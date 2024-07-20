@@ -36,12 +36,6 @@ jobs:
           cd compat
           cargo test
 
-      # Step to copy the shared object using Racket script
-      - name: Copy shared object with Racket
-        run: |
-          cd ..
-          racket copy-lib.rkt
-
       # Step to set up Racket
       - uses: Bogdanp/setup-racket@v1.9.1
         with:
@@ -49,6 +43,12 @@ jobs:
           distribution: full
           variant: ${{ matrix.racket-variant }}
           version: ${{ matrix.racket-version }}
+
+      # Step to copy the shared object using Racket script
+      - name: Copy shared object with Racket
+        run: |
+          cd ..
+          racket copy-lib.rkt
 
       # Step to install rkt-polars and its dependencies
       - name: Installing rkt-polars and its dependencies
