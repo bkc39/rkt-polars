@@ -4,3 +4,16 @@
 .DS_Store
 compiled/
 /doc/
+
+compat/target/
+**/*.rs.bk
+Cargo.lock
+
+
+compiled/
+*.zo
+*.dep
+planet-cache/
+
+# User-specific files
+.racket/
