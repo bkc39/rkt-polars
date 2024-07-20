@@ -15,15 +15,47 @@ jobs:
             experimental: true
     steps:
       - uses: actions/checkout@v3.1.0
+
+      # Step to set up Rust
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      # Step to build the Rust project
+      - name: Build Rust project
+        run: |
+          cd compat
+          cargo build --release
+
+      # Step to run tests for Rust project
+      - name: Test Rust project
+        run: |
+          cd compat
+          cargo test
+
+      # Step to set up Racket
       - uses: Bogdanp/setup-racket@v1.9.1
         with:
           architecture: x64
           distribution: full
           variant: ${{ matrix.racket-variant }}
           version: ${{ matrix.racket-version }}
+
+      # Step to copy the shared object using Racket script
+      - name: Copy shared object with Racket
+        run: racket copy-lib.rkt
+
+      # Step to install rkt-polars and its dependencies
       - name: Installing rkt-polars and its dependencies
         run: raco pkg install --no-docs --auto --name rkt-polars
+
+      # Step to compile rkt-polars and build its docs
       - name: Compiling rkt-polars and building its docs
         run: raco setup --check-pkg-deps --unused-pkg-deps rkt-polars
+
+      # Step to test rkt-polars
       - name: Testing rkt-polars
         run: raco test -x -p rkt-polars
