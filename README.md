@@ -1,3 +1,4 @@
 rkt-polars
 ==========
-README text here.
+
+Racket bindings to (polars)[https://pola.rs/].
