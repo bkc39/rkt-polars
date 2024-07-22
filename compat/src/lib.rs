@@ -19,7 +19,7 @@ mod tests {
 }
 
 #[no_mangle]
-pub extern "C" fn make_df() -> *mut DataFrame {
+pub extern "C" fn make_data_frame() -> *mut DataFrame {
     let df = df!(
         "integer" => &[1, 2, 3],
         "date" => &[

@@ -1,5 +1,5 @@
 # Define variables
-CARGO_CMD = cargo build --manifest-path=compat/Cargo.toml
+CARGO_CMD = cargo build --manifest-path=compat/Cargo.toml --release
 RACKET_CMD = raco make main.rkt
 COPY_LIB_CMD = racket copy-lib.rkt
 
