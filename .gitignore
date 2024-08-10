@@ -5,7 +5,7 @@
 compiled/
 /doc/
 
-compat/target/
+polars/private/compat/target/
 **/*.rs.bk
 Cargo.lock
 
