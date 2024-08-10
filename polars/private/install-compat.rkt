@@ -3,6 +3,8 @@
 (require
  (only-in dynext/file
           append-extension-suffix)
+ (only-in racket/file
+          make-directory*)
  (only-in racket/system
           system*)
  (only-in setup/dirs
@@ -38,6 +40,7 @@
     (if user-specific?
         (find-user-lib-dir)
         (find-lib-dir)))
+  (make-directory* lib-path)
   (define destination-object-path
     (build-path lib-path shared-object-basename))
 
