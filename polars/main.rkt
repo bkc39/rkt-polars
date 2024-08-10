@@ -19,3 +19,7 @@
 (define-compat hello-world
   (_fun -> _void)
   #:c-id hello_world)
+
+(module+ test
+  (require rackunit)
+  (check-equal? (add 40 2) 42))
