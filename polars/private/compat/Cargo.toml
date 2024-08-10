@@ -7,3 +7,5 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+chrono = "0.4.38"
+polars = "0.41.3"
