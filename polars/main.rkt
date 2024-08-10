@@ -16,16 +16,9 @@
 (define-ffi-definer define-compat
   (ffi-lib libcompat))
 
-;; (define-compat add
-;;   (_fun _uint32 _uint32 -> _uint32))
+(define-compat add
+  (_fun _uint32 _uint32 -> _uint32))
 
 (define-compat hello-world
   (_fun -> _void)
   #:c-id hello_world)
-
-;; (module+ test
-;;   (check-equal? (add 770 7) 777))
-
-;; (module+ main
-;;   (printf "~a + ~a = ~a~n"
-;;           1700 29 (add 1700 29)))
