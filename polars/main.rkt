@@ -19,6 +19,9 @@
 (define-compat add
   (_fun _uint32 _uint32 -> _uint32))
 
+(module+ test
+  (check-equal? (add 40 2) 42))
+
 (define-compat hello-world
   (_fun -> _void)
   #:c-id hello_world)
