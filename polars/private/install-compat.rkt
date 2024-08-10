@@ -40,9 +40,12 @@
     (if user-specific?
         (find-user-lib-dir)
         (find-lib-dir)))
-  (make-directory* lib-path)
   (define destination-object-path
     (build-path lib-path shared-object-basename))
+
+  (make-directory* lib-path)
+  (when (file-exists? destination-object-path)
+    (delete-file destination-object-path))
 
   (parameterize ([current-directory compat-path])
     (displayln (format "in directory: ~a" (current-directory)))
@@ -52,8 +55,8 @@
       (preinstall-error
        "libcompat shared object not in expected location:~n~a"
        compiled-object-path))
-    (copy-file compiled-object-path destination-object-path
-               #:exists-ok? #t)
-    (printf "Copied ~a => ~a\n"
+    (make-file-or-directory-link compiled-object-path
+                                 destination-object-path)
+    (printf "Made link ~a => ~a\n"
             compiled-object-path
             destination-object-path)))
