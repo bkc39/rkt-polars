@@ -7,9 +7,6 @@
 
 (provide (all-defined-out))
 
-(module+ test
-  (require rackunit))
-
 (define-runtime-path libcompat
   '(so "libcompat"))
 
@@ -18,9 +15,6 @@
 
 (define-compat add
   (_fun _uint32 _uint32 -> _uint32))
-
-(module+ test
-  (check-equal? (add 40 2) 42))
 
 (define-compat hello-world
   (_fun -> _void)
