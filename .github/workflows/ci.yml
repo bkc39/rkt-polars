@@ -46,12 +46,12 @@ jobs:
 
       # Step to install rkt-polars and its dependencies
       - name: Installing rkt-polars and its dependencies
-        run: raco pkg install --no-docs --auto --name rkt-polars
+        run: raco pkg install --no-docs --auto --name polars
 
       # Step to compile rkt-polars and build its docs
       - name: Compiling rkt-polars and building its docs
-        run: raco setup --check-pkg-deps --unused-pkg-deps rkt-polars
+        run: raco setup --check-pkg-deps --unused-pkg-deps polars
 
       # Step to test rkt-polars
       - name: Testing rkt-polars
-        run: raco test -x -p rkt-polars
+        run: raco test -x -p polars
