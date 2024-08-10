@@ -45,10 +45,10 @@ jobs:
           version: ${{ matrix.racket-version }}
 
       - name: Installing polars and its dependencies
-        run: raco pkg install --no-docs --auto --name polars
+        run: raco pkg install --no-docs --auto
 
       - name: Compiling polars and building its docs
         run: raco setup --check-pkg-deps --unused-pkg-deps polars
 
       - name: Testing polars
-        run: raco test -x -p polars
+        run: raco test -x -p rkt-polars
