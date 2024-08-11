@@ -19,6 +19,23 @@
   (ffi-lib libcompat)
   #:make-c-id convention:hyphen->underscore)
 
+(define _Series-ptr
+  (_cpointer 'Series))
+
+(define-compat free-series
+  (_fun _Series-ptr -> _void)
+  #:wrap (deallocator))
+
+(define-compat empty-series
+  (_fun -> _Series-ptr)
+  #:wrap (allocator free-series))
+
+(module+ test
+  (define empty-series-ptr
+    (empty-series))
+  (check-pred cpointer? empty-series-ptr)
+  (check-pred void? (free-series empty-series-ptr)))
+
 (define _DataFrame-ptr
   (_cpointer 'DataFrame))
 
@@ -38,6 +55,8 @@
   (_fun _DataFrame-ptr
         -> (s : _Shape)
         -> (values (Shape-rows s) (Shape-cols s))))
+
+
 
 (module+ test
   (check-pred void? (free-dataframe (make-dataframe)))
