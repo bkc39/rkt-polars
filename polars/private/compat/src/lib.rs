@@ -64,4 +64,30 @@ mod tests {
         let df: *mut DataFrame = ptr::null_mut();
         free_dataframe(df);
     }
+
+    #[test]
+    fn get_shape_of_non_null_dataframe() {
+        let df = make_dataframe();
+        let shape = get_shape(df);
+        assert_eq!(shape.rows, 0);
+        assert_eq!(shape.cols, 0);
+        free_dataframe(df);
+    }
+
+    #[test]
+    fn get_shape_of_empty_dataframe() {
+        let df = empty_dataframe();
+        let shape = get_shape(df);
+        assert_eq!(shape.rows, 0);
+        assert_eq!(shape.cols, 0);
+        free_dataframe(df);
+    }
+
+    #[test]
+    fn get_shape_of_null_dataframe() {
+        let df: *mut DataFrame = ptr::null_mut();
+        let shape = get_shape(df);
+        assert_eq!(shape.rows, 0);
+        assert_eq!(shape.cols, 0);
+    }
 }
