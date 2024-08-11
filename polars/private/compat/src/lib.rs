@@ -124,6 +124,29 @@ pub extern "C" fn series_null_count(s_ptr: *mut Series) -> usize {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn series_new_i32(
+    name: *const c_char,
+    data: *const i32,
+    length: usize,
+) -> *mut Series {
+    if name.is_null() || data.is_null() {
+        return ptr::null_mut();
+    }
+
+    unsafe {
+        let c_str = CStr::from_ptr(name);
+        if let Ok(str_slice) = c_str.to_str() {
+            let slice = std::slice::from_raw_parts(data, length);
+            let s = Series::new(str_slice, slice);
+            let boxed_s = Box::new(s);
+            Box::into_raw(boxed_s)
+        } else {
+            ptr::null_mut()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +369,80 @@ mod tests {
         let series = series_empty();
         let null_count = series_null_count(series);
         assert_eq!(null_count, 0);
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_new_i32_valid() {
+        let data = vec![1, 2, 3, 4];
+        let data_ptr = data.as_ptr();
+
+        let name = CString::new("i32_series").unwrap();
+        let name_ptr = name.as_ptr();
+
+        let series = series_new_i32(name_ptr, data_ptr, data.len());
+        assert!(!series.is_null());
+
+        let len = series_len(series);
+        assert_eq!(len, 4);
+
+        let null_count = series_null_count(series);
+        assert_eq!(null_count, 0);
+
+        let name_ptr = series_name(series);
+        let c_str = unsafe { CStr::from_ptr(name_ptr) };
+        let series_name = c_str.to_str().unwrap();
+        assert_eq!(series_name, "i32_series");
+
+        // Free the CString allocated by series_name
+        unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_new_i32_null_name() {
+        let data = vec![1, 2, 3, 4];
+        let data_ptr = data.as_ptr();
+
+        let series = series_new_i32(ptr::null(), data_ptr, data.len());
+        assert!(series.is_null());
+    }
+
+    #[test]
+    fn test_series_new_i32_null_data() {
+        let name = CString::new("i32_series").unwrap();
+        let name_ptr = name.as_ptr();
+
+        let series = series_new_i32(name_ptr, ptr::null(), 4);
+        assert!(series.is_null());
+    }
+
+    #[test]
+    fn test_series_new_i32_empty_data() {
+        let data: Vec<i32> = Vec::new();
+        let data_ptr = data.as_ptr();
+
+        let name = CString::new("i32_series").unwrap();
+        let name_ptr = name.as_ptr();
+
+        let series = series_new_i32(name_ptr, data_ptr, data.len());
+        assert!(!series.is_null());
+
+        let len = series_len(series);
+        assert_eq!(len, 0);
+
+        let null_count = series_null_count(series);
+        assert_eq!(null_count, 0);
+
+        let name_ptr = series_name(series);
+        let c_str = unsafe { CStr::from_ptr(name_ptr) };
+        let series_name = c_str.to_str().unwrap();
+        assert_eq!(series_name, "i32_series");
+
+        // Free the CString allocated by series_name
+        unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+
         series_drop(series);
     }
 }
