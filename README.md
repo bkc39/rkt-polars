@@ -1,4 +1,4 @@
 rkt-polars
 ==========
 
-Racket bindings to (polars)[https://pola.rs/].
+Racket bindings to [polars](https://pola.rs/).
