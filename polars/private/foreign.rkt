@@ -36,6 +36,12 @@
   (check-pred cpointer? empty-series-ptr)
   (check-pred void? (free-series empty-series-ptr)))
 
+(define-compat series-name
+  (_fun _Series-ptr -> _string))
+
+(module+ test
+  (check-equal? (series-name (empty-series)) ""))
+
 (define _DataFrame-ptr
   (_cpointer 'DataFrame))
 
