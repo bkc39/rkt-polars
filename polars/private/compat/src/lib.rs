@@ -25,19 +25,19 @@ pub extern "C" fn dataframe_make() -> *mut DataFrame {
 }
 
 #[no_mangle]
-pub extern "C" fn empty_dataframe() -> *mut DataFrame {
+pub extern "C" fn dataframe_empty() -> *mut DataFrame {
     Box::into_raw(Box::new(DataFrame::empty()))
 }
 
 #[no_mangle]
-pub extern "C" fn free_dataframe(df_ptr: *mut DataFrame) {
+pub extern "C" fn dataframe_drop(df_ptr: *mut DataFrame) {
     if !df_ptr.is_null() {
         unsafe { drop(Box::from_raw(df_ptr)) };
     }
 }
 
 #[no_mangle]
-pub extern "C" fn get_shape(df_ptr: *mut DataFrame) -> Shape {
+pub extern "C" fn dataframe_shape(df_ptr: *mut DataFrame) -> Shape {
     if df_ptr.is_null() {
         Shape { rows: 0, cols: 0 }
     } else {
@@ -51,19 +51,19 @@ pub extern "C" fn get_shape(df_ptr: *mut DataFrame) -> Shape {
 }
 
 #[no_mangle]
-pub extern "C" fn make_series() -> *mut Series {
+pub extern "C" fn series_make() -> *mut Series {
     let s = Series::new("example", &[1, 2, 3, 4]);
     let boxed_s = Box::new(s);
     Box::into_raw(boxed_s)
 }
 
 #[no_mangle]
-pub extern "C" fn empty_series() -> *mut Series {
+pub extern "C" fn series_empty() -> *mut Series {
     Box::into_raw(Box::new(Series::new_empty("", &DataType::Int32)))
 }
 
 #[no_mangle]
-pub extern "C" fn free_series(s_ptr: *mut Series) {
+pub extern "C" fn series_drop(s_ptr: *mut Series) {
     if !s_ptr.is_null() {
         unsafe { drop(Box::from_raw(s_ptr)) };
     }
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_series_name_non_null() {
-        let series = make_series();
+        let series = series_make();
         let name_ptr = series_name(series);
         assert!(!name_ptr.is_null());
 
@@ -118,7 +118,7 @@ mod tests {
         // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
@@ -129,27 +129,27 @@ mod tests {
 
     #[test]
     fn free_non_null_series() {
-        let series = make_series();
+        let series = series_make();
         assert!(!series.is_null());
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn free_empty_series() {
-        let series = empty_series();
+        let series = series_empty();
         assert!(!series.is_null());
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn free_null_series() {
         let series: *mut Series = ptr::null_mut();
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn test_empty_series_name() {
-        let series = empty_series();
+        let series = series_empty();
         let name_ptr = series_name(series);
         assert!(!name_ptr.is_null());
 
@@ -160,12 +160,12 @@ mod tests {
         // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn test_rename_series_non_null() {
-        let series = make_series();
+        let series = series_make();
 
         let new_name = CString::new("new_name").unwrap();
         let new_name_ptr = new_name.as_ptr();
@@ -182,12 +182,12 @@ mod tests {
         // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn test_rename_series_with_empty_string() {
-        let series = make_series();
+        let series = series_make();
 
         let new_name = CString::new("").unwrap();
         let new_name_ptr = new_name.as_ptr();
@@ -204,7 +204,7 @@ mod tests {
         // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_rename_series_null_new_name_pointer() {
-        let series = make_series();
+        let series = series_make();
 
         series_rename(series, ptr::null());
 
@@ -232,51 +232,51 @@ mod tests {
         // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
-        free_series(series);
+        series_drop(series);
     }
 
     #[test]
     fn free_non_null_dataframe() {
         let df = dataframe_make();
         assert!(!df.is_null());
-        free_dataframe(df);
+        dataframe_drop(df);
     }
 
     #[test]
     fn free_empty_dataframe() {
-        let df = empty_dataframe();
+        let df = dataframe_empty();
         assert!(!df.is_null());
-        free_dataframe(df);
+        dataframe_drop(df);
     }
 
     #[test]
     fn free_null_dataframe() {
         let df: *mut DataFrame = ptr::null_mut();
-        free_dataframe(df);
+        dataframe_drop(df);
     }
 
     #[test]
     fn get_shape_of_non_null_dataframe() {
         let df = dataframe_make();
-        let shape = get_shape(df);
+        let shape = dataframe_shape(df);
         assert_eq!(shape.rows, 0);
         assert_eq!(shape.cols, 0);
-        free_dataframe(df);
+        dataframe_drop(df);
     }
 
     #[test]
     fn get_shape_of_empty_dataframe() {
-        let df = empty_dataframe();
-        let shape = get_shape(df);
+        let df = dataframe_empty();
+        let shape = dataframe_shape(df);
         assert_eq!(shape.rows, 0);
         assert_eq!(shape.cols, 0);
-        free_dataframe(df);
+        dataframe_drop(df);
     }
 
     #[test]
     fn get_shape_of_null_dataframe() {
         let df: *mut DataFrame = ptr::null_mut();
-        let shape = get_shape(df);
+        let shape = dataframe_shape(df);
         assert_eq!(shape.rows, 0);
         assert_eq!(shape.cols, 0);
     }
