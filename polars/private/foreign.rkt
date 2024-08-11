@@ -37,8 +37,7 @@
      (register-finalizer ptr string-drop)
      str)))
 
-(define _Series-ptr
-  (_cpointer 'Series))
+(define-cpointer-type _Series-ptr)
 
 (define-compat series-drop
   (_fun _Series-ptr -> _void)
@@ -51,7 +50,7 @@
 (module+ test
   (define empty-series-ptr
     (series-empty))
-  (check-pred cpointer? empty-series-ptr)
+  (check-pred Series-ptr? empty-series-ptr)
   (check-pred void? (series-drop empty-series-ptr)))
 
 (define-compat series-name
@@ -81,7 +80,7 @@
         -> _Series-ptr))
 
 (module+ test
-  (check-pred cpointer? (series-new-i32 "" '(1 2 3)))
+  (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
   (check-equal?
    (series-len (series-new-i32 "series" '(0 1)))
    2)
@@ -90,8 +89,7 @@
    (lambda ()
      (series-new-i32 "example" '()))))
 
-(define _DataFrame-ptr
-  (_cpointer 'DataFrame))
+(define-cpointer-type _DataFrame-ptr)
 
 (define-compat dataframe-drop
   (_fun _DataFrame-ptr -> _void)
@@ -111,6 +109,7 @@
         -> (values (Shape-rows s) (Shape-cols s))))
 
 (module+ test
+  (check-pred DataFrame-ptr? (dataframe-make))
   (check-pred void? (dataframe-drop (dataframe-make)))
 
   (define-values (r c)
