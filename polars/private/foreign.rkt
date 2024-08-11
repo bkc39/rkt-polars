@@ -23,11 +23,14 @@
   (_fun _pointer -> _void)
   #:wrap (deallocator))
 
+;; heap allocated rust string
 (define _rsstring
   (make-ctype
    _pointer
    (lambda (str)
-     (cast str _string _pointer))
+     (error '_rsstring
+            "_rsstring should only be used as a result type: ~a"
+            str))
    (lambda (ptr)
      (define str
        (cast ptr _pointer _string))
@@ -55,16 +58,37 @@
   (_fun _Series-ptr -> _rsstring))
 
 (define-compat series-rename
-  (_fun _Series-ptr _rsstring -> _void))
+  (_fun _Series-ptr _string -> _void))
 
 (module+ test
   (check-equal? (series-name (series-empty)) "")
-  ;; (check-pred void? (string-drop (series-name (series-empty))))
   (check-equal?
    (let ([s (series-empty)])
      (series-rename s "hello")
      (series-name s))
    "hello"))
+
+(define-compat series-len
+  (_fun _Series-ptr -> _size))
+
+(module+ test
+  (check-equal? (series-len (series-empty)) 0))
+
+(define-compat series-new-i32
+  (_fun _string
+        (v : (_list i _int32))
+        (_size = (length v))
+        -> _Series-ptr))
+
+(module+ test
+  (check-pred cpointer? (series-new-i32 "" '(1 2 3)))
+  (check-equal?
+   (series-len (series-new-i32 "series" '(0 1)))
+   2)
+  (check-exn
+   #rx"argument is not non-null"
+   (lambda ()
+     (series-new-i32 "example" '()))))
 
 (define _DataFrame-ptr
   (_cpointer 'DataFrame))

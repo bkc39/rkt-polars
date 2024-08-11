@@ -13,9 +13,7 @@ pub struct Shape {
 #[no_mangle]
 pub extern "C" fn string_drop(s: *mut c_char) {
     if !s.is_null() {
-        unsafe {
-            let _ = CString::from_raw(s);
-        };
+        unsafe { drop(CString::from_raw(s)) };
     }
 }
 
