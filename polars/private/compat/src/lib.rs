@@ -11,6 +11,13 @@ pub struct Shape {
 }
 
 #[no_mangle]
+pub extern "C" fn drop_string(s: *mut c_char) {
+    if !s.is_null() {
+        unsafe { drop(CString::from_raw(s)) };
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn make_dataframe() -> *mut DataFrame {
     let df = DataFrame::default();
     let boxed_df = Box::new(df);

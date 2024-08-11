@@ -19,6 +19,10 @@
   (ffi-lib libcompat)
   #:make-c-id convention:hyphen->underscore)
 
+(define-compat drop-string
+  (_fun _string -> _void)
+  #:wrap (deallocator))
+
 (define _Series-ptr
   (_cpointer 'Series))
 
@@ -37,13 +41,15 @@
   (check-pred void? (free-series empty-series-ptr)))
 
 (define-compat series-name
-  (_fun _Series-ptr -> _string))
+  (_fun _Series-ptr -> _string)
+  #:wrap (allocator drop-string))
 
 (define-compat series-rename
   (_fun _Series-ptr _string -> _void))
 
 (module+ test
   (check-equal? (series-name (empty-series)) "")
+  (check-pred void? (drop-string (series-name (empty-series))))
   (check-equal?
    (let ([s (empty-series)])
      (series-rename s "hello")
