@@ -39,8 +39,16 @@
 (define-compat series-name
   (_fun _Series-ptr -> _string))
 
+(define-compat series-rename
+  (_fun _Series-ptr _string -> _void))
+
 (module+ test
-  (check-equal? (series-name (empty-series)) ""))
+  (check-equal? (series-name (empty-series)) "")
+  (check-equal?
+   (let ([s (empty-series)])
+     (series-rename s "hello")
+     (series-name s))
+   "hello"))
 
 (define _DataFrame-ptr
   (_cpointer 'DataFrame))
@@ -61,8 +69,6 @@
   (_fun _DataFrame-ptr
         -> (s : _Shape)
         -> (values (Shape-rows s) (Shape-cols s))))
-
-
 
 (module+ test
   (check-pred void? (free-dataframe (make-dataframe)))

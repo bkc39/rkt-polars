@@ -79,7 +79,7 @@ pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn rename_series(s_ptr: *mut Series, new_name: *const c_char) {
+pub extern "C" fn series_rename(s_ptr: *mut Series, new_name: *const c_char) {
     if s_ptr.is_null() || new_name.is_null() {
         return;
     }
@@ -163,7 +163,7 @@ mod tests {
         let new_name = CString::new("new_name").unwrap();
         let new_name_ptr = new_name.as_ptr();
 
-        rename_series(series, new_name_ptr);
+        series_rename(series, new_name_ptr);
 
         let name_ptr = series_name(series);
         assert!(!name_ptr.is_null());
@@ -185,7 +185,7 @@ mod tests {
         let new_name = CString::new("").unwrap();
         let new_name_ptr = new_name.as_ptr();
 
-        rename_series(series, new_name_ptr);
+        series_rename(series, new_name_ptr);
 
         let name_ptr = series_name(series);
         assert!(!name_ptr.is_null());
@@ -205,14 +205,14 @@ mod tests {
         let new_name = CString::new("new_name").unwrap();
         let new_name_ptr = new_name.as_ptr();
 
-        rename_series(ptr::null_mut(), new_name_ptr);
+        series_rename(ptr::null_mut(), new_name_ptr);
     }
 
     #[test]
     fn test_rename_series_null_new_name_pointer() {
         let series = make_series();
 
-        rename_series(series, ptr::null());
+        series_rename(series, ptr::null());
 
         // Ensure the original name remains unchanged
         let name_ptr = series_name(series);
