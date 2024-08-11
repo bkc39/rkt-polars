@@ -112,6 +112,18 @@ pub extern "C" fn series_len(s_ptr: *mut Series) -> usize {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn series_null_count(s_ptr: *mut Series) -> usize {
+    if s_ptr.is_null() {
+        0
+    } else {
+        unsafe {
+            let s = &*s_ptr;
+            s.null_count()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +324,28 @@ mod tests {
         let series = series_empty();
         let len = series_len(series);
         assert_eq!(len, 0);
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_null_count_non_null() {
+        let series = series_make();
+        let null_count = series_null_count(series);
+        assert_eq!(null_count, 0);
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_null_count_null() {
+        let null_count = series_null_count(ptr::null_mut());
+        assert_eq!(null_count, 0);
+    }
+
+    #[test]
+    fn test_series_null_count_empty_series() {
+        let series = series_empty();
+        let null_count = series_null_count(series);
+        assert_eq!(null_count, 0);
         series_drop(series);
     }
 }
