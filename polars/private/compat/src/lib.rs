@@ -11,14 +11,14 @@ pub struct Shape {
 }
 
 #[no_mangle]
-pub extern "C" fn drop_string(s: *mut c_char) {
+pub extern "C" fn string_drop(s: *mut c_char) {
     if !s.is_null() {
         unsafe { drop(CString::from_raw(s)) };
     }
 }
 
 #[no_mangle]
-pub extern "C" fn make_dataframe() -> *mut DataFrame {
+pub extern "C" fn dataframe_make() -> *mut DataFrame {
     let df = DataFrame::default();
     let boxed_df = Box::new(df);
     Box::into_raw(boxed_df)
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn free_non_null_dataframe() {
-        let df = make_dataframe();
+        let df = dataframe_make();
         assert!(!df.is_null());
         free_dataframe(df);
     }
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn get_shape_of_non_null_dataframe() {
-        let df = make_dataframe();
+        let df = dataframe_make();
         let shape = get_shape(df);
         assert_eq!(shape.rows, 0);
         assert_eq!(shape.cols, 0);
