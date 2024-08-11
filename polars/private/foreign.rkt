@@ -19,39 +19,49 @@
   (ffi-lib libcompat)
   #:make-c-id convention:hyphen->underscore)
 
-(define-compat drop-string
-  (_fun _string -> _void)
+(define-compat string-drop
+  (_fun _pointer -> _void)
   #:wrap (deallocator))
+
+(define _rsstring
+  (make-ctype
+   _pointer
+   (lambda (str)
+     (cast str _string _pointer))
+   (lambda (ptr)
+     (define str
+       (cast ptr _pointer _string))
+     (register-finalizer ptr string-drop)
+     str)))
 
 (define _Series-ptr
   (_cpointer 'Series))
 
-(define-compat free-series
+(define-compat series-drop
   (_fun _Series-ptr -> _void)
   #:wrap (deallocator))
 
-(define-compat empty-series
+(define-compat series-empty
   (_fun -> _Series-ptr)
-  #:wrap (allocator free-series))
+  #:wrap (allocator series-drop))
 
 (module+ test
   (define empty-series-ptr
-    (empty-series))
+    (series-empty))
   (check-pred cpointer? empty-series-ptr)
-  (check-pred void? (free-series empty-series-ptr)))
+  (check-pred void? (series-drop empty-series-ptr)))
 
 (define-compat series-name
-  (_fun _Series-ptr -> _string)
-  #:wrap (allocator drop-string))
+  (_fun _Series-ptr -> _rsstring))
 
 (define-compat series-rename
-  (_fun _Series-ptr _string -> _void))
+  (_fun _Series-ptr _rsstring -> _void))
 
 (module+ test
-  (check-equal? (series-name (empty-series)) "")
-  (check-pred void? (drop-string (series-name (empty-series))))
+  (check-equal? (series-name (series-empty)) "")
+  ;; (check-pred void? (string-drop (series-name (series-empty))))
   (check-equal?
-   (let ([s (empty-series)])
+   (let ([s (series-empty)])
      (series-rename s "hello")
      (series-name s))
    "hello"))
@@ -59,27 +69,27 @@
 (define _DataFrame-ptr
   (_cpointer 'DataFrame))
 
-(define-compat free-dataframe
+(define-compat dataframe-drop
   (_fun _DataFrame-ptr -> _void)
   #:wrap (deallocator))
 
-(define-compat make-dataframe
+(define-compat dataframe-make
   (_fun -> _DataFrame-ptr)
-  #:wrap (allocator free-dataframe))
+  #:wrap (allocator dataframe-drop))
 
 (define-cstruct _Shape
   ([rows _size]
    [cols _size]))
 
-(define-compat get-shape
+(define-compat dataframe-shape
   (_fun _DataFrame-ptr
         -> (s : _Shape)
         -> (values (Shape-rows s) (Shape-cols s))))
 
 (module+ test
-  (check-pred void? (free-dataframe (make-dataframe)))
+  (check-pred void? (dataframe-drop (dataframe-make)))
 
   (define-values (r c)
-    (get-shape (make-dataframe)))
+    (dataframe-shape (dataframe-make)))
   (check-equal? r 0)
   (check-equal? c 0))

@@ -13,7 +13,9 @@ pub struct Shape {
 #[no_mangle]
 pub extern "C" fn string_drop(s: *mut c_char) {
     if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
+        unsafe {
+            let _ = CString::from_raw(s);
+        };
     }
 }
 
@@ -78,9 +80,9 @@ pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
     unsafe {
         let s = &*s_ptr;
         if let Ok(c_string) = CString::new(s.name()) {
-            c_string.into_raw()
+            c_string.into_raw() as *mut c_char
         } else {
-            ptr::null()
+            ptr::null_mut()
         }
     }
 }
@@ -444,5 +446,19 @@ mod tests {
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
         series_drop(series);
+    }
+
+    #[test]
+    fn test_string_drop_non_null() {
+        let s = CString::new("hello").unwrap();
+        let s_ptr = s.into_raw();
+
+        string_drop(s_ptr);
+    }
+
+    #[test]
+    fn test_string_drop_null() {
+        string_drop(ptr::null_mut());
+        // Should not do anything, hence no assertion or panic
     }
 }
