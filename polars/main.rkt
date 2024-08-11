@@ -1,7 +1,9 @@
 #lang racket/base
 
 (require ffi/unsafe
+         ffi/unsafe/alloc
          ffi/unsafe/define
+         ffi/unsafe/define/conventions
          racket/runtime-path
          (for-syntax racket/base))
 
@@ -11,15 +13,33 @@
   '(so "libcompat"))
 
 (define-ffi-definer define-compat
-  (ffi-lib libcompat))
+  (ffi-lib libcompat)
+  #:make-c-id convention:hyphen->underscore)
 
-(define-compat add
-  (_fun _uint32 _uint32 -> _uint32))
+(define _DataFrame-ptr
+  (_cpointer 'DataFrame))
 
-(define-compat hello-world
-  (_fun -> _void)
-  #:c-id hello_world)
+(define-compat free-dataframe
+  (_fun _DataFrame-ptr -> _void)
+  #:wrap (deallocator))
+
+(define-compat make-dataframe
+  (_fun -> _DataFrame-ptr)
+  #:wrap (allocator free-dataframe))
+
+(define-cstruct _Shape
+  ([rows _size]
+   [cols _size]))
+
+(define-compat get-shape
+  (_fun _DataFrame-ptr
+        -> (s : _Shape)
+        -> (values (Shape-rows s) (Shape-cols s))))
 
 (module+ test
   (require rackunit)
-  (check-equal? (add 40 2) 42))
+
+  (define-values (r c)
+    (get-shape (make-dataframe)))
+  (check-equal? r 0)
+  (check-equal? c 0))
