@@ -100,6 +100,18 @@ pub extern "C" fn series_rename(s_ptr: *mut Series, new_name: *const c_char) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn series_len(s_ptr: *mut Series) -> usize {
+    if s_ptr.is_null() {
+        0
+    } else {
+        unsafe {
+            let s = &*s_ptr;
+            s.len()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +291,27 @@ mod tests {
         let shape = dataframe_shape(df);
         assert_eq!(shape.rows, 0);
         assert_eq!(shape.cols, 0);
+    }
+
+    #[test]
+    fn test_series_len_non_null() {
+        let series = series_make();
+        let len = series_len(series);
+        assert_eq!(len, 4);
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_len_null() {
+        let len = series_len(ptr::null_mut());
+        assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn test_series_len_empty_series() {
+        let series = series_empty();
+        let len = series_len(series);
+        assert_eq!(len, 0);
+        series_drop(series);
     }
 }
