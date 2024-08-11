@@ -40,6 +40,25 @@ pub extern "C" fn get_shape(df_ptr: *mut DataFrame) -> Shape {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn make_series() -> *mut Series {
+    let s = Series::new("example", &[1, 2, 3, 4]);
+    let boxed_s = Box::new(s);
+    Box::into_raw(boxed_s)
+}
+
+#[no_mangle]
+pub extern "C" fn empty_series() -> *mut Series {
+    Box::into_raw(Box::new(Series::new_empty("", &DataType::Int32)))
+}
+
+#[no_mangle]
+pub extern "C" fn free_series(s_ptr: *mut Series) {
+    if !s_ptr.is_null() {
+        unsafe { drop(Box::from_raw(s_ptr)) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

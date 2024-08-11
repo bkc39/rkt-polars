@@ -39,6 +39,8 @@
 (module+ test
   (require rackunit)
 
+  (check-pred void? (free-dataframe (make-dataframe)))
+
   (define-values (r c)
     (get-shape (make-dataframe)))
   (check-equal? r 0)
