@@ -124,26 +124,41 @@ pub extern "C" fn series_null_count(s_ptr: *mut Series) -> usize {
     }
 }
 
-fn series_new<T: 'static + Clone>(
+fn create_chunked_array_from_raw<T>(
     name: *const c_char,
-    data: *const T,
+    data: *const T::Native,
     length: usize,
-) -> *mut Series {
+) -> ChunkedArray<T>
+where
+    T: PolarsNumericType,
+{
+    let slice = unsafe { std::slice::from_raw_parts(data as *const _, length) };
+    let vec = slice.to_vec();
+
+    unsafe {
+        if let Ok(name) = CStr::from_ptr(name).to_str() {
+            ChunkedArray::from_vec(name, vec)
+        } else {
+            ChunkedArray::from_vec("", vec)
+        }
+    }
+}
+
+fn series_new<T>(
+    name: *const c_char,
+    data: *const T::Native,
+    length: usize,
+) -> *mut Series
+where
+    T: PolarsNumericType + Clone,
+    ChunkedArray<T>: IntoSeries,
+{
     if name.is_null() || data.is_null() {
         return ptr::null_mut();
     }
 
-    unsafe {
-        let c_str = CStr::from_ptr(name);
-        if let Ok(str_slice) = c_str.to_str() {
-            let slice = std::slice::from_raw_parts(data, length);
-            let s = Series::new(str_slice, slice.to_vec());
-            let boxed_s = Box::new(s);
-            Box::into_raw(boxed_s)
-        } else {
-            ptr::null_mut()
-        }
-    }
+    let s = create_chunked_array_from_raw(name, data, length);
+    Box::into_raw(Box::new(s.into()))
 }
 
 #[no_mangle]
@@ -152,7 +167,16 @@ pub extern "C" fn series_new_i32(
     data: *const i32,
     length: usize,
 ) -> *mut Series {
-    series_new(name, data, length)
+    series_new::<Int32Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_f64(
+    name: *const c_char,
+    data: *const f64,
+    length: usize,
+) -> *mut Series {
+    series_new::<Float64Type>(name, data, length)
 }
 
 #[cfg(test)]
