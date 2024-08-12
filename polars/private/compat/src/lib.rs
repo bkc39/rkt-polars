@@ -124,10 +124,9 @@ pub extern "C" fn series_null_count(s_ptr: *mut Series) -> usize {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn series_new_i32(
+fn series_new<T: 'static + Clone>(
     name: *const c_char,
-    data: *const i32,
+    data: *const T,
     length: usize,
 ) -> *mut Series {
     if name.is_null() || data.is_null() {
@@ -138,13 +137,22 @@ pub extern "C" fn series_new_i32(
         let c_str = CStr::from_ptr(name);
         if let Ok(str_slice) = c_str.to_str() {
             let slice = std::slice::from_raw_parts(data, length);
-            let s = Series::new(str_slice, slice);
+            let s = Series::new(str_slice, slice.to_vec());
             let boxed_s = Box::new(s);
             Box::into_raw(boxed_s)
         } else {
             ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_i32(
+    name: *const c_char,
+    data: *const i32,
+    length: usize,
+) -> *mut Series {
+    series_new(name, data, length)
 }
 
 #[cfg(test)]
