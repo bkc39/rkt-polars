@@ -491,4 +491,32 @@ mod tests {
         string_drop(ptr::null_mut());
         // Should not do anything, hence no assertion or panic
     }
+
+    #[test]
+    fn test_series_new_f64_valid() {
+        let data = vec![1.1, 2.2, 3.3, 4.4];
+        let data_ptr = data.as_ptr();
+
+        let name = CString::new("f64_series").unwrap();
+        let name_ptr = name.as_ptr();
+
+        let series = series_new_f64(name_ptr, data_ptr, data.len());
+        assert!(!series.is_null());
+
+        let len = series_len(series);
+        assert_eq!(len, 4);
+
+        let null_count = series_null_count(series);
+        assert_eq!(null_count, 0);
+
+        let name_ptr = series_name(series);
+        let c_str = unsafe { CStr::from_ptr(name_ptr) };
+        let series_name = c_str.to_str().unwrap();
+        assert_eq!(series_name, "f64_series");
+
+        // Free the CString allocated by series_name
+        unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+
+        series_drop(series);
+    }
 }
