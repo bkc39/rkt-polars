@@ -109,6 +109,54 @@
    (λ ()
      (series-new-f64 "no-name" '(0)))))
 
+(define-compat series-new-str
+  (_fun _string
+        (v : (_list i _string))
+        (_size = (length v))
+        -> _Series-ptr))
+
+(module+ test
+  (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
+  (check-equal?
+   (series-len (series-new-str "str" '("" "")))
+   2)
+  (check-exn
+   #rx"argument is not non-null"
+   (lambda ()
+     (series-new-str "example" '())))
+  (check-exn
+   #rx"contract violation"
+   (λ ()
+     (series-new-str "" '(symbol)))))
+
+;; Year, Month, Day, Hour, Minute, Second
+(define-cstruct _YMDHMS
+  ([year _int]
+   [month _uint32]
+   [day _uint32]
+   [hour _uint32]
+   [minute _uint32]
+   [sescond _uint32]))
+
+(module+ test
+  (check-pred YMDHMS?
+              (make-YMDHMS 2014 7 11 12 0 0)))
+
+(define-compat series-new-ymdhms
+  (_fun _string
+        (v : (_list i _YMDHMS))
+        (_size = (length v))
+        -> _Series-ptr))
+
+(module+ test
+  (check-pred Series-ptr?
+              (series-new-ymdhms "" (list (make-YMDHMS 2010 1 1 0 0 0))))
+  (check-equal?
+   (series-len (series-new-ymdhms "name" (list (make-YMDHMS 2010 1 1 0 0 0)
+                                               (make-YMDHMS 2011 1 1 0 0 0)
+                                               (make-YMDHMS 2012 1 1 0 0 0))))
+   3))
+
 (define-cpointer-type _DataFrame-ptr)
 
 (define-compat dataframe-drop

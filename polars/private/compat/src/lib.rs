@@ -191,6 +191,7 @@ fn name_from_ptr(p: *const c_char) -> &'static str {
     }
 }
 
+#[no_mangle]
 pub extern "C" fn series_new_str(
     name: *const c_char,
     data: *const *const c_char,
@@ -219,6 +220,7 @@ pub struct YMDHMS {
     pub second: u32,
 }
 
+#[no_mangle]
 pub extern "C" fn series_new_ymdhms(
     name: *const c_char,
     data: *const YMDHMS,
