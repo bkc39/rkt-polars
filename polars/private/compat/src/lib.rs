@@ -79,9 +79,9 @@ pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
     unsafe {
         let s = &*s_ptr;
         if let Ok(c_string) = CString::new(s.name()) {
-            c_string.into_raw() as *mut c_char
+            c_string.into_raw() as *const c_char
         } else {
-            ptr::null_mut()
+            ptr::null()
         }
     }
 }
@@ -242,6 +242,11 @@ pub extern "C" fn series_new_ymdhms(
         Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
     }
 }
+
+// #[no_mangle]
+// fn dataframe_new_series() -> DataFrame {
+//     DataFrame::new(vec![]).expect("test")
+// }
 
 #[cfg(test)]
 mod tests {
