@@ -89,6 +89,26 @@
    (lambda ()
      (series-new-i32 "example" '()))))
 
+(define-compat series-new-f64
+  (_fun _string
+        (v : (_list i _double))
+        (_size = (length v))
+        -> _Series-ptr))
+
+(module+ test
+  (check-pred Series-ptr? (series-new-f64 "" '(1.1 2.17)))
+  (check-equal?
+   (series-len (series-new-f64 "series" '(0.0 1.2)))
+   2)
+  (check-exn
+   #rx"argument is not non-null"
+   (lambda ()
+     (series-new-f64 "example" '())))
+  (check-exn
+   #rx"given value does not fit primitive C type"
+   (λ ()
+     (series-new-f64 "no-name" '(0)))))
+
 (define-cpointer-type _DataFrame-ptr)
 
 (define-compat dataframe-drop
