@@ -1,3 +1,4 @@
+use chrono::{NaiveDate, NaiveDateTime};
 use polars::prelude::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -177,6 +178,60 @@ pub extern "C" fn series_new_f64(
     length: usize,
 ) -> *mut Series {
     series_new::<Float64Type>(name, data, length)
+}
+
+fn name_from_ptr(p: *const c_char) -> &'static str {
+    if let Ok(name) = unsafe { CStr::from_ptr(p).to_str() } {
+        name
+    } else {
+        ""
+    }
+}
+
+pub extern "C" fn series_new_str(
+    name: *const c_char,
+    data: *const *const c_char,
+    length: usize,
+) -> *mut Series {
+    let slice: &[*const c_char] =
+        unsafe { std::slice::from_raw_parts(data, length) };
+    let vec: Vec<&str> = slice
+        .iter()
+        .map(|&ptr| unsafe { CStr::from_ptr(ptr).to_str().unwrap_or_default() })
+        .collect();
+    Box::into_raw(Box::new(Series::new(name_from_ptr(name), vec)))
+}
+
+#[repr(C)]
+pub struct YMDHMS {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub minute: u32,
+    pub second: u32,
+}
+
+pub extern "C" fn series_new_ymdhms(
+    name: *const c_char,
+    data: *const YMDHMS,
+    length: usize,
+) -> *mut Series {
+    if data.is_null() {
+        std::ptr::null_mut()
+    } else {
+        let ymdhms_slice = unsafe { std::slice::from_raw_parts(data, length) };
+        let naive_dates: Vec<NaiveDateTime> = ymdhms_slice
+            .iter()
+            .map(|ymdhms| {
+                NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day)
+                    .unwrap()
+                    .and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second)
+                    .unwrap()
+            })
+            .collect();
+        Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
+    }
 }
 
 #[cfg(test)]
