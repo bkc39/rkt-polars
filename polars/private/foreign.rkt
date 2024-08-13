@@ -5,7 +5,8 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          racket/runtime-path
-         (for-syntax racket/base))
+         syntax/parse/define
+         (for-syntax racket/base racket/syntax))
 
 (module+ test
   (require rackunit))
@@ -73,11 +74,15 @@
 (module+ test
   (check-equal? (series-len (series-empty)) 0))
 
-(define-compat series-new-i32
-  (_fun _string
-        (v : (_list i _int32))
-        (_size = (length v))
-        -> _Series-ptr))
+(define-syntax-parse-rule (define-series-constructor rs-type:id ctype:id)
+  #:with constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
+  (define-compat constructor-name
+    (_fun _string
+          (v : (_list i ctype))
+          (_size = (length v))
+          -> _Series-ptr)))
+
+(define-series-constructor i32 _int32)
 
 (module+ test
   (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
