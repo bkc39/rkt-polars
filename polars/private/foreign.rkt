@@ -74,15 +74,26 @@
 (module+ test
   (check-equal? (series-len (series-empty)) 0))
 
-(define-syntax-parse-rule (define-series-constructor rs-type:id ctype:id)
-  #:with constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
-  (define-compat constructor-name
-    (_fun _string
-          (v : (_list i ctype))
-          (_size = (length v))
-          -> _Series-ptr)))
+(define-syntax-parse-rule (define-series-constructors rs-type:id ctype:id)
+  #:with list-constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
+  #:with vector-constructor-name (format-id #'rs-type
+                                            "series-new-~a/vec"
+                                            #'rs-type)
+  #:with rust-id (format-id #'rs-type "series_new_~a" #'rs-type)
+  (begin
+    (define-compat list-constructor-name
+      (_fun _string
+            (v : (_list i ctype))
+            (_size = (length v))
+            -> _Series-ptr))
+    (define-compat vector-constructor-name
+      (_fun _string
+            (v : (_vector i ctype))
+            (_size = (vector-length v))
+            -> _Series-ptr)
+      #:c-id rust-id)))
 
-(define-series-constructor i32 _int32)
+(define-series-constructors i32 _int32)
 
 (module+ test
   (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
@@ -92,13 +103,14 @@
   (check-exn
    #rx"argument is not non-null"
    (lambda ()
-     (series-new-i32 "example" '()))))
+     (series-new-i32 "example" '())))
 
-(define-compat series-new-f64
-  (_fun _string
-        (v : (_list i _double))
-        (_size = (length v))
-        -> _Series-ptr))
+  (check-pred Series-ptr? (series-new-i32/vec "" (vector 1 2 3)))
+  (check-equal?
+   (series-len (series-new-i32/vec "" (vector 0)))
+   1))
+
+(define-series-constructors f64 _double)
 
 (module+ test
   (check-pred Series-ptr? (series-new-f64 "" '(1.1 2.17)))
@@ -112,13 +124,14 @@
   (check-exn
    #rx"given value does not fit primitive C type"
    (λ ()
-     (series-new-f64 "no-name" '(0)))))
+     (series-new-f64 "no-name" '(0))))
 
-(define-compat series-new-str
-  (_fun _string
-        (v : (_list i _string))
-        (_size = (length v))
-        -> _Series-ptr))
+  (check-pred Series-ptr? (series-new-f64/vec "" (vector 17.29 40.2)))
+  (check-equal?
+   (series-len (series-new-f64/vec "" (vector 17.29 40.2)))
+   2))
+
+(define-series-constructors str _string)
 
 (module+ test
   (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
@@ -132,7 +145,12 @@
   (check-exn
    #rx"contract violation"
    (λ ()
-     (series-new-str "" '(symbol)))))
+     (series-new-str "" '(symbol))))
+
+  (check-pred Series-ptr? (series-new-str/vec "" (vector "foo" "bar" "baz" "")))
+  (check-equal?
+   (series-name (series-new-str "str" '("" "")))
+   "str"))
 
 ;; Year, Month, Day, Hour, Minute, Second
 (define-cstruct _YMDHMS
@@ -147,19 +165,25 @@
   (check-pred YMDHMS?
               (make-YMDHMS 2014 7 11 12 0 0)))
 
-(define-compat series-new-ymdhms
-  (_fun _string
-        (v : (_list i _YMDHMS))
-        (_size = (length v))
-        -> _Series-ptr))
+(define-series-constructors ymdhms _YMDHMS)
 
 (module+ test
+  (define-values (ex0 ex1)
+    (values
+     (list (make-YMDHMS 2010 1 1 0 0 0))
+     (list (make-YMDHMS 2010 1 1 0 0 0)
+           (make-YMDHMS 2011 1 1 0 0 0)
+           (make-YMDHMS 2012 1 1 0 0 0))))
   (check-pred Series-ptr?
-              (series-new-ymdhms "" (list (make-YMDHMS 2010 1 1 0 0 0))))
+              (series-new-ymdhms "" ex0))
   (check-equal?
-   (series-len (series-new-ymdhms "name" (list (make-YMDHMS 2010 1 1 0 0 0)
-                                               (make-YMDHMS 2011 1 1 0 0 0)
-                                               (make-YMDHMS 2012 1 1 0 0 0))))
+   (series-len (series-new-ymdhms "name" ex1))
+   3)
+  (check-pred Series-ptr?
+              (series-new-ymdhms/vec "" (list->vector ex0)))
+  (check-equal?
+   (series-len (series-new-ymdhms/vec "name"
+                                      (list->vector ex1)))
    3))
 
 (define-cpointer-type _DataFrame-ptr)
