@@ -243,11 +243,6 @@ pub extern "C" fn series_new_ymdhms(
     }
 }
 
-// #[no_mangle]
-// fn dataframe_new_series() -> DataFrame {
-//     DataFrame::new(vec![]).expect("test")
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +258,6 @@ mod tests {
         let name = c_str.to_str().unwrap();
         assert_eq!(name, "example");
 
-        // Free the CString allocated by series_name
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
         series_drop(series);
