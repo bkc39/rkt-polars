@@ -11,10 +11,259 @@ pub struct Shape {
     pub cols: usize,
 }
 
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatDTypeTag {
+    Unknown = 0,
+    Boolean = 1,
+    UInt8 = 2,
+    UInt16 = 3,
+    UInt32 = 4,
+    UInt64 = 5,
+    Int8 = 6,
+    Int16 = 7,
+    Int32 = 8,
+    Int64 = 9,
+    Float32 = 10,
+    Float64 = 11,
+    String = 12,
+    Binary = 13,
+    BinaryOffset = 14,
+    Date = 15,
+    Datetime = 16,
+    Duration = 17,
+    Time = 18,
+    Null = 19,
+    List = 20,
+    Array = 21,
+    Struct = 22,
+    Categorical = 23,
+    Enum = 24,
+    Decimal = 25,
+    Object = 26,
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatTimeUnit {
+    None = 0,
+    Nanoseconds = 1,
+    Microseconds = 2,
+    Milliseconds = 3,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatDType {
+    pub tag: i32,
+    pub time_unit: i32,
+    pub flags: u32,
+    pub array_width: usize,
+}
+
+const COMPAT_DTYPE_HAS_TIMEZONE: u32 = 0x1;
+
 #[no_mangle]
 pub extern "C" fn string_drop(s: *mut c_char) {
     if !s.is_null() {
         unsafe { drop(CString::from_raw(s)) };
+    }
+}
+
+fn rust_string_to_ptr(value: impl AsRef<str>) -> *const c_char {
+    CString::new(value.as_ref())
+        .map(CString::into_raw)
+        .map(|ptr| ptr as *const c_char)
+        .unwrap_or(ptr::null())
+}
+
+fn compat_time_unit_from_polars(time_unit: &TimeUnit) -> CompatTimeUnit {
+    match time_unit {
+        TimeUnit::Nanoseconds => CompatTimeUnit::Nanoseconds,
+        TimeUnit::Microseconds => CompatTimeUnit::Microseconds,
+        TimeUnit::Milliseconds => CompatTimeUnit::Milliseconds,
+    }
+}
+
+#[allow(unexpected_cfgs)]
+fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
+    use CompatDTypeTag as Tag;
+
+    // TODO: Preserve nested/parameterized dtype payloads for List/Array/Struct
+    // instead of exposing only the top-level constructor and array width.
+    match dtype {
+        DataType::Boolean => CompatDType {
+            tag: Tag::Boolean as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::UInt8 => CompatDType {
+            tag: Tag::UInt8 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::UInt16 => CompatDType {
+            tag: Tag::UInt16 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::UInt32 => CompatDType {
+            tag: Tag::UInt32 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::UInt64 => CompatDType {
+            tag: Tag::UInt64 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Int8 => CompatDType {
+            tag: Tag::Int8 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Int16 => CompatDType {
+            tag: Tag::Int16 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Int32 => CompatDType {
+            tag: Tag::Int32 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Int64 => CompatDType {
+            tag: Tag::Int64 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Float32 => CompatDType {
+            tag: Tag::Float32 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Float64 => CompatDType {
+            tag: Tag::Float64 as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::String => CompatDType {
+            tag: Tag::String as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Binary => CompatDType {
+            tag: Tag::Binary as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::BinaryOffset => CompatDType {
+            tag: Tag::BinaryOffset as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Date => CompatDType {
+            tag: Tag::Date as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Datetime(time_unit, timezone) => CompatDType {
+            tag: Tag::Datetime as i32,
+            time_unit: compat_time_unit_from_polars(time_unit) as i32,
+            flags: if timezone.is_some() {
+                COMPAT_DTYPE_HAS_TIMEZONE
+            } else {
+                0
+            },
+            array_width: 0,
+        },
+        DataType::Duration(time_unit) => CompatDType {
+            tag: Tag::Duration as i32,
+            time_unit: compat_time_unit_from_polars(time_unit) as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Time => CompatDType {
+            tag: Tag::Time as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::List(_) => CompatDType {
+            tag: Tag::List as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "dtype-array")]
+        DataType::Array(_, width) => CompatDType {
+            tag: Tag::Array as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: *width,
+        },
+        DataType::Null => CompatDType {
+            tag: Tag::Null as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "dtype-categorical")]
+        DataType::Categorical(_, _) => CompatDType {
+            tag: Tag::Categorical as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "dtype-categorical")]
+        DataType::Enum(_, _) => CompatDType {
+            tag: Tag::Enum as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "dtype-decimal")]
+        DataType::Decimal(_, _) => CompatDType {
+            tag: Tag::Decimal as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "object")]
+        DataType::Object(_, _) => CompatDType {
+            tag: Tag::Object as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        #[cfg(feature = "dtype-struct")]
+        DataType::Struct(_) => CompatDType {
+            tag: Tag::Struct as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Unknown(_) => CompatDType {
+            tag: Tag::Unknown as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
     }
 }
 
@@ -76,14 +325,21 @@ pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
         return ptr::null();
     }
 
-    unsafe {
-        let s = &*s_ptr;
-        if let Ok(c_string) = CString::new(s.name()) {
-            c_string.into_raw() as *const c_char
-        } else {
-            ptr::null()
-        }
+    unsafe { rust_string_to_ptr((&*s_ptr).name()) }
+}
+
+#[no_mangle]
+pub extern "C" fn series_dtype(s_ptr: *mut Series) -> CompatDType {
+    if s_ptr.is_null() {
+        return CompatDType {
+            tag: CompatDTypeTag::Unknown as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        };
     }
+
+    unsafe { compat_dtype_from_polars((&*s_ptr).dtype()) }
 }
 
 #[no_mangle]
@@ -375,6 +631,25 @@ mod tests {
         unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
 
         series_drop(series);
+    }
+
+    #[test]
+    fn test_series_dtype_non_null() {
+        let series = series_make();
+        let dtype = series_dtype(series);
+        assert_eq!(dtype.tag, CompatDTypeTag::Int32 as i32);
+        assert_eq!(dtype.time_unit, CompatTimeUnit::None as i32);
+        assert_eq!(dtype.flags, 0);
+        assert_eq!(dtype.array_width, 0);
+
+        series_drop(series);
+    }
+
+    #[test]
+    fn test_series_dtype_null() {
+        let dtype = series_dtype(ptr::null_mut());
+        assert_eq!(dtype.tag, CompatDTypeTag::Unknown as i32);
+        assert_eq!(dtype.time_unit, CompatTimeUnit::None as i32);
     }
 
     #[test]
