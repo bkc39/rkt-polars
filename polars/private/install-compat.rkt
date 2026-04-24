@@ -1,62 +1,45 @@
 #lang racket/base
 
-(require
- (only-in dynext/file
-          append-extension-suffix)
- (only-in racket/file
-          make-directory*)
- (only-in racket/system
-          system*)
- (only-in setup/dirs
-          find-user-lib-dir
-          find-lib-dir))
+(require racket/file)
 
 (provide pre-installer)
 
-(define COMPAT-SRC-DIR "compat")
+(define compat-lib-env-var "RKT_POLARS_COMPAT_LIB_PATH")
+(define compat-lib-pattern #rx"^libcompat\\.")
 
 (define (preinstall-error . args)
   (apply error (cons 'pre-installer args)))
 
+(define (copy-native-libs! dest-dir source-dir pattern)
+  (make-directory* dest-dir)
+  (for ([f (in-list (directory-list source-dir))])
+    (when (regexp-match? pattern (path->string f))
+      (define src (build-path source-dir f))
+      (define dst (build-path dest-dir f))
+      (when (file-exists? dst)
+        (delete-file dst))
+      (copy-file src dst))))
+
+(define (has-matching-files? dir pattern)
+  (and (directory-exists? dir)
+       (pair? (filter (lambda (f)
+                        (regexp-match? pattern (path->string f)))
+                      (directory-list dir)))))
+
 (define (pre-installer collections-top-path this-collection-path user-specific?)
-  (define private-path
-    (build-path this-collection-path "private"))
-  (define compat-path
-    (build-path private-path "compat"))
-  (define cargo-path
-    (find-executable-path "cargo"))
-  (unless (path? cargo-path)
-    (preinstall-error
-     "cargo command not found on system. install cargo:~n~a"
-     "https://doc.rust-lang.org/cargo/getting-started/installation.html"))
-  (define shared-object-basename
-    (append-extension-suffix "libcompat"))
-  (define compiled-object-path
-    (build-path compat-path
-                "target"
-                "release"
-                shared-object-basename))
-  (define lib-path
-    (if user-specific?
-        (find-user-lib-dir)
-        (find-lib-dir)))
-  (define destination-object-path
-    (build-path lib-path shared-object-basename))
-
-  (make-directory* lib-path)
-  (when (file-exists? destination-object-path)
-    (delete-file destination-object-path))
-
-  (parameterize ([current-directory compat-path])
-    (displayln (format "in directory: ~a" (current-directory)))
-    (unless (system* cargo-path "build" "--release")
-      (preinstall-error "cargo build failed"))
-    (unless (file-exists? compiled-object-path)
-      (preinstall-error
-       "libcompat shared object not in expected location:~n~a"
-       compiled-object-path))
-    (make-file-or-directory-link compiled-object-path
-                                 destination-object-path)
-    (printf "Made link ~a => ~a\n"
-            compiled-object-path
-            destination-object-path)))
+  (define native-libs-dir
+    (build-path this-collection-path "native-libs"))
+  (define compat-lib-path
+    (getenv compat-lib-env-var))
+  (cond
+    [compat-lib-path
+     (copy-native-libs! native-libs-dir
+                        (build-path compat-lib-path "lib")
+                        compat-lib-pattern)]
+    [(has-matching-files? native-libs-dir compat-lib-pattern)
+     (void)]
+    [else
+     (preinstall-error
+      "compatibility library not found. Either:\n  1. Run: nix run .#copy-native-libs\n  2. Set ~a to a Nix build output containing lib/libcompat.*\n  3. Copy libcompat into ~a"
+      compat-lib-env-var
+      (path->string native-libs-dir))]))

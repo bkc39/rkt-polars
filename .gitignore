@@ -5,10 +5,12 @@
 compiled/
 /doc/
 
+rust/target/
 polars/private/compat/target/
 **/*.rs.bk
-Cargo.lock
-
+polars/native-libs/
+result
+.racket-user/
 
 compiled/
 *.zo

@@ -13,11 +13,10 @@
 
 (provide (all-defined-out))
 
-(define-runtime-path libcompat
-  '(so "libcompat"))
+(define-runtime-path native-libs-dir "../native-libs")
 
 (define-ffi-definer define-compat
-  (ffi-lib libcompat)
+  (ffi-lib (build-path native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
 (define-compat string-drop
