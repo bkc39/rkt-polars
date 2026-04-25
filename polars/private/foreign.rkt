@@ -401,6 +401,49 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
+(define-compat series-gt-i32
+  (_fun _Series-ptr _int32 -> _Series-ptr))
+
+(define-compat dataframe-filter
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define-compat dataframe-sort/c
+  (_fun _DataFrame-ptr
+        (names : (_list i _string))
+        (descending : (_list i _uint8))
+        (_size = (length names))
+        -> _DataFrame-ptr)
+  #:c-id dataframe_sort
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-sort df names #:descending [descending #f])
+  (define dlist
+    (cond
+      [(eq? descending #f) (map (lambda (_) 0) names)]
+      [(eq? descending #t) (map (lambda (_) 1) names)]
+      [(list? descending)
+       (unless (= (length descending) (length names))
+         (error 'dataframe-sort
+                "descending list length ~a does not match names length ~a"
+                (length descending) (length names)))
+       (map (lambda (b) (if b 1 0)) descending)]
+      [else (error 'dataframe-sort "bad descending: ~v" descending)]))
+  (dataframe-sort/c df names dlist))
+
+(define-compat dataframe-group-by-sum/c
+  (_fun _DataFrame-ptr
+        (by : (_list i _string))
+        (_size = (length by))
+        (agg : (_list i _string))
+        (_size = (length agg))
+        -> _DataFrame-ptr)
+  #:c-id dataframe_group_by_sum
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-group-by-sum df #:by by #:agg agg)
+  (dataframe-group-by-sum/c df by agg))
+
 (define (display-dataframe df [out (current-output-port)])
   (display (dataframe->string df) out)
   (newline out))
@@ -441,4 +484,39 @@
   (check-equal? (series-name score-col) "score")
   (check-equal? (series-dtype score-col) 'int32)
   (check-equal? (series-len score-col) 4)
-  (check-equal? (series-sum-i32 score-col) 94))
+  (check-equal? (series-sum-i32 score-col) 94)
+
+  ;; --- Example 3: filter / sort / group-by ---
+  (define ops-df
+    (dataframe-new
+     (list (series-new-str "group" '("a" "a" "b" "b" "c"))
+           (series-new-i32 "value" '(10 25 7 30 18))
+           (series-new-f64 "cost"  '(1.2 2.4 0.5 3.1 1.8)))))
+
+  ;; filter value > 15
+  (define mask (series-gt-i32 (dataframe-column ops-df "value") 15))
+  (check-equal? (series-dtype mask) 'boolean)
+  (define filtered (dataframe-filter ops-df mask))
+  (check-equal? (dataframe-height filtered) 3) ;; 25, 30, 18
+  (check-equal?
+   (series-sum-i32 (dataframe-column filtered "value"))
+   73)
+
+  ;; sort by group asc, value desc
+  (define sorted
+    (dataframe-sort ops-df '("group" "value") #:descending '(#f #t)))
+  (check-equal? (dataframe-height sorted) 5)
+  ;; First row of each group should be the max value within that group.
+  ;; (a, 25), (b, 30), (c, 18) -> sum = 73
+  ;; Just spot-check the value column came back sorted.
+  (let ([vs (dataframe-column sorted "value")])
+    (check-equal? (series-len vs) 5))
+
+  ;; group by group, sum value
+  (define grouped
+    (dataframe-group-by-sum ops-df #:by '("group") #:agg '("value")))
+  (check-equal? (dataframe-height grouped) 3)
+  (check-equal? (dataframe-width grouped) 2) ;; group + value
+  (check-equal?
+   (series-sum-i32 (dataframe-column grouped "value_sum"))
+   90)) ;; 35 + 37 + 18

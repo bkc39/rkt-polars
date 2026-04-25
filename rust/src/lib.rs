@@ -396,6 +396,129 @@ pub extern "C" fn dataframe_column(
 }
 
 #[no_mangle]
+pub extern "C" fn series_gt_i32(s_ptr: *mut Series, threshold: i32) -> *mut Series {
+    if s_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => {
+            let mask = ca.gt(threshold);
+            Box::into_raw(Box::new(mask.into_series()))
+        }
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_filter(
+    df_ptr: *mut DataFrame,
+    mask_ptr: *mut Series,
+) -> *mut DataFrame {
+    if df_ptr.is_null() || mask_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let df = unsafe { &*df_ptr };
+    let mask = unsafe { &*mask_ptr };
+    let bool_ca = match mask.bool() {
+        Ok(ca) => ca,
+        Err(_) => return ptr::null_mut(),
+    };
+    match df.filter(bool_ca) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+unsafe fn collect_c_strings(
+    ptrs: *const *const c_char,
+    n: usize,
+) -> Option<Vec<String>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    if ptrs.is_null() {
+        return None;
+    }
+    let slice = std::slice::from_raw_parts(ptrs, n);
+    let mut out = Vec::with_capacity(n);
+    for &p in slice {
+        if p.is_null() {
+            return None;
+        }
+        match CStr::from_ptr(p).to_str() {
+            Ok(s) => out.push(s.to_string()),
+            Err(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_sort(
+    df_ptr: *mut DataFrame,
+    by_ptrs: *const *const c_char,
+    descending_ptr: *const u8,
+    n: usize,
+) -> *mut DataFrame {
+    if df_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let names = match unsafe { collect_c_strings(by_ptrs, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let descending: Vec<bool> = if n == 0 {
+        Vec::new()
+    } else if descending_ptr.is_null() {
+        vec![false; n]
+    } else {
+        unsafe { std::slice::from_raw_parts(descending_ptr, n) }
+            .iter()
+            .map(|&b| b != 0)
+            .collect()
+    };
+    let opts = SortMultipleOptions::new().with_order_descending_multi(descending);
+    let df = unsafe { &*df_ptr };
+    match df.sort(names, opts) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_group_by_sum(
+    df_ptr: *mut DataFrame,
+    by_ptrs: *const *const c_char,
+    n_by: usize,
+    agg_ptrs: *const *const c_char,
+    n_agg: usize,
+) -> *mut DataFrame {
+    if df_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let by = match unsafe { collect_c_strings(by_ptrs, n_by) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let agg = match unsafe { collect_c_strings(agg_ptrs, n_agg) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let df = unsafe { &*df_ptr };
+    let gb = match df.group_by(&by) {
+        Ok(gb) => gb,
+        Err(_) => return ptr::null_mut(),
+    };
+    #[allow(deprecated)]
+    let result = gb.select(&agg).sum();
+    match result {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn dataframe_to_string(df_ptr: *mut DataFrame) -> *const c_char {
     if df_ptr.is_null() {
         return ptr::null();
