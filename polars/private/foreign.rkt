@@ -375,6 +375,28 @@
         -> (s : _Shape)
         -> (values (Shape-rows s) (Shape-cols s))))
 
+(define-compat dataframe-height
+  (_fun _DataFrame-ptr -> _size))
+
+(define-compat dataframe-width
+  (_fun _DataFrame-ptr -> _size))
+
+(define-compat dataframe-new/raw
+  (_fun (v : (_list i _Series-ptr))
+        (_size = (length v))
+        -> _DataFrame-ptr)
+  #:c-id dataframe_new
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-new series-list)
+  (dataframe-new/raw series-list))
+
+(define-compat dataframe-column-name
+  (_fun _DataFrame-ptr _size -> _rsstring))
+
+(define-compat dataframe-column
+  (_fun _DataFrame-ptr _string -> _Series-ptr))
+
 (module+ test
   (check-pred DataFrame-ptr? (dataframe-make))
   (check-pred DataFrame-ptr? (dataframe-empty))
@@ -389,4 +411,26 @@
   (define-values (er ec)
     (dataframe-shape (dataframe-empty)))
   (check-equal? er 0)
-  (check-equal? ec 0))
+  (check-equal? ec 0)
+
+  (define example-df
+    (dataframe-new
+     (list (series-new-str "user" '("alice" "bob" "carol" "dora"))
+           (series-new-i32 "score" '(10 25 18 41))
+           (series-new-f64 "cost" '(1.2 3.5 2.0 8.4)))))
+  (check-pred DataFrame-ptr? example-df)
+  (define-values (dr dc) (dataframe-shape example-df))
+  (check-equal? dr 4)
+  (check-equal? dc 3)
+  (check-equal? (dataframe-height example-df) 4)
+  (check-equal? (dataframe-width example-df) 3)
+  (check-equal? (dataframe-column-name example-df 0) "user")
+  (check-equal? (dataframe-column-name example-df 1) "score")
+  (check-equal? (dataframe-column-name example-df 2) "cost")
+
+  (define score-col (dataframe-column example-df "score"))
+  (check-pred Series-ptr? score-col)
+  (check-equal? (series-name score-col) "score")
+  (check-equal? (series-dtype score-col) 'int32)
+  (check-equal? (series-len score-col) 4)
+  (check-equal? (series-sum-i32 score-col) 94))

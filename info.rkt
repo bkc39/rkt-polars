@@ -1,7 +1,7 @@
 #lang setup/infotab
 
 (define collection 'multi)
-(define deps '("base"))
+(define deps '("base" "gregor-lib"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 (define scribblings '(("scribblings/rkt-polars.scrbl" ())))
 (define pkg-desc "Racket bindings to the polars library")

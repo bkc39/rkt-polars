@@ -317,6 +317,85 @@ pub extern "C" fn dataframe_drop(df_ptr: *mut DataFrame) {
 }
 
 #[no_mangle]
+pub extern "C" fn dataframe_new(
+    series_ptrs: *const *const Series,
+    length: usize,
+) -> *mut DataFrame {
+    if series_ptrs.is_null() && length != 0 {
+        return ptr::null_mut();
+    }
+    let columns: Vec<Series> = if length == 0 {
+        Vec::new()
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(series_ptrs, length) };
+        if slice.iter().any(|p| p.is_null()) {
+            return ptr::null_mut();
+        }
+        slice
+            .iter()
+            .map(|&p| unsafe { (&*p).clone() })
+            .collect()
+    };
+    match DataFrame::new(columns) {
+        Ok(df) => Box::into_raw(Box::new(df)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_height(df_ptr: *mut DataFrame) -> usize {
+    if df_ptr.is_null() {
+        0
+    } else {
+        unsafe { (&*df_ptr).height() }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_width(df_ptr: *mut DataFrame) -> usize {
+    if df_ptr.is_null() {
+        0
+    } else {
+        unsafe { (&*df_ptr).width() }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_column_name(
+    df_ptr: *mut DataFrame,
+    index: usize,
+) -> *const c_char {
+    if df_ptr.is_null() {
+        return ptr::null();
+    }
+    let df = unsafe { &*df_ptr };
+    let names = df.get_column_names();
+    match names.get(index) {
+        Some(name) => rust_string_to_ptr(*name),
+        None => ptr::null(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_column(
+    df_ptr: *mut DataFrame,
+    name: *const c_char,
+) -> *mut Series {
+    if df_ptr.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    let df = unsafe { &*df_ptr };
+    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match df.column(name_str) {
+        Ok(s) => Box::into_raw(Box::new(s.clone())),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn dataframe_shape(df_ptr: *mut DataFrame) -> Shape {
     if df_ptr.is_null() {
         Shape { rows: 0, cols: 0 }
