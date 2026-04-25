@@ -122,6 +122,22 @@
     [(26) '(todo parameterized-dtype-support object)]
     [else 'unknown]))
 
+(define-cstruct _CompatOptI32
+  ([valid _int32]
+   [value _int32]))
+
+(define-cstruct _CompatOptF64
+  ([valid _int32]
+   [value _double]))
+
+(define (compat-opt-i32->datum o)
+  (and (not (zero? (CompatOptI32-valid o)))
+       (CompatOptI32-value o)))
+
+(define (compat-opt-f64->datum o)
+  (and (not (zero? (CompatOptF64-valid o)))
+       (CompatOptF64-value o)))
+
 (define-cpointer-type _Series-ptr)
 
 (define-compat series-drop
@@ -166,6 +182,34 @@
 (define-compat series-null-count
   (_fun _Series-ptr -> _size))
 
+(define-compat series-sum-i32/raw
+  (_fun _Series-ptr -> _CompatOptI32)
+  #:c-id series_sum_i32)
+
+(define (series-sum-i32 s)
+  (compat-opt-i32->datum (series-sum-i32/raw s)))
+
+(define-compat series-sum-f64/raw
+  (_fun _Series-ptr -> _CompatOptF64)
+  #:c-id series_sum_f64)
+
+(define (series-sum-f64 s)
+  (compat-opt-f64->datum (series-sum-f64/raw s)))
+
+(define-compat series-mean-f64/raw
+  (_fun _Series-ptr -> _CompatOptF64)
+  #:c-id series_mean_f64)
+
+(define (series-mean-f64 s)
+  (compat-opt-f64->datum (series-mean-f64/raw s)))
+
+(define-compat series-max-f64/raw
+  (_fun _Series-ptr -> _CompatOptF64)
+  #:c-id series_max_f64)
+
+(define (series-max-f64 s)
+  (compat-opt-f64->datum (series-max-f64/raw s)))
+
 (module+ test
   (check-equal? (series-len (series-empty)) 0)
   (check-equal? (series-null-count (series-empty)) 0))
@@ -199,6 +243,11 @@
   (check-equal?
    (series-dtype (series-new-i32 "series" '(0 1)))
    'int32)
+  (check-equal?
+   (series-sum-i32 (series-new-i32 "" '(1 2 3 4)))
+   10)
+  (check-false
+   (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))) ;; wrong dtype
   (check-exn
    #rx"argument is not non-null"
    (lambda ()
@@ -219,6 +268,15 @@
   (check-equal?
    (series-dtype (series-new-f64 "series" '(0.0 1.2)))
    'float64)
+  (check-equal?
+   (series-sum-f64 (series-new-f64 "" '(1.5 2.0 4.25 8.0)))
+   15.75)
+  (check-equal?
+   (series-mean-f64 (series-new-f64 "" '(1.0 2.0 3.0 4.0)))
+   2.5)
+  (check-equal?
+   (series-max-f64 (series-new-f64 "" '(1.5 2.0 4.25 8.0)))
+   8.0)
   (check-exn
    #rx"argument is not non-null"
    (lambda ()

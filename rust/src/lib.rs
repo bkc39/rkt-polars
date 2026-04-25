@@ -63,6 +63,36 @@ pub struct CompatDType {
 
 const COMPAT_DTYPE_HAS_TIMEZONE: u32 = 0x1;
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptI32 {
+    pub valid: i32,
+    pub value: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CompatOptF64 {
+    pub valid: i32,
+    pub value: f64,
+}
+
+impl CompatOptI32 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: i32) -> Self { Self { valid: 1, value: v } }
+    fn from_option(o: Option<i32>) -> Self {
+        match o { Some(v) => Self::some(v), None => Self::NONE }
+    }
+}
+
+impl CompatOptF64 {
+    const NONE: Self = Self { valid: 0, value: 0.0 };
+    fn some(v: f64) -> Self { Self { valid: 1, value: v } }
+    fn from_option(o: Option<f64>) -> Self {
+        match o { Some(v) => Self::some(v), None => Self::NONE }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn string_drop(s: *mut c_char) {
     if !s.is_null() {
@@ -474,6 +504,54 @@ pub struct YMDHMS {
     pub hour: u32,
     pub minute: u32,
     pub second: u32,
+}
+
+#[no_mangle]
+pub extern "C" fn series_sum_i32(s_ptr: *mut Series) -> CompatOptI32 {
+    if s_ptr.is_null() {
+        return CompatOptI32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => CompatOptI32::from_option(ca.sum()),
+        Err(_) => CompatOptI32::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_sum_f64(s_ptr: *mut Series) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f64() {
+        Ok(ca) => CompatOptF64::from_option(ca.sum()),
+        Err(_) => CompatOptF64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_mean_f64(s_ptr: *mut Series) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f64() {
+        Ok(ca) => CompatOptF64::from_option(ca.mean()),
+        Err(_) => CompatOptF64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_max_f64(s_ptr: *mut Series) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f64() {
+        Ok(ca) => CompatOptF64::from_option(ca.max()),
+        Err(_) => CompatOptF64::NONE,
+    }
 }
 
 #[no_mangle]
