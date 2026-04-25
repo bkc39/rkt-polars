@@ -2,12 +2,8 @@
 
 ;; Mirror of rust/examples/02_dataframe_from_series.rs.
 ;;
-;; Build & run:
-;;   raco make examples/02_dataframe_from_series.rkt
-;;   racket examples/02_dataframe_from_series.rkt
-;;
-;; Or directly:
-;;   racket examples/02_dataframe_from_series.rkt
+;; Inside `nix develop`:
+;;   racket examples/02-dataframe-from-series.rkt
 
 (require gregor
          polars/private/foreign
