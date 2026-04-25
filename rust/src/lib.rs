@@ -396,6 +396,15 @@ pub extern "C" fn dataframe_column(
 }
 
 #[no_mangle]
+pub extern "C" fn dataframe_to_string(df_ptr: *mut DataFrame) -> *const c_char {
+    if df_ptr.is_null() {
+        return ptr::null();
+    }
+    let df = unsafe { &*df_ptr };
+    rust_string_to_ptr(format!("{}", df))
+}
+
+#[no_mangle]
 pub extern "C" fn dataframe_shape(df_ptr: *mut DataFrame) -> Shape {
     if df_ptr.is_null() {
         Shape { rows: 0, cols: 0 }

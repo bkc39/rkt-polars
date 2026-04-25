@@ -397,6 +397,14 @@
 (define-compat dataframe-column
   (_fun _DataFrame-ptr _string -> _Series-ptr))
 
+(define-compat dataframe->string
+  (_fun _DataFrame-ptr -> _rsstring)
+  #:c-id dataframe_to_string)
+
+(define (display-dataframe df [out (current-output-port)])
+  (display (dataframe->string df) out)
+  (newline out))
+
 (module+ test
   (check-pred DataFrame-ptr? (dataframe-make))
   (check-pred DataFrame-ptr? (dataframe-empty))
