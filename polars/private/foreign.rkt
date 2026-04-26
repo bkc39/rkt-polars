@@ -401,6 +401,34 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
+(define-compat dataframe-write-csv/raw
+  (_fun _DataFrame-ptr _string -> _int32)
+  #:c-id dataframe_write_csv)
+
+(define (dataframe-write-csv df path)
+  (define rc (dataframe-write-csv/raw df (path->string-or-string path)))
+  (unless (zero? rc)
+    (error 'dataframe-write-csv
+           "failed to write csv to ~a (rust error code ~a)"
+           path rc)))
+
+(define-compat dataframe-read-csv/raw
+  (_fun _string -> _DataFrame-ptr)
+  #:c-id dataframe_read_csv
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-read-csv path)
+  (define df (dataframe-read-csv/raw (path->string-or-string path)))
+  (unless df
+    (error 'dataframe-read-csv "failed to read csv from ~a" path))
+  df)
+
+(define (path->string-or-string p)
+  (cond
+    [(string? p) p]
+    [(path? p) (path->string p)]
+    [else (error 'dataframe-csv "expected path-string?, got ~v" p)]))
+
 (define-compat series-gt-i32
   (_fun _Series-ptr _int32 -> _Series-ptr))
 
@@ -519,4 +547,27 @@
   (check-equal? (dataframe-width grouped) 2) ;; group + value
   (check-equal?
    (series-sum-i32 (dataframe-column grouped "value_sum"))
-   90)) ;; 35 + 37 + 18
+   90) ;; 35 + 37 + 18
+
+  ;; --- Example 4: CSV roundtrip ---
+  (define csv-df
+    (dataframe-new
+     (list (series-new-str "city" '("Boston" "New York" "Chicago"))
+           (series-new-f64 "population_millions" '(0.65 8.8 2.7))
+           (series-new-i32 "founded" '(1630 1624 1837)))))
+  (define tmp-csv
+    (build-path (find-system-path 'temp-dir) "rkt-polars-test.csv"))
+  (dataframe-write-csv csv-df tmp-csv)
+  (define round (dataframe-read-csv tmp-csv))
+  (define-values (rr rc) (dataframe-shape round))
+  (check-equal? rr 3)
+  (check-equal? rc 3)
+  (check-equal? (dataframe-column-name round 0) "city")
+  (check-equal? (dataframe-column-name round 1) "population_millions")
+  (check-equal? (dataframe-column-name round 2) "founded")
+  (check-equal? (series-dtype (dataframe-column round "founded")) 'int64)
+  (check-equal? (series-dtype (dataframe-column round "population_millions")) 'float64)
+  (check-= (series-sum-f64 (dataframe-column round "population_millions"))
+           12.15
+           1e-9)
+  (delete-file tmp-csv))
