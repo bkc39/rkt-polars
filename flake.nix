@@ -129,10 +129,13 @@
               mkdir -p "$PWD/polars/native-libs"
               cp -f ${rust}/lib/libcompat.* "$PWD/polars/native-libs/"
 
-              deps_stamp="$PLTUSERHOME/.setup-installed-v1"
+              # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
+              info_hash=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-16)
+              deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
               if [ ! -f "$deps_stamp" ]; then
-                echo "Linking rkt-polars into $PLTUSERHOME"
+                echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
                 mkdir -p "$PLTUSERHOME"
+                rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
                 raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
                   --name rkt-polars "$PWD"
                 raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
