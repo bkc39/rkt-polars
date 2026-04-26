@@ -124,7 +124,15 @@
 
             shellHook = ''
               export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
-              export PLTUSERHOME="$PWD/.racket-user"
+
+              # PLTUSERHOME must live outside $PWD: raco pkg install --link
+              # rejects a link target that overlaps with a collects dir, and
+              # PLTUSERHOME contains a collects dir.  Key the location on a
+              # hash of the project path so multiple checkouts don't collide.
+              cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/rkt-polars-devshell"
+              project_id=$(printf '%s' "$PWD" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-12)
+              export PLTUSERHOME="$cache_root/$project_id"
+              mkdir -p "$PLTUSERHOME"
 
               mkdir -p "$PWD/polars/native-libs"
               cp -f ${rust}/lib/libcompat.* "$PWD/polars/native-libs/"
@@ -134,13 +142,15 @@
               deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
               if [ ! -f "$deps_stamp" ]; then
                 echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
-                mkdir -p "$PLTUSERHOME"
                 rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
-                raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
-                  --name rkt-polars "$PWD"
-                raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
-                touch "$deps_stamp"
-                echo "Done. Run 'raco test -x -c polars' to test."
+                if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
+                     --name rkt-polars "$PWD" \
+                  && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
+                  touch "$deps_stamp"
+                  echo "Done. Run 'raco test -x -c polars' to test."
+                else
+                  echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
+                fi
               fi
             '';
           };

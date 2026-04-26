@@ -1,10 +1,10 @@
 #lang scribble/manual
-@require[@for-label[rkt-polars
+@require[@for-label[polars
                     racket/base]]
 
 @title{rkt-polars}
 @author{bkc}
 
-@defmodule[rkt-polars]
+@defmodule[polars]
 
 Package Description Here
