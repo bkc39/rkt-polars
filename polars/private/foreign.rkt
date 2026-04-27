@@ -529,6 +529,52 @@
 (define-compat dataframe-width
   (_fun _DataFrame-ptr -> _size))
 
+(define-compat dataframe-head
+  (_fun _DataFrame-ptr _size -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define-compat dataframe-tail
+  (_fun _DataFrame-ptr _size -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define-compat dataframe-slice
+  (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-column-names df)
+  (for/list ([i (in-range (dataframe-width df))])
+    (dataframe-column-name df i)))
+
+(define-compat dataframe-select/c
+  (_fun _DataFrame-ptr
+        (names : (_list i _string))
+        (_size = (length names))
+        -> _DataFrame-ptr)
+  #:c-id dataframe_select
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-select df cols)
+  (dataframe-select/c df cols))
+
+(define-compat dataframe-drop-columns/c
+  (_fun _DataFrame-ptr
+        (names : (_list i _string))
+        (_size = (length names))
+        -> _DataFrame-ptr)
+  #:c-id dataframe_drop_columns
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-drop-columns df cols)
+  (dataframe-drop-columns/c df cols))
+
+(define-compat dataframe-rename
+  (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define-compat dataframe-with-column
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
 (define-compat dataframe-new/raw
   (_fun (v : (_list i _Series-ptr))
         (_size = (length v))
@@ -748,6 +794,50 @@
   (check-equal? (series-dtype score-col) 'int32)
   (check-equal? (series-len score-col) 4)
   (check-equal? (series-sum-i32 score-col) 94)
+
+  ;; column-names helper
+  (check-equal? (dataframe-column-names example-df)
+                '("user" "score" "cost"))
+
+  ;; head / tail / slice
+  (check-equal? (dataframe-height (dataframe-head example-df 2)) 2)
+  (check-equal? (dataframe-height (dataframe-tail example-df 2)) 2)
+  (check-equal? (series-sum-i32
+                 (dataframe-column (dataframe-head example-df 2) "score"))
+                35) ;; 10 + 25
+  (check-equal? (series-sum-i32
+                 (dataframe-column (dataframe-tail example-df 2) "score"))
+                59) ;; 18 + 41
+  (check-equal? (dataframe-height (dataframe-slice example-df 1 2)) 2)
+  (check-equal? (series-sum-i32
+                 (dataframe-column (dataframe-slice example-df 1 2) "score"))
+                43) ;; 25 + 18
+
+  ;; Column ops
+  (define just-score (dataframe-select example-df '("score")))
+  (check-equal? (dataframe-width just-score) 1)
+  (check-equal? (dataframe-column-names just-score) '("score"))
+
+  (define no-cost (dataframe-drop-columns example-df '("cost")))
+  (check-equal? (dataframe-column-names no-cost) '("user" "score"))
+
+  (define renamed (dataframe-rename example-df "score" "points"))
+  (check-equal? (dataframe-column-names renamed) '("user" "points" "cost"))
+  (check-equal? (series-sum-i32 (dataframe-column renamed "points")) 94)
+
+  (define with-bonus
+    (dataframe-with-column example-df
+                           (series-new-i32 "bonus" '(1 2 3 4))))
+  (check-equal? (dataframe-column-names with-bonus)
+                '("user" "score" "cost" "bonus"))
+  (check-equal? (series-sum-i32 (dataframe-column with-bonus "bonus")) 10)
+
+  ;; with-column replaces if name already exists
+  (define replaced
+    (dataframe-with-column example-df
+                           (series-new-i32 "score" '(0 0 0 0))))
+  (check-equal? (dataframe-width replaced) 3) ;; not 4
+  (check-equal? (series-sum-i32 (dataframe-column replaced "score")) 0)
 
   ;; --- Example 3: filter / sort / group-by ---
   (define ops-df
