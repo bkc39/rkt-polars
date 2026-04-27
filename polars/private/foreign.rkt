@@ -486,8 +486,54 @@
     [(path? p) (path->string p)]
     [else (error 'dataframe-csv "expected path-string?, got ~v" p)]))
 
-(define-compat series-gt-i32
-  (_fun _Series-ptr _int32 -> _Series-ptr))
+(define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
+  (define-compat name
+    (_fun _Series-ptr ctype -> _Series-ptr)))
+
+(define-cmp-scalar series-lt-i32 _int32)
+(define-cmp-scalar series-le-i32 _int32)
+(define-cmp-scalar series-gt-i32 _int32)
+(define-cmp-scalar series-ge-i32 _int32)
+(define-cmp-scalar series-eq-i32 _int32)
+(define-cmp-scalar series-ne-i32 _int32)
+
+(define-cmp-scalar series-lt-f64 _double)
+(define-cmp-scalar series-le-f64 _double)
+(define-cmp-scalar series-gt-f64 _double)
+(define-cmp-scalar series-ge-f64 _double)
+(define-cmp-scalar series-eq-f64 _double)
+(define-cmp-scalar series-ne-f64 _double)
+
+(define-cmp-scalar series-eq-str _string)
+(define-cmp-scalar series-ne-str _string)
+
+(module+ test
+  ;; Use a small dataframe so we can read mask results back via dataframe-filter.
+  (define cmp-df
+    (dataframe-new
+     (list (series-new-i32 "x" '(1 2 3 4 5))
+           (series-new-f64 "y" '(1.0 2.0 3.0 4.0 5.0))
+           (series-new-str "s" '("a" "b" "a" "b" "c")))))
+
+  (define (count-where mask)
+    (dataframe-height (dataframe-filter cmp-df mask)))
+
+  ;; i32: each op returns a boolean Series
+  (check-equal? (series-dtype (series-lt-i32 (dataframe-column cmp-df "x") 3))
+                'boolean)
+  (check-equal? (count-where (series-lt-i32 (dataframe-column cmp-df "x") 3)) 2)
+  (check-equal? (count-where (series-le-i32 (dataframe-column cmp-df "x") 3)) 3)
+  (check-equal? (count-where (series-ge-i32 (dataframe-column cmp-df "x") 3)) 3)
+  (check-equal? (count-where (series-eq-i32 (dataframe-column cmp-df "x") 3)) 1)
+  (check-equal? (count-where (series-ne-i32 (dataframe-column cmp-df "x") 3)) 4)
+
+  ;; f64
+  (check-equal? (count-where (series-gt-f64 (dataframe-column cmp-df "y") 2.5)) 3)
+  (check-equal? (count-where (series-eq-f64 (dataframe-column cmp-df "y") 4.0)) 1)
+
+  ;; str
+  (check-equal? (count-where (series-eq-str (dataframe-column cmp-df "s") "a")) 2)
+  (check-equal? (count-where (series-ne-str (dataframe-column cmp-df "s") "a")) 3))
 
 (define-compat dataframe-filter
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
