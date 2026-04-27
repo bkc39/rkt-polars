@@ -535,6 +535,47 @@
   (check-equal? (count-where (series-eq-str (dataframe-column cmp-df "s") "a")) 2)
   (check-equal? (count-where (series-ne-str (dataframe-column cmp-df "s") "a")) 3))
 
+(define-compat series-is-null
+  (_fun _Series-ptr -> _Series-ptr))
+
+(define-compat series-is-not-null
+  (_fun _Series-ptr -> _Series-ptr))
+
+(define-compat series-and
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+
+(define-compat series-or
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+
+(define-compat series-xor
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+
+(define-compat series-not
+  (_fun _Series-ptr -> _Series-ptr))
+
+(module+ test
+  (define bool-df
+    (dataframe-new
+     (list (series-new-i32 "x" '(1 2 3 4 5))
+           (series-new-str "s" '("a" "b" "a" "b" "c")))))
+
+  ;; Compose two masks: x > 2 AND s == "a"
+  (define m1 (series-gt-i32 (dataframe-column bool-df "x") 2))
+  (define m2 (series-eq-str (dataframe-column bool-df "s") "a"))
+  (check-equal? (dataframe-height (dataframe-filter bool-df (series-and m1 m2)))
+                1) ;; only x=3,s="a"
+  (check-equal? (dataframe-height (dataframe-filter bool-df (series-or m1 m2)))
+                4) ;; x>2 OR s=="a" : x=1,s="a"; x=3,s="a"; x=3,s="a"; x=4; x=5 -> 4 distinct rows
+  (check-equal? (dataframe-height (dataframe-filter bool-df (series-not m1)))
+                2) ;; x in {1,2}
+  (check-equal? (series-dtype (series-and m1 m2)) 'boolean)
+
+  ;; is-null / is-not-null
+  (define non-null-mask (series-is-not-null (dataframe-column bool-df "x")))
+  (check-equal? (dataframe-height (dataframe-filter bool-df non-null-mask)) 5)
+  (define null-mask (series-is-null (dataframe-column bool-df "x")))
+  (check-equal? (dataframe-height (dataframe-filter bool-df null-mask)) 0))
+
 (define-compat dataframe-filter
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
