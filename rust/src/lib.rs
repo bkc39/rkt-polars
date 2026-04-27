@@ -729,6 +729,54 @@ pub extern "C" fn series_new_f64(
     series_new::<Float64Type>(name, data, length)
 }
 
+#[no_mangle]
+pub extern "C" fn series_new_i64(
+    name: *const c_char,
+    data: *const i64,
+    length: usize,
+) -> *mut Series {
+    series_new::<Int64Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_u32(
+    name: *const c_char,
+    data: *const u32,
+    length: usize,
+) -> *mut Series {
+    series_new::<UInt32Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_u64(
+    name: *const c_char,
+    data: *const u64,
+    length: usize,
+) -> *mut Series {
+    series_new::<UInt64Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_bool(
+    name: *const c_char,
+    data: *const u8,
+    length: usize,
+) -> *mut Series {
+    if name.is_null() || (data.is_null() && length != 0) {
+        return ptr::null_mut();
+    }
+    let bools: Vec<bool> = if length == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(data, length) }
+            .iter()
+            .map(|&b| b != 0)
+            .collect()
+    };
+    let n = name_from_ptr(name);
+    Box::into_raw(Box::new(Series::new(n, bools)))
+}
+
 fn name_from_ptr(p: *const c_char) -> &'static str {
     if p.is_null() {
         return "";

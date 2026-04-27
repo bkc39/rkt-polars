@@ -291,6 +291,63 @@
    (series-len (series-new-f64/vec "" (vector 17.29 40.2)))
    2))
 
+(define-series-constructors i64 _int64)
+
+(module+ test
+  (check-pred Series-ptr? (series-new-i64 "" '(1 2 3)))
+  (check-equal? (series-len (series-new-i64 "x" '(1 2))) 2)
+  (check-equal? (series-dtype (series-new-i64 "x" '(1 2))) 'int64)
+  (check-pred Series-ptr? (series-new-i64/vec "" (vector 1 2 3))))
+
+(define-series-constructors u32 _uint32)
+
+(module+ test
+  (check-pred Series-ptr? (series-new-u32 "" '(1 2 3)))
+  (check-equal? (series-len (series-new-u32 "x" '(0 1 2))) 3)
+  (check-equal? (series-dtype (series-new-u32 "x" '(0 1))) 'uint32)
+  (check-pred Series-ptr? (series-new-u32/vec "" (vector 1 2 3))))
+
+(define-series-constructors u64 _uint64)
+
+(module+ test
+  (check-pred Series-ptr? (series-new-u64 "" '(1 2 3)))
+  (check-equal? (series-len (series-new-u64 "x" '(0 1 2))) 3)
+  (check-equal? (series-dtype (series-new-u64 "x" '(0 1))) 'uint64)
+  (check-pred Series-ptr? (series-new-u64/vec "" (vector 1 2 3))))
+
+;; Bools cross the boundary as u8 (0/1).  Racket-side wrappers translate
+;; #f/#t to 0/1.
+(define-compat series-new-bool/raw
+  (_fun _string
+        (v : (_list i _uint8))
+        (_size = (length v))
+        -> _Series-ptr)
+  #:c-id series_new_bool)
+
+(define-compat series-new-bool/vec/raw
+  (_fun _string
+        (v : (_vector i _uint8))
+        (_size = (vector-length v))
+        -> _Series-ptr)
+  #:c-id series_new_bool)
+
+(define (bool->u8 b) (if b 1 0))
+
+(define (series-new-bool name bools)
+  (series-new-bool/raw name (map bool->u8 bools)))
+
+(define (series-new-bool/vec name bools)
+  (series-new-bool/vec/raw name
+                           (for/vector #:length (vector-length bools)
+                                       ([b (in-vector bools)])
+                             (bool->u8 b))))
+
+(module+ test
+  (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
+  (check-equal? (series-len (series-new-bool "x" '(#t #f))) 2)
+  (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
+  (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t))))
+
 (define-series-constructors str _string)
 
 (module+ test
