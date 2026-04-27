@@ -4,38 +4,31 @@ This project should grow the Racket API by reproducing small, concrete Polars pr
 
 ## Current State
 
-Current Rust primitive objects:
+The four-example sequence is complete and the Series API has been
+filled out via a five-phase expansion plan.
 
-- `Series`
-- `DataFrame`
-- `Shape`
-- `YMDHMS`
+Series surface (Racket-side names):
+- Lifecycle: `series-empty`, `series-drop`
+- Metadata: `series-name`, `series-rename`, `series-len`, `series-null-count`, `series-dtype`
+- Constructors: `series-new-i32` / `-i64` / `-u32` / `-u64` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`)
+- Comparisons (scalar RHS): `series-{lt,le,gt,ge,eq,ne}-{i32,f64}`, `series-{eq,ne}-str`
+- Boolean ops: `series-and`, `series-or`, `series-xor`, `series-not`, `series-is-null`, `series-is-not-null`
+- Reductions: `series-{sum,min,max,mean}-i32`, `series-{sum,min,max,mean}-f64`, `series-n-unique`
+- Reshaping: `series-head`, `series-tail`, `series-slice`, `series-reverse`, `series-drop-nulls`, `series-unique`, `series-sort` (with `#:descending`)
 
-Current Rust exports:
+DataFrame surface (Racket-side names):
+- Lifecycle: `dataframe-make`, `dataframe-empty`, `dataframe-drop`
+- Construction: `dataframe-new`
+- Metadata: `dataframe-shape`, `dataframe-height`, `dataframe-width`
+- Column access: `dataframe-column-name`, `dataframe-column`
+- Eager ops: `dataframe-filter`, `dataframe-sort` (with `#:descending`), `dataframe-group-by-sum` (with `#:by` / `#:agg`)
+- IO: `dataframe-write-csv`, `dataframe-read-csv`
+- Display: `dataframe->string`, `display-dataframe`
 
-- Series lifecycle: `series_empty`, `series_drop`
-- Series metadata: `series_name`, `series_rename`, `series_len`, `series_null_count`
-- Series constructors: `series_new_i32`, `series_new_f64`, `series_new_str`, `series_new_ymdhms`
-- DataFrame lifecycle: `dataframe_make`, `dataframe_empty`, `dataframe_drop`
-- DataFrame metadata: `dataframe_shape`
-
-Current Racket bindings:
-
-- `Series-ptr` and `DataFrame-ptr`
-- `series-empty`, `series-drop`, `series-name`, `series-rename`, `series-len`
-- `series-new-i32`, `series-new-f64`, `series-new-str`, `series-new-ymdhms`
-- `dataframe-make`, `dataframe-drop`, `dataframe-shape`
-
-Notable gaps:
-
-- `series-null-count` exists in Rust but is not bound in Racket
-- `dataframe-empty` exists in Rust but is not bound in Racket
-- no dtype introspection
-- no null-aware constructors
-- no dataframe construction from series
-- no dataframe column access
-- no dataframe IO
-- no dataframe filtering, sorting, grouping, or joins
+Notable remaining gaps:
+- Series-side: element access (`series-ref`), series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var/median), null-aware constructors
+- DataFrame-side: more aggregations beyond `sum`, joins, additional IO formats
+- Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Development Rule
 

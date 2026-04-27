@@ -241,6 +241,52 @@
 (define-compat series-n-unique
   (_fun _Series-ptr -> _size))
 
+(define-compat series-head
+  (_fun _Series-ptr _size -> _Series-ptr))
+
+(define-compat series-tail
+  (_fun _Series-ptr _size -> _Series-ptr))
+
+(define-compat series-slice
+  (_fun _Series-ptr _int64 _size -> _Series-ptr))
+
+(define-compat series-reverse
+  (_fun _Series-ptr -> _Series-ptr))
+
+(define-compat series-drop-nulls
+  (_fun _Series-ptr -> _Series-ptr))
+
+(define-compat series-unique
+  (_fun _Series-ptr -> _Series-ptr))
+
+(define-compat series-sort/raw
+  (_fun _Series-ptr _uint8 -> _Series-ptr)
+  #:c-id series_sort)
+
+(define (series-sort s #:descending [descending #f])
+  (series-sort/raw s (if descending 1 0)))
+
+(module+ test
+  (define s (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
+  (check-equal? (series-len (series-head s 3)) 3)
+  (check-equal? (series-sum-i32 (series-head s 3)) 8) ;; 3+1+4
+  (check-equal? (series-len (series-tail s 3)) 3)
+  (check-equal? (series-sum-i32 (series-tail s 3)) 17) ;; 9+2+6
+  (check-equal? (series-len (series-slice s 2 3)) 3)
+  (check-equal? (series-sum-i32 (series-slice s 2 3)) 10) ;; 4+1+5
+  (check-equal? (series-len (series-reverse s)) 8)
+  (check-equal? (series-sum-i32 (series-reverse s)) (series-sum-i32 s))
+  (check-equal? (series-len (series-unique s)) 7) ;; one duplicate (1)
+
+  ;; sort
+  (check-equal? (series-min-i32 (series-head (series-sort s) 1)) 1)
+  (check-equal? (series-max-i32
+                 (series-head (series-sort s #:descending #t) 1))
+                9)
+
+  ;; drop_nulls on a series with no nulls is a no-op
+  (check-equal? (series-len (series-drop-nulls s)) 8))
+
 (module+ test
   (define red-i32 (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
   (check-equal? (series-min-i32 red-i32) 1)
