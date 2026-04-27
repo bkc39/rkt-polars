@@ -210,6 +210,51 @@
 (define (series-max-f64 s)
   (compat-opt-f64->datum (series-max-f64/raw s)))
 
+(define-compat series-min-i32/raw
+  (_fun _Series-ptr -> _CompatOptI32)
+  #:c-id series_min_i32)
+
+(define (series-min-i32 s)
+  (compat-opt-i32->datum (series-min-i32/raw s)))
+
+(define-compat series-max-i32/raw
+  (_fun _Series-ptr -> _CompatOptI32)
+  #:c-id series_max_i32)
+
+(define (series-max-i32 s)
+  (compat-opt-i32->datum (series-max-i32/raw s)))
+
+(define-compat series-mean-i32/raw
+  (_fun _Series-ptr -> _CompatOptF64)
+  #:c-id series_mean_i32)
+
+(define (series-mean-i32 s)
+  (compat-opt-f64->datum (series-mean-i32/raw s)))
+
+(define-compat series-min-f64/raw
+  (_fun _Series-ptr -> _CompatOptF64)
+  #:c-id series_min_f64)
+
+(define (series-min-f64 s)
+  (compat-opt-f64->datum (series-min-f64/raw s)))
+
+(define-compat series-n-unique
+  (_fun _Series-ptr -> _size))
+
+(module+ test
+  (define red-i32 (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
+  (check-equal? (series-min-i32 red-i32) 1)
+  (check-equal? (series-max-i32 red-i32) 9)
+  (check-= (series-mean-i32 red-i32) (/ 31.0 8.0) 1e-9)
+  (check-equal? (series-n-unique red-i32) 7) ;; {1,2,3,4,5,6,9}
+
+  (define red-f64 (series-new-f64 "y" '(1.5 2.0 4.25 8.0)))
+  (check-equal? (series-min-f64 red-f64) 1.5)
+
+  (check-equal? (series-n-unique
+                 (series-new-str "s" '("a" "b" "a" "c" "b")))
+                3))
+
 (module+ test
   (check-equal? (series-len (series-empty)) 0)
   (check-equal? (series-null-count (series-empty)) 0))

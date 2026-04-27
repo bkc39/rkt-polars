@@ -966,6 +966,63 @@ pub extern "C" fn series_max_f64(s_ptr: *mut Series) -> CompatOptF64 {
 }
 
 #[no_mangle]
+pub extern "C" fn series_min_i32(s_ptr: *mut Series) -> CompatOptI32 {
+    if s_ptr.is_null() {
+        return CompatOptI32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => CompatOptI32::from_option(ca.min()),
+        Err(_) => CompatOptI32::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_max_i32(s_ptr: *mut Series) -> CompatOptI32 {
+    if s_ptr.is_null() {
+        return CompatOptI32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => CompatOptI32::from_option(ca.max()),
+        Err(_) => CompatOptI32::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_mean_i32(s_ptr: *mut Series) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => CompatOptF64::from_option(ca.mean()),
+        Err(_) => CompatOptF64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_min_f64(s_ptr: *mut Series) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f64() {
+        Ok(ca) => CompatOptF64::from_option(ca.min()),
+        Err(_) => CompatOptF64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_n_unique(s_ptr: *mut Series) -> usize {
+    if s_ptr.is_null() {
+        return 0;
+    }
+    let s = unsafe { &*s_ptr };
+    s.n_unique().unwrap_or(0)
+}
+
+#[no_mangle]
 pub extern "C" fn series_new_ymdhms(
     name: *const c_char,
     data: *const YMDHMS,
