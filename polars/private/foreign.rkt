@@ -740,18 +740,41 @@
       [else (error 'dataframe-sort "bad descending: ~v" descending)]))
   (dataframe-sort/c df names dlist))
 
-(define-compat dataframe-group-by-sum/c
-  (_fun _DataFrame-ptr
-        (by : (_list i _string))
-        (_size = (length by))
-        (agg : (_list i _string))
-        (_size = (length agg))
-        -> _DataFrame-ptr)
-  #:c-id dataframe_group_by_sum
-  #:wrap (allocator dataframe-drop))
+(define-syntax-parse-rule (define-group-by-agg name:id rust-id:id)
+  (define-compat name
+    (_fun _DataFrame-ptr
+          (by : (_list i _string))
+          (_size = (length by))
+          (agg : (_list i _string))
+          (_size = (length agg))
+          -> _DataFrame-ptr)
+    #:c-id rust-id
+    #:wrap (allocator dataframe-drop)))
+
+(define-group-by-agg dataframe-group-by-sum/c   dataframe_group_by_sum)
+(define-group-by-agg dataframe-group-by-mean/c  dataframe_group_by_mean)
+(define-group-by-agg dataframe-group-by-min/c   dataframe_group_by_min)
+(define-group-by-agg dataframe-group-by-max/c   dataframe_group_by_max)
+(define-group-by-agg dataframe-group-by-count/c dataframe_group_by_count)
 
 (define (dataframe-group-by-sum df #:by by #:agg agg)
   (dataframe-group-by-sum/c df by agg))
+(define (dataframe-group-by-mean df #:by by #:agg agg)
+  (dataframe-group-by-mean/c df by agg))
+(define (dataframe-group-by-min df #:by by #:agg agg)
+  (dataframe-group-by-min/c df by agg))
+(define (dataframe-group-by-max df #:by by #:agg agg)
+  (dataframe-group-by-max/c df by agg))
+(define (dataframe-group-by-count df #:by by #:agg agg)
+  (dataframe-group-by-count/c df by agg))
+
+(define-compat dataframe-unique
+  (_fun _DataFrame-ptr -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
+(define-compat dataframe-drop-nulls
+  (_fun _DataFrame-ptr -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
 
 (define (display-dataframe df [out (current-output-port)])
   (display (dataframe->string df) out)
@@ -873,6 +896,49 @@
   (check-equal?
    (series-sum-i32 (dataframe-column grouped "value_sum"))
    90) ;; 35 + 37 + 18
+
+  ;; Mean / min / max / count
+  (define grouped-mean
+    (dataframe-group-by-mean ops-df #:by '("group") #:agg '("value")))
+  (check-equal? (dataframe-height grouped-mean) 3)
+  ;; means: a=17.5, b=18.5, c=18 — sum = 54
+  (check-= (series-sum-f64 (dataframe-column grouped-mean "value_mean"))
+           54.0 1e-9)
+
+  (define grouped-min
+    (dataframe-group-by-min ops-df #:by '("group") #:agg '("value")))
+  ;; mins: a=10, b=7, c=18 — sum = 35
+  (check-equal? (series-sum-i32 (dataframe-column grouped-min "value_min")) 35)
+
+  (define grouped-max
+    (dataframe-group-by-max ops-df #:by '("group") #:agg '("value")))
+  ;; maxes: a=25, b=30, c=18 — sum = 73
+  (check-equal? (series-sum-i32 (dataframe-column grouped-max "value_max")) 73)
+
+  (define grouped-count
+    (dataframe-group-by-count ops-df #:by '("group") #:agg '("value")))
+  ;; counts: a=2, b=2, c=1 — total rows = 5
+  (check-equal? (dataframe-height grouped-count) 3)
+
+  ;; --- Dedup + null cleanup ---
+  (define dup-df
+    (dataframe-new
+     (list (series-new-i32 "x" '(1 2 1 3 2 1))
+           (series-new-str "y" '("a" "b" "a" "c" "b" "a")))))
+  (check-equal? (dataframe-height (dataframe-unique dup-df)) 3)
+
+  ;; drop-nulls: round-trip a CSV with empty cells.
+  (define np-csv (build-path (find-system-path 'temp-dir) "rkt-polars-dn.csv"))
+  (with-output-to-file np-csv #:exists 'replace
+    (lambda ()
+      (displayln "name,score")
+      (displayln "a,10")
+      (displayln "b,")
+      (displayln "c,30")))
+  (define np-df (dataframe-read-csv np-csv))
+  (check-equal? (dataframe-height np-df) 3)
+  (check-equal? (dataframe-height (dataframe-drop-nulls np-df)) 2)
+  (delete-file np-csv)
 
   ;; --- Example 4: CSV roundtrip ---
   (define csv-df
