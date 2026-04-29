@@ -776,6 +776,50 @@
   (_fun _DataFrame-ptr -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
 
+(define compat-join-kind/inner 1)
+(define compat-join-kind/left  2)
+(define compat-join-kind/outer 3)
+(define compat-join-kind/cross 4)
+
+(define (join-symbol->code sym)
+  (case sym
+    [(inner) compat-join-kind/inner]
+    [(left)  compat-join-kind/left]
+    [(outer full) compat-join-kind/outer]
+    [(cross) compat-join-kind/cross]
+    [else (error 'dataframe-join
+                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross)"
+                 sym)]))
+
+(define-compat dataframe-join/c
+  (_fun _DataFrame-ptr _DataFrame-ptr
+        (left-on : (_list i _string))
+        (_size = (length left-on))
+        (right-on : (_list i _string))
+        (_size = (length right-on))
+        _int32
+        -> _DataFrame-ptr)
+  #:c-id dataframe_join
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-join left right
+                        #:on [on #f]
+                        #:left-on [left-on #f]
+                        #:right-on [right-on #f]
+                        #:how [how 'inner])
+  (define-values (lon ron)
+    (cond
+      [(eq? how 'cross) (values '() '())]
+      [on (values on on)]
+      [(and left-on right-on) (values left-on right-on)]
+      [else (error 'dataframe-join
+                   "must supply #:on, or #:left-on and #:right-on")]))
+  (dataframe-join/c left right lon ron (join-symbol->code how)))
+
+(define-compat dataframe-vstack
+  (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr)
+  #:wrap (allocator dataframe-drop))
+
 (define (display-dataframe df [out (current-output-port)])
   (display (dataframe->string df) out)
   (newline out))
@@ -939,6 +983,37 @@
   (check-equal? (dataframe-height np-df) 3)
   (check-equal? (dataframe-height (dataframe-drop-nulls np-df)) 2)
   (delete-file np-csv)
+
+  ;; --- Joins + vstack ---
+  (define users-df
+    (dataframe-new
+     (list (series-new-i32 "uid" '(1 2 3 4))
+           (series-new-str "name" '("alice" "bob" "carol" "dora")))))
+  (define orders-df
+    (dataframe-new
+     (list (series-new-i32 "uid" '(1 2 2 5))
+           (series-new-i32 "amount" '(10 20 30 40)))))
+
+  (define inner (dataframe-join users-df orders-df #:on '("uid") #:how 'inner))
+  (check-equal? (dataframe-height inner) 3) ;; uid 1,2,2
+
+  (define left (dataframe-join users-df orders-df #:on '("uid") #:how 'left))
+  (check-equal? (dataframe-height left) 5) ;; 1,2,2,3 (null),4 (null)
+
+  (define outer (dataframe-join users-df orders-df #:on '("uid") #:how 'outer))
+  (check-equal? (dataframe-height outer) 6) ;; 1,2,2,3,4,5
+
+  (define crossed
+    (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)
+                    #:how 'cross))
+  (check-equal? (dataframe-height crossed) 4) ;; 2 * 2
+
+  ;; vstack — append rows from a compatible dataframe
+  (define more-users
+    (dataframe-new
+     (list (series-new-i32 "uid" '(5 6))
+           (series-new-str "name" '("eve" "frank")))))
+  (check-equal? (dataframe-height (dataframe-vstack users-df more-users)) 6)
 
   ;; --- Example 4: CSV roundtrip ---
   (define csv-df

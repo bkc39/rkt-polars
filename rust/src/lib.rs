@@ -770,6 +770,77 @@ pub extern "C" fn dataframe_drop_nulls(df_ptr: *mut DataFrame) -> *mut DataFrame
     }
 }
 
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatJoinKind {
+    Inner = 1,
+    Left = 2,
+    Outer = 3,
+    Cross = 4,
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_join(
+    left_ptr: *mut DataFrame,
+    right_ptr: *mut DataFrame,
+    left_on_ptrs: *const *const c_char,
+    n_left_on: usize,
+    right_on_ptrs: *const *const c_char,
+    n_right_on: usize,
+    how: i32,
+) -> *mut DataFrame {
+    if left_ptr.is_null() || right_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { &*left_ptr };
+    let right = unsafe { &*right_ptr };
+    if how == CompatJoinKind::Cross as i32 {
+        use polars::prelude::CrossJoin;
+        return match left.cross_join(right, None, None) {
+            Ok(out) => Box::into_raw(Box::new(out)),
+            Err(_) => ptr::null_mut(),
+        };
+    }
+    let join_type = match how {
+        x if x == CompatJoinKind::Inner as i32 => polars::prelude::JoinType::Inner,
+        x if x == CompatJoinKind::Left as i32 => polars::prelude::JoinType::Left,
+        x if x == CompatJoinKind::Outer as i32 => polars::prelude::JoinType::Full,
+        _ => return ptr::null_mut(),
+    };
+    let left_on = match unsafe { collect_c_strings(left_on_ptrs, n_left_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    if left_on.is_empty() || right_on.is_empty() {
+        return ptr::null_mut();
+    }
+    let args = polars::prelude::JoinArgs::new(join_type);
+    match left.join(right, &left_on, &right_on, args) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_vstack(
+    a_ptr: *mut DataFrame,
+    b_ptr: *mut DataFrame,
+) -> *mut DataFrame {
+    if a_ptr.is_null() || b_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let a = unsafe { &*a_ptr };
+    let b = unsafe { &*b_ptr };
+    match a.vstack(b) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn dataframe_write_csv(
     df_ptr: *mut DataFrame,

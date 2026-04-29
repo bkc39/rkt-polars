@@ -19,15 +19,20 @@ Series surface (Racket-side names):
 DataFrame surface (Racket-side names):
 - Lifecycle: `dataframe-make`, `dataframe-empty`, `dataframe-drop`
 - Construction: `dataframe-new`
-- Metadata: `dataframe-shape`, `dataframe-height`, `dataframe-width`
+- Metadata: `dataframe-shape`, `dataframe-height`, `dataframe-width`, `dataframe-column-names`
 - Column access: `dataframe-column-name`, `dataframe-column`
-- Eager ops: `dataframe-filter`, `dataframe-sort` (with `#:descending`), `dataframe-group-by-sum` (with `#:by` / `#:agg`)
+- Row reshaping: `dataframe-head`, `dataframe-tail`, `dataframe-slice`
+- Column ops: `dataframe-select`, `dataframe-drop-columns`, `dataframe-rename`, `dataframe-with-column`
+- Eager ops: `dataframe-filter`, `dataframe-sort` (with `#:descending`)
+- Group-by: `dataframe-group-by-{sum,mean,min,max,count}` (with `#:by` / `#:agg`)
+- Dedup / null cleanup: `dataframe-unique`, `dataframe-drop-nulls`
+- Joins / stack: `dataframe-join` (`#:how 'inner|'left|'outer|'cross`, `#:on` or `#:left-on` + `#:right-on`), `dataframe-vstack`
 - IO: `dataframe-write-csv`, `dataframe-read-csv`
 - Display: `dataframe->string`, `display-dataframe`
 
 Notable remaining gaps:
 - Series-side: element access (`series-ref`), series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var/median), null-aware constructors
-- DataFrame-side: more aggregations beyond `sum`, joins, additional IO formats
+- DataFrame-side: hstack, additional IO formats (JSON, Parquet), pivot/unpivot, asof/semi/anti joins
 - Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Development Rule
