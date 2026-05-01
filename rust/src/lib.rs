@@ -253,41 +253,16 @@ fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
             flags: 0,
             array_width: 0,
         },
-        #[cfg(feature = "dtype-categorical")]
-        DataType::Categorical(_, _) => CompatDType {
-            tag: Tag::Categorical as i32,
-            time_unit: CompatTimeUnit::None as i32,
-            flags: 0,
-            array_width: 0,
-        },
-        #[cfg(feature = "dtype-categorical")]
-        DataType::Enum(_, _) => CompatDType {
-            tag: Tag::Enum as i32,
-            time_unit: CompatTimeUnit::None as i32,
-            flags: 0,
-            array_width: 0,
-        },
-        #[cfg(feature = "dtype-decimal")]
-        DataType::Decimal(_, _) => CompatDType {
-            tag: Tag::Decimal as i32,
-            time_unit: CompatTimeUnit::None as i32,
-            flags: 0,
-            array_width: 0,
-        },
-        #[cfg(feature = "object")]
-        DataType::Object(_, _) => CompatDType {
-            tag: Tag::Object as i32,
-            time_unit: CompatTimeUnit::None as i32,
-            flags: 0,
-            array_width: 0,
-        },
-        #[cfg(feature = "dtype-struct")]
         DataType::Struct(_) => CompatDType {
             tag: Tag::Struct as i32,
             time_unit: CompatTimeUnit::None as i32,
             flags: 0,
             array_width: 0,
         },
+        // Categorical/Enum/Decimal/Object exist as variants in polars but only
+        // when their respective features are enabled in the polars build.
+        // We don't enable any of those today; route anything we don't recognize
+        // through Unknown so the match stays exhaustive.
         DataType::Unknown(_) => CompatDType {
             tag: Tag::Unknown as i32,
             time_unit: CompatTimeUnit::None as i32,
@@ -1339,6 +1314,135 @@ pub extern "C" fn series_new_ymdhms(
             })
             .collect();
         Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
+    }
+}
+
+// ===== Track A: Expr / Lazy DSL =====
+
+#[no_mangle]
+pub extern "C" fn expr_drop(e: *mut Expr) {
+    if !e.is_null() {
+        unsafe { drop(Box::from_raw(e)) };
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_drop(lf: *mut LazyFrame) {
+    if !lf.is_null() {
+        unsafe { drop(Box::from_raw(lf)) };
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn expr_col(name: *const c_char) -> *mut Expr {
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+    let n = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    Box::into_raw(Box::new(col(n)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_lit_i32(v: i32) -> *mut Expr {
+    Box::into_raw(Box::new(lit(v)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_lit_i64(v: i64) -> *mut Expr {
+    Box::into_raw(Box::new(lit(v)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_lit_f64(v: f64) -> *mut Expr {
+    Box::into_raw(Box::new(lit(v)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_lit_bool(v: u8) -> *mut Expr {
+    Box::into_raw(Box::new(lit(v != 0)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_lit_str(v: *const c_char) -> *mut Expr {
+    if v.is_null() {
+        return ptr::null_mut();
+    }
+    let s = match unsafe { CStr::from_ptr(v).to_str() } {
+        Ok(s) => s.to_string(),
+        Err(_) => return ptr::null_mut(),
+    };
+    Box::into_raw(Box::new(lit(s)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_alias(e: *const Expr, name: *const c_char) -> *mut Expr {
+    if e.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    let n = match unsafe { CStr::from_ptr(name).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let inner = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(inner.alias(n)))
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_lazy(df: *mut DataFrame) -> *mut LazyFrame {
+    if df.is_null() {
+        return ptr::null_mut();
+    }
+    let cloned = unsafe { (*df).clone() };
+    Box::into_raw(Box::new(cloned.lazy()))
+}
+
+unsafe fn collect_exprs(ptrs: *const *const Expr, n: usize) -> Option<Vec<Expr>> {
+    if n == 0 {
+        return Some(Vec::new());
+    }
+    if ptrs.is_null() {
+        return None;
+    }
+    let slice = std::slice::from_raw_parts(ptrs, n);
+    let mut out = Vec::with_capacity(n);
+    for &p in slice {
+        if p.is_null() {
+            return None;
+        }
+        out.push((*p).clone());
+    }
+    Some(out)
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_with_columns(
+    lf: *mut LazyFrame,
+    expr_ptrs: *const *const Expr,
+    n: usize,
+) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let exprs = match unsafe { collect_exprs(expr_ptrs, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.with_columns(exprs)))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let owned = unsafe { (*lf).clone() };
+    match owned.collect() {
+        Ok(df) => Box::into_raw(Box::new(df)),
+        Err(_) => ptr::null_mut(),
     }
 }
 
