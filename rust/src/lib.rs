@@ -1446,6 +1446,87 @@ pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
     }
 }
 
+macro_rules! expr_binop {
+    ($name:ident, $build:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(a: *const Expr, b: *const Expr) -> *mut Expr {
+            if a.is_null() || b.is_null() {
+                return ptr::null_mut();
+            }
+            let aa = unsafe { (*a).clone() };
+            let bb = unsafe { (*b).clone() };
+            let f: fn(Expr, Expr) -> Expr = $build;
+            Box::into_raw(Box::new(f(aa, bb)))
+        }
+    };
+}
+
+expr_binop!(expr_add, |a, b| a + b);
+expr_binop!(expr_sub, |a, b| a - b);
+expr_binop!(expr_mul, |a, b| a * b);
+expr_binop!(expr_div, |a, b| a / b);
+expr_binop!(expr_mod, |a, b| a % b);
+
+expr_binop!(expr_gt, |a, b| a.gt(b));
+expr_binop!(expr_lt, |a, b| a.lt(b));
+expr_binop!(expr_ge, |a, b| a.gt_eq(b));
+expr_binop!(expr_le, |a, b| a.lt_eq(b));
+expr_binop!(expr_eq, |a, b| a.eq(b));
+expr_binop!(expr_ne, |a, b| a.neq(b));
+
+expr_binop!(expr_and, |a, b| a.and(b));
+expr_binop!(expr_or, |a, b| a.or(b));
+expr_binop!(expr_xor, |a, b| a.xor(b));
+
+macro_rules! expr_unop {
+    ($name:ident, $build:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(e: *const Expr) -> *mut Expr {
+            if e.is_null() {
+                return ptr::null_mut();
+            }
+            let ee = unsafe { (*e).clone() };
+            let f: fn(Expr) -> Expr = $build;
+            Box::into_raw(Box::new(f(ee)))
+        }
+    };
+}
+
+expr_unop!(expr_not, |e| e.not());
+expr_unop!(expr_neg, |e| -e);
+expr_unop!(expr_is_null, |e| e.is_null());
+expr_unop!(expr_is_not_null, |e| e.is_not_null());
+
+#[no_mangle]
+pub extern "C" fn lazyframe_filter(
+    lf: *mut LazyFrame,
+    predicate: *const Expr,
+) -> *mut LazyFrame {
+    if lf.is_null() || predicate.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    let p = unsafe { (*predicate).clone() };
+    Box::into_raw(Box::new(lf_ref.filter(p)))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_select(
+    lf: *mut LazyFrame,
+    expr_ptrs: *const *const Expr,
+    n: usize,
+) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let exprs = match unsafe { collect_exprs(expr_ptrs, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.select(exprs)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
