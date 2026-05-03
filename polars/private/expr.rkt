@@ -37,15 +37,19 @@
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
-         lit col ->expr
+         lit col ->expr ->key-expr
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
          expr-and expr-or expr-xor
          expr-not expr-neg expr-is-null expr-is-not-null
+         expr-sum expr-mean expr-min expr-max
+         expr-count expr-n-unique expr-first expr-last expr-median
          dataframe-lazy
          lazyframe-with-columns lazyframe-collect
          lazyframe-filter lazyframe-select
-         dataframe-with-columns dataframe-select-exprs dataframe-filter-expr)
+         lazyframe-group-by-agg
+         dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
+         dataframe-group-by-agg)
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
 
@@ -240,6 +244,44 @@
   (_fun _Expr-ptr -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
+;; --- Phase A4: aggregations (collapse a column to one value) ---
+
+(define-compat expr-sum
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-mean
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-min
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-max
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-count
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-n-unique
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-first
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-last
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-median
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
 ;; --- Phase A3: lazy frame integration ---
 
 (define-compat lazyframe-filter
@@ -269,6 +311,36 @@
 (define (dataframe-filter-expr df predicate)
   (lazyframe-collect
    (lazyframe-filter (dataframe-lazy df) predicate)))
+
+;; --- Phase A4: lazy group-by ---
+;;
+;; LazyGroupBy::agg consumes self on the Rust side, which doesn't fit
+;; Racket's allocator/deallocator round-tripping; fold group_by + agg
+;; into one FFI call so the intermediate state never crosses the boundary.
+
+(define-compat lazyframe-group-by-agg/c
+  (_fun _LazyFrame-ptr
+        (keys : (_list i _Expr-ptr))
+        (_size = (length keys))
+        (aggs : (_list i _Expr-ptr))
+        (_size = (length aggs))
+        -> _LazyFrame-ptr)
+  #:c-id lazyframe_group_by_agg
+  #:wrap (allocator lazyframe-drop))
+
+;; Lifts strings to (col s); already-Expr values pass through.
+(define (->key-expr v)
+  (cond
+    [(Expr-ptr? v) v]
+    [(string? v) (col v)]
+    [else (error '->key-expr "expected string or Expr-ptr, got ~v" v)]))
+
+(define (lazyframe-group-by-agg lf keys aggs)
+  (lazyframe-group-by-agg/c lf (map ->key-expr keys) aggs))
+
+(define (dataframe-group-by-agg df keys aggs)
+  (lazyframe-collect
+   (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
 
 (module+ test
   (define df
@@ -355,4 +427,39 @@
                             (list (col "x")
                                   (expr-alias (expr-mul (col "x") 10) "x10"))))
   (check-equal? (dataframe-width projected) 2)
-  (check-equal? (series-sum-i32 (dataframe-column projected "x10")) 100))
+  (check-equal? (series-sum-i32 (dataframe-column projected "x10")) 100)
+
+  ;; --- Phase A4 tests: aggregations + lazy group-by ---
+
+  ;; Top-level aggregation: select(col("x").sum()) -> single row of 10
+  (define agg-only
+    (dataframe-select-exprs df
+                            (list (expr-alias (expr-sum (col "x")) "sum_x")
+                                  (expr-alias (expr-mean (col "y")) "mean_y"))))
+  (check-equal? (dataframe-height agg-only) 1)
+  (check-equal? (series-sum-i32 (dataframe-column agg-only "sum_x")) 10)
+  (check-= (series-sum-f64 (dataframe-column agg-only "mean_y")) 2.0 1e-9)
+
+  ;; Group-by + agg: groups of x by parity of (x mod 2).
+  (define df-grp
+    (dataframe-new
+     (list (series-new-str "g" '("a" "a" "b" "b" "b"))
+           (series-new-i32 "v" '(10 20 1 2 3)))))
+
+  (define grouped
+    (dataframe-group-by-agg
+     df-grp
+     '("g")
+     (list (expr-alias (expr-sum (col "v")) "sum_v")
+           (expr-alias (expr-count (col "v")) "n"))))
+  (check-equal? (dataframe-height grouped) 2)
+  ;; sum across groups must equal sum across input regardless of order
+  (check-equal? (series-sum-i32 (dataframe-column grouped "sum_v")) 36)
+
+  ;; key list also accepts already-built Expr-ptrs
+  (define grouped/expr-key
+    (dataframe-group-by-agg
+     df-grp
+     (list (col "g"))
+     (list (expr-alias (expr-max (col "v")) "max_v"))))
+  (check-equal? (dataframe-height grouped/expr-key) 2))

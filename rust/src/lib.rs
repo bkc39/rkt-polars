@@ -1497,6 +1497,18 @@ expr_unop!(expr_neg, |e| -e);
 expr_unop!(expr_is_null, |e| e.is_null());
 expr_unop!(expr_is_not_null, |e| e.is_not_null());
 
+// Aggregations: collapse a column to a single value when used inside
+// .agg(...), or to a length-1 result when used at the top level.
+expr_unop!(expr_sum, |e| e.sum());
+expr_unop!(expr_mean, |e| e.mean());
+expr_unop!(expr_min, |e| e.min());
+expr_unop!(expr_max, |e| e.max());
+expr_unop!(expr_count, |e| e.count());
+expr_unop!(expr_n_unique, |e| e.n_unique());
+expr_unop!(expr_first, |e| e.first());
+expr_unop!(expr_last, |e| e.last());
+expr_unop!(expr_median, |e| e.median());
+
 #[no_mangle]
 pub extern "C" fn lazyframe_filter(
     lf: *mut LazyFrame,
@@ -1525,6 +1537,33 @@ pub extern "C" fn lazyframe_select(
     };
     let lf_ref = unsafe { (*lf).clone() };
     Box::into_raw(Box::new(lf_ref.select(exprs)))
+}
+
+// LazyGroupBy::agg consumes self and LazyGroupBy is not Clone, which
+// breaks the Racket allocator/deallocator round-tripping pattern.  Fold
+// group_by + agg into a single FFI call so the intermediate state never
+// crosses the boundary.
+#[no_mangle]
+pub extern "C" fn lazyframe_group_by_agg(
+    lf: *mut LazyFrame,
+    key_ptrs: *const *const Expr,
+    n_keys: usize,
+    agg_ptrs: *const *const Expr,
+    n_aggs: usize,
+) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let keys = match unsafe { collect_exprs(key_ptrs, n_keys) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let aggs = match unsafe { collect_exprs(agg_ptrs, n_aggs) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.group_by(keys).agg(aggs)))
 }
 
 #[cfg(test)]

@@ -30,9 +30,20 @@ DataFrame surface (Racket-side names):
 - IO: `dataframe-write-csv`, `dataframe-read-csv`
 - Display: `dataframe->string`, `display-dataframe`
 
+Expr / LazyFrame surface (Track A, in `polars/private/expr.rkt`):
+- Leaves: `col`, `lit` (dispatches on Racket type), `expr-lit-{i32,i64,f64,bool,str}`, `expr-alias`
+- Arithmetic: `expr-{add,sub,mul,div,mod}` (auto-lift Racket scalars via `->expr`)
+- Comparison: `expr-{gt,lt,ge,le,eq,ne}`
+- Boolean: `expr-{and,or,xor,not}`
+- Unary: `expr-{neg,is-null,is-not-null}`
+- Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`
+- LazyFrame plumbing: `dataframe-lazy`, `lazyframe-with-columns`, `lazyframe-select`, `lazyframe-filter`, `lazyframe-group-by-agg`, `lazyframe-collect`
+- Eager wrappers: `dataframe-with-columns`, `dataframe-select-exprs`, `dataframe-filter-expr`, `dataframe-group-by-agg`
+
 Notable remaining gaps:
 - Series-side: element access (`series-ref`), series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var/median), null-aware constructors
 - DataFrame-side: hstack, additional IO formats (JSON, Parquet), pivot/unpivot, asof/semi/anti joins
+- Expr / lazy: sort/over/window, str.* and dt.* namespaces, `expr-cast`, `expr-{std,var}` (need `ddof` arg), scan_csv / scan_parquet
 - Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Development Rule
