@@ -12,7 +12,8 @@ shipped vs. queued).
 Series surface (Racket-side names):
 - Lifecycle: `series-empty`, `series-drop`
 - Metadata: `series-name`, `series-rename`, `series-len`, `series-null-count`, `series-dtype`
-- Constructors: `series-new-i32` / `-i64` / `-u32` / `-u64` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`)
+- Constructors: `series-new-i32` / `-i64` / `-u32` / `-u64` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`), all accepting `polars-null`
+- Value access: `series-ref`, returning typed Racket values or `polars-null`
 - Comparisons (scalar RHS): `series-{lt,le,gt,ge,eq,ne}-{i32,f64}`, `series-{eq,ne}-str`
 - Boolean ops: `series-and`, `series-or`, `series-xor`, `series-not`, `series-is-null`, `series-is-not-null`
 - Reductions: `series-{sum,min,max,mean}-i32`, `series-{sum,min,max,mean}-f64`, `series-n-unique`
@@ -35,6 +36,9 @@ DataFrame surface (Racket-side names):
 The public low-level API is exported from `(require polars)`. The
 `polars/private/*` modules remain implementation modules; examples
 should require `polars` unless they are specifically testing internals.
+That low-level API should stay stable, explicit, function-first, and
+frame-first: `DataFrame`, `LazyFrame`, or `Series` arguments remain the
+first argument so code works naturally with Racket threading macros.
 
 Expr / LazyFrame surface (Track A, implemented in `polars/private/expr.rkt`):
 - Leaves: `col`, `lit` (dispatches on Racket type), `expr-lit-{i32,i64,f64,bool,str}`, `expr-alias`
@@ -47,6 +51,14 @@ Expr / LazyFrame surface (Track A, implemented in `polars/private/expr.rkt`):
 - Window / sort: `expr-over` (string keys auto-lifted via `->key-expr`), `expr-sort` (with `#:descending`)
 - LazyFrame plumbing: `dataframe-lazy`, `lazyframe-with-columns`, `lazyframe-select`, `lazyframe-filter`, `lazyframe-group-by-agg`, `lazyframe-sort` (with `#:descending`), `lazyframe-unique`, `lazyframe-drop-nulls`, `lazyframe-{head,tail,slice}`, `lazyframe-join` (`#:how`, `#:on` or `#:left-on`/`#:right-on`), `lazyframe-collect`
 - Eager wrappers: `dataframe-with-columns`, `dataframe-select-exprs`, `dataframe-filter-expr`, `dataframe-group-by-agg`, `dataframe-sort-exprs`
+
+Group-by remains exposed as fused operations such as
+`lazyframe-group-by-agg` and `dataframe-group-by-agg`. Do not expose
+Rust-backed eager `GroupBy` or `LazyGroupBy` pointers from `(require
+polars)` for now: Rust-side group-by ownership is awkward across FFI,
+and long query chains do not need those intermediate objects. A future
+`polars/dsl` convenience layer can use ordinary Racket structs for
+group-by builders and lower them back to the fused calls.
 
 Examples covering the lazy DSL: `examples/11-expr-with-columns.rkt`,
 `examples/12-lazy-group-by.rkt`, `examples/13-lazy-pipeline.rkt`
@@ -67,7 +79,7 @@ their Polars behavior is covered by the Rust library tests and the
 Racket examples/tests rather than one mirror Rust file per wrapper.
 
 Notable remaining gaps:
-- Series-side: element access (`series-ref`), series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var), null-aware constructors
+- Series-side: series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var)
 - DataFrame-side: hstack, additional IO formats (JSON, Parquet), pivot/unpivot, asof/semi/anti joins
 - Expr / lazy: str.* and dt.* namespaces, scan_csv / scan_parquet
 - Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
@@ -79,6 +91,7 @@ End-to-end rebuild during dev:
 ```
 cd rust && cargo build --release
 cp target/release/libcompat.dylib ../polars/native-libs/
+otool -D ../polars/native-libs/libcompat.dylib
 cd .. && raco test -x -c polars
 ```
 
@@ -100,14 +113,16 @@ at the time this note was written. The next work should harden the
 public low-level API before adding more Expr namespaces or any
 high-level Racket DSL.
 
-Near-term Series targets:
-- `series-ref`
+Series batch 1 is shipped:
+- `polars-null`
+- null-aware constructors
+- `series-ref` as the standard value assertion helper
+
+Near-term Series batch 2 targets:
 - `series-cast`
 - `series-std` / `series-var`
 - series-series comparisons
 - element-wise arithmetic
-- null-aware constructors using an exported `polars-null` sentinel
-  instead of overloading `#f`
 
 Near-term DataFrame targets:
 - `dataframe-hstack`

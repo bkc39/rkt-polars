@@ -52,8 +52,14 @@ Typical commands inside the shell:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml
+cd rust && cargo build --release
+cp target/release/libcompat.dylib ../polars/native-libs/
+otool -D ../polars/native-libs/libcompat.dylib
+cd ..
 raco test -x -c polars
 ```
+
+On macOS, the `otool -D` line should print `@rpath/libcompat.dylib`.
 
 ## Non-Nix `raco` Fallback
 

@@ -24,6 +24,9 @@
 (define strings
   (series-new-str "strings" '("alpha" "beta" "gamma" "delta")))
 
+(define nullable-scores
+  (series-new-i32 "nullable_scores" (list 10 polars-null 30)))
+
 (define timestamps
   (series-new-datetime
    "timestamps"
@@ -35,7 +38,11 @@
 (describe-series ints)
 (describe-series floats)
 (describe-series strings)
+(describe-series nullable-scores)
 (describe-series timestamps)
+
+(printf "nullable_scores[0] = ~a\n" (series-ref nullable-scores 0))
+(printf "nullable_scores[1] = ~a\n" (series-ref nullable-scores 1))
 
 ;; Rename: rkt-polars' rename mutates in place, matching Polars' API.
 ;; The Rust example uses .clone() to keep the original; we don't have

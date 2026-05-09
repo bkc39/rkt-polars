@@ -1,4 +1,4 @@
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike};
 use polars::prelude::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -77,6 +77,34 @@ pub struct CompatOptF64 {
     pub value: f64,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptI64 {
+    pub valid: i32,
+    pub value: i64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptU32 {
+    pub valid: i32,
+    pub value: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptU64 {
+    pub valid: i32,
+    pub value: u64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptBool {
+    pub valid: i32,
+    pub value: i32,
+}
+
 impl CompatOptI32 {
     const NONE: Self = Self { valid: 0, value: 0 };
     fn some(v: i32) -> Self { Self { valid: 1, value: v } }
@@ -90,6 +118,61 @@ impl CompatOptF64 {
     fn some(v: f64) -> Self { Self { valid: 1, value: v } }
     fn from_option(o: Option<f64>) -> Self {
         match o { Some(v) => Self::some(v), None => Self::NONE }
+    }
+}
+
+impl CompatOptI64 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: i64) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<i64>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptU32 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: u32) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<u32>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptU64 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: u64) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<u64>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptBool {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: bool) -> Self {
+        Self {
+            valid: 1,
+            value: if v { 1 } else { 0 },
+        }
+    }
+    fn from_option(o: Option<bool>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
     }
 }
 
@@ -1046,6 +1129,58 @@ where
     Box::into_raw(Box::new(s.into()))
 }
 
+fn valid_slices<'a, T>(
+    data: *const T,
+    valid: *const u8,
+    length: usize,
+) -> Option<(&'a [T], &'a [u8])> {
+    if (data.is_null() || valid.is_null()) && length != 0 {
+        return None;
+    }
+    let values = if length == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, length) }
+    };
+    let valid = if length == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(valid, length) }
+    };
+    Some((values, valid))
+}
+
+macro_rules! series_new_opt_primitive {
+    ($fn_name:ident, $ty:ty) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(
+            name: *const c_char,
+            data: *const $ty,
+            valid: *const u8,
+            length: usize,
+        ) -> *mut Series {
+            if name.is_null() {
+                return ptr::null_mut();
+            }
+            let Some((values, valid)) = valid_slices(data, valid, length) else {
+                return ptr::null_mut();
+            };
+            let options: Vec<Option<$ty>> = values
+                .iter()
+                .zip(valid.iter())
+                .map(|(value, is_valid)| {
+                    if *is_valid == 0 {
+                        None
+                    } else {
+                        Some(*value)
+                    }
+                })
+                .collect();
+            Box::into_raw(Box::new(Series::new(name_from_ptr(name), options)))
+        }
+    };
+}
+
 #[no_mangle]
 pub extern "C" fn series_new_i32(
     name: *const c_char,
@@ -1091,6 +1226,12 @@ pub extern "C" fn series_new_u64(
     series_new::<UInt64Type>(name, data, length)
 }
 
+series_new_opt_primitive!(series_new_opt_i32, i32);
+series_new_opt_primitive!(series_new_opt_f64, f64);
+series_new_opt_primitive!(series_new_opt_i64, i64);
+series_new_opt_primitive!(series_new_opt_u32, u32);
+series_new_opt_primitive!(series_new_opt_u64, u64);
+
 #[no_mangle]
 pub extern "C" fn series_new_bool(
     name: *const c_char,
@@ -1110,6 +1251,33 @@ pub extern "C" fn series_new_bool(
     };
     let n = name_from_ptr(name);
     Box::into_raw(Box::new(Series::new(n, bools)))
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_opt_bool(
+    name: *const c_char,
+    data: *const u8,
+    valid: *const u8,
+    length: usize,
+) -> *mut Series {
+    if name.is_null() {
+        return ptr::null_mut();
+    }
+    let Some((values, valid)) = valid_slices(data, valid, length) else {
+        return ptr::null_mut();
+    };
+    let bools: Vec<Option<bool>> = values
+        .iter()
+        .zip(valid.iter())
+        .map(|(value, is_valid)| {
+            if *is_valid == 0 {
+                None
+            } else {
+                Some(*value != 0)
+            }
+        })
+        .collect();
+    Box::into_raw(Box::new(Series::new(name_from_ptr(name), bools)))
 }
 
 fn name_from_ptr(p: *const c_char) -> &'static str {
@@ -1142,7 +1310,35 @@ pub extern "C" fn series_new_str(
     Box::into_raw(Box::new(Series::new(name_from_ptr(name), vec)))
 }
 
+#[no_mangle]
+pub extern "C" fn series_new_opt_str(
+    name: *const c_char,
+    data: *const *const c_char,
+    valid: *const u8,
+    length: usize,
+) -> *mut Series {
+    if data.is_null() && length != 0 {
+        return std::ptr::null_mut();
+    }
+    let Some((values, valid)) = valid_slices(data, valid, length) else {
+        return ptr::null_mut();
+    };
+    let strings: Vec<Option<&str>> = values
+        .iter()
+        .zip(valid.iter())
+        .map(|(value, is_valid)| {
+            if *is_valid == 0 || value.is_null() {
+                None
+            } else {
+                unsafe { CStr::from_ptr(*value).to_str().ok() }
+            }
+        })
+        .collect();
+    Box::into_raw(Box::new(Series::new(name_from_ptr(name), strings)))
+}
+
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct YMDHMS {
     pub year: i32,
     pub month: u32,
@@ -1150,6 +1346,31 @@ pub struct YMDHMS {
     pub hour: u32,
     pub minute: u32,
     pub second: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptYMDHMS {
+    pub valid: i32,
+    pub value: YMDHMS,
+}
+
+impl CompatOptYMDHMS {
+    const NONE: Self = Self {
+        valid: 0,
+        value: YMDHMS {
+            year: 0,
+            month: 0,
+            day: 0,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        },
+    };
+
+    fn some(v: YMDHMS) -> Self {
+        Self { valid: 1, value: v }
+    }
 }
 
 #[no_mangle]
@@ -1351,6 +1572,211 @@ pub extern "C" fn series_new_ymdhms(
             })
             .collect();
         Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
+    }
+}
+
+fn ymdhms_to_naive_datetime(ymdhms: &YMDHMS) -> Option<NaiveDateTime> {
+    NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day)
+        .and_then(|date| {
+            date.and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second)
+        })
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_opt_ymdhms(
+    name: *const c_char,
+    data: *const YMDHMS,
+    valid: *const u8,
+    length: usize,
+) -> *mut Series {
+    let Some((values, valid)) = valid_slices(data, valid, length) else {
+        return ptr::null_mut();
+    };
+    let naive_dates = values.iter().zip(valid.iter()).map(|(ymdhms, is_valid)| {
+        if *is_valid == 0 {
+            None
+        } else {
+            ymdhms_to_naive_datetime(ymdhms)
+        }
+    });
+    let ca = DatetimeChunked::from_naive_datetime_options(
+        name_from_ptr(name),
+        naive_dates,
+        TimeUnit::Milliseconds,
+    );
+    Box::into_raw(Box::new(ca.into_series()))
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_is_null(s_ptr: *mut Series, index: usize) -> i32 {
+    if s_ptr.is_null() {
+        return -1;
+    }
+    let s = unsafe { &*s_ptr };
+    if index >= s.len() {
+        return -1;
+    }
+    if s.null_count() == 0 {
+        return 0;
+    }
+    if s.is_null().get(index).unwrap_or(false) {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_i32(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI32 {
+    if s_ptr.is_null() {
+        return CompatOptI32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i32() {
+        Ok(ca) => CompatOptI32::from_option(ca.get(index)),
+        Err(_) => CompatOptI32::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_i64(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI64 {
+    if s_ptr.is_null() {
+        return CompatOptI64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i64() {
+        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
+        Err(_) => CompatOptI64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_u32(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptU32 {
+    if s_ptr.is_null() {
+        return CompatOptU32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.u32() {
+        Ok(ca) => CompatOptU32::from_option(ca.get(index)),
+        Err(_) => CompatOptU32::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_u64(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptU64 {
+    if s_ptr.is_null() {
+        return CompatOptU64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.u64() {
+        Ok(ca) => CompatOptU64::from_option(ca.get(index)),
+        Err(_) => CompatOptU64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_f64(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f64() {
+        Ok(ca) => CompatOptF64::from_option(ca.get(index)),
+        Err(_) => CompatOptF64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_bool(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptBool {
+    if s_ptr.is_null() {
+        return CompatOptBool::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.bool() {
+        Ok(ca) => CompatOptBool::from_option(ca.get(index)),
+        Err(_) => CompatOptBool::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_str(
+    s_ptr: *mut Series,
+    index: usize,
+) -> *const c_char {
+    if s_ptr.is_null() {
+        return ptr::null();
+    }
+    let s = unsafe { &*s_ptr };
+    match s.str() {
+        Ok(ca) => ca.get(index).map(rust_string_to_ptr).unwrap_or(ptr::null()),
+        Err(_) => ptr::null(),
+    }
+}
+
+fn datetime_value_to_ymdhms(
+    value: i64,
+    time_unit: &TimeUnit,
+) -> Option<YMDHMS> {
+    let (secs, nanos) = match time_unit {
+        TimeUnit::Nanoseconds => (
+            value.div_euclid(1_000_000_000),
+            value.rem_euclid(1_000_000_000) as u32,
+        ),
+        TimeUnit::Microseconds => (
+            value.div_euclid(1_000_000),
+            (value.rem_euclid(1_000_000) * 1_000) as u32,
+        ),
+        TimeUnit::Milliseconds => (
+            value.div_euclid(1_000),
+            (value.rem_euclid(1_000) * 1_000_000) as u32,
+        ),
+    };
+    DateTime::from_timestamp(secs, nanos)
+        .map(|dt| dt.naive_utc())
+        .map(|dt| YMDHMS {
+            year: dt.year(),
+            month: dt.month(),
+            day: dt.day(),
+            hour: dt.hour(),
+            minute: dt.minute(),
+            second: dt.second(),
+        })
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_ymdhms(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptYMDHMS {
+    if s_ptr.is_null() {
+        return CompatOptYMDHMS::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.datetime() {
+        Ok(ca) => ca
+            .get(index)
+            .and_then(|value| datetime_value_to_ymdhms(value, &ca.time_unit()))
+            .map(CompatOptYMDHMS::some)
+            .unwrap_or(CompatOptYMDHMS::NONE),
+        Err(_) => CompatOptYMDHMS::NONE,
     }
 }
 

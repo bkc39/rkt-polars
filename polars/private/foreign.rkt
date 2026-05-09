@@ -4,6 +4,8 @@
          ffi/unsafe/alloc
          ffi/unsafe/define
          ffi/unsafe/define/conventions
+         gregor
+         racket/match
          racket/runtime-path
          syntax/parse/define
          (for-syntax racket/base racket/syntax))
@@ -32,10 +34,20 @@
             "_rsstring should only be used as a result type: ~a"
             str))
    (lambda (ptr)
-     (define str
-       (cast ptr _pointer _string))
-     (register-finalizer ptr string-drop)
-     str)))
+     (and ptr
+          (let ([str (cast ptr _pointer _string)])
+            (register-finalizer ptr string-drop)
+            str)))))
+
+(struct polars-null-sentinel ()
+  #:property prop:custom-write
+  (lambda (_ out mode)
+    (write-string "polars-null" out)))
+
+(define polars-null (polars-null-sentinel))
+
+(define (polars-null? v)
+  (eq? v polars-null))
 
 (define compat-dtype-tag/unknown 0)
 (define compat-dtype-tag/boolean 1)
@@ -130,6 +142,22 @@
   ([valid _int32]
    [value _double]))
 
+(define-cstruct _CompatOptI64
+  ([valid _int32]
+   [value _int64]))
+
+(define-cstruct _CompatOptU32
+  ([valid _int32]
+   [value _uint32]))
+
+(define-cstruct _CompatOptU64
+  ([valid _int32]
+   [value _uint64]))
+
+(define-cstruct _CompatOptBool
+  ([valid _int32]
+   [value _int32]))
+
 (define (compat-opt-i32->datum o)
   (and (not (zero? (CompatOptI32-valid o)))
        (CompatOptI32-value o)))
@@ -137,6 +165,22 @@
 (define (compat-opt-f64->datum o)
   (and (not (zero? (CompatOptF64-valid o)))
        (CompatOptF64-value o)))
+
+(define (compat-opt-i64->datum o)
+  (and (not (zero? (CompatOptI64-valid o)))
+       (CompatOptI64-value o)))
+
+(define (compat-opt-u32->datum o)
+  (and (not (zero? (CompatOptU32-valid o)))
+       (CompatOptU32-value o)))
+
+(define (compat-opt-u64->datum o)
+  (and (not (zero? (CompatOptU64-valid o)))
+       (CompatOptU64-value o)))
+
+(define (compat-opt-bool->datum o)
+  (and (not (zero? (CompatOptBool-valid o)))
+       (not (zero? (CompatOptBool-value o)))))
 
 (define-cpointer-type _Series-ptr)
 
@@ -305,26 +349,62 @@
   (check-equal? (series-len (series-empty)) 0)
   (check-equal? (series-null-count (series-empty)) 0))
 
-(define-syntax-parse-rule (define-series-constructors rs-type:id ctype:id)
+(define (values+valid input-values default-value)
+  (for/lists (clean-values valid)
+             ([value input-values])
+    (if (polars-null? value)
+        (values default-value 0)
+        (values value 1))))
+
+(define (contains-polars-null? values)
+  (ormap polars-null? values))
+
+(define-syntax-parse-rule (define-series-constructors rs-type:id ctype:id default-value:expr)
   #:with list-constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
   #:with vector-constructor-name (format-id #'rs-type
                                             "series-new-~a/vec"
                                             #'rs-type)
+  #:with list-constructor-raw-name (format-id #'rs-type "series-new-~a/raw" #'rs-type)
+  #:with vector-constructor-raw-name (format-id #'rs-type
+                                                "series-new-~a/vec/raw"
+                                                #'rs-type)
+  #:with opt-constructor-name (format-id #'rs-type "series-new-~a/opt/raw" #'rs-type)
   #:with rust-id (format-id #'rs-type "series_new_~a" #'rs-type)
+  #:with rust-opt-id (format-id #'rs-type "series_new_opt_~a" #'rs-type)
   (begin
-    (define-compat list-constructor-name
+    (define-compat list-constructor-raw-name
       (_fun _string
             (v : (_list i ctype))
             (_size = (length v))
-            -> _Series-ptr))
-    (define-compat vector-constructor-name
+            -> _Series-ptr)
+      #:c-id rust-id)
+    (define-compat vector-constructor-raw-name
       (_fun _string
             (v : (_vector i ctype))
             (_size = (vector-length v))
             -> _Series-ptr)
-      #:c-id rust-id)))
+      #:c-id rust-id)
+    (define-compat opt-constructor-name
+      (_fun _string
+            (v : (_list i ctype))
+            (valid : (_list i _uint8))
+            (_size = (length v))
+            -> _Series-ptr)
+      #:c-id rust-opt-id)
+    (define (list-constructor-name name values)
+      (if (contains-polars-null? values)
+          (let-values ([(clean-values valid) (values+valid values default-value)])
+            (opt-constructor-name name clean-values valid))
+          (list-constructor-raw-name name values)))
+    (define (vector-constructor-name name values)
+      (if (for/or ([value (in-vector values)])
+            (polars-null? value))
+          (let-values ([(clean-values valid)
+                        (values+valid (vector->list values) default-value)])
+            (opt-constructor-name name clean-values valid))
+          (vector-constructor-raw-name name values)))))
 
-(define-series-constructors i32 _int32)
+(define-series-constructors i32 _int32 0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
@@ -349,7 +429,7 @@
    (series-len (series-new-i32/vec "" (vector 0)))
    1))
 
-(define-series-constructors f64 _double)
+(define-series-constructors f64 _double 0.0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-f64 "" '(1.1 2.17)))
@@ -382,7 +462,7 @@
    (series-len (series-new-f64/vec "" (vector 17.29 40.2)))
    2))
 
-(define-series-constructors i64 _int64)
+(define-series-constructors i64 _int64 0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-i64 "" '(1 2 3)))
@@ -390,7 +470,7 @@
   (check-equal? (series-dtype (series-new-i64 "x" '(1 2))) 'int64)
   (check-pred Series-ptr? (series-new-i64/vec "" (vector 1 2 3))))
 
-(define-series-constructors u32 _uint32)
+(define-series-constructors u32 _uint32 0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-u32 "" '(1 2 3)))
@@ -398,7 +478,7 @@
   (check-equal? (series-dtype (series-new-u32 "x" '(0 1))) 'uint32)
   (check-pred Series-ptr? (series-new-u32/vec "" (vector 1 2 3))))
 
-(define-series-constructors u64 _uint64)
+(define-series-constructors u64 _uint64 0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-u64 "" '(1 2 3)))
@@ -422,16 +502,31 @@
         -> _Series-ptr)
   #:c-id series_new_bool)
 
+(define-compat series-new-bool/opt/raw
+  (_fun _string
+        (v : (_list i _uint8))
+        (valid : (_list i _uint8))
+        (_size = (length v))
+        -> _Series-ptr)
+  #:c-id series_new_opt_bool)
+
 (define (bool->u8 b) (if b 1 0))
 
 (define (series-new-bool name bools)
-  (series-new-bool/raw name (map bool->u8 bools)))
+  (if (contains-polars-null? bools)
+      (let-values ([(clean-values valid) (values+valid bools #f)])
+        (series-new-bool/opt/raw name (map bool->u8 clean-values) valid))
+      (series-new-bool/raw name (map bool->u8 bools))))
 
 (define (series-new-bool/vec name bools)
-  (series-new-bool/vec/raw name
-                           (for/vector #:length (vector-length bools)
-                                       ([b (in-vector bools)])
-                             (bool->u8 b))))
+  (if (for/or ([value (in-vector bools)])
+        (polars-null? value))
+      (let-values ([(clean-values valid) (values+valid (vector->list bools) #f)])
+        (series-new-bool/opt/raw name (map bool->u8 clean-values) valid))
+      (series-new-bool/vec/raw name
+                               (for/vector #:length (vector-length bools)
+                                           ([b (in-vector bools)])
+                                 (bool->u8 b)))))
 
 (module+ test
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
@@ -439,7 +534,7 @@
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
   (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t))))
 
-(define-series-constructors str _string)
+(define-series-constructors str _string "")
 
 (module+ test
   (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
@@ -472,11 +567,100 @@
    [minute _uint32]
    [sescond _uint32]))
 
+(define-cstruct _CompatOptYMDHMS
+  ([valid _int32]
+   [value _YMDHMS]))
+
+(define (ymdhms->datetime value)
+  (datetime (YMDHMS-year value)
+            (YMDHMS-month value)
+            (YMDHMS-day value)
+            (YMDHMS-hour value)
+            (YMDHMS-minute value)
+            (YMDHMS-sescond value)))
+
+(define (compat-opt-ymdhms->datum o)
+  (and (not (zero? (CompatOptYMDHMS-valid o)))
+       (ymdhms->datetime (CompatOptYMDHMS-value o))))
+
 (module+ test
   (check-pred YMDHMS?
               (make-YMDHMS 2014 7 11 12 0 0)))
 
-(define-series-constructors ymdhms _YMDHMS)
+(define default-ymdhms (make-YMDHMS 1970 1 1 0 0 0))
+
+(define-series-constructors ymdhms _YMDHMS default-ymdhms)
+
+(define-compat series-ref-is-null
+  (_fun _Series-ptr _size -> _int32))
+
+(define-compat series-ref-i32/raw
+  (_fun _Series-ptr _size -> _CompatOptI32)
+  #:c-id series_ref_i32)
+
+(define-compat series-ref-i64/raw
+  (_fun _Series-ptr _size -> _CompatOptI64)
+  #:c-id series_ref_i64)
+
+(define-compat series-ref-u32/raw
+  (_fun _Series-ptr _size -> _CompatOptU32)
+  #:c-id series_ref_u32)
+
+(define-compat series-ref-u64/raw
+  (_fun _Series-ptr _size -> _CompatOptU64)
+  #:c-id series_ref_u64)
+
+(define-compat series-ref-f64/raw
+  (_fun _Series-ptr _size -> _CompatOptF64)
+  #:c-id series_ref_f64)
+
+(define-compat series-ref-bool/raw
+  (_fun _Series-ptr _size -> _CompatOptBool)
+  #:c-id series_ref_bool)
+
+(define-compat series-ref-str/raw
+  (_fun _Series-ptr _size -> _rsstring)
+  #:c-id series_ref_str)
+
+(define-compat series-ref-ymdhms/raw
+  (_fun _Series-ptr _size -> _CompatOptYMDHMS)
+  #:c-id series_ref_ymdhms)
+
+(define (series-ref-unsupported dtype)
+  (error 'series-ref "unsupported dtype ~v" dtype))
+
+(define (require-ref-value dtype value)
+  (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
+
+(define (series-ref s index)
+  (unless (exact-nonnegative-integer? index)
+    (error 'series-ref "index must be an exact nonnegative integer, got ~v" index))
+  (define len (series-len s))
+  (unless (< index len)
+    (error 'series-ref "index ~a out of bounds for series of length ~a" index len))
+  (case (series-ref-is-null s index)
+    [(1) polars-null]
+    [(0)
+     (define dtype (series-dtype s))
+     (case dtype
+       [(int32) (require-ref-value dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
+       [(int64) (require-ref-value dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
+       [(uint32) (require-ref-value dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
+       [(uint64) (require-ref-value dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
+       [(float64) (require-ref-value dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
+       [(boolean)
+        (define value (series-ref-bool/raw s index))
+        (if (zero? (CompatOptBool-valid value))
+            (error 'series-ref "could not read non-null value for dtype ~v" dtype)
+            (compat-opt-bool->datum value))]
+       [(string) (require-ref-value dtype (series-ref-str/raw s index))]
+       [else
+        (match dtype
+          [`(datetime ,_ ,_)
+           (require-ref-value dtype
+                              (compat-opt-ymdhms->datum (series-ref-ymdhms/raw s index)))]
+          [_ (series-ref-unsupported dtype)])])]
+    [else (error 'series-ref "could not read null state at index ~a" index)]))
 
 (module+ test
   (define-values (ex0 ex1)
@@ -499,6 +683,58 @@
   (check-equal?
    (series-dtype (series-new-ymdhms "name" ex1))
    '(datetime milliseconds #f)))
+
+(module+ test
+  (define ref-i32 (series-new-i32 "x" (list 10 polars-null -3)))
+  (check-equal? (series-len ref-i32) 3)
+  (check-equal? (series-null-count ref-i32) 1)
+  (check-equal? (series-ref ref-i32 0) 10)
+  (check-equal? (series-ref ref-i32 1) polars-null)
+  (check-equal? (series-ref ref-i32 2) -3)
+
+  (define ref-i64 (series-new-i64 "x" (list 1099511627776 polars-null)))
+  (check-equal? (series-ref ref-i64 0) 1099511627776)
+  (check-equal? (series-ref ref-i64 1) polars-null)
+
+  (define ref-u32 (series-new-u32 "x" (list 0 polars-null 4294967295)))
+  (check-equal? (series-ref ref-u32 0) 0)
+  (check-equal? (series-ref ref-u32 1) polars-null)
+  (check-equal? (series-ref ref-u32 2) 4294967295)
+
+  (define ref-u64 (series-new-u64 "x" (list 0 polars-null 4294967296)))
+  (check-equal? (series-ref ref-u64 2) 4294967296)
+
+  (define ref-f64 (series-new-f64 "x" (list 1.5 polars-null 2.25)))
+  (check-equal? (series-dtype ref-f64) 'float64)
+  (check-equal? (series-null-count ref-f64) 1)
+  (check-equal? (series-ref ref-f64 0) 1.5)
+  (check-equal? (series-ref ref-f64 1) polars-null)
+
+  (define ref-bool (series-new-bool "x" (list #t #f polars-null)))
+  (check-equal? (series-ref ref-bool 0) #t)
+  (check-equal? (series-ref ref-bool 1) #f)
+  (check-equal? (series-ref ref-bool 2) polars-null)
+
+  (define ref-str (series-new-str "x" (list "alpha" polars-null "")))
+  (check-equal? (series-ref ref-str 0) "alpha")
+  (check-equal? (series-ref ref-str 1) polars-null)
+  (check-equal? (series-ref ref-str 2) "")
+
+  (define ref-dt
+    (series-new-ymdhms
+     "x"
+     (list (make-YMDHMS 2024 1 2 3 4 5)
+           polars-null)))
+  (check-equal? (series-ref ref-dt 0) (datetime 2024 1 2 3 4 5))
+  (check-equal? (series-ref ref-dt 1) polars-null)
+
+  (define ref-vec (series-new-i32/vec "x" (vector 1 polars-null 3)))
+  (check-equal? (series-ref ref-vec 1) polars-null)
+
+  (check-exn #rx"nonnegative"
+             (lambda () (series-ref ref-i32 -1)))
+  (check-exn #rx"out of bounds"
+             (lambda () (series-ref ref-i32 3))))
 
 (define-cpointer-type _DataFrame-ptr)
 

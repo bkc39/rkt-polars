@@ -18,13 +18,20 @@
                (->seconds dt)))
 
 (define (series-new-datetime name datetimes)
-  (series-new-ymdhms name (map datetime->ymdhms datetimes)))
+  (series-new-ymdhms name
+                     (map (lambda (dt)
+                            (if (polars-null? dt)
+                                polars-null
+                                (datetime->ymdhms dt)))
+                          datetimes)))
 
 (define (series-new-datetime/vec name datetimes)
   (series-new-ymdhms/vec name
                          (for/vector #:length (vector-length datetimes)
                                      ([dt (in-vector datetimes)])
-                           (datetime->ymdhms dt))))
+                           (if (polars-null? dt)
+                               polars-null
+                               (datetime->ymdhms dt)))))
 
 (module+ test
   (define ts0 (datetime 2024 1 1 9 0 0))
@@ -38,6 +45,10 @@
   (define sv (series-new-datetime/vec "tsv" (vector ts0 ts1)))
   (check-pred Series-ptr? sv)
   (check-equal? (series-len sv) 2)
+  (define sn (series-new-datetime "tsn" (list ts0 polars-null ts1)))
+  (check-equal? (series-null-count sn) 1)
+  (check-equal? (series-ref sn 0) ts0)
+  (check-equal? (series-ref sn 1) polars-null)
 
   ;; Mirror of rust/examples/02_dataframe_from_series.rs
   (define users   (series-new-str "user" '("alice" "bob" "carol" "dora")))
