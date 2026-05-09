@@ -6,7 +6,7 @@
 ;;   racket examples/04-csv-roundtrip.rkt
 
 (require racket/file
-         polars/private/foreign)
+         polars)
 
 (define original
   (dataframe-new

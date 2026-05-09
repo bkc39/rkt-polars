@@ -115,6 +115,43 @@ fn compat_time_unit_from_polars(time_unit: &TimeUnit) -> CompatTimeUnit {
     }
 }
 
+/// Inverse of `compat_dtype_from_polars`: lift a CompatDType (as it
+/// appears across the FFI) back to a polars DataType.  Datetime and
+/// Duration default to Microseconds when the time-unit field is None;
+/// timezone is always None for now (no Racket-side surface yet).
+/// Returns None for unknown tags or for nested/parameterized dtypes
+/// that we don't yet expose for input.
+fn polars_dtype_from_compat(c: &CompatDType) -> Option<DataType> {
+    use CompatDTypeTag as Tag;
+    let tu = match c.time_unit {
+        x if x == CompatTimeUnit::Nanoseconds as i32 => TimeUnit::Nanoseconds,
+        x if x == CompatTimeUnit::Microseconds as i32 => TimeUnit::Microseconds,
+        x if x == CompatTimeUnit::Milliseconds as i32 => TimeUnit::Milliseconds,
+        _ => TimeUnit::Microseconds,
+    };
+    Some(match c.tag {
+        x if x == Tag::Boolean as i32 => DataType::Boolean,
+        x if x == Tag::UInt8 as i32 => DataType::UInt8,
+        x if x == Tag::UInt16 as i32 => DataType::UInt16,
+        x if x == Tag::UInt32 as i32 => DataType::UInt32,
+        x if x == Tag::UInt64 as i32 => DataType::UInt64,
+        x if x == Tag::Int8 as i32 => DataType::Int8,
+        x if x == Tag::Int16 as i32 => DataType::Int16,
+        x if x == Tag::Int32 as i32 => DataType::Int32,
+        x if x == Tag::Int64 as i32 => DataType::Int64,
+        x if x == Tag::Float32 as i32 => DataType::Float32,
+        x if x == Tag::Float64 as i32 => DataType::Float64,
+        x if x == Tag::String as i32 => DataType::String,
+        x if x == Tag::Binary as i32 => DataType::Binary,
+        x if x == Tag::Date as i32 => DataType::Date,
+        x if x == Tag::Datetime as i32 => DataType::Datetime(tu, None),
+        x if x == Tag::Duration as i32 => DataType::Duration(tu),
+        x if x == Tag::Time as i32 => DataType::Time,
+        x if x == Tag::Null as i32 => DataType::Null,
+        _ => return None,
+    })
+}
+
 #[allow(unexpected_cfgs)]
 fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
     use CompatDTypeTag as Tag;
@@ -1492,6 +1529,21 @@ macro_rules! expr_unop {
     };
 }
 
+/// Unary aggregations that take a `ddof: u8` parameter (std, var).
+macro_rules! expr_unop_u8 {
+    ($name:ident, $build:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(e: *const Expr, arg: u8) -> *mut Expr {
+            if e.is_null() {
+                return ptr::null_mut();
+            }
+            let ee = unsafe { (*e).clone() };
+            let f: fn(Expr, u8) -> Expr = $build;
+            Box::into_raw(Box::new(f(ee, arg)))
+        }
+    };
+}
+
 expr_unop!(expr_not, |e| e.not());
 expr_unop!(expr_neg, |e| -e);
 expr_unop!(expr_is_null, |e| e.is_null());
@@ -1508,6 +1560,11 @@ expr_unop!(expr_n_unique, |e| e.n_unique());
 expr_unop!(expr_first, |e| e.first());
 expr_unop!(expr_last, |e| e.last());
 expr_unop!(expr_median, |e| e.median());
+
+// std / var carry a ddof parameter (degrees-of-freedom adjustment);
+// matches polars and pandas defaults of 1 on the Racket side.
+expr_unop_u8!(expr_std, |e, ddof| e.std(ddof));
+expr_unop_u8!(expr_var, |e, ddof| e.var(ddof));
 
 #[no_mangle]
 pub extern "C" fn lazyframe_filter(
@@ -1539,6 +1596,33 @@ pub extern "C" fn lazyframe_select(
     Box::into_raw(Box::new(lf_ref.select(exprs)))
 }
 
+#[no_mangle]
+pub extern "C" fn expr_over(
+    e: *const Expr,
+    partition_ptrs: *const *const Expr,
+    n: usize,
+) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let parts = match unsafe { collect_exprs(partition_ptrs, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let inner = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(inner.over(parts)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_sort(e: *const Expr, descending: u8) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let inner = unsafe { (*e).clone() };
+    let opts = SortOptions::default().with_order_descending(descending != 0);
+    Box::into_raw(Box::new(inner.sort(opts)))
+}
+
 // LazyGroupBy::agg consumes self and LazyGroupBy is not Clone, which
 // breaks the Racket allocator/deallocator round-tripping pattern.  Fold
 // group_by + agg into a single FFI call so the intermediate state never
@@ -1564,6 +1648,159 @@ pub extern "C" fn lazyframe_group_by_agg(
     };
     let lf_ref = unsafe { (*lf).clone() };
     Box::into_raw(Box::new(lf_ref.group_by(keys).agg(aggs)))
+}
+
+// ===== Phase A6: more LazyFrame ops (sort / unique / drop_nulls) =====
+
+#[no_mangle]
+pub extern "C" fn lazyframe_sort(
+    lf: *mut LazyFrame,
+    by_ptrs: *const *const c_char,
+    descending_ptr: *const u8,
+    n: usize,
+) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let names = match unsafe { collect_c_strings(by_ptrs, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let descending: Vec<bool> = if n == 0 {
+        Vec::new()
+    } else if descending_ptr.is_null() {
+        vec![false; n]
+    } else {
+        unsafe { std::slice::from_raw_parts(descending_ptr, n) }
+            .iter()
+            .map(|&b| b != 0)
+            .collect()
+    };
+    let by_exprs: Vec<Expr> = names.iter().map(|n| col(n)).collect();
+    let opts = SortMultipleOptions::new().with_order_descending_multi(descending);
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.sort_by_exprs(by_exprs, opts)))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_unique(lf: *mut LazyFrame) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(
+        lf_ref.unique(None, polars::prelude::UniqueKeepStrategy::Any),
+    ))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_drop_nulls(lf: *mut LazyFrame) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    let subset: Option<Vec<Expr>> = None;
+    Box::into_raw(Box::new(lf_ref.drop_nulls(subset)))
+}
+
+// ===== Phase A7: lazy head / tail / slice =====
+
+#[no_mangle]
+pub extern "C" fn lazyframe_head(lf: *mut LazyFrame, n: usize) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.limit(n as u32)))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_tail(lf: *mut LazyFrame, n: usize) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.tail(n as u32)))
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_slice(
+    lf: *mut LazyFrame,
+    offset: i64,
+    length: usize,
+) -> *mut LazyFrame {
+    if lf.is_null() {
+        return ptr::null_mut();
+    }
+    let lf_ref = unsafe { (*lf).clone() };
+    Box::into_raw(Box::new(lf_ref.slice(offset, length as u32)))
+}
+
+// ===== Phase A8: lazy join =====
+//
+// Mirrors the eager `dataframe_join` ABI exactly: same `CompatJoinKind`
+// tags, same packed left/right key-name arrays.  Cross uses
+// `LazyFrame::cross_join`; inner/left/outer go through `.join` with
+// per-side `Vec<Expr>` built from `col(name)`.
+
+#[no_mangle]
+pub extern "C" fn lazyframe_join(
+    left_ptr: *mut LazyFrame,
+    right_ptr: *mut LazyFrame,
+    left_on_ptrs: *const *const c_char,
+    n_left_on: usize,
+    right_on_ptrs: *const *const c_char,
+    n_right_on: usize,
+    how: i32,
+) -> *mut LazyFrame {
+    if left_ptr.is_null() || right_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { (*left_ptr).clone() };
+    let right = unsafe { (*right_ptr).clone() };
+    if how == CompatJoinKind::Cross as i32 {
+        return Box::into_raw(Box::new(left.cross_join(right, None)));
+    }
+    let join_type = match how {
+        x if x == CompatJoinKind::Inner as i32 => polars::prelude::JoinType::Inner,
+        x if x == CompatJoinKind::Left as i32 => polars::prelude::JoinType::Left,
+        x if x == CompatJoinKind::Outer as i32 => polars::prelude::JoinType::Full,
+        _ => return ptr::null_mut(),
+    };
+    let left_on = match unsafe { collect_c_strings(left_on_ptrs, n_left_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    if left_on.is_empty() || right_on.is_empty() {
+        return ptr::null_mut();
+    }
+    let left_exprs: Vec<Expr> = left_on.iter().map(|n| col(n)).collect();
+    let right_exprs: Vec<Expr> = right_on.iter().map(|n| col(n)).collect();
+    let args = polars::prelude::JoinArgs::new(join_type);
+    Box::into_raw(Box::new(left.join(right, left_exprs, right_exprs, args)))
+}
+
+// ===== Phase A9: expr cast =====
+//
+// Takes a CompatDType *by value* (same struct used on the output side
+// of `series_dtype`).  Unsupported tags (List/Array/Struct/Decimal/...)
+// return null so the Racket side can raise rather than panic.
+
+#[no_mangle]
+pub extern "C" fn expr_cast(e: *mut Expr, target: CompatDType) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let dt = match polars_dtype_from_compat(&target) {
+        Some(d) => d,
+        None => return ptr::null_mut(),
+    };
+    let e_ref = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(e_ref.cast(dt)))
 }
 
 #[cfg(test)]

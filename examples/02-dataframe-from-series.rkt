@@ -6,8 +6,7 @@
 ;;   racket examples/02-dataframe-from-series.rkt
 
 (require gregor
-         polars/private/foreign
-         polars/private/series)
+         polars)
 
 (define users
   (series-new-str "user" '("alice" "bob" "carol" "dora")))

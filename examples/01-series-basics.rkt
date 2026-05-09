@@ -6,8 +6,7 @@
 ;;   racket examples/01-series-basics.rkt
 
 (require gregor
-         polars/private/foreign
-         polars/private/series)
+         polars)
 
 (define (describe-series s)
   (printf "name=~s len=~a dtype=~a nulls=~a\n"

@@ -19,3 +19,9 @@ planet-cache/
 
 # User-specific files
 .racket/
+
+# Local FFI scratch artifacts
+/example.c
+/libexample.dylib
+/use-example.rkt
+/use-ffi.rkt

@@ -6,7 +6,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/05-filtering.rkt
 
-(require polars/private/foreign)
+(require polars)
 
 (define df
   (dataframe-new

@@ -12,8 +12,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/12-lazy-group-by.rkt
 
-(require polars/private/foreign
-         polars/private/expr)
+(require polars)
 
 (define df
   (dataframe-new

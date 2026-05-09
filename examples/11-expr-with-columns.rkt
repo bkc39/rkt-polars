@@ -7,8 +7,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/11-expr-with-columns.rkt
 
-(require polars/private/foreign
-         polars/private/expr)
+(require polars)
 
 (define df
   (dataframe-new

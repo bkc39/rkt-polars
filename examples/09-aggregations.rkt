@@ -6,7 +6,7 @@
 ;;   racket examples/09-aggregations.rkt
 
 (require racket/file
-         polars/private/foreign)
+         polars)
 
 (define df
   (dataframe-new

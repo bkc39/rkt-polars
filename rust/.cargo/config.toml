@@ -1,0 +1,13 @@
+# Make the cdylib relocatable on macOS by setting its LC_ID_DYLIB to a
+# leaf @rpath name instead of the absolute build-tree path that cargo
+# would otherwise bake in.  Without this, copying the dylib out of
+# `target/release/` and dlopen'ing it from `polars/native-libs/` segfaults
+# at load because dyld tries to resolve the original build path as a
+# dependency.  Nix builds get this fixup for free via fixupPhase; plain
+# `cargo build` outside Nix did not, until we baked it in here.
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-args=-Wl,-install_name,@rpath/libcompat.dylib"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-args=-Wl,-install_name,@rpath/libcompat.dylib"]

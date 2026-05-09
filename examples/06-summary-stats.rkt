@@ -6,7 +6,7 @@
 ;;   racket examples/06-summary-stats.rkt
 
 (require racket/file
-         polars/private/foreign)
+         polars)
 
 (define df
   (dataframe-new

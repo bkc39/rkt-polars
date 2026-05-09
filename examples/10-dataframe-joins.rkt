@@ -5,7 +5,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/10-dataframe-joins.rkt
 
-(require polars/private/foreign)
+(require polars)
 
 (define users
   (dataframe-new

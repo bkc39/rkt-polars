@@ -6,7 +6,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/08-dataframe-shaping.rkt
 
-(require polars/private/foreign)
+(require polars)
 
 (define df
   (dataframe-new
