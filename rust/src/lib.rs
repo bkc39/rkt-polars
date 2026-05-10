@@ -872,6 +872,8 @@ pub enum CompatJoinKind {
     Left = 2,
     Outer = 3,
     Cross = 4,
+    Semi = 5,
+    Anti = 6,
 }
 
 #[no_mangle]
@@ -897,16 +899,29 @@ pub extern "C" fn dataframe_join(
         };
     }
     let join_type = match how {
-        x if x == CompatJoinKind::Inner as i32 => polars::prelude::JoinType::Inner,
-        x if x == CompatJoinKind::Left as i32 => polars::prelude::JoinType::Left,
-        x if x == CompatJoinKind::Outer as i32 => polars::prelude::JoinType::Full,
+        x if x == CompatJoinKind::Inner as i32 => {
+            polars::prelude::JoinType::Inner
+        }
+        x if x == CompatJoinKind::Left as i32 => {
+            polars::prelude::JoinType::Left
+        }
+        x if x == CompatJoinKind::Outer as i32 => {
+            polars::prelude::JoinType::Full
+        }
+        x if x == CompatJoinKind::Semi as i32 => {
+            polars::prelude::JoinType::Semi
+        }
+        x if x == CompatJoinKind::Anti as i32 => {
+            polars::prelude::JoinType::Anti
+        }
         _ => return ptr::null_mut(),
     };
     let left_on = match unsafe { collect_c_strings(left_on_ptrs, n_left_on) } {
         Some(v) => v,
         None => return ptr::null_mut(),
     };
-    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) } {
+    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) }
+    {
         Some(v) => v,
         None => return ptr::null_mut(),
     };
@@ -915,6 +930,99 @@ pub extern "C" fn dataframe_join(
     }
     let args = polars::prelude::JoinArgs::new(join_type);
     match left.join(right, &left_on, &right_on, args) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatAsofStrategy {
+    Backward = 1,
+    Forward = 2,
+    Nearest = 3,
+}
+
+fn compat_asof_strategy(code: i32) -> Option<polars::prelude::AsofStrategy> {
+    match code {
+        x if x == CompatAsofStrategy::Backward as i32 => {
+            Some(polars::prelude::AsofStrategy::Backward)
+        }
+        x if x == CompatAsofStrategy::Forward as i32 => {
+            Some(polars::prelude::AsofStrategy::Forward)
+        }
+        x if x == CompatAsofStrategy::Nearest as i32 => {
+            Some(polars::prelude::AsofStrategy::Nearest)
+        }
+        _ => None,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_join_asof(
+    left_ptr: *mut DataFrame,
+    right_ptr: *mut DataFrame,
+    left_on: *const c_char,
+    right_on: *const c_char,
+    strategy: i32,
+) -> *mut DataFrame {
+    if left_ptr.is_null()
+        || right_ptr.is_null()
+        || left_on.is_null()
+        || right_on.is_null()
+    {
+        return ptr::null_mut();
+    }
+    let left_on_str = match unsafe { CStr::from_ptr(left_on).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let right_on_str = match unsafe { CStr::from_ptr(right_on).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let strategy = match compat_asof_strategy(strategy) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let left = unsafe { &*left_ptr };
+    let right = unsafe { &*right_ptr };
+    let left_key = match left.column(left_on_str) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let right_key = match right.column(right_on_str) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match left._join_asof(
+        right, left_key, right_key, strategy, None, None, None, true,
+    ) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_hstack(
+    df_ptr: *mut DataFrame,
+    series_ptrs: *const *const Series,
+    length: usize,
+) -> *mut DataFrame {
+    if df_ptr.is_null() || (series_ptrs.is_null() && length != 0) {
+        return ptr::null_mut();
+    }
+    let columns: Vec<Series> = if length == 0 {
+        Vec::new()
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(series_ptrs, length) };
+        if slice.iter().any(|p| p.is_null()) {
+            return ptr::null_mut();
+        }
+        slice.iter().map(|&p| unsafe { (&*p).clone() }).collect()
+    };
+    let df = unsafe { &*df_ptr };
+    match df.hstack(&columns) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -931,6 +1039,105 @@ pub extern "C" fn dataframe_vstack(
     let a = unsafe { &*a_ptr };
     let b = unsafe { &*b_ptr };
     match a.vstack(b) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatPivotAgg {
+    None = 0,
+    First = 1,
+    Sum = 2,
+    Min = 3,
+    Max = 4,
+    Mean = 5,
+    Count = 6,
+}
+
+fn compat_pivot_agg(code: i32) -> Option<Option<Expr>> {
+    match code {
+        x if x == CompatPivotAgg::None as i32 => Some(None),
+        x if x == CompatPivotAgg::First as i32 => Some(Some(first())),
+        x if x == CompatPivotAgg::Sum as i32 => Some(Some(col("").sum())),
+        x if x == CompatPivotAgg::Min as i32 => Some(Some(col("").min())),
+        x if x == CompatPivotAgg::Max as i32 => Some(Some(col("").max())),
+        x if x == CompatPivotAgg::Mean as i32 => Some(Some(col("").mean())),
+        x if x == CompatPivotAgg::Count as i32 => Some(Some(col("").count())),
+        _ => None,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_pivot(
+    df_ptr: *mut DataFrame,
+    on_ptrs: *const *const c_char,
+    n_on: usize,
+    index_ptrs: *const *const c_char,
+    n_index: usize,
+    values_ptrs: *const *const c_char,
+    n_values: usize,
+    agg: i32,
+) -> *mut DataFrame {
+    if df_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let on = match unsafe { collect_c_strings(on_ptrs, n_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    if on.is_empty() {
+        return ptr::null_mut();
+    }
+    let index = match unsafe { collect_c_strings(index_ptrs, n_index) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let values = match unsafe { collect_c_strings(values_ptrs, n_values) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let agg_expr = match compat_pivot_agg(agg) {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let df = unsafe { &*df_ptr };
+    match polars::lazy::frame::pivot::pivot_stable(
+        df,
+        on,
+        Some(index),
+        Some(values),
+        true,
+        agg_expr,
+        None,
+    ) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_unpivot(
+    df_ptr: *mut DataFrame,
+    on_ptrs: *const *const c_char,
+    n_on: usize,
+    index_ptrs: *const *const c_char,
+    n_index: usize,
+) -> *mut DataFrame {
+    if df_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let on = match unsafe { collect_c_strings(on_ptrs, n_on) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let index = match unsafe { collect_c_strings(index_ptrs, n_index) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let df = unsafe { &*df_ptr };
+    match df.unpivot(on, index) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -981,6 +1188,102 @@ pub extern "C" fn dataframe_read_csv(path: *const c_char) -> *mut DataFrame {
     match polars::prelude::CsvReadOptions::default()
         .with_has_header(true)
         .into_reader_with_file_handle(file)
+        .finish()
+    {
+        Ok(df) => Box::into_raw(Box::new(df)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_write_parquet(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+) -> i32 {
+    if df_ptr.is_null() || path.is_null() {
+        return 1;
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    let mut file = match std::fs::File::create(path_str) {
+        Ok(f) => f,
+        Err(_) => return 3,
+    };
+    let df = unsafe { &mut *df_ptr };
+    match polars::prelude::ParquetWriter::new(&mut file).finish(df) {
+        Ok(_) => 0,
+        Err(_) => 4,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_read_parquet(
+    path: *const c_char,
+) -> *mut DataFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let file = match std::fs::File::open(path_str) {
+        Ok(f) => f,
+        Err(_) => return ptr::null_mut(),
+    };
+    match polars::prelude::ParquetReader::new(file).finish() {
+        Ok(df) => Box::into_raw(Box::new(df)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_write_json_lines(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+) -> i32 {
+    if df_ptr.is_null() || path.is_null() {
+        return 1;
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return 2,
+    };
+    let mut file = match std::fs::File::create(path_str) {
+        Ok(f) => f,
+        Err(_) => return 3,
+    };
+    let df = unsafe { &mut *df_ptr };
+    use polars::prelude::SerWriter;
+    match polars::prelude::JsonWriter::new(&mut file)
+        .with_json_format(polars::prelude::JsonFormat::JsonLines)
+        .finish(df)
+    {
+        Ok(_) => 0,
+        Err(_) => 4,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_read_json_lines(
+    path: *const c_char,
+) -> *mut DataFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let file = match std::fs::File::open(path_str) {
+        Ok(f) => f,
+        Err(_) => return ptr::null_mut(),
+    };
+    use polars::prelude::SerReader;
+    match polars::prelude::JsonReader::new(file)
+        .with_json_format(polars::prelude::JsonFormat::JsonLines)
         .finish()
     {
         Ok(df) => Box::into_raw(Box::new(df)),
@@ -1780,6 +2083,185 @@ pub extern "C" fn series_ref_ymdhms(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn series_cast(
+    s_ptr: *mut Series,
+    target: CompatDType,
+) -> *mut Series {
+    if s_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let dt = match polars_dtype_from_compat(&target) {
+        Some(d) => d,
+        None => return ptr::null_mut(),
+    };
+    let s = unsafe { &*s_ptr };
+    match s.cast(&dt) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_std(
+    s_ptr: *mut Series,
+    ddof: u8,
+) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    CompatOptF64::from_option(s.std(ddof))
+}
+
+#[no_mangle]
+pub extern "C" fn series_var(
+    s_ptr: *mut Series,
+    ddof: u8,
+) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    CompatOptF64::from_option(s.var(ddof))
+}
+
+fn series_cmp_result<F>(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+    f: F,
+) -> *mut Series
+where
+    F: FnOnce(&Series, &Series) -> PolarsResult<BooleanChunked>,
+{
+    if left_ptr.is_null() || right_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { &*left_ptr };
+    let right = unsafe { &*right_ptr };
+    match f(left, right) {
+        Ok(out) => Box::into_raw(Box::new(out.into_series())),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_eq(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.equal(right))
+}
+
+#[no_mangle]
+pub extern "C" fn series_ne(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.not_equal(right))
+}
+
+#[no_mangle]
+pub extern "C" fn series_gt(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.gt(right))
+}
+
+#[no_mangle]
+pub extern "C" fn series_ge(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.gt_eq(right))
+}
+
+#[no_mangle]
+pub extern "C" fn series_lt(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.lt(right))
+}
+
+#[no_mangle]
+pub extern "C" fn series_le(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_cmp_result(left_ptr, right_ptr, |left, right| left.lt_eq(right))
+}
+
+fn series_arith_result<F>(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+    f: F,
+) -> *mut Series
+where
+    F: FnOnce(&Series, &Series) -> PolarsResult<Series>,
+{
+    if left_ptr.is_null() || right_ptr.is_null() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { &*left_ptr };
+    let right = unsafe { &*right_ptr };
+    match f(left, right) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_add(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_arith_result(left_ptr, right_ptr, |left, right| {
+        std::ops::Add::add(left, right)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_sub(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_arith_result(left_ptr, right_ptr, |left, right| {
+        std::ops::Sub::sub(left, right)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_mul(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_arith_result(left_ptr, right_ptr, |left, right| {
+        std::ops::Mul::mul(left, right)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_div(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_arith_result(left_ptr, right_ptr, |left, right| {
+        std::ops::Div::div(left, right)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_mod(
+    left_ptr: *mut Series,
+    right_ptr: *mut Series,
+) -> *mut Series {
+    series_arith_result(left_ptr, right_ptr, |left, right| {
+        std::ops::Rem::rem(left, right)
+    })
+}
+
 // ===== Track A: Expr / Lazy DSL =====
 
 #[no_mangle]
@@ -1862,6 +2344,88 @@ pub extern "C" fn dataframe_lazy(df: *mut DataFrame) -> *mut LazyFrame {
     Box::into_raw(Box::new(cloned.lazy()))
 }
 
+#[no_mangle]
+pub extern "C" fn lazyframe_scan_csv(path: *const c_char) -> *mut LazyFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match polars::prelude::LazyCsvReader::new(path_str).finish() {
+        Ok(lf) => Box::into_raw(Box::new(lf)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_scan_csv_options(
+    path: *const c_char,
+    has_header: u8,
+    separator: u8,
+    skip_rows: usize,
+    has_n_rows: u8,
+    n_rows: usize,
+) -> *mut LazyFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let mut reader = polars::prelude::LazyCsvReader::new(path_str)
+        .with_has_header(has_header != 0)
+        .with_separator(separator)
+        .with_skip_rows(skip_rows);
+    if has_n_rows != 0 {
+        reader = reader.with_n_rows(Some(n_rows));
+    }
+    match reader.finish() {
+        Ok(lf) => Box::into_raw(Box::new(lf)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_scan_parquet(path: *const c_char) -> *mut LazyFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    match LazyFrame::scan_parquet(path_str, Default::default()) {
+        Ok(lf) => Box::into_raw(Box::new(lf)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn lazyframe_scan_parquet_options(
+    path: *const c_char,
+    has_n_rows: u8,
+    n_rows: usize,
+) -> *mut LazyFrame {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    let path_str = match unsafe { CStr::from_ptr(path).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let mut args = ScanArgsParquet::default();
+    if has_n_rows != 0 {
+        args.n_rows = Some(n_rows);
+    }
+    match LazyFrame::scan_parquet(path_str, args) {
+        Ok(lf) => Box::into_raw(Box::new(lf)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 unsafe fn collect_exprs(ptrs: *const *const Expr, n: usize) -> Option<Vec<Expr>> {
     if n == 0 {
         return Some(Vec::new());
@@ -1940,6 +2504,256 @@ expr_binop!(expr_ne, |a, b| a.neq(b));
 expr_binop!(expr_and, |a, b| a.and(b));
 expr_binop!(expr_or, |a, b| a.or(b));
 expr_binop!(expr_xor, |a, b| a.xor(b));
+
+#[no_mangle]
+pub extern "C" fn expr_str_contains(
+    e: *const Expr,
+    pat: *const Expr,
+    strict: u8,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    Box::into_raw(Box::new(ee.str().contains(pp, strict != 0)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_starts_with(
+    e: *const Expr,
+    prefix: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || prefix.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*prefix).clone() };
+    Box::into_raw(Box::new(ee.str().starts_with(pp)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_ends_with(
+    e: *const Expr,
+    suffix: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || suffix.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let ss = unsafe { (*suffix).clone() };
+    Box::into_raw(Box::new(ee.str().ends_with(ss)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_to_lowercase(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().to_lowercase()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_to_uppercase(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().to_uppercase()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_replace(
+    e: *const Expr,
+    pat: *const Expr,
+    value: *const Expr,
+    literal: u8,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() || value.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    let vv = unsafe { (*value).clone() };
+    Box::into_raw(Box::new(ee.str().replace(pp, vv, literal != 0)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_replace_all(
+    e: *const Expr,
+    pat: *const Expr,
+    value: *const Expr,
+    literal: u8,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() || value.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    let vv = unsafe { (*value).clone() };
+    Box::into_raw(Box::new(ee.str().replace_all(pp, vv, literal != 0)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_extract(
+    e: *const Expr,
+    pat: *const Expr,
+    group_index: usize,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    Box::into_raw(Box::new(ee.str().extract(pp, group_index)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars(
+    e: *const Expr,
+    chars: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || chars.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let cc = unsafe { (*chars).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars(cc)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars_start(
+    e: *const Expr,
+    chars: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || chars.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let cc = unsafe { (*chars).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars_start(cc)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars_end(
+    e: *const Expr,
+    chars: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || chars.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let cc = unsafe { (*chars).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars_end(cc)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars_whitespace(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars(Expr::default())))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars_start_whitespace(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars_start(Expr::default())))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_chars_end_whitespace(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().strip_chars_end(Expr::default())))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_prefix(
+    e: *const Expr,
+    prefix: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || prefix.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*prefix).clone() };
+    Box::into_raw(Box::new(ee.str().strip_prefix(pp)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_strip_suffix(
+    e: *const Expr,
+    suffix: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || suffix.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let ss = unsafe { (*suffix).clone() };
+    Box::into_raw(Box::new(ee.str().strip_suffix(ss)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_year(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().year()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_month(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().month()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_day(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().day()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_hour(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().hour()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_minute(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().minute()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_second(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().second()))
+}
 
 macro_rules! expr_unop {
     ($name:ident, $build:expr) => {
@@ -2188,16 +3002,29 @@ pub extern "C" fn lazyframe_join(
         return Box::into_raw(Box::new(left.cross_join(right, None)));
     }
     let join_type = match how {
-        x if x == CompatJoinKind::Inner as i32 => polars::prelude::JoinType::Inner,
-        x if x == CompatJoinKind::Left as i32 => polars::prelude::JoinType::Left,
-        x if x == CompatJoinKind::Outer as i32 => polars::prelude::JoinType::Full,
+        x if x == CompatJoinKind::Inner as i32 => {
+            polars::prelude::JoinType::Inner
+        }
+        x if x == CompatJoinKind::Left as i32 => {
+            polars::prelude::JoinType::Left
+        }
+        x if x == CompatJoinKind::Outer as i32 => {
+            polars::prelude::JoinType::Full
+        }
+        x if x == CompatJoinKind::Semi as i32 => {
+            polars::prelude::JoinType::Semi
+        }
+        x if x == CompatJoinKind::Anti as i32 => {
+            polars::prelude::JoinType::Anti
+        }
         _ => return ptr::null_mut(),
     };
     let left_on = match unsafe { collect_c_strings(left_on_ptrs, n_left_on) } {
         Some(v) => v,
         None => return ptr::null_mut(),
     };
-    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) } {
+    let right_on = match unsafe { collect_c_strings(right_on_ptrs, n_right_on) }
+    {
         Some(v) => v,
         None => return ptr::null_mut(),
     };

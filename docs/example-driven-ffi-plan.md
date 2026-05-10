@@ -15,8 +15,11 @@ Series surface (Racket-side names):
 - Constructors: `series-new-i32` / `-i64` / `-u32` / `-u64` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`), all accepting `polars-null`
 - Value access: `series-ref`, returning typed Racket values or `polars-null`
 - Comparisons (scalar RHS): `series-{lt,le,gt,ge,eq,ne}-{i32,f64}`, `series-{eq,ne}-str`
+- Comparisons (Series RHS): `series-{lt,le,gt,ge,eq,ne}`
+- Arithmetic (Series RHS): `series-{add,sub,mul,div,mod}`
 - Boolean ops: `series-and`, `series-or`, `series-xor`, `series-not`, `series-is-null`, `series-is-not-null`
-- Reductions: `series-{sum,min,max,mean}-i32`, `series-{sum,min,max,mean}-f64`, `series-n-unique`
+- Reductions: `series-{sum,min,max,mean}-i32`, `series-{sum,min,max,mean}-f64`, `series-std`, `series-var`, `series-n-unique`
+- Type conversion: `series-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`)
 - Reshaping: `series-head`, `series-tail`, `series-slice`, `series-reverse`, `series-drop-nulls`, `series-unique`, `series-sort` (with `#:descending`)
 
 DataFrame surface (Racket-side names):
@@ -29,8 +32,9 @@ DataFrame surface (Racket-side names):
 - Eager ops: `dataframe-filter`, `dataframe-sort` (with `#:descending`)
 - Group-by: `dataframe-group-by-{sum,mean,min,max,count}` (with `#:by` / `#:agg`)
 - Dedup / null cleanup: `dataframe-unique`, `dataframe-drop-nulls`
-- Joins / stack: `dataframe-join` (`#:how 'inner|'left|'outer|'cross`, `#:on` or `#:left-on` + `#:right-on`), `dataframe-vstack`
-- IO: `dataframe-write-csv`, `dataframe-read-csv`
+- Joins / stack: `dataframe-join` (`#:how 'inner|'left|'outer|'cross|'semi|'anti`, `#:on` or `#:left-on` + `#:right-on`), `dataframe-join-asof`, `dataframe-vstack`, `dataframe-hstack`
+- Reshaping: `dataframe-pivot`, `dataframe-unpivot`
+- IO: `dataframe-write-csv`, `dataframe-read-csv`, `dataframe-write-parquet`, `dataframe-read-parquet`, `dataframe-write-json-lines`, `dataframe-read-json-lines`
 - Display: `dataframe->string`, `display-dataframe`
 
 The public low-level API is exported from `(require polars)`. The
@@ -40,17 +44,40 @@ That low-level API should stay stable, explicit, function-first, and
 frame-first: `DataFrame`, `LazyFrame`, or `Series` arguments remain the
 first argument so code works naturally with Racket threading macros.
 
-Expr / LazyFrame surface (Track A, implemented in `polars/private/expr.rkt`):
+## Batch Coverage Index
+
+| Batch | Racket module(s) | Rust example | Racket example | Racket tests |
+| --- | --- | --- | --- | --- |
+| Series batch 2 | `polars/private/foreign.rkt` | n/a | `examples/18-series-batch2.rkt` | `polars/private/foreign.rkt` |
+| DataFrame batch 1 | `polars/private/foreign.rkt` | `rust/examples/05_dataframe_batch1.rs` | `examples/19-dataframe-batch1.rkt` | `polars/private/foreign.rkt` |
+| DataFrame batch 2 | `polars/private/foreign.rkt` | `rust/examples/06_dataframe_batch2.rs` | `examples/20-dataframe-batch2.rkt` | `polars/private/foreign.rkt` |
+| Lazy IO batch 1 | `polars/private/expr.rkt` | `rust/examples/07_lazy_io_batch1.rs` | `examples/21-lazy-io-batch1.rkt` | `polars/private/expr.rkt` |
+| Lazy scan options batch 1 | `polars/private/expr.rkt` | `rust/examples/11_lazy_scan_options_batch1.rs` | `examples/25-lazy-scan-options-batch1.rkt` | `polars/private/expr.rkt` |
+| Expr string batch 1 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/08_expr_string_batch1.rs` | `examples/22-expr-string-batch1.rkt` | `polars/private/expr.rkt` |
+| Expr datetime batch 1 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/09_expr_datetime_batch1.rs` | `examples/23-expr-datetime-batch1.rkt` | `polars/private/expr.rkt` |
+| Expr string batch 2 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/10_expr_string_batch2.rs` | `examples/24-expr-string-batch2.rkt` | `polars/private/expr.rkt` |
+| Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
+
+Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Leaves: `col`, `lit` (dispatches on Racket type), `expr-lit-{i32,i64,f64,bool,str}`, `expr-alias`
 - Arithmetic: `expr-{add,sub,mul,div,mod}` (auto-lift Racket scalars via `->expr`)
 - Comparison: `expr-{gt,lt,ge,le,eq,ne}`
 - Boolean: `expr-{and,or,xor,not}`
 - Unary: `expr-{neg,is-null,is-not-null}`
+- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`
+- Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
 - Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`, `expr-{std,var}` (with `#:ddof`, default 1)
 - Window / sort: `expr-over` (string keys auto-lifted via `->key-expr`), `expr-sort` (with `#:descending`)
 - LazyFrame plumbing: `dataframe-lazy`, `lazyframe-with-columns`, `lazyframe-select`, `lazyframe-filter`, `lazyframe-group-by-agg`, `lazyframe-sort` (with `#:descending`), `lazyframe-unique`, `lazyframe-drop-nulls`, `lazyframe-{head,tail,slice}`, `lazyframe-join` (`#:how`, `#:on` or `#:left-on`/`#:right-on`), `lazyframe-collect`
+- Lazy IO: `lazyframe-scan-csv` (with `#:has-header`, `#:separator`, `#:skip-rows`, `#:n-rows`), `lazyframe-scan-parquet` (with `#:n-rows`)
 - Eager wrappers: `dataframe-with-columns`, `dataframe-select-exprs`, `dataframe-filter-expr`, `dataframe-group-by-agg`, `dataframe-sort-exprs`
+
+The namespace-specific Expr bindings are split into leaf modules:
+- `polars/private/expr-core.rkt`: shared Expr/LazyFrame pointer types,
+  `define-compat`, scalar literals, `col`, `lit`, and `->expr`
+- `polars/private/expr-str.rkt`: `expr-str-*`
+- `polars/private/expr-dt.rkt`: `expr-dt-*`
 
 Group-by remains exposed as fused operations such as
 `lazyframe-group-by-agg` and `dataframe-group-by-agg`. Do not expose
@@ -70,7 +97,11 @@ lazy plan, plus `#:left-on`/`#:right-on` and `'cross`),
 `examples/16-expr-cast.rkt` (numeric/string casts inside
 with_columns, plus i64 → datetime),
 `examples/17-expr-std-var.rkt` (sample vs population std/var via
-`#:ddof`, both at top-level and inside group_by_agg).
+`#:ddof`, both at top-level and inside group_by_agg),
+`examples/22-expr-string-batch1.rkt` (first string namespace batch),
+`examples/23-expr-datetime-batch1.rkt` (first datetime namespace
+batch), and `examples/24-expr-string-batch2.rkt` (string cleanup,
+replacement, and regex extraction).
 
 Rust mirror status: `rust/examples/01_*.rs` through
 `rust/examples/04_*.rs` are the Rust proof examples. The Racket
@@ -79,9 +110,9 @@ their Polars behavior is covered by the Rust library tests and the
 Racket examples/tests rather than one mirror Rust file per wrapper.
 
 Notable remaining gaps:
-- Series-side: series-series comparisons, element-wise arithmetic, type casting, additional reductions (std/var)
-- DataFrame-side: hstack, additional IO formats (JSON, Parquet), pivot/unpivot, asof/semi/anti joins
-- Expr / lazy: str.* and dt.* namespaces, scan_csv / scan_parquet
+- Series-side: scalar arithmetic, typed reductions for additional integer/float widths
+- DataFrame-side: richer asof joins with by-groups/tolerance
+- Expr / lazy: richer dt.* and str.* operations, schema/projection scan options
 - Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Build / Iteration Loop
@@ -108,8 +139,8 @@ polars/native-libs/libcompat.dylib` should print `@rpath/libcompat.dylib`.
 
 ## Continuing in a new session
 
-Phase A1-A10 of the Expr / LazyFrame DSL are shipped; 237 tests passed
-at the time this note was written. The next work should harden the
+Phase A1-A10 of the Expr / LazyFrame DSL are shipped; 346 tests passed
+at the time String batch 2 shipped. The next work should harden the
 public low-level API before adding more Expr namespaces or any
 high-level Racket DSL.
 
@@ -118,27 +149,75 @@ Series batch 1 is shipped:
 - null-aware constructors
 - `series-ref` as the standard value assertion helper
 
-Near-term Series batch 2 targets:
+Series batch 2 is shipped:
 - `series-cast`
 - `series-std` / `series-var`
 - series-series comparisons
 - element-wise arithmetic
 
-Near-term DataFrame targets:
+DataFrame batch 1 is shipped:
 - `dataframe-hstack`
 - Parquet roundtrip
 - JSON Lines roundtrip
 - semi / anti joins
-- asof join
-- pivot / unpivot
+
+DataFrame batch 2 is shipped:
+- `dataframe-join-asof`
+- `dataframe-pivot`
+- `dataframe-unpivot`
+
+Lazy IO batch 1 is shipped:
+- `lazyframe-scan-csv`
+- `lazyframe-scan-parquet`
+
+Lazy scan options batch 1 is shipped:
+- `lazyframe-scan-csv` accepts `#:has-header`, `#:separator`, `#:skip-rows`, `#:n-rows`
+- `lazyframe-scan-parquet` accepts `#:n-rows`
+
+Expr string batch 1 is shipped:
+- `expr-str-contains`
+- `expr-str-starts-with`
+- `expr-str-ends-with`
+- `expr-str-to-lowercase`
+- `expr-str-to-uppercase`
+
+Expr string batch 2 is shipped:
+- `expr-str-replace`
+- `expr-str-replace-all`
+- `expr-str-extract`
+- `expr-str-strip-chars`
+- `expr-str-strip-chars-start`
+- `expr-str-strip-chars-end`
+- `expr-str-strip-prefix`
+- `expr-str-strip-suffix`
+
+Expr datetime batch 1 is shipped:
+- `expr-dt-year`
+- `expr-dt-month`
+- `expr-dt-day`
+- `expr-dt-hour`
+- `expr-dt-minute`
+- `expr-dt-second`
+
+Stabilization batch 1 is shipped:
+- `polars/private/expr-core.rkt` owns shared Expr/LazyFrame FFI setup
+- `polars/private/expr-str.rkt` owns string namespace wrappers
+- `polars/private/expr-dt.rkt` owns datetime namespace wrappers
+- `polars/private/expr.rkt` remains the public aggregation point for `(require polars)`
+
+Candidate Series follow-up work:
+- scalar arithmetic wrappers
+- typed reductions for additional integer/float widths
+- richer `series-ref` support for date, duration, time, and nested dtypes
+
+Near-term DataFrame targets:
+- asof join `#:by` groups and tolerance
 
 Expr / LazyFrame work after the low-level surface has public examples
 and tests:
-- `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`,
-  `expr-str-to-lowercase`
-- `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-truncate`
-- `lazyframe-scan-csv`
-- `lazyframe-scan-parquet`
+- more `expr-str-*` operations: lengths, slicing, find/count, split
+- more `expr-dt-*` operations: week, weekday, ordinal day, truncate
+- schema/projection scan options for CSV / Parquet
 
 Keep any high-level Racket DSL in a later `polars/dsl` track. Do not
 make `(require polars)` grow a new high-level query language until core
@@ -166,9 +245,9 @@ default `#:ddof` to 1 (sample), matching polars and pandas. Use the
 same macro shape if any future Expr unop needs a small fixed-size
 extra arg.
 
-When `str.*` / `dt.*` work resumes, prefer new modules such as
+When `str.*` / `dt.*` work resumes, extend
 `polars/private/expr-str.rkt` and `polars/private/expr-dt.rkt` instead
-of continuing to grow `expr.rkt` indefinitely.
+of growing `expr.rkt`.
 
 ## Development Rule
 

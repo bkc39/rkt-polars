@@ -2,18 +2,18 @@
 
 ;; Expr / LazyFrame DSL — Phase A1.
 ;;
-;; Sits on top of polars/private/foreign for the FFI plumbing (define-compat,
-;; the libcompat handle, _DataFrame-ptr).  Exposes its own Expr-ptr and
-;; LazyFrame-ptr opaque cpointer types.
+;; Sits on top of polars/private/foreign for DataFrame/Series interop and
+;; polars/private/expr-core for Expr/LazyFrame FFI plumbing.
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         ffi/unsafe/define
-         ffi/unsafe/define/conventions
-         racket/runtime-path
+         polars/private/expr-core
+         polars/private/expr-dt
+         polars/private/expr-str
          (only-in polars/private/foreign
                   _DataFrame-ptr
                   DataFrame-ptr?
+                  dataframe-drop
                   _CompatDType make-CompatDType
                   compat-dtype-tag/boolean
                   compat-dtype-tag/uint8 compat-dtype-tag/uint16
@@ -37,13 +37,17 @@
                     series-new-i64
                     series-new-f64
                     series-new-str
+                    series-new-ymdhms
+                    make-YMDHMS
                     dataframe-new
+                    dataframe-write-parquet
                     dataframe-height
                     dataframe-width
                     dataframe-column
                     dataframe-column-names
                     dataframe-column-name
                     series-len
+                    series-ref
                     series-dtype
                     series-sum-i32
                     series-sum-f64)))
@@ -57,6 +61,13 @@
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
          expr-and expr-or expr-xor
+         expr-str-contains expr-str-starts-with expr-str-ends-with
+         expr-str-to-lowercase expr-str-to-uppercase
+         expr-str-replace expr-str-replace-all expr-str-extract
+         expr-str-strip-chars expr-str-strip-chars-start expr-str-strip-chars-end
+         expr-str-strip-prefix expr-str-strip-suffix
+         expr-dt-year expr-dt-month expr-dt-day
+         expr-dt-hour expr-dt-minute expr-dt-second
          expr-not expr-neg expr-is-null expr-is-not-null
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
@@ -69,79 +80,93 @@
          lazyframe-sort lazyframe-unique lazyframe-drop-nulls
          lazyframe-head lazyframe-tail lazyframe-slice
          lazyframe-join
+         lazyframe-scan-csv lazyframe-scan-parquet
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
          dataframe-sort-exprs)
 
-(define-runtime-path expr-native-libs-dir "../native-libs")
-
-(define-ffi-definer define-compat
-  (ffi-lib (build-path expr-native-libs-dir "libcompat"))
-  #:make-c-id convention:hyphen->underscore)
-
-(define-cpointer-type _Expr-ptr)
-(define-cpointer-type _LazyFrame-ptr)
-
-(define-compat expr-drop
-  (_fun _Expr-ptr -> _void)
-  #:wrap (deallocator))
-
-(define-compat lazyframe-drop
-  (_fun _LazyFrame-ptr -> _void)
-  #:wrap (deallocator))
-
-(define-compat expr-col
-  (_fun _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-(define-compat expr-lit-i32
-  (_fun _int32 -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-(define-compat expr-lit-i64
-  (_fun _int64 -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-(define-compat expr-lit-f64
-  (_fun _double -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-(define-compat expr-lit-bool/raw
-  (_fun _uint8 -> _Expr-ptr)
-  #:c-id expr_lit_bool
-  #:wrap (allocator expr-drop))
-
-(define (expr-lit-bool b)
-  (expr-lit-bool/raw (if b 1 0)))
-
-(define-compat expr-lit-str
-  (_fun _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-(define-compat expr-alias
-  (_fun _Expr-ptr _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
-
-;; lit dispatches on Racket type.
-(define (lit v)
-  (cond
-    [(boolean? v) (expr-lit-bool v)]
-    [(exact-integer? v)
-     (if (and (>= v -2147483648) (<= v 2147483647))
-         (expr-lit-i32 v)
-         (expr-lit-i64 v))]
-    [(real? v) (expr-lit-f64 (exact->inexact v))]
-    [(string? v) (expr-lit-str v)]
-    [else (error 'lit "no Expr literal for ~v" v)]))
-
-;; col is a one-letter alias for expr-col, since column references are by far
-;; the most common Expr leaf.
-(define (col name) (expr-col name))
-
 (define-compat dataframe-lazy
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
+
+(define (path->string-or-string who p)
+  (cond
+    [(string? p) p]
+    [(path? p) (path->string p)]
+    [else (error who "expected path-string?, got ~v" p)]))
+
+(define (require-lazyframe-result who result)
+  (if result
+      (let ([lf (cast result _pointer _LazyFrame-ptr)])
+        (register-finalizer lf lazyframe-drop)
+        lf)
+      (error who "operation failed")))
+
+(define-compat lazyframe-scan-csv/raw
+  (_fun _string -> _pointer)
+  #:c-id lazyframe_scan_csv)
+
+(define-compat lazyframe-scan-csv/options/raw
+  (_fun _string _uint8 _uint8 _size _uint8 _size -> _pointer)
+  #:c-id lazyframe_scan_csv_options)
+
+(define (separator->byte who separator)
+  (cond
+    [(char? separator)
+     (define value (char->integer separator))
+     (unless (<= 0 value 255)
+       (error who "separator must fit in one byte, got ~v" separator))
+     value]
+    [(string? separator)
+     (unless (= (string-length separator) 1)
+       (error who "separator string must have length 1, got ~v" separator))
+     (separator->byte who (string-ref separator 0))]
+    [(and (exact-integer? separator) (<= 0 separator 255)) separator]
+    [else (error who "separator must be a byte, character, or one-character string, got ~v"
+                 separator)]))
+
+(define (check-nonnegative-option who name value)
+  (unless (exact-nonnegative-integer? value)
+    (error who "~a must be an exact nonnegative integer, got ~v" name value)))
+
+(define (lazyframe-scan-csv path
+                            #:has-header [has-header #t]
+                            #:separator [separator #\,]
+                            #:skip-rows [skip-rows 0]
+                            #:n-rows [n-rows #f])
+  (unless (boolean? has-header)
+    (error 'lazyframe-scan-csv "has-header must be a boolean, got ~v" has-header))
+  (check-nonnegative-option 'lazyframe-scan-csv "skip-rows" skip-rows)
+  (when n-rows
+    (check-nonnegative-option 'lazyframe-scan-csv "n-rows" n-rows))
+  (require-lazyframe-result
+   'lazyframe-scan-csv
+   (lazyframe-scan-csv/options/raw
+    (path->string-or-string 'lazyframe-scan-csv path)
+    (if has-header 1 0)
+    (separator->byte 'lazyframe-scan-csv separator)
+    skip-rows
+    (if n-rows 1 0)
+    (or n-rows 0))))
+
+(define-compat lazyframe-scan-parquet/raw
+  (_fun _string -> _pointer)
+  #:c-id lazyframe_scan_parquet)
+
+(define-compat lazyframe-scan-parquet/options/raw
+  (_fun _string _uint8 _size -> _pointer)
+  #:c-id lazyframe_scan_parquet_options)
+
+(define (lazyframe-scan-parquet path #:n-rows [n-rows #f])
+  (when n-rows
+    (check-nonnegative-option 'lazyframe-scan-parquet "n-rows" n-rows))
+  (require-lazyframe-result
+   'lazyframe-scan-parquet
+   (lazyframe-scan-parquet/options/raw
+    (path->string-or-string 'lazyframe-scan-parquet path)
+    (if n-rows 1 0)
+    (or n-rows 0))))
 
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
@@ -163,9 +188,6 @@
 ;; Each binary op has a /raw Expr-Expr binding plus a public wrapper
 ;; that auto-lifts non-Expr arguments via `lit`.  Hand-written rather
 ;; than macro-generated because define-compat needs a literal #:c-id.
-
-(define (->expr v)
-  (if (Expr-ptr? v) v (lit v)))
 
 (define-compat expr-add/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -583,6 +605,73 @@
   (define lf (dataframe-lazy df))
   (check-pred LazyFrame-ptr? lf)
 
+  (define tmp-scan-csv
+    (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))
+  (with-output-to-file tmp-scan-csv #:exists 'replace
+    (lambda ()
+      (displayln "group,value")
+      (displayln "a,10")
+      (displayln "a,25")
+      (displayln "b,7")
+      (displayln "b,30")))
+  (define csv-scan (lazyframe-scan-csv tmp-scan-csv))
+  (check-pred LazyFrame-ptr? csv-scan)
+  (define csv-scan-out
+    (lazyframe-collect
+     (lazyframe-sort
+      (lazyframe-group-by-agg
+       (lazyframe-filter csv-scan (expr-gt (col "value") 10))
+       '("group")
+       (list (expr-alias (expr-sum (expr-cast (col "value") 'int32)) "total")))
+      '("group"))))
+  (check-equal? (dataframe-height csv-scan-out) 2)
+  (check-equal? (series-sum-i32 (dataframe-column csv-scan-out "total")) 55)
+  (delete-file tmp-scan-csv)
+
+  (define tmp-scan-csv/options
+    (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan-options.csv"))
+  (with-output-to-file tmp-scan-csv/options #:exists 'replace
+    (lambda ()
+      (displayln "ignore;999")
+      (displayln "group;value")
+      (displayln "a;10")
+      (displayln "a;25")
+      (displayln "b;7")
+      (displayln "b;30")))
+  (define csv-scan-options
+    (lazyframe-scan-csv tmp-scan-csv/options
+                        #:has-header #t
+                        #:separator #\;
+                        #:skip-rows 1
+                        #:n-rows 3))
+  (define csv-scan-options-out
+    (lazyframe-collect
+     (lazyframe-filter csv-scan-options (expr-gt (col "value") 10))))
+  (check-equal? (dataframe-height csv-scan-options-out) 1)
+  (check-equal? (series-ref (dataframe-column csv-scan-options-out "value") 0) 25)
+  (delete-file tmp-scan-csv/options)
+
+  (define tmp-scan-parquet
+    (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.parquet"))
+  (dataframe-write-parquet df tmp-scan-parquet)
+  (define parquet-scan (lazyframe-scan-parquet tmp-scan-parquet))
+  (check-pred LazyFrame-ptr? parquet-scan)
+  (define parquet-scan-out
+    (lazyframe-collect
+     (lazyframe-select
+      (lazyframe-filter parquet-scan (expr-ge (col "x") 2))
+      (list (col "x")
+            (expr-alias (expr-mul (col "x") 10) "ten_x")))))
+  (check-equal? (dataframe-height parquet-scan-out) 3)
+  (check-equal? (series-sum-i32 (dataframe-column parquet-scan-out "ten_x")) 90)
+
+  (define parquet-scan-limited
+    (lazyframe-collect
+     (lazyframe-scan-parquet tmp-scan-parquet #:n-rows 2)))
+  (check-equal? (dataframe-height parquet-scan-limited) 2)
+  (check-equal? (series-sum-i32 (dataframe-column parquet-scan-limited "x")) 3)
+  (delete-file tmp-scan-parquet)
+
   ;; with-columns adding a literal column
   (define lf2
     (lazyframe-with-columns lf
@@ -605,6 +694,101 @@
 
   ;; col alias
   (check-pred Expr-ptr? (col "x"))
+
+  ;; --- Expr string namespace ---
+  (define str-df
+    (dataframe-new
+     (list (series-new-str "name" '("Alpha" "beta" "Gamma" "delta"))
+           (series-new-i32 "value" '(1 2 3 4)))))
+
+  (check-equal?
+   (dataframe-height
+    (lazyframe-collect
+     (lazyframe-filter (dataframe-lazy str-df)
+                       (expr-str-contains (col "name") "a"))))
+   4)
+
+  (check-equal?
+   (dataframe-height
+    (lazyframe-collect
+     (lazyframe-filter (dataframe-lazy str-df)
+                       (expr-str-starts-with (col "name") "A"))))
+   1)
+
+  (check-equal?
+   (dataframe-height
+    (lazyframe-collect
+     (lazyframe-filter (dataframe-lazy str-df)
+                       (expr-str-ends-with (col "name") "ta"))))
+   2)
+
+  (define str-case
+    (lazyframe-collect
+     (lazyframe-with-columns
+      (dataframe-lazy str-df)
+      (list (expr-alias (expr-str-to-lowercase (col "name")) "lower_name")
+            (expr-alias (expr-str-to-uppercase (col "name")) "upper_name")))))
+  (check-equal? (series-ref (dataframe-column str-case "lower_name") 0) "alpha")
+  (check-equal? (series-ref (dataframe-column str-case "upper_name") 1) "BETA")
+
+  (define str-clean-df
+    (dataframe-new
+     (list (series-new-str "text"
+                           '("  alpha  "
+                             "--beta--"
+                             "id=123"
+                             "report.txt"
+                             "banana")))))
+  (define str-clean
+    (lazyframe-collect
+     (lazyframe-with-columns
+      (dataframe-lazy str-clean-df)
+      (list (expr-alias (expr-str-strip-chars (col "text")) "trimmed")
+            (expr-alias (expr-str-strip-chars (col "text") "-") "stripped")
+            (expr-alias (expr-str-strip-chars-start (col "text") "-") "strip_start")
+            (expr-alias (expr-str-strip-chars-end (col "text") "-") "strip_end")
+            (expr-alias (expr-str-strip-prefix (col "text") "id=") "no_prefix")
+            (expr-alias (expr-str-strip-suffix (col "text") ".txt") "no_suffix")
+            (expr-alias (expr-str-replace (col "text") "\\d+" "#") "replace_digits")
+            (expr-alias (expr-str-replace-all (col "text") "a" "A" #:literal #t)
+                        "replace_all_a")
+            (expr-alias (expr-str-extract (col "text") "([0-9]+)") "digits")))))
+  (check-equal? (series-ref (dataframe-column str-clean "trimmed") 0) "alpha")
+  (check-equal? (series-ref (dataframe-column str-clean "stripped") 1) "beta")
+  (check-equal? (series-ref (dataframe-column str-clean "strip_start") 1) "beta--")
+  (check-equal? (series-ref (dataframe-column str-clean "strip_end") 1) "--beta")
+  (check-equal? (series-ref (dataframe-column str-clean "no_prefix") 2) "123")
+  (check-equal? (series-ref (dataframe-column str-clean "no_suffix") 3) "report")
+  (check-equal? (series-ref (dataframe-column str-clean "replace_digits") 2) "id=#")
+  (check-equal? (series-ref (dataframe-column str-clean "replace_all_a") 4) "bAnAnA")
+  (check-equal? (series-ref (dataframe-column str-clean "digits") 2) "123")
+
+  ;; --- Expr datetime namespace ---
+  (define dt-df
+    (dataframe-new
+     (list (series-new-ymdhms
+            "ts"
+            (list (make-YMDHMS 2024 1 2 3 4 5)
+                  (make-YMDHMS 2025 12 31 23 59 58)
+                  (make-YMDHMS 2026 5 9 12 30 45))))))
+
+  (define dt-parts
+    (lazyframe-collect
+     (lazyframe-with-columns
+      (dataframe-lazy dt-df)
+      (list (expr-alias (expr-dt-year (col "ts")) "year")
+            (expr-alias (expr-cast (expr-dt-month (col "ts")) 'int32) "month")
+            (expr-alias (expr-cast (expr-dt-day (col "ts")) 'int32) "day")
+            (expr-alias (expr-cast (expr-dt-hour (col "ts")) 'int32) "hour")
+            (expr-alias (expr-cast (expr-dt-minute (col "ts")) 'int32) "minute")
+            (expr-alias (expr-cast (expr-dt-second (col "ts")) 'int32) "second")))))
+
+  (check-equal? (series-ref (dataframe-column dt-parts "year") 0) 2024)
+  (check-equal? (series-ref (dataframe-column dt-parts "month") 1) 12)
+  (check-equal? (series-ref (dataframe-column dt-parts "day") 2) 9)
+  (check-equal? (series-ref (dataframe-column dt-parts "hour") 0) 3)
+  (check-equal? (series-ref (dataframe-column dt-parts "minute") 1) 59)
+  (check-equal? (series-ref (dataframe-column dt-parts "second") 2) 45)
 
   ;; --- Phase A2 tests: Expr ops via with-columns ---
 

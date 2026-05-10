@@ -208,6 +208,57 @@
 (define (series-dtype series)
   (compat-dtype->datum (series-dtype/raw series)))
 
+(define (time-unit-symbol->code tu)
+  (case tu
+    [(#f none) compat-time-unit/none]
+    [(nanoseconds) compat-time-unit/nanoseconds]
+    [(microseconds) compat-time-unit/microseconds]
+    [(milliseconds) compat-time-unit/milliseconds]
+    [else (error '->compat-dtype "unknown time unit ~v" tu)]))
+
+(define (simple-dtype-tag sym)
+  (case sym
+    [(boolean)   compat-dtype-tag/boolean]
+    [(uint8)     compat-dtype-tag/uint8]
+    [(uint16)    compat-dtype-tag/uint16]
+    [(uint32)    compat-dtype-tag/uint32]
+    [(uint64)    compat-dtype-tag/uint64]
+    [(int8)      compat-dtype-tag/int8]
+    [(int16)     compat-dtype-tag/int16]
+    [(int32)     compat-dtype-tag/int32]
+    [(int64)     compat-dtype-tag/int64]
+    [(float32)   compat-dtype-tag/float32]
+    [(float64)   compat-dtype-tag/float64]
+    [(string)    compat-dtype-tag/string]
+    [(binary)    compat-dtype-tag/binary]
+    [(date)      compat-dtype-tag/date]
+    [(time)      compat-dtype-tag/time]
+    [(null)      compat-dtype-tag/null]
+    [else        #f]))
+
+(define (->compat-dtype dtype)
+  (cond
+    [(symbol? dtype)
+     (define tag (simple-dtype-tag dtype))
+     (case dtype
+       [(datetime)
+        (make-CompatDType compat-dtype-tag/datetime
+                          compat-time-unit/microseconds 0 0)]
+       [(duration)
+        (make-CompatDType compat-dtype-tag/duration
+                          compat-time-unit/microseconds 0 0)]
+       [else
+        (unless tag
+          (error '->compat-dtype "unsupported cast target ~v" dtype))
+        (make-CompatDType tag compat-time-unit/none 0 0)])]
+    [(and (pair? dtype) (eq? (car dtype) 'datetime))
+     (make-CompatDType compat-dtype-tag/datetime
+                       (time-unit-symbol->code (cadr dtype)) 0 0)]
+    [(and (pair? dtype) (eq? (car dtype) 'duration))
+     (make-CompatDType compat-dtype-tag/duration
+                       (time-unit-symbol->code (cadr dtype)) 0 0)]
+    [else (error '->compat-dtype "unsupported cast target ~v" dtype)]))
+
 (define-compat series-rename
   (_fun _Series-ptr _string -> _void))
 
@@ -736,6 +787,107 @@
   (check-exn #rx"out of bounds"
              (lambda () (series-ref ref-i32 3))))
 
+(define (require-series-result who result)
+  (if result
+      (cast result _pointer _Series-ptr)
+      (error who "operation failed")))
+
+(define-compat series-cast/c
+  (_fun _Series-ptr _CompatDType -> _pointer)
+  #:c-id series_cast)
+
+(define (series-cast s dtype)
+  (require-series-result 'series-cast
+                         (series-cast/c s (->compat-dtype dtype))))
+
+(define-compat series-std/raw
+  (_fun _Series-ptr _uint8 -> _CompatOptF64)
+  #:c-id series_std)
+
+(define (series-std s #:ddof [ddof 1])
+  (compat-opt-f64->datum (series-std/raw s ddof)))
+
+(define-compat series-var/raw
+  (_fun _Series-ptr _uint8 -> _CompatOptF64)
+  #:c-id series_var)
+
+(define (series-var s #:ddof [ddof 1])
+  (compat-opt-f64->datum (series-var/raw s ddof)))
+
+(define-syntax-parse-rule (define-series-series-op public-name:id rust-id:id)
+  (begin
+    (define-compat public-name/c
+      (_fun _Series-ptr _Series-ptr -> _pointer)
+      #:c-id rust-id)
+    (define (public-name left right)
+      (require-series-result 'public-name (public-name/c left right)))))
+
+(define-series-series-op series-eq series_eq)
+(define-series-series-op series-ne series_ne)
+(define-series-series-op series-gt series_gt)
+(define-series-series-op series-ge series_ge)
+(define-series-series-op series-lt series_lt)
+(define-series-series-op series-le series_le)
+
+(define-series-series-op series-add series_add)
+(define-series-series-op series-sub series_sub)
+(define-series-series-op series-mul series_mul)
+(define-series-series-op series-div series_div)
+(define-series-series-op series-mod series_mod)
+
+(module+ test
+  (define batch2-x (series-new-i32 "x" (list 1 2 polars-null 4)))
+  (define batch2-y (series-new-i32 "y" '(10 20 30 40)))
+
+  ;; cast
+  (define x64 (series-cast batch2-x 'float64))
+  (check-equal? (series-dtype x64) 'float64)
+  (check-equal? (series-ref x64 0) 1.0)
+  (check-equal? (series-ref x64 2) polars-null)
+  (define xs (series-cast batch2-y 'string))
+  (check-equal? (series-dtype xs) 'string)
+  (check-equal? (series-ref xs 1) "20")
+  (check-exn #rx"unsupported cast target"
+             (lambda () (series-cast batch2-x '(list int32))))
+
+  ;; reductions
+  (define stats (series-new-f64 "s" '(1.0 2.0 3.0 4.0)))
+  (check-= (series-var stats #:ddof 1) (/ 5.0 3.0) 1e-9)
+  (check-= (series-var stats #:ddof 0) 1.25 1e-9)
+  (check-= (series-std stats #:ddof 0) (sqrt 1.25) 1e-9)
+  (check-false (series-std (series-new-str "s" '("a" "b"))))
+
+  ;; series-series comparisons
+  (define cmp-left (series-new-i32 "a" '(1 2 3 4)))
+  (define cmp-right (series-new-i32 "b" '(1 0 3 9)))
+  (check-equal? (series-dtype (series-eq cmp-left cmp-right)) 'boolean)
+  (check-equal? (series-ref (series-eq cmp-left cmp-right) 0) #t)
+  (check-equal? (series-ref (series-ne cmp-left cmp-right) 1) #t)
+  (check-equal? (series-ref (series-gt cmp-left cmp-right) 1) #t)
+  (check-equal? (series-ref (series-ge cmp-left cmp-right) 2) #t)
+  (check-equal? (series-ref (series-lt cmp-left cmp-right) 3) #t)
+  (check-equal? (series-ref (series-le cmp-left cmp-right) 0) #t)
+
+  ;; element-wise arithmetic
+  (define added (series-add batch2-x batch2-y))
+  (check-equal? (series-dtype added) 'int32)
+  (check-equal? (series-ref added 0) 11)
+  (check-equal? (series-ref added 2) polars-null)
+  (check-equal? (series-ref (series-sub batch2-y batch2-x) 1) 18)
+  (check-equal? (series-ref (series-mul batch2-x batch2-y) 3) 160)
+  (define divided (series-div batch2-y batch2-x))
+  (check-equal? (series-dtype divided) 'int32)
+  (check-equal? (series-ref divided 1) 10)
+  (define divided-f64 (series-div (series-cast batch2-y 'float64)
+                                  (series-cast batch2-x 'float64)))
+  (check-equal? (series-dtype divided-f64) 'float64)
+  (check-equal? (series-ref divided-f64 1) 10.0)
+  (check-equal? (series-ref (series-mod batch2-y batch2-x) 3) 0)
+  (check-exn #rx"operation failed"
+             (lambda ()
+               (series-add (series-new-i32 "short" '(1 2))
+                           (series-new-i32 "long" '(1 2 3))))))
+
 (define-cpointer-type _DataFrame-ptr)
 
 (define-compat dataframe-drop
@@ -749,6 +901,13 @@
 (define-compat dataframe-empty
   (_fun -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
+
+(define (require-dataframe-result who result)
+  (if result
+      (let ([df (cast result _pointer _DataFrame-ptr)])
+        (register-finalizer df dataframe-drop)
+        df)
+      (error who "operation failed")))
 
 (define-cstruct _Shape
   ([rows _size]
@@ -811,6 +970,17 @@
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
 
+(define-compat dataframe-hstack/raw
+  (_fun _DataFrame-ptr
+        (v : (_list i _Series-ptr))
+        (_size = (length v))
+        -> _pointer)
+  #:c-id dataframe_hstack)
+
+(define (dataframe-hstack df series-list)
+  (require-dataframe-result 'dataframe-hstack
+                            (dataframe-hstack/raw df series-list)))
+
 (define-compat dataframe-new/raw
   (_fun (v : (_list i _Series-ptr))
         (_size = (length v))
@@ -851,6 +1021,50 @@
   (define df (dataframe-read-csv/raw (path->string-or-string path)))
   (unless df
     (error 'dataframe-read-csv "failed to read csv from ~a" path))
+  df)
+
+(define-compat dataframe-write-parquet/raw
+  (_fun _DataFrame-ptr _string -> _int32)
+  #:c-id dataframe_write_parquet)
+
+(define (dataframe-write-parquet df path)
+  (define rc (dataframe-write-parquet/raw df (path->string-or-string path)))
+  (unless (zero? rc)
+    (error 'dataframe-write-parquet
+           "failed to write parquet to ~a (rust error code ~a)"
+           path rc)))
+
+(define-compat dataframe-read-parquet/raw
+  (_fun _string -> _DataFrame-ptr)
+  #:c-id dataframe_read_parquet
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-read-parquet path)
+  (define df (dataframe-read-parquet/raw (path->string-or-string path)))
+  (unless df
+    (error 'dataframe-read-parquet "failed to read parquet from ~a" path))
+  df)
+
+(define-compat dataframe-write-json-lines/raw
+  (_fun _DataFrame-ptr _string -> _int32)
+  #:c-id dataframe_write_json_lines)
+
+(define (dataframe-write-json-lines df path)
+  (define rc (dataframe-write-json-lines/raw df (path->string-or-string path)))
+  (unless (zero? rc)
+    (error 'dataframe-write-json-lines
+           "failed to write json lines to ~a (rust error code ~a)"
+           path rc)))
+
+(define-compat dataframe-read-json-lines/raw
+  (_fun _string -> _DataFrame-ptr)
+  #:c-id dataframe_read_json_lines
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-read-json-lines path)
+  (define df (dataframe-read-json-lines/raw (path->string-or-string path)))
+  (unless df
+    (error 'dataframe-read-json-lines "failed to read json lines from ~a" path))
   df)
 
 (define (path->string-or-string p)
@@ -1016,6 +1230,8 @@
 (define compat-join-kind/left  2)
 (define compat-join-kind/outer 3)
 (define compat-join-kind/cross 4)
+(define compat-join-kind/semi  5)
+(define compat-join-kind/anti  6)
 
 (define (join-symbol->code sym)
   (case sym
@@ -1023,8 +1239,10 @@
     [(left)  compat-join-kind/left]
     [(outer full) compat-join-kind/outer]
     [(cross) compat-join-kind/cross]
+    [(semi)  compat-join-kind/semi]
+    [(anti)  compat-join-kind/anti]
     [else (error 'dataframe-join
-                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross)"
+                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross 'semi 'anti)"
                  sym)]))
 
 (define-compat dataframe-join/c
@@ -1052,9 +1270,95 @@
                    "must supply #:on, or #:left-on and #:right-on")]))
   (dataframe-join/c left right lon ron (join-symbol->code how)))
 
+(define compat-asof-strategy/backward 1)
+(define compat-asof-strategy/forward  2)
+(define compat-asof-strategy/nearest  3)
+
+(define (asof-strategy-symbol->code sym)
+  (case sym
+    [(backward) compat-asof-strategy/backward]
+    [(forward)  compat-asof-strategy/forward]
+    [(nearest)  compat-asof-strategy/nearest]
+    [else (error 'dataframe-join-asof
+                 "unknown asof strategy ~v (expected 'backward 'forward 'nearest)"
+                 sym)]))
+
+(define-compat dataframe-join-asof/raw
+  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _pointer)
+  #:c-id dataframe_join_asof)
+
+(define (dataframe-join-asof left right
+                             #:on [on #f]
+                             #:left-on [left-on #f]
+                             #:right-on [right-on #f]
+                             #:strategy [strategy 'backward])
+  (define-values (lon ron)
+    (cond
+      [on (values on on)]
+      [(and left-on right-on) (values left-on right-on)]
+      [else (error 'dataframe-join-asof
+                   "must supply #:on, or #:left-on and #:right-on")]))
+  (require-dataframe-result
+   'dataframe-join-asof
+   (dataframe-join-asof/raw left right lon ron
+                            (asof-strategy-symbol->code strategy))))
+
 (define-compat dataframe-vstack
   (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
+
+(define compat-pivot-agg/none  0)
+(define compat-pivot-agg/first 1)
+(define compat-pivot-agg/sum   2)
+(define compat-pivot-agg/min   3)
+(define compat-pivot-agg/max   4)
+(define compat-pivot-agg/mean  5)
+(define compat-pivot-agg/count 6)
+
+(define (pivot-agg-symbol->code sym)
+  (case sym
+    [(none #f) compat-pivot-agg/none]
+    [(first)   compat-pivot-agg/first]
+    [(sum)     compat-pivot-agg/sum]
+    [(min)     compat-pivot-agg/min]
+    [(max)     compat-pivot-agg/max]
+    [(mean)    compat-pivot-agg/mean]
+    [(count)   compat-pivot-agg/count]
+    [else (error 'dataframe-pivot
+                 "unknown pivot aggregation ~v (expected #f 'first 'sum 'min 'max 'mean 'count)"
+                 sym)]))
+
+(define-compat dataframe-pivot/raw
+  (_fun _DataFrame-ptr
+        (on : (_list i _string))
+        (_size = (length on))
+        (index : (_list i _string))
+        (_size = (length index))
+        (values : (_list i _string))
+        (_size = (length values))
+        _int32
+        -> _pointer)
+  #:c-id dataframe_pivot)
+
+(define (dataframe-pivot df #:on on #:index index #:values values
+                         #:agg [agg 'first])
+  (require-dataframe-result
+   'dataframe-pivot
+   (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg))))
+
+(define-compat dataframe-unpivot/raw
+  (_fun _DataFrame-ptr
+        (on : (_list i _string))
+        (_size = (length on))
+        (index : (_list i _string))
+        (_size = (length index))
+        -> _pointer)
+  #:c-id dataframe_unpivot)
+
+(define (dataframe-unpivot df #:on on #:index index)
+  (require-dataframe-result
+   'dataframe-unpivot
+   (dataframe-unpivot/raw df on index)))
 
 (define (display-dataframe df [out (current-output-port)])
   (display (dataframe->string df) out)
@@ -1141,6 +1445,24 @@
                            (series-new-i32 "score" '(0 0 0 0))))
   (check-equal? (dataframe-width replaced) 3) ;; not 4
   (check-equal? (series-sum-i32 (dataframe-column replaced "score")) 0)
+
+  (define stacked-cols
+    (dataframe-hstack example-df
+                      (list (series-new-i32 "rank" '(4 2 3 1))
+                            (series-new-str "tier" '("b" "a" "b" "a")))))
+  (check-equal? (dataframe-column-names stacked-cols)
+                '("user" "score" "cost" "rank" "tier"))
+  (check-equal? (series-sum-i32 (dataframe-column stacked-cols "rank")) 10)
+  (check-exn #rx"operation failed"
+             (lambda ()
+               (dataframe-hstack
+                example-df
+                (list (series-new-i32 "score" '(1 2 3 4))))))
+  (check-exn #rx"operation failed"
+             (lambda ()
+               (dataframe-hstack
+                example-df
+                (list (series-new-i32 "too-short" '(1 2))))))
 
   ;; --- Example 3: filter / sort / group-by ---
   (define ops-df
@@ -1239,6 +1561,29 @@
   (define outer (dataframe-join users-df orders-df #:on '("uid") #:how 'outer))
   (check-equal? (dataframe-height outer) 6) ;; 1,2,2,3,4,5
 
+  (define semi (dataframe-join users-df orders-df #:on '("uid") #:how 'semi))
+  (check-equal? (dataframe-height semi) 2) ;; uid 1,2
+  (check-equal? (dataframe-column-names semi) '("uid" "name"))
+
+  (define anti (dataframe-join users-df orders-df #:on '("uid") #:how 'anti))
+  (check-equal? (dataframe-height anti) 2) ;; uid 3,4
+  (check-equal? (dataframe-column-names anti) '("uid" "name"))
+
+  (define observations-df
+    (dataframe-new
+     (list (series-new-i32 "time" '(1 3 5))
+           (series-new-i32 "reading" '(100 300 500)))))
+  (define calibration-df
+    (dataframe-new
+     (list (series-new-i32 "time" '(1 2 4))
+           (series-new-i32 "offset" '(10 20 40)))))
+  (define asof-backward
+    (dataframe-join-asof observations-df calibration-df
+                         #:on "time"
+                         #:strategy 'backward))
+  (check-equal? (dataframe-height asof-backward) 3)
+  (check-equal? (series-sum-i32 (dataframe-column asof-backward "offset")) 70)
+
   (define crossed
     (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)
                     #:how 'cross))
@@ -1250,6 +1595,31 @@
      (list (series-new-i32 "uid" '(5 6))
            (series-new-str "name" '("eve" "frank")))))
   (check-equal? (dataframe-height (dataframe-vstack users-df more-users)) 6)
+
+  ;; --- Pivot / unpivot ---
+  (define sales-df
+    (dataframe-new
+     (list (series-new-str "store" '("a" "a" "b" "b"))
+           (series-new-str "quarter" '("q1" "q2" "q1" "q2"))
+           (series-new-i32 "sales" '(10 20 30 40)))))
+  (define pivoted-sales
+    (dataframe-pivot sales-df
+                     #:on '("quarter")
+                     #:index '("store")
+                     #:values '("sales")
+                     #:agg 'sum))
+  (check-equal? (dataframe-column-names pivoted-sales) '("store" "q1" "q2"))
+  (check-equal? (series-sum-i32 (dataframe-column pivoted-sales "q1")) 40)
+  (check-equal? (series-sum-i32 (dataframe-column pivoted-sales "q2")) 60)
+
+  (define unpivoted-sales
+    (dataframe-unpivot pivoted-sales
+                       #:on '("q1" "q2")
+                       #:index '("store")))
+  (check-equal? (dataframe-height unpivoted-sales) 4)
+  (check-equal? (dataframe-column-names unpivoted-sales)
+                '("store" "variable" "value"))
+  (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
 
   ;; --- Example 4: CSV roundtrip ---
   (define csv-df
@@ -1272,4 +1642,35 @@
   (check-= (series-sum-f64 (dataframe-column round "population_millions"))
            12.15
            1e-9)
-  (delete-file tmp-csv))
+  (delete-file tmp-csv)
+
+  ;; --- Parquet and JSON Lines roundtrip ---
+  (define tmp-parquet
+    (build-path (find-system-path 'temp-dir) "rkt-polars-test.parquet"))
+  (dataframe-write-parquet csv-df tmp-parquet)
+  (define parquet-round (dataframe-read-parquet tmp-parquet))
+  (define-values (pr pc) (dataframe-shape parquet-round))
+  (check-equal? pr 3)
+  (check-equal? pc 3)
+  (check-equal? (dataframe-column-names parquet-round)
+                '("city" "population_millions" "founded"))
+  (check-equal? (series-dtype (dataframe-column parquet-round "founded")) 'int32)
+  (check-= (series-sum-f64 (dataframe-column parquet-round "population_millions"))
+           12.15
+           1e-9)
+  (delete-file tmp-parquet)
+
+  (define tmp-jsonl
+    (build-path (find-system-path 'temp-dir) "rkt-polars-test.jsonl"))
+  (dataframe-write-json-lines csv-df tmp-jsonl)
+  (define jsonl-round (dataframe-read-json-lines tmp-jsonl))
+  (define-values (jr jc) (dataframe-shape jsonl-round))
+  (check-equal? jr 3)
+  (check-equal? jc 3)
+  (check-equal? (dataframe-column-names jsonl-round)
+                '("city" "population_millions" "founded"))
+  (check-equal? (series-dtype (dataframe-column jsonl-round "founded")) 'int64)
+  (check-= (series-sum-f64 (dataframe-column jsonl-round "population_millions"))
+           12.15
+           1e-9)
+  (delete-file tmp-jsonl))
