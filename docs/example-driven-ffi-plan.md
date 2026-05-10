@@ -12,13 +12,15 @@ shipped vs. queued).
 Series surface (Racket-side names):
 - Lifecycle: `series-empty`, `series-drop`
 - Metadata: `series-name`, `series-rename`, `series-len`, `series-null-count`, `series-dtype`
-- Constructors: `series-new-i32` / `-i64` / `-u32` / `-u64` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`), all accepting `polars-null`
+- Constructors: `series-new-i8` / `-i16` / `-i32` / `-i64` / `-u8` / `-u16` / `-u32` / `-u64` / `-f32` / `-f64` / `-str` / `-bool` / `-ymdhms` (+ Racket gregor wrapper `series-new-datetime`), all accepting `polars-null`
 - Value access: `series-ref`, returning typed Racket values or `polars-null`
+  (including Gregor values for date/datetime/time and Gregor time-periods for duration)
 - Comparisons (scalar RHS): `series-{lt,le,gt,ge,eq,ne}-{i32,f64}`, `series-{eq,ne}-str`
 - Comparisons (Series RHS): `series-{lt,le,gt,ge,eq,ne}`
 - Arithmetic (Series RHS): `series-{add,sub,mul,div,mod}`
+- Arithmetic (scalar RHS): `series-{add,sub,mul,div,mod}-{i32,i64,u32,u64,f64}`
 - Boolean ops: `series-and`, `series-or`, `series-xor`, `series-not`, `series-is-null`, `series-is-not-null`
-- Reductions: `series-{sum,min,max,mean}-i32`, `series-{sum,min,max,mean}-f64`, `series-std`, `series-var`, `series-n-unique`
+- Reductions: `series-{sum,min,max,mean}-{i8,i16,i32,i64,u8,u16,u32,u64,f32,f64}`, `series-std`, `series-var`, `series-n-unique`
 - Type conversion: `series-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`)
 - Reshaping: `series-head`, `series-tail`, `series-slice`, `series-reverse`, `series-drop-nulls`, `series-unique`, `series-sort` (with `#:descending`)
 
@@ -32,7 +34,7 @@ DataFrame surface (Racket-side names):
 - Eager ops: `dataframe-filter`, `dataframe-sort` (with `#:descending`)
 - Group-by: `dataframe-group-by-{sum,mean,min,max,count}` (with `#:by` / `#:agg`)
 - Dedup / null cleanup: `dataframe-unique`, `dataframe-drop-nulls`
-- Joins / stack: `dataframe-join` (`#:how 'inner|'left|'outer|'cross|'semi|'anti`, `#:on` or `#:left-on` + `#:right-on`), `dataframe-join-asof`, `dataframe-vstack`, `dataframe-hstack`
+- Joins / stack: `dataframe-join` (`#:how 'inner|'left|'outer|'cross|'semi|'anti`, `#:on` or `#:left-on` + `#:right-on`), `dataframe-join-asof` (with `#:by` / `#:left-by` + `#:right-by` and `#:tolerance`), `dataframe-vstack`, `dataframe-hstack`
 - Reshaping: `dataframe-pivot`, `dataframe-unpivot`
 - IO: `dataframe-write-csv`, `dataframe-read-csv`, `dataframe-write-parquet`, `dataframe-read-parquet`, `dataframe-write-json-lines`, `dataframe-read-json-lines`
 - Display: `dataframe->string`, `display-dataframe`
@@ -49,13 +51,20 @@ first argument so code works naturally with Racket threading macros.
 | Batch | Racket module(s) | Rust example | Racket example | Racket tests |
 | --- | --- | --- | --- | --- |
 | Series batch 2 | `polars/private/foreign.rkt` | n/a | `examples/18-series-batch2.rkt` | `polars/private/foreign.rkt` |
+| Series scalar arithmetic | `polars/private/foreign.rkt` | `rust/examples/12_series_scalar_arithmetic.rs` | `examples/26-series-scalar-arithmetic.rkt` | `polars/private/foreign.rkt` |
+| Series typed reductions | `polars/private/foreign.rkt` | `rust/examples/13_series_typed_reductions.rs` | `examples/27-series-typed-reductions.rkt` | `polars/private/foreign.rkt` |
+| Series temporal refs | `polars/private/foreign.rkt` | `rust/examples/14_series_temporal_refs.rs` | `examples/28-series-temporal-ref.rkt` | `polars/private/foreign.rkt` |
+| Series primitive dtypes | `polars/private/foreign.rkt` | `rust/examples/16_series_primitive_dtypes.rs` | `examples/30-series-primitive-dtypes.rkt` | `polars/private/foreign.rkt` |
 | DataFrame batch 1 | `polars/private/foreign.rkt` | `rust/examples/05_dataframe_batch1.rs` | `examples/19-dataframe-batch1.rkt` | `polars/private/foreign.rkt` |
 | DataFrame batch 2 | `polars/private/foreign.rkt` | `rust/examples/06_dataframe_batch2.rs` | `examples/20-dataframe-batch2.rkt` | `polars/private/foreign.rkt` |
+| DataFrame asof options | `polars/private/foreign.rkt` | `rust/examples/15_dataframe_asof_options.rs` | `examples/29-dataframe-asof-options.rkt` | `polars/private/foreign.rkt` |
 | Lazy IO batch 1 | `polars/private/expr.rkt` | `rust/examples/07_lazy_io_batch1.rs` | `examples/21-lazy-io-batch1.rkt` | `polars/private/expr.rkt` |
 | Lazy scan options batch 1 | `polars/private/expr.rkt` | `rust/examples/11_lazy_scan_options_batch1.rs` | `examples/25-lazy-scan-options-batch1.rkt` | `polars/private/expr.rkt` |
 | Expr string batch 1 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/08_expr_string_batch1.rs` | `examples/22-expr-string-batch1.rkt` | `polars/private/expr.rkt` |
 | Expr datetime batch 1 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/09_expr_datetime_batch1.rs` | `examples/23-expr-datetime-batch1.rkt` | `polars/private/expr.rkt` |
 | Expr string batch 2 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/10_expr_string_batch2.rs` | `examples/24-expr-string-batch2.rkt` | `polars/private/expr.rkt` |
+| Expr string batch 3 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/17_expr_string_batch3.rs` | `examples/31-expr-string-batch3.rkt` | `polars/private/expr.rkt` |
+| Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -64,8 +73,8 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Comparison: `expr-{gt,lt,ge,le,eq,ne}`
 - Boolean: `expr-{and,or,xor,not}`
 - Unary: `expr-{neg,is-null,is-not-null}`
-- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`
-- Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`
+- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`
+- Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
 - Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`, `expr-{std,var}` (with `#:ddof`, default 1)
 - Window / sort: `expr-over` (string keys auto-lifted via `->key-expr`), `expr-sort` (with `#:descending`)
@@ -110,10 +119,9 @@ their Polars behavior is covered by the Rust library tests and the
 Racket examples/tests rather than one mirror Rust file per wrapper.
 
 Notable remaining gaps:
-- Series-side: scalar arithmetic, typed reductions for additional integer/float widths
-- DataFrame-side: richer asof joins with by-groups/tolerance
-- Expr / lazy: richer dt.* and str.* operations, schema/projection scan options
-- Cross-cutting: nested dtype payloads still surface as TODO placeholders; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
+- Series-side: scalar arithmetic and scalar comparisons for additional integer/float widths
+- Expr / lazy: string-to-temporal parsing helpers, schema/projection scan options
+- Cross-cutting: nested dtype payloads still surface as TODO placeholders and are post-MVP; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Build / Iteration Loop
 
@@ -155,6 +163,21 @@ Series batch 2 is shipped:
 - series-series comparisons
 - element-wise arithmetic
 
+Series scalar arithmetic is shipped:
+- `series-{add,sub,mul,div,mod}-{i32,i64,u32,u64,f64}`
+
+Series typed reductions are shipped:
+- `series-{sum,min,max,mean}-{i64,u32,u64}` in addition to the existing `i32` / `f64` reductions
+
+Series primitive dtypes are shipped:
+- Constructors and `/vec` variants for `series-new-{i8,i16,u8,u16,f32}`
+- `series-ref`, `series-dtype`, `series-cast`, and typed reductions for `int8`, `int16`, `uint8`, `uint16`, and `float32`
+
+Series temporal refs are shipped:
+- `series-ref` returns Gregor `date` values for Polars `Date`
+- `series-ref` returns Gregor time values for Polars `Time`
+- `series-ref` returns Gregor time-period values for Polars `Duration`
+
 DataFrame batch 1 is shipped:
 - `dataframe-hstack`
 - Parquet roundtrip
@@ -165,6 +188,10 @@ DataFrame batch 2 is shipped:
 - `dataframe-join-asof`
 - `dataframe-pivot`
 - `dataframe-unpivot`
+
+DataFrame asof options are shipped:
+- `dataframe-join-asof` accepts `#:by` or `#:left-by` / `#:right-by`
+- `dataframe-join-asof` accepts numeric `#:tolerance` in the key column's units
 
 Lazy IO batch 1 is shipped:
 - `lazyframe-scan-csv`
@@ -191,6 +218,16 @@ Expr string batch 2 is shipped:
 - `expr-str-strip-prefix`
 - `expr-str-strip-suffix`
 
+Expr string batch 3 is shipped:
+- `expr-str-len-bytes`
+- `expr-str-len-chars`
+- `expr-str-slice`
+- `expr-str-head`
+- `expr-str-tail`
+- `expr-str-find`
+- `expr-str-find-literal`
+- `expr-str-count-matches`
+
 Expr datetime batch 1 is shipped:
 - `expr-dt-year`
 - `expr-dt-month`
@@ -199,24 +236,37 @@ Expr datetime batch 1 is shipped:
 - `expr-dt-minute`
 - `expr-dt-second`
 
+Expr datetime batch 2 is shipped:
+- `expr-dt-iso-year`
+- `expr-dt-quarter`
+- `expr-dt-week`
+- `expr-dt-weekday`
+- `expr-dt-ordinal-day`
+- `expr-dt-is-leap-year`
+- `expr-dt-date`
+- `expr-dt-time`
+- `expr-dt-millisecond`
+- `expr-dt-microsecond`
+- `expr-dt-nanosecond`
+- `expr-dt-timestamp`
+- `expr-dt-strftime`
+- `expr-dt-truncate`
+
 Stabilization batch 1 is shipped:
 - `polars/private/expr-core.rkt` owns shared Expr/LazyFrame FFI setup
 - `polars/private/expr-str.rkt` owns string namespace wrappers
 - `polars/private/expr-dt.rkt` owns datetime namespace wrappers
 - `polars/private/expr.rkt` remains the public aggregation point for `(require polars)`
 
-Candidate Series follow-up work:
-- scalar arithmetic wrappers
-- typed reductions for additional integer/float widths
-- richer `series-ref` support for date, duration, time, and nested dtypes
-
-Near-term DataFrame targets:
-- asof join `#:by` groups and tolerance
+Post-MVP dtype work:
+- Add nested dtype payload support to the dtype descriptor ABI so
+  `list`, `array`, and `struct` can preserve inner dtype information
+  instead of surfacing TODO placeholders. This is explicitly not part
+  of the MVP hardening pass.
 
 Expr / LazyFrame work after the low-level surface has public examples
 and tests:
-- more `expr-str-*` operations: lengths, slicing, find/count, split
-- more `expr-dt-*` operations: week, weekday, ordinal day, truncate
+- string-to-temporal parsing helpers such as `expr-str-to-date`, `expr-str-to-datetime`, and `expr-str-to-time`
 - schema/projection scan options for CSV / Parquet
 
 Keep any high-level Racket DSL in a later `polars/dsl` track. Do not
@@ -340,8 +390,9 @@ FFI likely needed:
 
 ## TODO
 
-- Add nested dtype support to the dtype descriptor ABI so `list`, `array`, and `struct`
-  can preserve inner dtype information instead of surfacing TODO placeholders.
+- Post-MVP: add nested dtype support to the dtype descriptor ABI so `list`,
+  `array`, and `struct` can preserve inner dtype information instead of
+  surfacing TODO placeholders.
 - Represent temporal values on the Racket side with `gregor`.
 - Add explicit conversion helpers between Gregor values in Racket and
   `chrono::NaiveDate` / `chrono::NaiveDateTime` in Rust.

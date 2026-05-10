@@ -10,7 +10,10 @@
          expr-str-to-lowercase expr-str-to-uppercase
          expr-str-replace expr-str-replace-all expr-str-extract
          expr-str-strip-chars expr-str-strip-chars-start expr-str-strip-chars-end
-         expr-str-strip-prefix expr-str-strip-suffix)
+         expr-str-strip-prefix expr-str-strip-suffix
+         expr-str-len-bytes expr-str-len-chars
+         expr-str-slice expr-str-head expr-str-tail
+         expr-str-find expr-str-find-literal expr-str-count-matches)
 
 (define-compat expr-str-contains/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -134,3 +137,61 @@
 
 (define (expr-str-strip-suffix e suffix)
   (expr-str-strip-suffix/raw e (->expr suffix)))
+
+(define-compat expr-str-len-bytes
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_len_bytes
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-str-len-chars
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_len_chars
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-str-slice/raw
+  (_fun _Expr-ptr _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_slice
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-slice e offset length)
+  (expr-str-slice/raw e (->expr offset) (->expr length)))
+
+(define-compat expr-str-head/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_head
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-head e n)
+  (expr-str-head/raw e (->expr n)))
+
+(define-compat expr-str-tail/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_tail
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-tail e n)
+  (expr-str-tail/raw e (->expr n)))
+
+(define-compat expr-str-find/raw
+  (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
+  #:c-id expr_str_find
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-find e pat #:strict [strict #t])
+  (expr-str-find/raw e (->expr pat) (if strict 1 0)))
+
+(define-compat expr-str-find-literal/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_str_find_literal
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-find-literal e pat)
+  (expr-str-find-literal/raw e (->expr pat)))
+
+(define-compat expr-str-count-matches/raw
+  (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
+  #:c-id expr_str_count_matches
+  #:wrap (allocator expr-drop))
+
+(define (expr-str-count-matches e pat #:literal [literal #f])
+  (expr-str-count-matches/raw e (->expr pat) (if literal 1 0)))

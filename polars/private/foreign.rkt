@@ -5,6 +5,7 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          gregor
+         gregor/period
          racket/match
          racket/runtime-path
          syntax/parse/define
@@ -138,13 +139,33 @@
   ([valid _int32]
    [value _int32]))
 
+(define-cstruct _CompatOptI8
+  ([valid _int32]
+   [value _int8]))
+
+(define-cstruct _CompatOptI16
+  ([valid _int32]
+   [value _int16]))
+
 (define-cstruct _CompatOptF64
   ([valid _int32]
    [value _double]))
 
+(define-cstruct _CompatOptF32
+  ([valid _int32]
+   [value _float]))
+
 (define-cstruct _CompatOptI64
   ([valid _int32]
    [value _int64]))
+
+(define-cstruct _CompatOptU8
+  ([valid _int32]
+   [value _uint8]))
+
+(define-cstruct _CompatOptU16
+  ([valid _int32]
+   [value _uint16]))
 
 (define-cstruct _CompatOptU32
   ([valid _int32]
@@ -158,17 +179,46 @@
   ([valid _int32]
    [value _int32]))
 
+(define-cstruct _YMD
+  ([ymd-year _int32]
+   [ymd-month _uint32]
+   [ymd-day _uint32]))
+
+(define-cstruct _CompatOptYMD
+  ([valid _int32]
+   [value _YMD]))
+
 (define (compat-opt-i32->datum o)
   (and (not (zero? (CompatOptI32-valid o)))
        (CompatOptI32-value o)))
+
+(define (compat-opt-i8->datum o)
+  (and (not (zero? (CompatOptI8-valid o)))
+       (CompatOptI8-value o)))
+
+(define (compat-opt-i16->datum o)
+  (and (not (zero? (CompatOptI16-valid o)))
+       (CompatOptI16-value o)))
 
 (define (compat-opt-f64->datum o)
   (and (not (zero? (CompatOptF64-valid o)))
        (CompatOptF64-value o)))
 
+(define (compat-opt-f32->datum o)
+  (and (not (zero? (CompatOptF32-valid o)))
+       (CompatOptF32-value o)))
+
 (define (compat-opt-i64->datum o)
   (and (not (zero? (CompatOptI64-valid o)))
        (CompatOptI64-value o)))
+
+(define (compat-opt-u8->datum o)
+  (and (not (zero? (CompatOptU8-valid o)))
+       (CompatOptU8-value o)))
+
+(define (compat-opt-u16->datum o)
+  (and (not (zero? (CompatOptU16-valid o)))
+       (CompatOptU16-value o)))
 
 (define (compat-opt-u32->datum o)
   (and (not (zero? (CompatOptU32-valid o)))
@@ -181,6 +231,15 @@
 (define (compat-opt-bool->datum o)
   (and (not (zero? (CompatOptBool-valid o)))
        (not (zero? (CompatOptBool-value o)))))
+
+(define (ymd->date value)
+  (date (YMD-ymd-year value)
+        (YMD-ymd-month value)
+        (YMD-ymd-day value)))
+
+(define (compat-opt-ymd->datum o)
+  (and (not (zero? (CompatOptYMD-valid o)))
+       (ymd->date (CompatOptYMD-value o))))
 
 (define-cpointer-type _Series-ptr)
 
@@ -333,6 +392,66 @@
 (define (series-min-f64 s)
   (compat-opt-f64->datum (series-min-f64/raw s)))
 
+(define-syntax-parse-rule (define-int-reductions opt-type:id opt->datum:id
+                            sum-id:id min-id:id max-id:id mean-id:id
+                            sum-c:id min-c:id max-c:id mean-c:id)
+  (begin
+    (define-compat sum-id/raw
+      (_fun _Series-ptr -> opt-type)
+      #:c-id sum-c)
+    (define (sum-id s)
+      (opt->datum (sum-id/raw s)))
+
+    (define-compat min-id/raw
+      (_fun _Series-ptr -> opt-type)
+      #:c-id min-c)
+    (define (min-id s)
+      (opt->datum (min-id/raw s)))
+
+    (define-compat max-id/raw
+      (_fun _Series-ptr -> opt-type)
+      #:c-id max-c)
+    (define (max-id s)
+      (opt->datum (max-id/raw s)))
+
+    (define-compat mean-id/raw
+      (_fun _Series-ptr -> _CompatOptF64)
+      #:c-id mean-c)
+    (define (mean-id s)
+      (compat-opt-f64->datum (mean-id/raw s)))))
+
+(define-int-reductions _CompatOptI64 compat-opt-i64->datum
+  series-sum-i64 series-min-i64 series-max-i64 series-mean-i64
+  series_sum_i64 series_min_i64 series_max_i64 series_mean_i64)
+
+(define-int-reductions _CompatOptI8 compat-opt-i8->datum
+  series-sum-i8 series-min-i8 series-max-i8 series-mean-i8
+  series_sum_i8 series_min_i8 series_max_i8 series_mean_i8)
+
+(define-int-reductions _CompatOptI16 compat-opt-i16->datum
+  series-sum-i16 series-min-i16 series-max-i16 series-mean-i16
+  series_sum_i16 series_min_i16 series_max_i16 series_mean_i16)
+
+(define-int-reductions _CompatOptU8 compat-opt-u8->datum
+  series-sum-u8 series-min-u8 series-max-u8 series-mean-u8
+  series_sum_u8 series_min_u8 series_max_u8 series_mean_u8)
+
+(define-int-reductions _CompatOptU16 compat-opt-u16->datum
+  series-sum-u16 series-min-u16 series-max-u16 series-mean-u16
+  series_sum_u16 series_min_u16 series_max_u16 series_mean_u16)
+
+(define-int-reductions _CompatOptU32 compat-opt-u32->datum
+  series-sum-u32 series-min-u32 series-max-u32 series-mean-u32
+  series_sum_u32 series_min_u32 series_max_u32 series_mean_u32)
+
+(define-int-reductions _CompatOptU64 compat-opt-u64->datum
+  series-sum-u64 series-min-u64 series-max-u64 series-mean-u64
+  series_sum_u64 series_min_u64 series_max_u64 series_mean_u64)
+
+(define-int-reductions _CompatOptF32 compat-opt-f32->datum
+  series-sum-f32 series-min-f32 series-max-f32 series-mean-f32
+  series_sum_f32 series_min_f32 series_max_f32 series_mean_f32)
+
 (define-compat series-n-unique
   (_fun _Series-ptr -> _size))
 
@@ -391,6 +510,54 @@
 
   (define red-f64 (series-new-f64 "y" '(1.5 2.0 4.25 8.0)))
   (check-equal? (series-min-f64 red-f64) 1.5)
+
+  (define red-i64 (series-new-i64 "wide" (list 1099511627776 polars-null 4)))
+  (check-equal? (series-sum-i64 red-i64) 1099511627780)
+  (check-equal? (series-min-i64 red-i64) 4)
+  (check-equal? (series-max-i64 red-i64) 1099511627776)
+  (check-= (series-mean-i64 red-i64) (/ 1099511627780.0 2.0) 1e-9)
+
+  (define red-u32 (series-new-u32 "count" (list 1 2 polars-null 7)))
+  (check-equal? (series-sum-u32 red-u32) 10)
+  (check-equal? (series-min-u32 red-u32) 1)
+  (check-equal? (series-max-u32 red-u32) 7)
+  (check-= (series-mean-u32 red-u32) (/ 10.0 3.0) 1e-9)
+
+  (define red-u64 (series-new-u64 "big" (list 10 20 4294967296)))
+  (check-equal? (series-sum-u64 red-u64) 4294967326)
+  (check-equal? (series-min-u64 red-u64) 10)
+  (check-equal? (series-max-u64 red-u64) 4294967296)
+  (check-= (series-mean-u64 red-u64) (/ 4294967326.0 3.0) 1e-6)
+
+  (define red-i8 (series-new-i8 "tiny" (list -4 polars-null 9)))
+  (check-equal? (series-sum-i8 red-i8) 5)
+  (check-equal? (series-min-i8 red-i8) -4)
+  (check-equal? (series-max-i8 red-i8) 9)
+  (check-= (series-mean-i8 red-i8) 2.5 1e-9)
+
+  (define red-i16 (series-new-i16 "short" (list -300 polars-null 1200)))
+  (check-equal? (series-sum-i16 red-i16) 900)
+  (check-equal? (series-min-i16 red-i16) -300)
+  (check-equal? (series-max-i16 red-i16) 1200)
+  (check-= (series-mean-i16 red-i16) 450.0 1e-9)
+
+  (define red-u8 (series-new-u8 "byte" (list 3 polars-null 12)))
+  (check-equal? (series-sum-u8 red-u8) 15)
+  (check-equal? (series-min-u8 red-u8) 3)
+  (check-equal? (series-max-u8 red-u8) 12)
+  (check-= (series-mean-u8 red-u8) 7.5 1e-9)
+
+  (define red-u16 (series-new-u16 "ushort" (list 300 polars-null 1200)))
+  (check-equal? (series-sum-u16 red-u16) 1500)
+  (check-equal? (series-min-u16 red-u16) 300)
+  (check-equal? (series-max-u16 red-u16) 1200)
+  (check-= (series-mean-u16 red-u16) 750.0 1e-9)
+
+  (define red-f32 (series-new-f32 "single" (list 1.5 polars-null 2.25)))
+  (check-= (series-sum-f32 red-f32) 3.75 1e-6)
+  (check-= (series-min-f32 red-f32) 1.5 1e-6)
+  (check-= (series-max-f32 red-f32) 2.25 1e-6)
+  (check-= (series-mean-f32 red-f32) 1.875 1e-6)
 
   (check-equal? (series-n-unique
                  (series-new-str "s" '("a" "b" "a" "c" "b")))
@@ -457,6 +624,9 @@
 
 (define-series-constructors i32 _int32 0)
 
+(define-series-constructors i8 _int8 0)
+(define-series-constructors i16 _int16 0)
+
 (module+ test
   (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
   (check-equal?
@@ -480,7 +650,17 @@
    (series-len (series-new-i32/vec "" (vector 0)))
    1))
 
+(module+ test
+  (check-pred Series-ptr? (series-new-i8 "x" '(-8 0 12)))
+  (check-equal? (series-dtype (series-new-i8 "x" '(-8 0 12))) 'int8)
+  (check-pred Series-ptr? (series-new-i8/vec "x" (vector -8 0 12)))
+  (check-pred Series-ptr? (series-new-i16 "x" '(-300 0 1200)))
+  (check-equal? (series-dtype (series-new-i16 "x" '(-300 0 1200))) 'int16)
+  (check-pred Series-ptr? (series-new-i16/vec "x" (vector -300 0 1200))))
+
 (define-series-constructors f64 _double 0.0)
+
+(define-series-constructors f32 _float 0.0)
 
 (module+ test
   (check-pred Series-ptr? (series-new-f64 "" '(1.1 2.17)))
@@ -513,6 +693,11 @@
    (series-len (series-new-f64/vec "" (vector 17.29 40.2)))
    2))
 
+(module+ test
+  (check-pred Series-ptr? (series-new-f32 "" '(1.5 2.25)))
+  (check-equal? (series-dtype (series-new-f32 "x" '(1.5 2.25))) 'float32)
+  (check-pred Series-ptr? (series-new-f32/vec "" (vector 1.5 2.25))))
+
 (define-series-constructors i64 _int64 0)
 
 (module+ test
@@ -523,11 +708,22 @@
 
 (define-series-constructors u32 _uint32 0)
 
+(define-series-constructors u8 _uint8 0)
+(define-series-constructors u16 _uint16 0)
+
 (module+ test
   (check-pred Series-ptr? (series-new-u32 "" '(1 2 3)))
   (check-equal? (series-len (series-new-u32 "x" '(0 1 2))) 3)
   (check-equal? (series-dtype (series-new-u32 "x" '(0 1))) 'uint32)
   (check-pred Series-ptr? (series-new-u32/vec "" (vector 1 2 3))))
+
+(module+ test
+  (check-pred Series-ptr? (series-new-u8 "x" '(0 1 255)))
+  (check-equal? (series-dtype (series-new-u8 "x" '(0 1 255))) 'uint8)
+  (check-pred Series-ptr? (series-new-u8/vec "x" (vector 0 1 255)))
+  (check-pred Series-ptr? (series-new-u16 "x" '(0 1 65535)))
+  (check-equal? (series-dtype (series-new-u16 "x" '(0 1 65535))) 'uint16)
+  (check-pred Series-ptr? (series-new-u16/vec "x" (vector 0 1 65535))))
 
 (define-series-constructors u64 _uint64 0)
 
@@ -649,9 +845,25 @@
   (_fun _Series-ptr _size -> _CompatOptI32)
   #:c-id series_ref_i32)
 
+(define-compat series-ref-i8/raw
+  (_fun _Series-ptr _size -> _CompatOptI8)
+  #:c-id series_ref_i8)
+
+(define-compat series-ref-i16/raw
+  (_fun _Series-ptr _size -> _CompatOptI16)
+  #:c-id series_ref_i16)
+
 (define-compat series-ref-i64/raw
   (_fun _Series-ptr _size -> _CompatOptI64)
   #:c-id series_ref_i64)
+
+(define-compat series-ref-u8/raw
+  (_fun _Series-ptr _size -> _CompatOptU8)
+  #:c-id series_ref_u8)
+
+(define-compat series-ref-u16/raw
+  (_fun _Series-ptr _size -> _CompatOptU16)
+  #:c-id series_ref_u16)
 
 (define-compat series-ref-u32/raw
   (_fun _Series-ptr _size -> _CompatOptU32)
@@ -665,6 +877,10 @@
   (_fun _Series-ptr _size -> _CompatOptF64)
   #:c-id series_ref_f64)
 
+(define-compat series-ref-f32/raw
+  (_fun _Series-ptr _size -> _CompatOptF32)
+  #:c-id series_ref_f32)
+
 (define-compat series-ref-bool/raw
   (_fun _Series-ptr _size -> _CompatOptBool)
   #:c-id series_ref_bool)
@@ -672,6 +888,18 @@
 (define-compat series-ref-str/raw
   (_fun _Series-ptr _size -> _rsstring)
   #:c-id series_ref_str)
+
+(define-compat series-ref-date/raw
+  (_fun _Series-ptr _size -> _CompatOptYMD)
+  #:c-id series_ref_date)
+
+(define-compat series-ref-duration/raw
+  (_fun _Series-ptr _size -> _CompatOptI64)
+  #:c-id series_ref_duration)
+
+(define-compat series-ref-time/raw
+  (_fun _Series-ptr _size -> _CompatOptI64)
+  #:c-id series_ref_time)
 
 (define-compat series-ref-ymdhms/raw
   (_fun _Series-ptr _size -> _CompatOptYMDHMS)
@@ -682,6 +910,34 @@
 
 (define (require-ref-value dtype value)
   (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
+
+(define (left-pad-number value width)
+  (define s (number->string value))
+  (if (>= (string-length s) width)
+      s
+      (string-append (make-string (- width (string-length s)) #\0) s)))
+
+(define (nanoseconds->time value)
+  (define-values (total-seconds nanosecond) (quotient/remainder value 1000000000))
+  (define-values (total-minutes second) (quotient/remainder total-seconds 60))
+  (define-values (hour minute) (quotient/remainder total-minutes 60))
+  (define base
+    (format "~a:~a:~a"
+            (left-pad-number hour 2)
+            (left-pad-number minute 2)
+            (left-pad-number second 2)))
+  (iso8601->time
+   (if (zero? nanosecond)
+       base
+       (format "~a.~a" base (left-pad-number nanosecond 9)))))
+
+(define (duration-value->period dtype value)
+  (match dtype
+    [`(duration nanoseconds) (nanoseconds value)]
+    [`(duration microseconds) (microseconds value)]
+    [`(duration milliseconds) (milliseconds value)]
+    [`(duration ,_) (microseconds value)]
+    [_ (error 'series-ref "expected duration dtype, got ~v" dtype)]))
 
 (define (series-ref s index)
   (unless (exact-nonnegative-integer? index)
@@ -694,10 +950,15 @@
     [(0)
      (define dtype (series-dtype s))
      (case dtype
+       [(int8) (require-ref-value dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
+       [(int16) (require-ref-value dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
        [(int32) (require-ref-value dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
        [(int64) (require-ref-value dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
+       [(uint8) (require-ref-value dtype (compat-opt-u8->datum (series-ref-u8/raw s index)))]
+       [(uint16) (require-ref-value dtype (compat-opt-u16->datum (series-ref-u16/raw s index)))]
        [(uint32) (require-ref-value dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
        [(uint64) (require-ref-value dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
+       [(float32) (require-ref-value dtype (compat-opt-f32->datum (series-ref-f32/raw s index)))]
        [(float64) (require-ref-value dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
        [(boolean)
         (define value (series-ref-bool/raw s index))
@@ -705,8 +966,19 @@
             (error 'series-ref "could not read non-null value for dtype ~v" dtype)
             (compat-opt-bool->datum value))]
        [(string) (require-ref-value dtype (series-ref-str/raw s index))]
+       [(date)
+        (require-ref-value dtype
+                           (compat-opt-ymd->datum (series-ref-date/raw s index)))]
+       [(time)
+        (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
+        (require-ref-value dtype (and raw (nanoseconds->time raw)))]
        [else
         (match dtype
+          [`(duration ,_)
+           (define raw (compat-opt-i64->datum (series-ref-duration/raw s index)))
+           (require-ref-value
+            dtype
+            (and raw (duration-value->period dtype raw)))]
           [`(datetime ,_ ,_)
            (require-ref-value dtype
                               (compat-opt-ymdhms->datum (series-ref-ymdhms/raw s index)))]
@@ -747,13 +1019,39 @@
   (check-equal? (series-ref ref-i64 0) 1099511627776)
   (check-equal? (series-ref ref-i64 1) polars-null)
 
+  (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
+  (check-equal? (series-ref ref-i8 0) -8)
+  (check-equal? (series-ref ref-i8 1) polars-null)
+  (check-equal? (series-ref ref-i8 2) 12)
+
+  (define ref-i16 (series-new-i16 "x" (list -300 polars-null 1200)))
+  (check-equal? (series-ref ref-i16 0) -300)
+  (check-equal? (series-ref ref-i16 1) polars-null)
+  (check-equal? (series-ref ref-i16 2) 1200)
+
   (define ref-u32 (series-new-u32 "x" (list 0 polars-null 4294967295)))
   (check-equal? (series-ref ref-u32 0) 0)
   (check-equal? (series-ref ref-u32 1) polars-null)
   (check-equal? (series-ref ref-u32 2) 4294967295)
 
+  (define ref-u8 (series-new-u8 "x" (list 0 polars-null 255)))
+  (check-equal? (series-ref ref-u8 0) 0)
+  (check-equal? (series-ref ref-u8 1) polars-null)
+  (check-equal? (series-ref ref-u8 2) 255)
+
+  (define ref-u16 (series-new-u16 "x" (list 0 polars-null 65535)))
+  (check-equal? (series-ref ref-u16 0) 0)
+  (check-equal? (series-ref ref-u16 1) polars-null)
+  (check-equal? (series-ref ref-u16 2) 65535)
+
   (define ref-u64 (series-new-u64 "x" (list 0 polars-null 4294967296)))
   (check-equal? (series-ref ref-u64 2) 4294967296)
+
+  (define ref-f32 (series-new-f32 "x" (list 1.5 polars-null 2.25)))
+  (check-equal? (series-dtype ref-f32) 'float32)
+  (check-equal? (series-null-count ref-f32) 1)
+  (check-= (series-ref ref-f32 0) 1.5 1e-6)
+  (check-equal? (series-ref ref-f32 1) polars-null)
 
   (define ref-f64 (series-new-f64 "x" (list 1.5 polars-null 2.25)))
   (check-equal? (series-dtype ref-f64) 'float64)
@@ -778,6 +1076,29 @@
            polars-null)))
   (check-equal? (series-ref ref-dt 0) (datetime 2024 1 2 3 4 5))
   (check-equal? (series-ref ref-dt 1) polars-null)
+
+  (define ref-date
+    (series-cast (series-new-i32 "d" (list 19724 polars-null -1)) 'date))
+  (check-equal? (series-dtype ref-date) 'date)
+  (check-equal? (series-ref ref-date 0) (date 2024 1 2))
+  (check-equal? (series-ref ref-date 1) polars-null)
+  (check-equal? (series-ref ref-date 2) (date 1969 12 31))
+
+  (define ref-duration
+    (series-cast (series-new-i64 "dur" (list 1500 polars-null -250))
+                 '(duration milliseconds)))
+  (check-equal? (series-dtype ref-duration) '(duration milliseconds))
+  (check-equal? (series-ref ref-duration 0) (milliseconds 1500))
+  (check-equal? (series-ref ref-duration 1) polars-null)
+  (check-equal? (series-ref ref-duration 2) (milliseconds -250))
+
+  (define ref-time
+    (series-cast (series-new-i64 "tod" (list 11045123456789 polars-null 0))
+                 'time))
+  (check-equal? (series-dtype ref-time) 'time)
+  (check-equal? (series-ref ref-time 0) (iso8601->time "03:04:05.123456789"))
+  (check-equal? (series-ref ref-time 1) polars-null)
+  (check-equal? (series-ref ref-time 2) (iso8601->time "00:00:00"))
 
   (define ref-vec (series-new-i32/vec "x" (vector 1 polars-null 3)))
   (check-equal? (series-ref ref-vec 1) polars-null)
@@ -835,6 +1156,44 @@
 (define-series-series-op series-div series_div)
 (define-series-series-op series-mod series_mod)
 
+(define-syntax-parse-rule (define-series-scalar-op public-name:id rust-id:id ctype:id)
+  (begin
+    (define-compat public-name/c
+      (_fun _Series-ptr ctype -> _pointer)
+      #:c-id rust-id)
+    (define (public-name s rhs)
+      (require-series-result 'public-name (public-name/c s rhs)))))
+
+(define-series-scalar-op series-add-i32 series_add_i32 _int32)
+(define-series-scalar-op series-sub-i32 series_sub_i32 _int32)
+(define-series-scalar-op series-mul-i32 series_mul_i32 _int32)
+(define-series-scalar-op series-div-i32 series_div_i32 _int32)
+(define-series-scalar-op series-mod-i32 series_mod_i32 _int32)
+
+(define-series-scalar-op series-add-i64 series_add_i64 _int64)
+(define-series-scalar-op series-sub-i64 series_sub_i64 _int64)
+(define-series-scalar-op series-mul-i64 series_mul_i64 _int64)
+(define-series-scalar-op series-div-i64 series_div_i64 _int64)
+(define-series-scalar-op series-mod-i64 series_mod_i64 _int64)
+
+(define-series-scalar-op series-add-u32 series_add_u32 _uint32)
+(define-series-scalar-op series-sub-u32 series_sub_u32 _uint32)
+(define-series-scalar-op series-mul-u32 series_mul_u32 _uint32)
+(define-series-scalar-op series-div-u32 series_div_u32 _uint32)
+(define-series-scalar-op series-mod-u32 series_mod_u32 _uint32)
+
+(define-series-scalar-op series-add-u64 series_add_u64 _uint64)
+(define-series-scalar-op series-sub-u64 series_sub_u64 _uint64)
+(define-series-scalar-op series-mul-u64 series_mul_u64 _uint64)
+(define-series-scalar-op series-div-u64 series_div_u64 _uint64)
+(define-series-scalar-op series-mod-u64 series_mod_u64 _uint64)
+
+(define-series-scalar-op series-add-f64 series_add_f64 _double)
+(define-series-scalar-op series-sub-f64 series_sub_f64 _double)
+(define-series-scalar-op series-mul-f64 series_mul_f64 _double)
+(define-series-scalar-op series-div-f64 series_div_f64 _double)
+(define-series-scalar-op series-mod-f64 series_mod_f64 _double)
+
 (module+ test
   (define batch2-x (series-new-i32 "x" (list 1 2 polars-null 4)))
   (define batch2-y (series-new-i32 "y" '(10 20 30 40)))
@@ -847,6 +1206,10 @@
   (define xs (series-cast batch2-y 'string))
   (check-equal? (series-dtype xs) 'string)
   (check-equal? (series-ref xs 1) "20")
+  (for ([dtype '(int8 int16 uint8 uint16 float32)])
+    (define casted (series-cast (series-new-i32 "small" '(1 2 3)) dtype))
+    (check-equal? (series-dtype casted) dtype)
+    (check-equal? (series-ref casted 1) (if (eq? dtype 'float32) 2.0 2)))
   (check-exn #rx"unsupported cast target"
              (lambda () (series-cast batch2-x '(list int32))))
 
@@ -886,7 +1249,29 @@
   (check-exn #rx"operation failed"
              (lambda ()
                (series-add (series-new-i32 "short" '(1 2))
-                           (series-new-i32 "long" '(1 2 3))))))
+                           (series-new-i32 "long" '(1 2 3)))))
+
+  ;; scalar arithmetic
+  (define add-scalar (series-add-i32 batch2-x 5))
+  (check-equal? (series-dtype add-scalar) 'int32)
+  (check-equal? (series-ref add-scalar 0) 6)
+  (check-equal? (series-ref add-scalar 2) polars-null)
+  (check-equal? (series-ref (series-sub-i32 batch2-y 7) 1) 13)
+  (check-equal? (series-ref (series-mul-i32 batch2-x 3) 3) 12)
+  (check-equal? (series-ref (series-div-i32 batch2-y 10) 1) 2)
+  (check-equal? (series-ref (series-mod-i32 batch2-y 7) 3) 5)
+  (check-equal? (series-ref (series-add-i64 (series-new-i64 "wide" '(10000000000 2)) 5) 0)
+                10000000005)
+  (check-equal? (series-ref (series-mul-u32 (series-new-u32 "u" '(2 3 4)) 10) 2)
+                40)
+  (check-equal? (series-ref (series-sub-u64 (series-new-u64 "u" '(10 20 30)) 7) 1)
+                13)
+  (check-equal? (series-ref (series-div-f64 (series-new-f64 "f" '(3.0 7.5)) 2.5) 1)
+                3.0)
+  (check-equal? (series-ref (series-mod-f64 (series-new-f64 "f" '(3.0 7.5)) 2.0) 1)
+                1.5)
+  (check-exn #rx"operation failed"
+             (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3))))
 
 (define-cpointer-type _DataFrame-ptr)
 
@@ -1274,6 +1659,10 @@
 (define compat-asof-strategy/forward  2)
 (define compat-asof-strategy/nearest  3)
 
+(define compat-asof-tolerance/none    0)
+(define compat-asof-tolerance/integer 1)
+(define compat-asof-tolerance/float   2)
+
 (define (asof-strategy-symbol->code sym)
   (case sym
     [(backward) compat-asof-strategy/backward]
@@ -1287,21 +1676,75 @@
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _pointer)
   #:c-id dataframe_join_asof)
 
+(define-compat dataframe-join-asof-options/raw
+  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
+        (left-by : (_list i _string))
+        (_size = (length left-by))
+        (right-by : (_list i _string))
+        (_size = (length right-by))
+        _int32
+        _int64
+        _double
+        -> _pointer)
+  #:c-id dataframe_join_asof_options)
+
+(define (asof-tolerance->parts tolerance)
+  (cond
+    [(not tolerance) (values compat-asof-tolerance/none 0 0.0)]
+    [(exact-integer? tolerance)
+     (values compat-asof-tolerance/integer tolerance 0.0)]
+    [(real? tolerance)
+     (values compat-asof-tolerance/float 0 (exact->inexact tolerance))]
+    [else
+     (error 'dataframe-join-asof
+            "tolerance must be #f, an exact integer, or a real number, got ~v"
+            tolerance)]))
+
+(define (asof-by-values by left-by right-by)
+  (cond
+    [by
+     (when (or left-by right-by)
+       (error 'dataframe-join-asof
+              "supply either #:by or #:left-by and #:right-by, not both"))
+     (values by by)]
+    [(or left-by right-by)
+     (unless (and left-by right-by)
+       (error 'dataframe-join-asof
+              "must supply both #:left-by and #:right-by"))
+     (unless (= (length left-by) (length right-by))
+       (error 'dataframe-join-asof
+              "left-by length ~a does not match right-by length ~a"
+              (length left-by)
+              (length right-by)))
+     (values left-by right-by)]
+    [else (values '() '())]))
+
 (define (dataframe-join-asof left right
                              #:on [on #f]
                              #:left-on [left-on #f]
                              #:right-on [right-on #f]
-                             #:strategy [strategy 'backward])
+                             #:by [by #f]
+                             #:left-by [left-by #f]
+                             #:right-by [right-by #f]
+                             #:strategy [strategy 'backward]
+                             #:tolerance [tolerance #f])
   (define-values (lon ron)
     (cond
       [on (values on on)]
       [(and left-on right-on) (values left-on right-on)]
       [else (error 'dataframe-join-asof
                    "must supply #:on, or #:left-on and #:right-on")]))
+  (define-values (lby rby) (asof-by-values by left-by right-by))
+  (define-values (tolerance-kind tolerance-integer tolerance-float)
+    (asof-tolerance->parts tolerance))
   (require-dataframe-result
    'dataframe-join-asof
-   (dataframe-join-asof/raw left right lon ron
-                            (asof-strategy-symbol->code strategy))))
+   (dataframe-join-asof-options/raw left right lon ron
+                                    (asof-strategy-symbol->code strategy)
+                                    lby rby
+                                    tolerance-kind
+                                    tolerance-integer
+                                    tolerance-float)))
 
 (define-compat dataframe-vstack
   (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr)
@@ -1583,6 +2026,38 @@
                          #:strategy 'backward))
   (check-equal? (dataframe-height asof-backward) 3)
   (check-equal? (series-sum-i32 (dataframe-column asof-backward "offset")) 70)
+
+  (define asof-exact
+    (dataframe-join-asof observations-df calibration-df
+                         #:on "time"
+                         #:strategy 'backward
+                         #:tolerance 0))
+  (check-equal? (series-sum-i32 (dataframe-column asof-exact "offset")) 10)
+  (check-equal? (series-null-count (dataframe-column asof-exact "offset")) 2)
+
+  (define grouped-observations-df
+    (dataframe-new
+     (list (series-new-str "sensor" '("a" "a" "b" "b"))
+           (series-new-i32 "time" '(3 5 3 5))
+           (series-new-i32 "reading" '(300 500 30 50)))))
+  (define grouped-calibration-df
+    (dataframe-new
+     (list (series-new-str "sensor" '("a" "a" "b" "b"))
+           (series-new-i32 "time" '(1 4 1 4))
+           (series-new-i32 "offset" '(10 40 100 400)))))
+  (define asof-by
+    (dataframe-join-asof grouped-observations-df grouped-calibration-df
+                         #:on "time"
+                         #:by '("sensor")
+                         #:strategy 'backward))
+  (check-equal? (series-sum-i32 (dataframe-column asof-by "offset")) 550)
+  (define asof-by-tolerance
+    (dataframe-join-asof grouped-observations-df grouped-calibration-df
+                         #:on "time"
+                         #:by '("sensor")
+                         #:strategy 'backward
+                         #:tolerance 0))
+  (check-equal? (series-null-count (dataframe-column asof-by-tolerance "offset")) 4)
 
   (define crossed
     (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)

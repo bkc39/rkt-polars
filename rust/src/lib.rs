@@ -1,4 +1,7 @@
-use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike};
+use chrono::{
+    DateTime, Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime,
+    Timelike,
+};
 use polars::prelude::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -71,6 +74,20 @@ pub struct CompatOptI32 {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptI8 {
+    pub valid: i32,
+    pub value: i8,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptI16 {
+    pub valid: i32,
+    pub value: i16,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CompatOptF64 {
     pub valid: i32,
@@ -78,10 +95,31 @@ pub struct CompatOptF64 {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct CompatOptF32 {
+    pub valid: i32,
+    pub value: f32,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CompatOptI64 {
     pub valid: i32,
     pub value: i64,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptU8 {
+    pub valid: i32,
+    pub value: u8,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptU16 {
+    pub valid: i32,
+    pub value: u16,
 }
 
 #[repr(C)]
@@ -105,19 +143,89 @@ pub struct CompatOptBool {
     pub value: i32,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct YMD {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CompatOptYMD {
+    pub valid: i32,
+    pub value: YMD,
+}
+
 impl CompatOptI32 {
     const NONE: Self = Self { valid: 0, value: 0 };
-    fn some(v: i32) -> Self { Self { valid: 1, value: v } }
+    fn some(v: i32) -> Self {
+        Self { valid: 1, value: v }
+    }
     fn from_option(o: Option<i32>) -> Self {
-        match o { Some(v) => Self::some(v), None => Self::NONE }
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptI8 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: i8) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<i8>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptI16 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: i16) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<i16>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
     }
 }
 
 impl CompatOptF64 {
-    const NONE: Self = Self { valid: 0, value: 0.0 };
-    fn some(v: f64) -> Self { Self { valid: 1, value: v } }
+    const NONE: Self = Self {
+        valid: 0,
+        value: 0.0,
+    };
+    fn some(v: f64) -> Self {
+        Self { valid: 1, value: v }
+    }
     fn from_option(o: Option<f64>) -> Self {
-        match o { Some(v) => Self::some(v), None => Self::NONE }
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptF32 {
+    const NONE: Self = Self {
+        valid: 0,
+        value: 0.0,
+    };
+    fn some(v: f32) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<f32>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
     }
 }
 
@@ -127,6 +235,32 @@ impl CompatOptI64 {
         Self { valid: 1, value: v }
     }
     fn from_option(o: Option<i64>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptU8 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: u8) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<u8>) -> Self {
+        match o {
+            Some(v) => Self::some(v),
+            None => Self::NONE,
+        }
+    }
+}
+
+impl CompatOptU16 {
+    const NONE: Self = Self { valid: 0, value: 0 };
+    fn some(v: u16) -> Self {
+        Self { valid: 1, value: v }
+    }
+    fn from_option(o: Option<u16>) -> Self {
         match o {
             Some(v) => Self::some(v),
             None => Self::NONE,
@@ -173,6 +307,21 @@ impl CompatOptBool {
             Some(v) => Self::some(v),
             None => Self::NONE,
         }
+    }
+}
+
+impl CompatOptYMD {
+    const NONE: Self = Self {
+        valid: 0,
+        value: YMD {
+            year: 0,
+            month: 0,
+            day: 0,
+        },
+    };
+
+    fn some(v: YMD) -> Self {
+        Self { valid: 1, value: v }
     }
 }
 
@@ -426,10 +575,7 @@ pub extern "C" fn dataframe_new(
         if slice.iter().any(|p| p.is_null()) {
             return ptr::null_mut();
         }
-        slice
-            .iter()
-            .map(|&p| unsafe { (&*p).clone() })
-            .collect()
+        slice.iter().map(|&p| unsafe { (&*p).clone() }).collect()
     };
     match DataFrame::new(columns) {
         Ok(df) => Box::into_raw(Box::new(df)),
@@ -456,7 +602,10 @@ pub extern "C" fn dataframe_width(df_ptr: *mut DataFrame) -> usize {
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_head(df_ptr: *mut DataFrame, n: usize) -> *mut DataFrame {
+pub extern "C" fn dataframe_head(
+    df_ptr: *mut DataFrame,
+    n: usize,
+) -> *mut DataFrame {
     if df_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -465,7 +614,10 @@ pub extern "C" fn dataframe_head(df_ptr: *mut DataFrame, n: usize) -> *mut DataF
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_tail(df_ptr: *mut DataFrame, n: usize) -> *mut DataFrame {
+pub extern "C" fn dataframe_tail(
+    df_ptr: *mut DataFrame,
+    n: usize,
+) -> *mut DataFrame {
     if df_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -610,7 +762,10 @@ pub extern "C" fn dataframe_column(
 macro_rules! cmp_scalar {
     ($name:ident, $op:ident, $downcast:ident, $rhs_ty:ty) => {
         #[no_mangle]
-        pub extern "C" fn $name(s_ptr: *mut Series, rhs: $rhs_ty) -> *mut Series {
+        pub extern "C" fn $name(
+            s_ptr: *mut Series,
+            rhs: $rhs_ty,
+        ) -> *mut Series {
             if s_ptr.is_null() {
                 return ptr::null_mut();
             }
@@ -638,7 +793,10 @@ cmp_scalar!(series_eq_f64, equal, f64, f64);
 cmp_scalar!(series_ne_f64, not_equal, f64, f64);
 
 #[no_mangle]
-pub extern "C" fn series_eq_str(s_ptr: *mut Series, rhs: *const c_char) -> *mut Series {
+pub extern "C" fn series_eq_str(
+    s_ptr: *mut Series,
+    rhs: *const c_char,
+) -> *mut Series {
     if s_ptr.is_null() || rhs.is_null() {
         return ptr::null_mut();
     }
@@ -654,7 +812,10 @@ pub extern "C" fn series_eq_str(s_ptr: *mut Series, rhs: *const c_char) -> *mut 
 }
 
 #[no_mangle]
-pub extern "C" fn series_ne_str(s_ptr: *mut Series, rhs: *const c_char) -> *mut Series {
+pub extern "C" fn series_ne_str(
+    s_ptr: *mut Series,
+    rhs: *const c_char,
+) -> *mut Series {
     if s_ptr.is_null() || rhs.is_null() {
         return ptr::null_mut();
     }
@@ -790,7 +951,8 @@ pub extern "C" fn dataframe_sort(
             .map(|&b| b != 0)
             .collect()
     };
-    let opts = SortMultipleOptions::new().with_order_descending_multi(descending);
+    let opts =
+        SortMultipleOptions::new().with_order_descending_multi(descending);
     let df = unsafe { &*df_ptr };
     match df.sort(names, opts) {
         Ok(out) => Box::into_raw(Box::new(out)),
@@ -853,7 +1015,9 @@ pub extern "C" fn dataframe_unique(df_ptr: *mut DataFrame) -> *mut DataFrame {
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_drop_nulls(df_ptr: *mut DataFrame) -> *mut DataFrame {
+pub extern "C" fn dataframe_drop_nulls(
+    df_ptr: *mut DataFrame,
+) -> *mut DataFrame {
     if df_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -943,6 +1107,14 @@ pub enum CompatAsofStrategy {
     Nearest = 3,
 }
 
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompatAsofToleranceKind {
+    None = 0,
+    Integer = 1,
+    Float = 2,
+}
+
 fn compat_asof_strategy(code: i32) -> Option<polars::prelude::AsofStrategy> {
     match code {
         x if x == CompatAsofStrategy::Backward as i32 => {
@@ -956,6 +1128,39 @@ fn compat_asof_strategy(code: i32) -> Option<polars::prelude::AsofStrategy> {
         }
         _ => None,
     }
+}
+
+fn compat_asof_tolerance(
+    dtype: &DataType,
+    kind: i32,
+    integer: i64,
+    float: f64,
+) -> Option<Option<AnyValue<'static>>> {
+    use CompatAsofToleranceKind as Kind;
+    if kind == Kind::None as i32 {
+        return Some(None);
+    }
+    Some(Some(match (dtype.to_physical(), kind) {
+        (DataType::Int32, x) if x == Kind::Integer as i32 => {
+            AnyValue::Int32(integer.try_into().ok()?)
+        }
+        (DataType::Int64, x) if x == Kind::Integer as i32 => {
+            AnyValue::Int64(integer)
+        }
+        (DataType::UInt32, x) if x == Kind::Integer as i32 => {
+            AnyValue::UInt32(integer.try_into().ok()?)
+        }
+        (DataType::UInt64, x) if x == Kind::Integer as i32 => {
+            AnyValue::UInt64(integer.try_into().ok()?)
+        }
+        (DataType::Float32, x) if x == Kind::Float as i32 => {
+            AnyValue::Float32(float as f32)
+        }
+        (DataType::Float64, x) if x == Kind::Float as i32 => {
+            AnyValue::Float64(float)
+        }
+        _ => return None,
+    }))
 }
 
 #[no_mangle]
@@ -998,6 +1203,92 @@ pub extern "C" fn dataframe_join_asof(
     match left._join_asof(
         right, left_key, right_key, strategy, None, None, None, true,
     ) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_join_asof_options(
+    left_ptr: *mut DataFrame,
+    right_ptr: *mut DataFrame,
+    left_on: *const c_char,
+    right_on: *const c_char,
+    strategy: i32,
+    left_by_ptrs: *const *const c_char,
+    n_left_by: usize,
+    right_by_ptrs: *const *const c_char,
+    n_right_by: usize,
+    tolerance_kind: i32,
+    tolerance_integer: i64,
+    tolerance_float: f64,
+) -> *mut DataFrame {
+    if left_ptr.is_null()
+        || right_ptr.is_null()
+        || left_on.is_null()
+        || right_on.is_null()
+    {
+        return ptr::null_mut();
+    }
+    let left_on_str = match unsafe { CStr::from_ptr(left_on).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let right_on_str = match unsafe { CStr::from_ptr(right_on).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let strategy = match compat_asof_strategy(strategy) {
+        Some(s) => s,
+        None => return ptr::null_mut(),
+    };
+    let left_by = match unsafe { collect_c_strings(left_by_ptrs, n_left_by) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let right_by = match unsafe { collect_c_strings(right_by_ptrs, n_right_by) }
+    {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    if left_by.len() != right_by.len() {
+        return ptr::null_mut();
+    }
+    let left = unsafe { &*left_ptr };
+    let right = unsafe { &*right_ptr };
+    let left_key = match left.column(left_on_str) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let right_key = match right.column(right_on_str) {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let tolerance = match compat_asof_tolerance(
+        left_key.dtype(),
+        tolerance_kind,
+        tolerance_integer,
+        tolerance_float,
+    ) {
+        Some(t) => t,
+        None => return ptr::null_mut(),
+    };
+    let result = if left_by.is_empty() && right_by.is_empty() {
+        left._join_asof(
+            right, left_key, right_key, strategy, tolerance, None, None, true,
+        )
+    } else {
+        left.join_asof_by(
+            right,
+            left_on_str,
+            right_on_str,
+            left_by.iter(),
+            right_by.iter(),
+            strategy,
+            tolerance,
+        )
+    };
+    match result {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -1465,19 +1756,22 @@ macro_rules! series_new_opt_primitive {
             if name.is_null() {
                 return ptr::null_mut();
             }
-            let Some((values, valid)) = valid_slices(data, valid, length) else {
+            let Some((values, valid)) = valid_slices(data, valid, length)
+            else {
                 return ptr::null_mut();
             };
             let options: Vec<Option<$ty>> = values
                 .iter()
                 .zip(valid.iter())
-                .map(|(value, is_valid)| {
-                    if *is_valid == 0 {
-                        None
-                    } else {
-                        Some(*value)
-                    }
-                })
+                .map(
+                    |(value, is_valid)| {
+                        if *is_valid == 0 {
+                            None
+                        } else {
+                            Some(*value)
+                        }
+                    },
+                )
                 .collect();
             Box::into_raw(Box::new(Series::new(name_from_ptr(name), options)))
         }
@@ -1494,6 +1788,24 @@ pub extern "C" fn series_new_i32(
 }
 
 #[no_mangle]
+pub extern "C" fn series_new_i8(
+    name: *const c_char,
+    data: *const i8,
+    length: usize,
+) -> *mut Series {
+    series_new::<Int8Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_i16(
+    name: *const c_char,
+    data: *const i16,
+    length: usize,
+) -> *mut Series {
+    series_new::<Int16Type>(name, data, length)
+}
+
+#[no_mangle]
 pub extern "C" fn series_new_f64(
     name: *const c_char,
     data: *const f64,
@@ -1503,12 +1815,39 @@ pub extern "C" fn series_new_f64(
 }
 
 #[no_mangle]
+pub extern "C" fn series_new_f32(
+    name: *const c_char,
+    data: *const f32,
+    length: usize,
+) -> *mut Series {
+    series_new::<Float32Type>(name, data, length)
+}
+
+#[no_mangle]
 pub extern "C" fn series_new_i64(
     name: *const c_char,
     data: *const i64,
     length: usize,
 ) -> *mut Series {
     series_new::<Int64Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_u8(
+    name: *const c_char,
+    data: *const u8,
+    length: usize,
+) -> *mut Series {
+    series_new::<UInt8Type>(name, data, length)
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_u16(
+    name: *const c_char,
+    data: *const u16,
+    length: usize,
+) -> *mut Series {
+    series_new::<UInt16Type>(name, data, length)
 }
 
 #[no_mangle]
@@ -1529,9 +1868,14 @@ pub extern "C" fn series_new_u64(
     series_new::<UInt64Type>(name, data, length)
 }
 
+series_new_opt_primitive!(series_new_opt_i8, i8);
+series_new_opt_primitive!(series_new_opt_i16, i16);
 series_new_opt_primitive!(series_new_opt_i32, i32);
+series_new_opt_primitive!(series_new_opt_f32, f32);
 series_new_opt_primitive!(series_new_opt_f64, f64);
 series_new_opt_primitive!(series_new_opt_i64, i64);
+series_new_opt_primitive!(series_new_opt_u8, u8);
+series_new_opt_primitive!(series_new_opt_u16, u16);
 series_new_opt_primitive!(series_new_opt_u32, u32);
 series_new_opt_primitive!(series_new_opt_u64, u64);
 
@@ -1772,6 +2116,124 @@ pub extern "C" fn series_min_f64(s_ptr: *mut Series) -> CompatOptF64 {
     }
 }
 
+macro_rules! series_int_reductions {
+    ($downcast:ident, $compat_opt:ident,
+     $sum:ident, $min:ident, $max:ident, $mean:ident) => {
+        #[no_mangle]
+        pub extern "C" fn $sum(s_ptr: *mut Series) -> $compat_opt {
+            if s_ptr.is_null() {
+                return $compat_opt::NONE;
+            }
+            let s = unsafe { &*s_ptr };
+            match s.$downcast() {
+                Ok(ca) => $compat_opt::from_option(ca.sum()),
+                Err(_) => $compat_opt::NONE,
+            }
+        }
+
+        #[no_mangle]
+        pub extern "C" fn $min(s_ptr: *mut Series) -> $compat_opt {
+            if s_ptr.is_null() {
+                return $compat_opt::NONE;
+            }
+            let s = unsafe { &*s_ptr };
+            match s.$downcast() {
+                Ok(ca) => $compat_opt::from_option(ca.min()),
+                Err(_) => $compat_opt::NONE,
+            }
+        }
+
+        #[no_mangle]
+        pub extern "C" fn $max(s_ptr: *mut Series) -> $compat_opt {
+            if s_ptr.is_null() {
+                return $compat_opt::NONE;
+            }
+            let s = unsafe { &*s_ptr };
+            match s.$downcast() {
+                Ok(ca) => $compat_opt::from_option(ca.max()),
+                Err(_) => $compat_opt::NONE,
+            }
+        }
+
+        #[no_mangle]
+        pub extern "C" fn $mean(s_ptr: *mut Series) -> CompatOptF64 {
+            if s_ptr.is_null() {
+                return CompatOptF64::NONE;
+            }
+            let s = unsafe { &*s_ptr };
+            match s.$downcast() {
+                Ok(ca) => CompatOptF64::from_option(ca.mean()),
+                Err(_) => CompatOptF64::NONE,
+            }
+        }
+    };
+}
+
+series_int_reductions!(
+    i8,
+    CompatOptI8,
+    series_sum_i8,
+    series_min_i8,
+    series_max_i8,
+    series_mean_i8
+);
+series_int_reductions!(
+    i16,
+    CompatOptI16,
+    series_sum_i16,
+    series_min_i16,
+    series_max_i16,
+    series_mean_i16
+);
+series_int_reductions!(
+    i64,
+    CompatOptI64,
+    series_sum_i64,
+    series_min_i64,
+    series_max_i64,
+    series_mean_i64
+);
+series_int_reductions!(
+    u8,
+    CompatOptU8,
+    series_sum_u8,
+    series_min_u8,
+    series_max_u8,
+    series_mean_u8
+);
+series_int_reductions!(
+    u16,
+    CompatOptU16,
+    series_sum_u16,
+    series_min_u16,
+    series_max_u16,
+    series_mean_u16
+);
+series_int_reductions!(
+    u32,
+    CompatOptU32,
+    series_sum_u32,
+    series_min_u32,
+    series_max_u32,
+    series_mean_u32
+);
+series_int_reductions!(
+    u64,
+    CompatOptU64,
+    series_sum_u64,
+    series_min_u64,
+    series_max_u64,
+    series_mean_u64
+);
+series_int_reductions!(
+    f32,
+    CompatOptF32,
+    series_sum_f32,
+    series_min_f32,
+    series_max_f32,
+    series_mean_f32
+);
+
 #[no_mangle]
 pub extern "C" fn series_n_unique(s_ptr: *mut Series) -> usize {
     if s_ptr.is_null() {
@@ -1843,7 +2305,10 @@ pub extern "C" fn series_unique(s_ptr: *mut Series) -> *mut Series {
 }
 
 #[no_mangle]
-pub extern "C" fn series_sort(s_ptr: *mut Series, descending: u8) -> *mut Series {
+pub extern "C" fn series_sort(
+    s_ptr: *mut Series,
+    descending: u8,
+) -> *mut Series {
     if s_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -1879,10 +2344,9 @@ pub extern "C" fn series_new_ymdhms(
 }
 
 fn ymdhms_to_naive_datetime(ymdhms: &YMDHMS) -> Option<NaiveDateTime> {
-    NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day)
-        .and_then(|date| {
-            date.and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second)
-        })
+    NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day).and_then(
+        |date| date.and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second),
+    )
 }
 
 #[no_mangle]
@@ -1895,13 +2359,14 @@ pub extern "C" fn series_new_opt_ymdhms(
     let Some((values, valid)) = valid_slices(data, valid, length) else {
         return ptr::null_mut();
     };
-    let naive_dates = values.iter().zip(valid.iter()).map(|(ymdhms, is_valid)| {
-        if *is_valid == 0 {
-            None
-        } else {
-            ymdhms_to_naive_datetime(ymdhms)
-        }
-    });
+    let naive_dates =
+        values.iter().zip(valid.iter()).map(|(ymdhms, is_valid)| {
+            if *is_valid == 0 {
+                None
+            } else {
+                ymdhms_to_naive_datetime(ymdhms)
+            }
+        });
     let ca = DatetimeChunked::from_naive_datetime_options(
         name_from_ptr(name),
         naive_dates,
@@ -1945,6 +2410,36 @@ pub extern "C" fn series_ref_i32(
 }
 
 #[no_mangle]
+pub extern "C" fn series_ref_i8(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI8 {
+    if s_ptr.is_null() {
+        return CompatOptI8::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i8() {
+        Ok(ca) => CompatOptI8::from_option(ca.get(index)),
+        Err(_) => CompatOptI8::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_i16(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI16 {
+    if s_ptr.is_null() {
+        return CompatOptI16::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.i16() {
+        Ok(ca) => CompatOptI16::from_option(ca.get(index)),
+        Err(_) => CompatOptI16::NONE,
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn series_ref_i64(
     s_ptr: *mut Series,
     index: usize,
@@ -1956,6 +2451,36 @@ pub extern "C" fn series_ref_i64(
     match s.i64() {
         Ok(ca) => CompatOptI64::from_option(ca.get(index)),
         Err(_) => CompatOptI64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_u8(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptU8 {
+    if s_ptr.is_null() {
+        return CompatOptU8::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.u8() {
+        Ok(ca) => CompatOptU8::from_option(ca.get(index)),
+        Err(_) => CompatOptU8::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_u16(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptU16 {
+    if s_ptr.is_null() {
+        return CompatOptU16::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.u16() {
+        Ok(ca) => CompatOptU16::from_option(ca.get(index)),
+        Err(_) => CompatOptU16::NONE,
     }
 }
 
@@ -1986,6 +2511,21 @@ pub extern "C" fn series_ref_u64(
     match s.u64() {
         Ok(ca) => CompatOptU64::from_option(ca.get(index)),
         Err(_) => CompatOptU64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_f32(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptF32 {
+    if s_ptr.is_null() {
+        return CompatOptF32::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.f32() {
+        Ok(ca) => CompatOptF32::from_option(ca.get(index)),
+        Err(_) => CompatOptF32::NONE,
     }
 }
 
@@ -2031,6 +2571,67 @@ pub extern "C" fn series_ref_str(
     match s.str() {
         Ok(ca) => ca.get(index).map(rust_string_to_ptr).unwrap_or(ptr::null()),
         Err(_) => ptr::null(),
+    }
+}
+
+fn date_days_to_ymd(days: i32) -> Option<YMD> {
+    NaiveDate::from_ymd_opt(1970, 1, 1)
+        .and_then(|epoch| {
+            epoch.checked_add_signed(ChronoDuration::days(days as i64))
+        })
+        .map(|date| YMD {
+            year: date.year(),
+            month: date.month(),
+            day: date.day(),
+        })
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_date(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptYMD {
+    if s_ptr.is_null() {
+        return CompatOptYMD::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.date() {
+        Ok(ca) => ca
+            .get(index)
+            .and_then(date_days_to_ymd)
+            .map(CompatOptYMD::some)
+            .unwrap_or(CompatOptYMD::NONE),
+        Err(_) => CompatOptYMD::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_duration(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI64 {
+    if s_ptr.is_null() {
+        return CompatOptI64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.duration() {
+        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
+        Err(_) => CompatOptI64::NONE,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_ref_time(
+    s_ptr: *mut Series,
+    index: usize,
+) -> CompatOptI64 {
+    if s_ptr.is_null() {
+        return CompatOptI64::NONE;
+    }
+    let s = unsafe { &*s_ptr };
+    match s.time() {
+        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
+        Err(_) => CompatOptI64::NONE,
     }
 }
 
@@ -2103,10 +2704,7 @@ pub extern "C" fn series_cast(
 }
 
 #[no_mangle]
-pub extern "C" fn series_std(
-    s_ptr: *mut Series,
-    ddof: u8,
-) -> CompatOptF64 {
+pub extern "C" fn series_std(s_ptr: *mut Series, ddof: u8) -> CompatOptF64 {
     if s_ptr.is_null() {
         return CompatOptF64::NONE;
     }
@@ -2115,10 +2713,7 @@ pub extern "C" fn series_std(
 }
 
 #[no_mangle]
-pub extern "C" fn series_var(
-    s_ptr: *mut Series,
-    ddof: u8,
-) -> CompatOptF64 {
+pub extern "C" fn series_var(s_ptr: *mut Series, ddof: u8) -> CompatOptF64 {
     if s_ptr.is_null() {
         return CompatOptF64::NONE;
     }
@@ -2262,6 +2857,82 @@ pub extern "C" fn series_mod(
     })
 }
 
+macro_rules! arith_scalar {
+    ($name:ident, $op:path, $downcast:ident, $rhs_ty:ty) => {
+        #[no_mangle]
+        pub extern "C" fn $name(
+            s_ptr: *mut Series,
+            rhs: $rhs_ty,
+        ) -> *mut Series {
+            if s_ptr.is_null() {
+                return ptr::null_mut();
+            }
+            let s = unsafe { &*s_ptr };
+            match s.$downcast() {
+                Ok(ca) => Box::into_raw(Box::new($op(ca, rhs).into_series())),
+                Err(_) => ptr::null_mut(),
+            }
+        }
+    };
+}
+
+macro_rules! arith_scalar_family {
+    ($downcast:ident, $rhs_ty:ty,
+     $add:ident, $sub:ident, $mul:ident, $div:ident, $rem:ident) => {
+        arith_scalar!($add, std::ops::Add::add, $downcast, $rhs_ty);
+        arith_scalar!($sub, std::ops::Sub::sub, $downcast, $rhs_ty);
+        arith_scalar!($mul, std::ops::Mul::mul, $downcast, $rhs_ty);
+        arith_scalar!($div, std::ops::Div::div, $downcast, $rhs_ty);
+        arith_scalar!($rem, std::ops::Rem::rem, $downcast, $rhs_ty);
+    };
+}
+
+arith_scalar_family!(
+    i32,
+    i32,
+    series_add_i32,
+    series_sub_i32,
+    series_mul_i32,
+    series_div_i32,
+    series_mod_i32
+);
+arith_scalar_family!(
+    i64,
+    i64,
+    series_add_i64,
+    series_sub_i64,
+    series_mul_i64,
+    series_div_i64,
+    series_mod_i64
+);
+arith_scalar_family!(
+    u32,
+    u32,
+    series_add_u32,
+    series_sub_u32,
+    series_mul_u32,
+    series_div_u32,
+    series_mod_u32
+);
+arith_scalar_family!(
+    u64,
+    u64,
+    series_add_u64,
+    series_sub_u64,
+    series_mul_u64,
+    series_div_u64,
+    series_mod_u64
+);
+arith_scalar_family!(
+    f64,
+    f64,
+    series_add_f64,
+    series_sub_f64,
+    series_mul_f64,
+    series_div_f64,
+    series_mod_f64
+);
+
 // ===== Track A: Expr / Lazy DSL =====
 
 #[no_mangle]
@@ -2389,7 +3060,9 @@ pub extern "C" fn lazyframe_scan_csv_options(
 }
 
 #[no_mangle]
-pub extern "C" fn lazyframe_scan_parquet(path: *const c_char) -> *mut LazyFrame {
+pub extern "C" fn lazyframe_scan_parquet(
+    path: *const c_char,
+) -> *mut LazyFrame {
     if path.is_null() {
         return ptr::null_mut();
     }
@@ -2426,7 +3099,10 @@ pub extern "C" fn lazyframe_scan_parquet_options(
     }
 }
 
-unsafe fn collect_exprs(ptrs: *const *const Expr, n: usize) -> Option<Vec<Expr>> {
+unsafe fn collect_exprs(
+    ptrs: *const *const Expr,
+    n: usize,
+) -> Option<Vec<Expr>> {
     if n == 0 {
         return Some(Vec::new());
     }
@@ -2658,7 +3334,9 @@ pub extern "C" fn expr_str_strip_chars_whitespace(e: *const Expr) -> *mut Expr {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_str_strip_chars_start_whitespace(e: *const Expr) -> *mut Expr {
+pub extern "C" fn expr_str_strip_chars_start_whitespace(
+    e: *const Expr,
+) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
     }
@@ -2667,7 +3345,9 @@ pub extern "C" fn expr_str_strip_chars_start_whitespace(e: *const Expr) -> *mut 
 }
 
 #[no_mangle]
-pub extern "C" fn expr_str_strip_chars_end_whitespace(e: *const Expr) -> *mut Expr {
+pub extern "C" fn expr_str_strip_chars_end_whitespace(
+    e: *const Expr,
+) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
     }
@@ -2699,6 +3379,100 @@ pub extern "C" fn expr_str_strip_suffix(
     let ee = unsafe { (*e).clone() };
     let ss = unsafe { (*suffix).clone() };
     Box::into_raw(Box::new(ee.str().strip_suffix(ss)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_len_bytes(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().len_bytes()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_len_chars(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.str().len_chars()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_slice(
+    e: *const Expr,
+    offset: *const Expr,
+    length: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || offset.is_null() || length.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let oo = unsafe { (*offset).clone() };
+    let ll = unsafe { (*length).clone() };
+    Box::into_raw(Box::new(ee.str().slice(oo, ll)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_head(e: *const Expr, n: *const Expr) -> *mut Expr {
+    if e.is_null() || n.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let nn = unsafe { (*n).clone() };
+    Box::into_raw(Box::new(ee.str().head(nn)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_tail(e: *const Expr, n: *const Expr) -> *mut Expr {
+    if e.is_null() || n.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let nn = unsafe { (*n).clone() };
+    Box::into_raw(Box::new(ee.str().tail(nn)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_find(
+    e: *const Expr,
+    pat: *const Expr,
+    strict: u8,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    Box::into_raw(Box::new(ee.str().find(pp, strict != 0)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_find_literal(
+    e: *const Expr,
+    pat: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    Box::into_raw(Box::new(ee.str().find_literal(pp)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_str_count_matches(
+    e: *const Expr,
+    pat: *const Expr,
+    literal: u8,
+) -> *mut Expr {
+    if e.is_null() || pat.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let pp = unsafe { (*pat).clone() };
+    Box::into_raw(Box::new(ee.str().count_matches(pp, literal != 0)))
 }
 
 #[no_mangle]
@@ -2753,6 +3527,149 @@ pub extern "C" fn expr_dt_second(e: *const Expr) -> *mut Expr {
     }
     let ee = unsafe { (*e).clone() };
     Box::into_raw(Box::new(ee.dt().second()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_iso_year(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().iso_year()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_quarter(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().quarter()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_week(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().week()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_weekday(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().weekday()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_ordinal_day(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().ordinal_day()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_is_leap_year(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().is_leap_year()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_date(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().date()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_time(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().time()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_millisecond(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().millisecond()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_microsecond(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().microsecond()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_nanosecond(e: *const Expr) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().nanosecond()))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_timestamp(e: *const Expr, unit: i32) -> *mut Expr {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let tu = match unit {
+        x if x == CompatTimeUnit::Nanoseconds as i32 => TimeUnit::Nanoseconds,
+        x if x == CompatTimeUnit::Microseconds as i32 => TimeUnit::Microseconds,
+        x if x == CompatTimeUnit::Milliseconds as i32 => TimeUnit::Milliseconds,
+        _ => return ptr::null_mut(),
+    };
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().timestamp(tu)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_strftime(
+    e: *const Expr,
+    format: *const c_char,
+) -> *mut Expr {
+    if e.is_null() || format.is_null() {
+        return ptr::null_mut();
+    }
+    let fmt = match unsafe { CStr::from_ptr(format).to_str() } {
+        Ok(s) => s,
+        Err(_) => return ptr::null_mut(),
+    };
+    let ee = unsafe { (*e).clone() };
+    Box::into_raw(Box::new(ee.dt().strftime(fmt)))
+}
+
+#[no_mangle]
+pub extern "C" fn expr_dt_truncate(
+    e: *const Expr,
+    every: *const Expr,
+) -> *mut Expr {
+    if e.is_null() || every.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let ev = unsafe { (*every).clone() };
+    Box::into_raw(Box::new(ee.dt().truncate(ev)))
 }
 
 macro_rules! expr_unop {
@@ -2917,7 +3834,8 @@ pub extern "C" fn lazyframe_sort(
             .collect()
     };
     let by_exprs: Vec<Expr> = names.iter().map(|n| col(n)).collect();
-    let opts = SortMultipleOptions::new().with_order_descending_multi(descending);
+    let opts =
+        SortMultipleOptions::new().with_order_descending_multi(descending);
     let lf_ref = unsafe { (*lf).clone() };
     Box::into_raw(Box::new(lf_ref.sort_by_exprs(by_exprs, opts)))
 }
@@ -2946,7 +3864,10 @@ pub extern "C" fn lazyframe_drop_nulls(lf: *mut LazyFrame) -> *mut LazyFrame {
 // ===== Phase A7: lazy head / tail / slice =====
 
 #[no_mangle]
-pub extern "C" fn lazyframe_head(lf: *mut LazyFrame, n: usize) -> *mut LazyFrame {
+pub extern "C" fn lazyframe_head(
+    lf: *mut LazyFrame,
+    n: usize,
+) -> *mut LazyFrame {
     if lf.is_null() {
         return ptr::null_mut();
     }
@@ -2955,7 +3876,10 @@ pub extern "C" fn lazyframe_head(lf: *mut LazyFrame, n: usize) -> *mut LazyFrame
 }
 
 #[no_mangle]
-pub extern "C" fn lazyframe_tail(lf: *mut LazyFrame, n: usize) -> *mut LazyFrame {
+pub extern "C" fn lazyframe_tail(
+    lf: *mut LazyFrame,
+    n: usize,
+) -> *mut LazyFrame {
     if lf.is_null() {
         return ptr::null_mut();
     }

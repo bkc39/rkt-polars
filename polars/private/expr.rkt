@@ -31,7 +31,8 @@
                   compat-time-unit/milliseconds))
 
 (module+ test
-  (require rackunit
+  (require gregor
+           rackunit
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -66,8 +67,16 @@
          expr-str-replace expr-str-replace-all expr-str-extract
          expr-str-strip-chars expr-str-strip-chars-start expr-str-strip-chars-end
          expr-str-strip-prefix expr-str-strip-suffix
+         expr-str-len-bytes expr-str-len-chars
+         expr-str-slice expr-str-head expr-str-tail
+         expr-str-find expr-str-find-literal expr-str-count-matches
          expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
+         expr-dt-iso-year expr-dt-quarter expr-dt-week
+         expr-dt-weekday expr-dt-ordinal-day expr-dt-is-leap-year
+         expr-dt-date expr-dt-time
+         expr-dt-millisecond expr-dt-microsecond expr-dt-nanosecond
+         expr-dt-timestamp expr-dt-strftime expr-dt-truncate
          expr-not expr-neg expr-is-null expr-is-not-null
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
@@ -763,6 +772,34 @@
   (check-equal? (series-ref (dataframe-column str-clean "replace_all_a") 4) "bAnAnA")
   (check-equal? (series-ref (dataframe-column str-clean "digits") 2) "123")
 
+  (define str-batch3-df
+    (dataframe-new
+     (list (series-new-str "text"
+                           '("hello"
+                             "héllo"
+                             "banana"
+                             "abc123abc")))))
+  (define str-batch3
+    (dataframe-with-columns
+     str-batch3-df
+     (list (expr-alias (expr-str-len-bytes (col "text")) "bytes")
+           (expr-alias (expr-str-len-chars (col "text")) "chars")
+           (expr-alias (expr-str-slice (col "text") 1 3) "slice")
+           (expr-alias (expr-str-head (col "text") 2) "head")
+           (expr-alias (expr-str-tail (col "text") 2) "tail")
+           (expr-alias (expr-str-find (col "text") "[0-9]+") "find_digits")
+           (expr-alias (expr-str-find-literal (col "text") "na") "find_na")
+           (expr-alias (expr-str-count-matches (col "text") "a" #:literal #t)
+                       "count_a"))))
+  (check-equal? (series-ref (dataframe-column str-batch3 "bytes") 1) 6)
+  (check-equal? (series-ref (dataframe-column str-batch3 "chars") 1) 5)
+  (check-equal? (series-ref (dataframe-column str-batch3 "slice") 2) "ana")
+  (check-equal? (series-ref (dataframe-column str-batch3 "head") 1) "hé")
+  (check-equal? (series-ref (dataframe-column str-batch3 "tail") 2) "na")
+  (check-equal? (series-ref (dataframe-column str-batch3 "find_digits") 3) 3)
+  (check-equal? (series-ref (dataframe-column str-batch3 "find_na") 2) 2)
+  (check-equal? (series-ref (dataframe-column str-batch3 "count_a") 2) 3)
+
   ;; --- Expr datetime namespace ---
   (define dt-df
     (dataframe-new
@@ -789,6 +826,53 @@
   (check-equal? (series-ref (dataframe-column dt-parts "hour") 0) 3)
   (check-equal? (series-ref (dataframe-column dt-parts "minute") 1) 59)
   (check-equal? (series-ref (dataframe-column dt-parts "second") 2) 45)
+
+  (define dt-batch2
+    (dataframe-with-columns
+     dt-df
+     (list (expr-alias (expr-dt-iso-year (col "ts")) "iso_year")
+           (expr-alias (expr-cast (expr-dt-quarter (col "ts")) 'int32) "quarter")
+           (expr-alias (expr-cast (expr-dt-week (col "ts")) 'int32) "week")
+           (expr-alias (expr-cast (expr-dt-weekday (col "ts")) 'int32) "weekday")
+           (expr-alias (expr-cast (expr-dt-ordinal-day (col "ts")) 'int32) "ordinal")
+           (expr-alias (expr-dt-is-leap-year (col "ts")) "leap")
+           (expr-alias (expr-dt-date (col "ts")) "date")
+           (expr-alias (expr-dt-time (col "ts")) "time")
+           (expr-alias (expr-dt-strftime (col "ts") "%Y-%m-%d") "fmt"))))
+  (check-equal? (series-ref (dataframe-column dt-batch2 "iso_year") 0) 2024)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "quarter") 0) 1)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "week") 0) 1)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "weekday") 0) 2)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "ordinal") 0) 2)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "leap") 0) #t)
+  (check-equal? (series-ref (dataframe-column dt-batch2 "date") 0) (date 2024 1 2))
+  (check-equal? (series-ref (dataframe-column dt-batch2 "time") 0)
+                (iso8601->time "03:04:05"))
+  (check-equal? (series-ref (dataframe-column dt-batch2 "fmt") 0) "2024-01-02")
+
+  (define dt-subsec-df
+    (dataframe-new
+     (list (series-new-i64 "t" '(1704164645123)))))
+  (define dt-subsec
+    (dataframe-with-columns
+     dt-subsec-df
+     (list (expr-alias (expr-cast (col "t") '(datetime milliseconds)) "ts"))))
+  (define dt-subsec-out
+    (dataframe-with-columns
+     dt-subsec
+     (list (expr-alias (expr-dt-millisecond (col "ts")) "ms")
+           (expr-alias (expr-dt-microsecond (col "ts")) "us")
+           (expr-alias (expr-dt-nanosecond (col "ts")) "ns")
+           (expr-alias (expr-dt-timestamp (col "ts") #:unit 'milliseconds) "epoch_ms")
+           (expr-alias (expr-dt-timestamp (col "ts") #:unit 'microseconds) "epoch_us")
+           (expr-alias (expr-dt-truncate (col "ts") "1h") "hour_bucket"))))
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "ms") 0) 123)
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "us") 0) 123000)
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "ns") 0) 123000000)
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "epoch_ms") 0) 1704164645123)
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "epoch_us") 0) 1704164645123000)
+  (check-equal? (series-ref (dataframe-column dt-subsec-out "hour_bucket") 0)
+                (datetime 2024 1 2 3 0 0))
 
   ;; --- Phase A2 tests: Expr ops via with-columns ---
 
