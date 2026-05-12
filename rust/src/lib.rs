@@ -3855,6 +3855,49 @@ expr_unop!(expr_is_infinite, |e| e.is_infinite());
 expr_binop!(expr_fill_null, |a, b| a.fill_null(b));
 expr_binop!(expr_fill_nan, |a, b| a.fill_nan(b));
 
+// ----- membership / distinct predicates -----
+
+/// Build a literal Expr from a Series (consumes nothing — clones the
+/// Series). Useful as the right-hand side of `is_in`.
+#[no_mangle]
+pub extern "C" fn expr_lit_series(s: *const Series) -> *mut Expr {
+    if s.is_null() {
+        return ptr::null_mut();
+    }
+    let ss = unsafe { (*s).clone() };
+    Box::into_raw(Box::new(lit(ss)))
+}
+
+expr_binop!(expr_is_in, |a, b| a.is_in(b));
+expr_unop!(expr_is_unique, |e| e.is_unique());
+expr_unop!(expr_is_duplicated, |e| e.is_duplicated());
+expr_unop!(expr_is_first_distinct, |e| e.is_first_distinct());
+expr_unop!(expr_is_last_distinct, |e| e.is_last_distinct());
+
+/// `is_between` with a `closed` selector: 0 = both, 1 = left, 2 = right,
+/// 3 = none (any other value treated as `both`).
+#[no_mangle]
+pub extern "C" fn expr_is_between(
+    e: *const Expr,
+    lower: *const Expr,
+    upper: *const Expr,
+    closed: u8,
+) -> *mut Expr {
+    if e.is_null() || lower.is_null() || upper.is_null() {
+        return ptr::null_mut();
+    }
+    let ee = unsafe { (*e).clone() };
+    let lo = unsafe { (*lower).clone() };
+    let hi = unsafe { (*upper).clone() };
+    let c = match closed {
+        1 => ClosedInterval::Left,
+        2 => ClosedInterval::Right,
+        3 => ClosedInterval::None,
+        _ => ClosedInterval::Both,
+    };
+    Box::into_raw(Box::new(ee.is_between(lo, hi, c)))
+}
+
 #[no_mangle]
 pub extern "C" fn expr_forward_fill(
     e: *const Expr,

@@ -13,6 +13,9 @@
          (only-in polars/private/foreign
                   _DataFrame-ptr
                   DataFrame-ptr?
+                  _Series-ptr
+                  Series-ptr?
+                  series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   _CompatDType make-CompatDType
                   compat-dtype-tag/boolean
@@ -85,6 +88,9 @@
          expr-fill-null expr-fill-nan expr-forward-fill expr-backward-fill
          expr-abs expr-sign expr-floor expr-ceil expr-sqrt expr-exp expr-log1p
          expr-round expr-log expr-pow expr-clip
+         expr-lit-series expr-is-in expr-is-between
+         expr-is-unique expr-is-duplicated
+         expr-is-first-distinct expr-is-last-distinct
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
@@ -413,6 +419,61 @@
   (expr-clip/raw e
                  (if lower 1 0) (and lower (->expr lower))
                  (if upper 1 0) (and upper (->expr upper))))
+
+;; --- Membership / distinct predicates ---
+
+(define-compat expr-lit-series
+  (_fun _Series-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-is-unique
+  (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-is-duplicated
+  (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-is-first-distinct
+  (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-is-last-distinct
+  (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+
+(define-compat expr-is-in/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_is_in
+  #:wrap (allocator expr-drop))
+
+;; The right-hand side may be an Expr, a Series, or a Racket list of
+;; homogeneous scalars (ints / reals / strings / booleans).
+(define (->membership-expr who rhs)
+  (cond
+    [(Expr-ptr? rhs) rhs]
+    [(Series-ptr? rhs) (expr-lit-series rhs)]
+    [(list? rhs)
+     (define s
+       (cond
+         [(null? rhs) (error who "is-in needs a non-empty list of values")]
+         [(andmap exact-integer? rhs) (series-new-i64 "" rhs)]
+         [(andmap real? rhs) (series-new-f64 "" (map exact->inexact rhs))]
+         [(andmap string? rhs) (series-new-str "" rhs)]
+         [(andmap boolean? rhs) (series-new-bool "" rhs)]
+         [else (error who "is-in list must be homogeneous ints/reals/strings/booleans, got ~v" rhs)]))
+     (expr-lit-series s)]
+    [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+
+(define (expr-is-in e rhs)
+  (expr-is-in/raw e (->membership-expr 'expr-is-in rhs)))
+
+(define-compat expr-is-between/raw
+  (_fun _Expr-ptr _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
+  #:c-id expr_is_between
+  #:wrap (allocator expr-drop))
+
+(define (closed->byte who closed)
+  (case closed
+    [(both) 0] [(left) 1] [(right) 2] [(none) 3]
+    [else (error who "closed must be one of 'both 'left 'right 'none, got ~v" closed)]))
+
+(define (expr-is-between e lower upper #:closed [closed 'both])
+  (expr-is-between/raw e (->expr lower) (->expr upper)
+                       (closed->byte 'expr-is-between closed)))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -1523,4 +1584,29 @@
   (check-equal? (col->list m "cmin") '(0.0 0.0 0.0 1.6 4.0))
   (check-= (series-ref (dataframe-column m "sq") 4) 16.0 1e-9)
   (check-= (series-ref (dataframe-column m "log2") 4) 2.0 1e-9)
-  (check-exn exn:fail? (lambda () (expr-round (col "x") #:decimals -1))))
+  (check-exn exn:fail? (lambda () (expr-round (col "x") #:decimals -1)))
+
+  ;; --- membership / distinct predicates ---
+  (define df-p
+    (dataframe-new (list (series-new-i64 "x" '(1 2 2 3 5 5 8)))))
+  (define p
+    (dataframe-with-columns
+     df-p
+     (list (expr-alias (expr-is-in (col "x") '(2 3 8)) "in")
+           (expr-alias (expr-is-between (col "x") 2 5) "btw")
+           (expr-alias (expr-is-between (col "x") 2 5 #:closed 'left) "btwl")
+           (expr-alias (expr-is-unique (col "x")) "u")
+           (expr-alias (expr-is-duplicated (col "x")) "d")
+           (expr-alias (expr-is-first-distinct (col "x")) "f")
+           (expr-alias (expr-is-last-distinct (col "x")) "l"))))
+  (define (col7 name)
+    (for/list ([i (in-range 7)]) (series-ref (dataframe-column p name) i)))
+  (check-equal? (col7 "in")   '(#f #t #t #t #f #f #t))
+  (check-equal? (col7 "btw")  '(#f #t #t #t #t #t #f))
+  (check-equal? (col7 "btwl") '(#f #t #t #t #f #f #f))
+  (check-equal? (col7 "u")    '(#t #f #f #t #f #f #t))
+  (check-equal? (col7 "d")    '(#f #t #t #f #t #t #f))
+  (check-equal? (col7 "f")    '(#t #t #f #t #t #f #t))
+  (check-equal? (col7 "l")    '(#t #f #t #t #f #t #t))
+  (check-exn exn:fail? (lambda () (expr-is-in (col "x") '())))
+  (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat))))

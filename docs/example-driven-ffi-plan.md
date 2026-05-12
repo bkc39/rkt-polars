@@ -69,6 +69,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/private/expr.rkt` |
 | Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/private/expr.rkt` |
 | Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/private/expr.rkt` |
+| Expr predicates | `polars/private/expr.rkt` | `rust/examples/23_expr_predicates.rs` | `examples/37-expr-predicates.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -79,6 +80,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Unary: `expr-{neg,is-null,is-not-null}`
 - Null / NaN: `expr-{drop-nulls,drop-nans,is-nan,is-not-nan,is-finite,is-infinite}`, `expr-fill-null`, `expr-fill-nan` (value auto-lifted via `->expr`), `expr-forward-fill` / `expr-backward-fill` (with `#:limit`)
 - Math: `expr-{abs,sign,floor,ceil,sqrt,exp,log1p}`, `expr-round` (`#:decimals`, default 0), `expr-log` (`#:base`, default e), `expr-pow` (exponent auto-lifted), `expr-clip` (`#:lower` / `#:upper`, either may be omitted)
+- Membership / distinct: `expr-is-in` (RHS = Expr, Series, or homogeneous Racket list), `expr-lit-series` (Series → literal Expr), `expr-is-between` (`#:closed` `'both|'left|'right|'none`), `expr-{is-unique,is-duplicated,is-first-distinct,is-last-distinct}`
 - String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
@@ -298,9 +300,19 @@ Expr math is shipped:
 - Cargo.toml: added the `abs`, `round_series`, `sign`, `log` polars
   features (there is no `pow` feature — `Expr::pow` is always available)
 
-Next planned Expr batches (see the approved plan): membership/predicate
-tests, cumulative + shift/diff, sorting/selection helpers, plus a
-`prop:custom-write` REPL pretty-print pass.
+Expr predicates is shipped:
+- `expr-lit-series` (`expr_lit_series`: clone a Series into a literal Expr)
+- `expr-is-in` (`expr_binop!`; Racket RHS may be an Expr, a Series, or a
+  homogeneous list of ints/reals/strings/booleans, sniffed into a Series)
+- `expr-is-unique` / `expr-is-duplicated` / `expr-is-first-distinct` /
+  `expr-is-last-distinct` (`expr_unop!`)
+- `expr-is-between` (`#:closed`; FFI `expr_is_between(e, lo, hi, closed: u8)`
+  mapping 0/1/2/3 → `ClosedInterval::{Both,Left,Right,None}`)
+- Cargo.toml: added `is_in`, `is_unique`, `is_first_distinct`,
+  `is_last_distinct`, `is_between` polars features
+
+Next planned Expr batches (see the approved plan): cumulative + shift/diff,
+sorting/selection helpers, plus a `prop:custom-write` REPL pretty-print pass.
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so
