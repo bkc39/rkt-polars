@@ -67,6 +67,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr string-to-temporal | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/19_expr_string_to_temporal.rs` | `examples/33-expr-string-to-temporal.rkt` | `polars/private/expr.rkt` |
 | Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
 | Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/private/expr.rkt` |
+| Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -75,6 +76,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Comparison: `expr-{gt,lt,ge,le,eq,ne}`
 - Boolean: `expr-{and,or,xor,not}`
 - Unary: `expr-{neg,is-null,is-not-null}`
+- Null / NaN: `expr-{drop-nulls,drop-nans,is-nan,is-not-nan,is-finite,is-infinite}`, `expr-fill-null`, `expr-fill-nan` (value auto-lifted via `->expr`), `expr-forward-fill` / `expr-backward-fill` (with `#:limit`)
 - String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
@@ -277,10 +279,16 @@ Expr when/then is shipped:
   `when(c0).then(v0).otherwise(when(c1).then(v1).otherwise(...)))`,
   so no `When` / `Then` builder pointers cross the FFI.
 
-Next planned Expr batches (see the approved plan): null/NaN handling,
-element-wise math, membership/predicate tests, cumulative + shift/diff,
-sorting/selection helpers, plus a `prop:custom-write` REPL pretty-print
-pass.
+Expr null/NaN is shipped:
+- `expr-drop-nulls` / `expr-drop-nans`, `expr-is-nan` / `expr-is-not-nan`,
+  `expr-is-finite` / `expr-is-infinite` (`expr_unop!`)
+- `expr-fill-null` / `expr-fill-nan` (`expr_binop!`; Racket value auto-lifted)
+- `expr-forward-fill` / `expr-backward-fill` (`#:limit`; FFI takes
+  `has_limit: u8` + `limit: u32` since `forward_fill` wants `Option<u32>`)
+
+Next planned Expr batches (see the approved plan): element-wise math,
+membership/predicate tests, cumulative + shift/diff, sorting/selection
+helpers, plus a `prop:custom-write` REPL pretty-print pass.
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so

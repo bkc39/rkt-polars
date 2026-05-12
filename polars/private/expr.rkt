@@ -80,6 +80,9 @@
          expr-dt-millisecond expr-dt-microsecond expr-dt-nanosecond
          expr-dt-timestamp expr-dt-strftime expr-dt-truncate
          expr-not expr-neg expr-is-null expr-is-not-null
+         expr-drop-nulls expr-drop-nans
+         expr-is-nan expr-is-not-nan expr-is-finite expr-is-infinite
+         expr-fill-null expr-fill-nan expr-forward-fill expr-backward-fill
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
@@ -300,6 +303,69 @@
 (define-compat expr-is-not-null
   (_fun _Expr-ptr -> _Expr-ptr)
   #:wrap (allocator expr-drop))
+
+;; --- Null / NaN handling ---
+
+(define-compat expr-drop-nulls
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-drop-nans
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-is-nan
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-is-not-nan
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-is-finite
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-is-infinite
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-fill-null/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_fill_null
+  #:wrap (allocator expr-drop))
+
+(define (expr-fill-null e value) (expr-fill-null/raw e (->expr value)))
+
+(define-compat expr-fill-nan/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_fill_nan
+  #:wrap (allocator expr-drop))
+
+(define (expr-fill-nan e value) (expr-fill-nan/raw e (->expr value)))
+
+(define-compat expr-forward-fill/raw
+  (_fun _Expr-ptr _uint8 _uint32 -> _Expr-ptr)
+  #:c-id expr_forward_fill
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-backward-fill/raw
+  (_fun _Expr-ptr _uint8 _uint32 -> _Expr-ptr)
+  #:c-id expr_backward_fill
+  #:wrap (allocator expr-drop))
+
+(define (check-fill-limit who limit)
+  (when limit
+    (unless (exact-nonnegative-integer? limit)
+      (error who "limit must be an exact nonnegative integer, got ~v" limit))))
+
+(define (expr-forward-fill e #:limit [limit #f])
+  (check-fill-limit 'expr-forward-fill limit)
+  (expr-forward-fill/raw e (if limit 1 0) (or limit 0)))
+
+(define (expr-backward-fill e #:limit [limit #f])
+  (check-fill-limit 'expr-backward-fill limit)
+  (expr-backward-fill/raw e (if limit 1 0) (or limit 0)))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -1354,4 +1420,34 @@
 
   (check-exn exn:fail? (lambda () (expr-when '() #:otherwise 0)))
   (check-exn exn:fail?
-             (lambda () (expr-when (list (list (col "x"))) #:otherwise 0))))
+             (lambda () (expr-when (list (list (col "x"))) #:otherwise 0)))
+
+  ;; --- null / NaN handling ---
+  (define df-nn
+    (dataframe-new
+     (list (series-new-f64 "x" (list 1.0 polars-null 3.0 polars-null 5.0))
+           (series-new-f64 "y" (list 1.0 +nan.0 3.0 +inf.0 -1.0)))))
+  (define nn
+    (dataframe-with-columns
+     df-nn
+     (list (expr-alias (expr-fill-null (col "x") 0.0) "xf")
+           (expr-alias (expr-forward-fill (col "x")) "xff")
+           (expr-alias (expr-fill-nan (col "y") -99.0) "ynn")
+           (expr-alias (expr-is-nan (col "y")) "yn")
+           (expr-alias (expr-is-finite (col "y")) "yfin")
+           (expr-alias (expr-is-infinite (col "y")) "yinf"))))
+  (define (col->list df name)
+    (for/list ([i (in-range 5)]) (series-ref (dataframe-column df name) i)))
+  (check-equal? (col->list nn "xf") '(1.0 0.0 3.0 0.0 5.0))
+  (check-equal? (col->list nn "xff") '(1.0 1.0 3.0 3.0 5.0))
+  (check-equal? (col->list nn "ynn") (list 1.0 -99.0 3.0 +inf.0 -1.0))
+  (check-equal? (col->list nn "yn") '(#f #t #f #f #f))
+  (check-equal? (col->list nn "yfin") '(#t #f #t #f #t))
+  (check-equal? (col->list nn "yinf") '(#f #f #f #t #f))
+
+  ;; drop_nulls collapses the column length
+  (define dn-x
+    (dataframe-select-exprs df-nn
+                            (list (expr-alias (expr-drop-nulls (col "x")) "x"))))
+  (check-equal? (series-len (dataframe-column dn-x "x")) 3)
+  (check-= (series-sum-f64 (dataframe-column dn-x "x")) 9.0 1e-9))
