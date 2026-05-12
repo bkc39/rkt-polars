@@ -66,6 +66,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr string batch 3 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/17_expr_string_batch3.rs` | `examples/31-expr-string-batch3.rkt` | `polars/private/expr.rkt` |
 | Expr string-to-temporal | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/19_expr_string_to_temporal.rs` | `examples/33-expr-string-to-temporal.rkt` | `polars/private/expr.rkt` |
 | Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
+| Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -78,6 +79,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
 - Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`, `expr-{std,var}` (with `#:ddof`, default 1)
+- Conditional: `expr-when` (takes `(list (list pred value) ...)` plus `#:otherwise`; preds/values auto-lifted via `->expr`; lowered as chained `when().then()...otherwise()`)
 - Window / sort: `expr-over` (string keys auto-lifted via `->key-expr`), `expr-sort` (with `#:descending`)
 - LazyFrame plumbing: `dataframe-lazy`, `lazyframe-with-columns`, `lazyframe-select`, `lazyframe-filter`, `lazyframe-group-by-agg`, `lazyframe-sort` (with `#:descending`), `lazyframe-unique`, `lazyframe-drop-nulls`, `lazyframe-{head,tail,slice}`, `lazyframe-join` (`#:how`, `#:on` or `#:left-on`/`#:right-on`), `lazyframe-collect`
 - Lazy IO: `lazyframe-scan-csv` (with `#:has-header`, `#:separator`, `#:skip-rows`, `#:n-rows`), `lazyframe-scan-parquet` (with `#:n-rows`)
@@ -266,6 +268,19 @@ Stabilization batch 1 is shipped:
 - `polars/private/expr-str.rkt` owns string namespace wrappers
 - `polars/private/expr-dt.rkt` owns datetime namespace wrappers
 - `polars/private/expr.rkt` remains the public aggregation point for `(require polars)`
+
+Expr when/then is shipped:
+- `expr-when` builds chained `when().then()...otherwise()` from a list
+  of `(list pred value)` clauses plus `#:otherwise`. The flat FFI
+  (`expr_when_then`: parallel `conds` / `vals` arrays + `otherwise`)
+  lowers it as nested
+  `when(c0).then(v0).otherwise(when(c1).then(v1).otherwise(...)))`,
+  so no `When` / `Then` builder pointers cross the FFI.
+
+Next planned Expr batches (see the approved plan): null/NaN handling,
+element-wise math, membership/predicate tests, cumulative + shift/diff,
+sorting/selection helpers, plus a `prop:custom-write` REPL pretty-print
+pass.
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so

@@ -84,6 +84,7 @@
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
          expr-over expr-sort
+         expr-when
          dataframe-lazy
          lazyframe-with-columns lazyframe-collect
          lazyframe-filter lazyframe-select
@@ -374,6 +375,30 @@
 
 (define (expr-sort e #:descending [descending #f])
   (expr-sort/raw e (if descending 1 0)))
+
+;; --- Conditional: when / then / otherwise ---
+
+(define-compat expr-when-then/c
+  (_fun (conds : (_list i _Expr-ptr))
+        (vals : (_list i _Expr-ptr))
+        (_size = (length conds))
+        (otherwise : _Expr-ptr)
+        -> _Expr-ptr)
+  #:c-id expr_when_then
+  #:wrap (allocator expr-drop))
+
+;; (expr-when (list (list pred value) ...) #:otherwise default)
+;; Builds the chained when().then()...otherwise() expression.  Both
+;; predicates and values are lifted with ->expr, so Racket scalars work.
+(define (expr-when clauses #:otherwise otherwise)
+  (when (null? clauses)
+    (error 'expr-when "requires at least one [pred value] clause"))
+  (for ([c (in-list clauses)])
+    (unless (and (list? c) (= 2 (length c)))
+      (error 'expr-when "each clause must be (list pred value); got ~v" c)))
+  (expr-when-then/c (for/list ([c (in-list clauses)]) (->expr (car c)))
+                    (for/list ([c (in-list clauses)]) (->expr (cadr c)))
+                    (->expr otherwise)))
 
 ;; --- Phase A3: lazy frame integration ---
 
@@ -1296,4 +1321,37 @@
      (list (expr-alias (expr-std (col "v")) "s"))))
   (check-equal? (dataframe-height grp-std) 2)
   ;; per-group sample std: a -> 1.0, b -> 10.0; total = 11.0
-  (check-= (series-sum-f64 (dataframe-column grp-std "s")) 11.0 1e-9))
+  (check-= (series-sum-f64 (dataframe-column grp-std "s")) 11.0 1e-9)
+
+  ;; --- when / then / otherwise ---
+  (define df-when
+    (dataframe-new (list (series-new-i32 "x" '(-3 0 4 12 7)))))
+
+  ;; single clause, string values
+  (define when-sign
+    (dataframe-with-columns
+     df-when
+     (list (expr-alias (expr-when (list (list (expr-gt (col "x") 0) "pos"))
+                                  #:otherwise "non-pos")
+                       "sign"))))
+  (check-equal? (for/list ([i (in-range 5)])
+                  (series-ref (dataframe-column when-sign "sign") i))
+                '("non-pos" "non-pos" "pos" "pos" "pos"))
+
+  ;; chained clauses, numeric values (auto-lifted scalars)
+  (define when-bucket
+    (dataframe-with-columns
+     df-when
+     (list (expr-alias
+            (expr-when (list (list (expr-lt (col "x") 0) 0)
+                             (list (expr-eq (col "x") 0) 1)
+                             (list (expr-lt (col "x") 10) 2))
+                       #:otherwise 3)
+            "bucket"))))
+  (check-equal? (for/list ([i (in-range 5)])
+                  (series-ref (dataframe-column when-bucket "bucket") i))
+                '(0 1 2 3 2))
+
+  (check-exn exn:fail? (lambda () (expr-when '() #:otherwise 0)))
+  (check-exn exn:fail?
+             (lambda () (expr-when (list (list (col "x"))) #:otherwise 0))))
