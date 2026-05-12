@@ -131,10 +131,45 @@ examples 11-17 are Racket-only regression examples for the FFI layer;
 their Polars behavior is covered by the Rust library tests and the
 Racket examples/tests rather than one mirror Rust file per wrapper.
 
-Notable remaining gaps:
-- Series-side: scalar arithmetic and scalar comparisons for additional integer/float widths
-- Expr / lazy: schema/projection scan options
-- Cross-cutting: nested dtype payloads still surface as TODO placeholders and are post-MVP; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
+## Deferred / queued work (single source of truth)
+
+Everything below is intentionally NOT done yet. This is the consolidated
+backlog — other "next planned" notes in this file just point here.
+
+Next up (small, self-contained):
+- `prop:custom-write` REPL pretty-print pass: make `DataFrame` /
+  `Series` / `LazyFrame` print via `dataframe->string` (and add
+  `series->string` / `lazyframe->string` if missing) at the REPL. Pure
+  Racket-side, no Rust changes. (This was "Batch N+7" in the Expr-wave
+  plan.)
+
+Expr / lazy DSL:
+- More `.str` ops: `split`, `pad_start` / `zfill`, `json_decode`,
+  `concat`, `reverse`, `to_titlecase` ("string batch 4").
+- More `.dt` ops: `offset_by`, `month_start` / `month_end`, `dt.round`,
+  `combine`, time-zone ops, duration `total_*`.
+- `.list` / `.arr` and `.struct` namespaces — blocked on the nested
+  dtype payload ABI work below.
+- `top_k` / `bottom_k`: the polars `top_k` feature drags in
+  `polars-ops` code that needs `dtype-decimal`, and enabling
+  `dtype-decimal` adds a `DataType::Decimal` variant that must be
+  threaded through `compat_dtype_from_polars` / `polars_dtype_from_compat`.
+  Do that dtype work first (or accept the cost) before adding these.
+- Expression name namespace: `name.suffix` / `name.prefix` / `name.map`
+  / `name.to_uppercase` etc. — handy for bulk-renaming derived columns.
+- Schema / projection scan options for `scan_csv` / `scan_parquet`.
+
+Series:
+- Scalar arithmetic and scalar comparisons for the remaining
+  integer/float widths.
+
+Cross-cutting / post-MVP:
+- Nested dtype payloads in the dtype descriptor ABI so `list`, `array`,
+  and `struct` preserve inner-dtype info instead of surfacing TODO
+  placeholders. Also unblocks the `.list` / `.struct` namespaces and
+  makes `dtype-decimal` (hence `top_k`) tractable.
+- Explicit conversion helpers between Gregor values (Racket) and
+  `chrono::NaiveDate` / `NaiveDateTime` (Rust).
 
 ## Build / Iteration Loop
 
@@ -349,20 +384,11 @@ Reminders: length-changing Expr ops (`filter`, `gather`, `head`, `tail`,
 `dataframe-select-exprs`, and every column produced in a single `select`
 must end up the same length — see `examples/39-expr-sort-select.rkt`.
 
-Next planned: optional `prop:custom-write` REPL pretty-print pass; then
-the Expr batches under "Notable remaining gaps" (more `.str` / `.dt`,
-`.list` once nested dtypes land, top_k/bottom_k if `dtype-decimal` is
-adopted).
-
-Post-MVP dtype work:
-- Add nested dtype payload support to the dtype descriptor ABI so
-  `list`, `array`, and `struct` can preserve inner dtype information
-  instead of surfacing TODO placeholders. This is explicitly not part
-  of the MVP hardening pass.
-
-Expr / LazyFrame work after the low-level surface has public examples
-and tests:
-- schema/projection scan options for CSV / Parquet
+For everything still outstanding (the `prop:custom-write` pass, more
+`.str` / `.dt`, `.list` / `.struct`, `top_k` / `bottom_k`, nested dtype
+ABI, scan options, etc.) see the consolidated **"Deferred / queued work
+(single source of truth)"** section above — that is the canonical
+backlog.
 
 Keep any high-level Racket DSL in a later `polars/dsl` track. Do not
 make `(require polars)` grow a new high-level query language until core
@@ -485,12 +511,9 @@ FFI likely needed:
 
 ## TODO
 
-- Post-MVP: add nested dtype support to the dtype descriptor ABI so `list`,
-  `array`, and `struct` can preserve inner dtype information instead of
-  surfacing TODO placeholders.
-- Represent temporal values on the Racket side with `gregor`.
-- Add explicit conversion helpers between Gregor values in Racket and
-  `chrono::NaiveDate` / `chrono::NaiveDateTime` in Rust.
+See the consolidated **"Deferred / queued work (single source of truth)"**
+section near the top of this file. (Racket-side temporal values are now
+`gregor` — that earlier TODO is done.)
 
 ## Review Method
 
