@@ -91,6 +91,8 @@
          expr-lit-series expr-is-in expr-is-between
          expr-is-unique expr-is-duplicated
          expr-is-first-distinct expr-is-last-distinct
+         expr-cum-sum expr-cum-prod expr-cum-min expr-cum-max expr-cum-count
+         expr-shift expr-diff
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
@@ -474,6 +476,55 @@
 (define (expr-is-between e lower upper #:closed [closed 'both])
   (expr-is-between/raw e (->expr lower) (->expr upper)
                        (closed->byte 'expr-is-between closed)))
+
+;; --- Cumulative + shift / diff ---
+
+(define-syntax-rule (define-cum name raw c-id)
+  (begin
+    (define-compat raw
+      (_fun _Expr-ptr _uint8 -> _Expr-ptr)
+      #:c-id c-id
+      #:wrap (allocator expr-drop))
+    (define (name e #:reverse [reverse #f])
+      (raw e (if reverse 1 0)))))
+
+(define-cum expr-cum-sum   expr-cum-sum/raw   expr_cum_sum)
+(define-cum expr-cum-prod  expr-cum-prod/raw  expr_cum_prod)
+(define-cum expr-cum-min   expr-cum-min/raw   expr_cum_min)
+(define-cum expr-cum-max   expr-cum-max/raw   expr_cum_max)
+(define-cum expr-cum-count expr-cum-count/raw expr_cum_count)
+
+(define-compat expr-shift/raw
+  (_fun _Expr-ptr _int64 -> _Expr-ptr)
+  #:c-id expr_shift
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-shift-and-fill/raw
+  (_fun _Expr-ptr _int64 _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_shift_and_fill
+  #:wrap (allocator expr-drop))
+
+(define (expr-shift e #:n [n 1] #:fill-value [fill-value #f])
+  (unless (exact-integer? n)
+    (error 'expr-shift "n must be an exact integer, got ~v" n))
+  (if fill-value
+      (expr-shift-and-fill/raw e n (->expr fill-value))
+      (expr-shift/raw e n)))
+
+(define-compat expr-diff/raw
+  (_fun _Expr-ptr _int64 _uint8 -> _Expr-ptr)
+  #:c-id expr_diff
+  #:wrap (allocator expr-drop))
+
+(define (null-behavior->byte who nb)
+  (case nb
+    [(ignore) 0] [(drop) 1]
+    [else (error who "null-behavior must be 'ignore or 'drop, got ~v" nb)]))
+
+(define (expr-diff e #:n [n 1] #:null-behavior [null-behavior 'ignore])
+  (unless (exact-integer? n)
+    (error 'expr-diff "n must be an exact integer, got ~v" n))
+  (expr-diff/raw e n (null-behavior->byte 'expr-diff null-behavior)))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -1609,4 +1660,32 @@
   (check-equal? (col7 "f")    '(#t #t #f #t #t #f #t))
   (check-equal? (col7 "l")    '(#t #f #t #t #f #t #t))
   (check-exn exn:fail? (lambda () (expr-is-in (col "x") '())))
-  (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat))))
+  (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat)))
+
+  ;; --- cumulative + shift / diff ---
+  (define df-c (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
+  (define cdf
+    (dataframe-with-columns
+     df-c
+     (list (expr-alias (expr-cum-sum (col "x")) "cs")
+           (expr-alias (expr-cum-sum (col "x") #:reverse #t) "csr")
+           (expr-alias (expr-cum-prod (col "x")) "cp")
+           (expr-alias (expr-cum-min (col "x")) "cmin")
+           (expr-alias (expr-cum-max (col "x")) "cmax")
+           (expr-alias (expr-cum-count (col "x")) "cc")
+           (expr-alias (expr-shift (col "x") #:n 1) "s1")
+           (expr-alias (expr-shift (col "x") #:n 1 #:fill-value 0) "s1f")
+           (expr-alias (expr-diff (col "x") #:n 1) "d1"))))
+  (define (c5 name)
+    (for/list ([i (in-range 5)]) (series-ref (dataframe-column cdf name) i)))
+  (check-equal? (c5 "cs")   '(1 3 6 10 15))
+  (check-equal? (c5 "csr")  '(15 14 12 9 5))
+  (check-equal? (c5 "cp")   '(1 2 6 24 120))
+  (check-equal? (c5 "cmin") '(1 1 1 1 1))
+  (check-equal? (c5 "cmax") '(1 2 3 4 5))
+  (check-equal? (series-ref (dataframe-column cdf "cc") 4) 5)
+  (check-equal? (c5 "s1")   (list polars-null 1 2 3 4))
+  (check-equal? (c5 "s1f")  '(0 1 2 3 4))
+  (check-equal? (c5 "d1")   (list polars-null 1 1 1 1))
+  (check-exn exn:fail? (lambda () (expr-diff (col "x") #:null-behavior 'wat)))
+  (check-exn exn:fail? (lambda () (expr-shift (col "x") #:n 1.5))))

@@ -70,6 +70,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/private/expr.rkt` |
 | Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/private/expr.rkt` |
 | Expr predicates | `polars/private/expr.rkt` | `rust/examples/23_expr_predicates.rs` | `examples/37-expr-predicates.rkt` | `polars/private/expr.rkt` |
+| Expr cumulative | `polars/private/expr.rkt` | `rust/examples/24_expr_cumulative.rs` | `examples/38-expr-cumulative.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -81,6 +82,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Null / NaN: `expr-{drop-nulls,drop-nans,is-nan,is-not-nan,is-finite,is-infinite}`, `expr-fill-null`, `expr-fill-nan` (value auto-lifted via `->expr`), `expr-forward-fill` / `expr-backward-fill` (with `#:limit`)
 - Math: `expr-{abs,sign,floor,ceil,sqrt,exp,log1p}`, `expr-round` (`#:decimals`, default 0), `expr-log` (`#:base`, default e), `expr-pow` (exponent auto-lifted), `expr-clip` (`#:lower` / `#:upper`, either may be omitted)
 - Membership / distinct: `expr-is-in` (RHS = Expr, Series, or homogeneous Racket list), `expr-lit-series` (Series → literal Expr), `expr-is-between` (`#:closed` `'both|'left|'right|'none`), `expr-{is-unique,is-duplicated,is-first-distinct,is-last-distinct}`
+- Cumulative / shift: `expr-{cum-sum,cum-prod,cum-min,cum-max,cum-count}` (each `#:reverse`), `expr-shift` (`#:n`, default 1; `#:fill-value` routes to `shift_and_fill`), `expr-diff` (`#:n`, `#:null-behavior` `'ignore|'drop`)
 - String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
@@ -311,8 +313,18 @@ Expr predicates is shipped:
 - Cargo.toml: added `is_in`, `is_unique`, `is_first_distinct`,
   `is_last_distinct`, `is_between` polars features
 
-Next planned Expr batches (see the approved plan): cumulative + shift/diff,
-sorting/selection helpers, plus a `prop:custom-write` REPL pretty-print pass.
+Expr cumulative is shipped:
+- `expr-cum-sum` / `expr-cum-prod` / `expr-cum-min` / `expr-cum-max` /
+  `expr-cum-count` (each `#:reverse`; FFI is the `_uint8` reverse flag,
+  built with a small `define-cum` Racket macro that passes the explicit
+  `/raw` binding name + c-id since `define-syntax-rule` can't splice ids)
+- `expr-shift` (`#:n`; `#:fill-value` switches to `expr_shift_and_fill`)
+- `expr-diff` (`#:n`, `#:null-behavior`; FFI `expr_diff(e, n: i64, nb: u8)`
+  → `polars::series::ops::NullBehavior::{Ignore,Drop}`)
+- Cargo.toml: added `cum_agg` and `diff` polars features
+
+Next planned Expr batches (see the approved plan): sorting/selection
+helpers, plus a `prop:custom-write` REPL pretty-print pass.
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so
