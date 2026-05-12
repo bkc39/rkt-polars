@@ -8,4 +8,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 chrono = "0.4.38"
-polars = { version = "0.41.3", features = ["lazy", "parquet", "json", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16"] }
+polars = { version = "0.41.3", features = ["lazy", "parquet", "json", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "abs", "round_series", "sign", "log"] }

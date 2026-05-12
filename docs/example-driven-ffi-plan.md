@@ -68,6 +68,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
 | Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/private/expr.rkt` |
 | Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/private/expr.rkt` |
+| Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -77,6 +78,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Boolean: `expr-{and,or,xor,not}`
 - Unary: `expr-{neg,is-null,is-not-null}`
 - Null / NaN: `expr-{drop-nulls,drop-nans,is-nan,is-not-nan,is-finite,is-infinite}`, `expr-fill-null`, `expr-fill-nan` (value auto-lifted via `->expr`), `expr-forward-fill` / `expr-backward-fill` (with `#:limit`)
+- Math: `expr-{abs,sign,floor,ceil,sqrt,exp,log1p}`, `expr-round` (`#:decimals`, default 0), `expr-log` (`#:base`, default e), `expr-pow` (exponent auto-lifted), `expr-clip` (`#:lower` / `#:upper`, either may be omitted)
 - String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
@@ -286,9 +288,19 @@ Expr null/NaN is shipped:
 - `expr-forward-fill` / `expr-backward-fill` (`#:limit`; FFI takes
   `has_limit: u8` + `limit: u32` since `forward_fill` wants `Option<u32>`)
 
-Next planned Expr batches (see the approved plan): element-wise math,
-membership/predicate tests, cumulative + shift/diff, sorting/selection
-helpers, plus a `prop:custom-write` REPL pretty-print pass.
+Expr math is shipped:
+- `expr-abs` / `expr-sign` / `expr-floor` / `expr-ceil` / `expr-sqrt` /
+  `expr-exp` / `expr-log1p` (`expr_unop!`)
+- `expr-round` (`#:decimals`; new `expr_unop_u32!` macro), `expr-log`
+  (`#:base`, `f64` extern), `expr-pow` (`expr_binop!`, exponent lifted),
+  `expr-clip` (`#:lower` / `#:upper`; FFI `expr_clip(e, has_min, min,
+  has_max, max)` routes to `clip` / `clip_min` / `clip_max`)
+- Cargo.toml: added the `abs`, `round_series`, `sign`, `log` polars
+  features (there is no `pow` feature — `Expr::pow` is always available)
+
+Next planned Expr batches (see the approved plan): membership/predicate
+tests, cumulative + shift/diff, sorting/selection helpers, plus a
+`prop:custom-write` REPL pretty-print pass.
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so

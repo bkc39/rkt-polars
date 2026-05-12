@@ -83,6 +83,8 @@
          expr-drop-nulls expr-drop-nans
          expr-is-nan expr-is-not-nan expr-is-finite expr-is-infinite
          expr-fill-null expr-fill-nan expr-forward-fill expr-backward-fill
+         expr-abs expr-sign expr-floor expr-ceil expr-sqrt expr-exp expr-log1p
+         expr-round expr-log expr-pow expr-clip
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
@@ -366,6 +368,51 @@
 (define (expr-backward-fill e #:limit [limit #f])
   (check-fill-limit 'expr-backward-fill limit)
   (expr-backward-fill/raw e (if limit 1 0) (or limit 0)))
+
+;; --- Element-wise math ---
+
+(define-compat expr-abs (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-sign (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-floor (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-ceil (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-sqrt (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-exp (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+(define-compat expr-log1p (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+
+(define-compat expr-round/raw
+  (_fun _Expr-ptr _uint32 -> _Expr-ptr)
+  #:c-id expr_round
+  #:wrap (allocator expr-drop))
+
+(define (expr-round e #:decimals [decimals 0])
+  (unless (exact-nonnegative-integer? decimals)
+    (error 'expr-round "decimals must be an exact nonnegative integer, got ~v" decimals))
+  (expr-round/raw e decimals))
+
+(define-compat expr-log/raw
+  (_fun _Expr-ptr _double -> _Expr-ptr)
+  #:c-id expr_log
+  #:wrap (allocator expr-drop))
+
+(define (expr-log e #:base [base (exp 1)])
+  (expr-log/raw e (exact->inexact base)))
+
+(define-compat expr-pow/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_pow
+  #:wrap (allocator expr-drop))
+
+(define (expr-pow e exponent) (expr-pow/raw e (->expr exponent)))
+
+(define-compat expr-clip/raw
+  (_fun _Expr-ptr _uint8 _Expr-ptr/null _uint8 _Expr-ptr/null -> _Expr-ptr)
+  #:c-id expr_clip
+  #:wrap (allocator expr-drop))
+
+(define (expr-clip e #:lower [lower #f] #:upper [upper #f])
+  (expr-clip/raw e
+                 (if lower 1 0) (and lower (->expr lower))
+                 (if upper 1 0) (and upper (->expr upper))))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -1450,4 +1497,30 @@
     (dataframe-select-exprs df-nn
                             (list (expr-alias (expr-drop-nulls (col "x")) "x"))))
   (check-equal? (series-len (dataframe-column dn-x "x")) 3)
-  (check-= (series-sum-f64 (dataframe-column dn-x "x")) 9.0 1e-9))
+  (check-= (series-sum-f64 (dataframe-column dn-x "x")) 9.0 1e-9)
+
+  ;; --- element-wise math ---
+  (define df-m
+    (dataframe-new (list (series-new-f64 "x" '(-2.4 -1.0 0.0 1.6 4.0)))))
+  (define m
+    (dataframe-with-columns
+     df-m
+     (list (expr-alias (expr-abs (col "x")) "abs")
+           (expr-alias (expr-sign (col "x")) "sign")
+           (expr-alias (expr-round (col "x") #:decimals 0) "r0")
+           (expr-alias (expr-floor (col "x")) "fl")
+           (expr-alias (expr-ceil (col "x")) "ce")
+           (expr-alias (expr-clip (col "x") #:lower -1.0 #:upper 2.0) "cl")
+           (expr-alias (expr-clip (col "x") #:lower 0.0) "cmin")
+           (expr-alias (expr-pow (expr-abs (col "x")) 2) "sq")
+           (expr-alias (expr-log (expr-abs (col "x")) #:base 2) "log2"))))
+  (check-equal? (col->list m "abs") '(2.4 1.0 0.0 1.6 4.0))
+  (check-equal? (col->list m "sign") '(-1 -1 0 1 1))
+  (check-equal? (col->list m "r0") '(-2.0 -1.0 0.0 2.0 4.0))
+  (check-equal? (col->list m "fl") '(-3.0 -1.0 0.0 1.0 4.0))
+  (check-equal? (col->list m "ce") '(-2.0 -1.0 0.0 2.0 4.0))
+  (check-equal? (col->list m "cl") '(-1.0 -1.0 0.0 1.6 2.0))
+  (check-equal? (col->list m "cmin") '(0.0 0.0 0.0 1.6 4.0))
+  (check-= (series-ref (dataframe-column m "sq") 4) 16.0 1e-9)
+  (check-= (series-ref (dataframe-column m "log2") 4) 2.0 1e-9)
+  (check-exn exn:fail? (lambda () (expr-round (col "x") #:decimals -1))))
