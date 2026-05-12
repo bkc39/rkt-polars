@@ -93,6 +93,8 @@
          expr-is-first-distinct expr-is-last-distinct
          expr-cum-sum expr-cum-prod expr-cum-min expr-cum-max expr-cum-count
          expr-shift expr-diff
+         expr-reverse expr-filter expr-gather
+         expr-sort-by expr-rank expr-head expr-tail expr-slice
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
@@ -525,6 +527,103 @@
   (unless (exact-integer? n)
     (error 'expr-diff "n must be an exact integer, got ~v" n))
   (expr-diff/raw e n (null-behavior->byte 'expr-diff null-behavior)))
+
+;; --- Sorting / selection helpers ---
+
+(define-compat expr-reverse
+  (_fun _Expr-ptr -> _Expr-ptr) #:wrap (allocator expr-drop))
+
+(define-compat expr-filter/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_filter
+  #:wrap (allocator expr-drop))
+
+(define (expr-filter e predicate) (expr-filter/raw e (->expr predicate)))
+
+(define-compat expr-gather/raw
+  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_gather
+  #:wrap (allocator expr-drop))
+
+;; indices may be an Expr, a Series, or a Racket list of integers
+(define (expr-gather e indices)
+  (expr-gather/raw e (->membership-expr 'expr-gather indices)))
+
+(define-compat expr-sort-by/raw
+  (_fun _Expr-ptr
+        (by : (_list i _Expr-ptr))
+        (descending : (_list i _uint8))
+        (_size = (length by))
+        -> _Expr-ptr)
+  #:c-id expr_sort_by
+  #:wrap (allocator expr-drop))
+
+(define (expr-sort-by e #:by by #:descending [descending #f])
+  (define by-list (if (list? by) by (list by)))
+  (when (null? by-list) (error 'expr-sort-by "#:by needs at least one key"))
+  (define by-exprs (map ->key-expr by-list))
+  (define desc-bytes
+    (cond
+      [(boolean? descending) (for/list ([_ (in-list by-exprs)]) (if descending 1 0))]
+      [(list? descending)
+       (unless (= (length descending) (length by-exprs))
+         (error 'expr-sort-by "#:descending list length must match #:by"))
+       (for/list ([d (in-list descending)]) (if d 1 0))]
+      [else (error 'expr-sort-by "#:descending must be a boolean or list of booleans, got ~v" descending)]))
+  (expr-sort-by/raw e by-exprs desc-bytes))
+
+(define-compat expr-rank/raw
+  (_fun _Expr-ptr _uint8 _uint8 _uint8 _uint64 -> _Expr-ptr)
+  #:c-id expr_rank
+  #:wrap (allocator expr-drop))
+
+(define (rank-method->byte who method)
+  (case method
+    [(average) 0] [(min) 1] [(max) 2] [(dense) 3] [(ordinal) 4]
+    [else (error who "method must be one of 'average 'min 'max 'dense 'ordinal, got ~v" method)]))
+
+(define (expr-rank e #:method [method 'average] #:descending [descending #f] #:seed [seed #f])
+  (when seed
+    (unless (exact-nonnegative-integer? seed)
+      (error 'expr-rank "seed must be an exact nonnegative integer, got ~v" seed)))
+  (expr-rank/raw e
+                 (rank-method->byte 'expr-rank method)
+                 (if descending 1 0)
+                 (if seed 1 0)
+                 (or seed 0)))
+
+(define-compat expr-head/raw
+  (_fun _Expr-ptr _uint8 _size -> _Expr-ptr)
+  #:c-id expr_head
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-tail/raw
+  (_fun _Expr-ptr _uint8 _size -> _Expr-ptr)
+  #:c-id expr_tail
+  #:wrap (allocator expr-drop))
+
+(define (check-opt-count who n)
+  (when n
+    (unless (exact-nonnegative-integer? n)
+      (error who "n must be an exact nonnegative integer or #f, got ~v" n))))
+
+(define (expr-head e #:n [n 10])
+  (check-opt-count 'expr-head n)
+  (expr-head/raw e (if n 1 0) (or n 0)))
+
+(define (expr-tail e #:n [n 10])
+  (check-opt-count 'expr-tail n)
+  (expr-tail/raw e (if n 1 0) (or n 0)))
+
+(define-compat expr-slice/raw
+  (_fun _Expr-ptr _int64 _int64 -> _Expr-ptr)
+  #:c-id expr_slice
+  #:wrap (allocator expr-drop))
+
+(define (expr-slice e offset length)
+  (unless (and (exact-integer? offset) (exact-integer? length))
+    (error 'expr-slice "offset and length must be exact integers, got ~v ~v" offset length))
+  (expr-slice/raw e offset length))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -1688,4 +1787,58 @@
   (check-equal? (c5 "s1f")  '(0 1 2 3 4))
   (check-equal? (c5 "d1")   (list polars-null 1 1 1 1))
   (check-exn exn:fail? (lambda () (expr-diff (col "x") #:null-behavior 'wat)))
-  (check-exn exn:fail? (lambda () (expr-shift (col "x") #:n 1.5))))
+  (check-exn exn:fail? (lambda () (expr-shift (col "x") #:n 1.5)))
+
+  ;; --- sorting / selection helpers ---
+  (define df-s
+    (dataframe-new (list (series-new-i64 "x" '(30 10 50 20 40))
+                         (series-new-str "g" '("b" "a" "b" "a" "b")))))
+  (define (take5 df name)
+    (for/list ([i (in-range 5)]) (series-ref (dataframe-column df name) i)))
+  ;; rank + reverse keep length, so they work inside with_columns
+  (define s-wc
+    (dataframe-with-columns
+     df-s
+     (list (expr-alias (expr-rank (col "x") #:method 'dense) "rk")
+           (expr-alias (expr-reverse (col "x")) "xr"))))
+  (check-equal? (take5 s-wc "rk") '(3 1 5 2 4))
+  (check-equal? (take5 s-wc "xr") '(40 20 50 10 30))
+  ;; sort_by (string keys lifted via ->key-expr)
+  (define s-sorted
+    (dataframe-select-exprs
+     df-s
+     (list (expr-alias (expr-sort-by (col "x") #:by "x") "xs")
+           (expr-alias (expr-sort-by (col "g") #:by "x") "gx"))))
+  (check-equal? (take5 s-sorted "xs") '(10 20 30 40 50))
+  (check-equal? (take5 s-sorted "gx") '("a" "a" "b" "b" "b"))
+  (define s-sd
+    (dataframe-select-exprs
+     df-s (list (expr-alias (expr-sort-by (col "x") #:by "x" #:descending #t) "xs"))))
+  (check-equal? (take5 s-sd "xs") '(50 40 30 20 10))
+  ;; head / tail / slice (all length 2 here, so fine in one select)
+  (define s-w
+    (dataframe-select-exprs
+     df-s
+     (list (expr-alias (expr-head (col "x") #:n 2) "h")
+           (expr-alias (expr-tail (col "x") #:n 2) "t")
+           (expr-alias (expr-slice (col "x") 1 2) "sl"))))
+  (define (take2 name)
+    (for/list ([i (in-range 2)]) (series-ref (dataframe-column s-w name) i)))
+  (check-equal? (take2 "h") '(30 10))
+  (check-equal? (take2 "t") '(20 40))
+  (check-equal? (take2 "sl") '(10 50))
+  ;; filter + gather
+  (define s-f
+    (dataframe-select-exprs
+     df-s (list (expr-alias (expr-filter (col "x") (expr-gt (col "x") 25)) "b"))))
+  (check-equal? (series-len (dataframe-column s-f "b")) 3)
+  (check-equal? (for/list ([i (in-range 3)]) (series-ref (dataframe-column s-f "b") i))
+                '(30 50 40))
+  (define s-g
+    (dataframe-select-exprs
+     df-s (list (expr-alias (expr-gather (col "x") '(0 2 4)) "g"))))
+  (check-equal? (for/list ([i (in-range 3)]) (series-ref (dataframe-column s-g "g") i))
+                '(30 50 40))
+  (check-exn exn:fail? (lambda () (expr-rank (col "x") #:method 'wat)))
+  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
+  (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))

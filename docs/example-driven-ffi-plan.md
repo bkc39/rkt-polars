@@ -71,6 +71,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/private/expr.rkt` |
 | Expr predicates | `polars/private/expr.rkt` | `rust/examples/23_expr_predicates.rs` | `examples/37-expr-predicates.rkt` | `polars/private/expr.rkt` |
 | Expr cumulative | `polars/private/expr.rkt` | `rust/examples/24_expr_cumulative.rs` | `examples/38-expr-cumulative.rkt` | `polars/private/expr.rkt` |
+| Expr sort/select | `polars/private/expr.rkt` | `rust/examples/25_expr_sort_select.rs` | `examples/39-expr-sort-select.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
@@ -83,6 +84,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Math: `expr-{abs,sign,floor,ceil,sqrt,exp,log1p}`, `expr-round` (`#:decimals`, default 0), `expr-log` (`#:base`, default e), `expr-pow` (exponent auto-lifted), `expr-clip` (`#:lower` / `#:upper`, either may be omitted)
 - Membership / distinct: `expr-is-in` (RHS = Expr, Series, or homogeneous Racket list), `expr-lit-series` (Series → literal Expr), `expr-is-between` (`#:closed` `'both|'left|'right|'none`), `expr-{is-unique,is-duplicated,is-first-distinct,is-last-distinct}`
 - Cumulative / shift: `expr-{cum-sum,cum-prod,cum-min,cum-max,cum-count}` (each `#:reverse`), `expr-shift` (`#:n`, default 1; `#:fill-value` routes to `shift_and_fill`), `expr-diff` (`#:n`, `#:null-behavior` `'ignore|'drop`)
+- Sort / select: `expr-reverse`, `expr-filter` (predicate Expr), `expr-gather` (indices = Expr / Series / int list), `expr-sort-by` (`#:by` string|Expr|list, `#:descending` bool|list), `expr-rank` (`#:method` `'average|'min|'max|'dense|'ordinal`, `#:descending`, `#:seed`), `expr-head` / `expr-tail` (`#:n`, default 10, `#f` = all), `expr-slice` (positional `offset` `length`, i64)
 - String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
@@ -323,8 +325,34 @@ Expr cumulative is shipped:
   → `polars::series::ops::NullBehavior::{Ignore,Drop}`)
 - Cargo.toml: added `cum_agg` and `diff` polars features
 
-Next planned Expr batches (see the approved plan): sorting/selection
-helpers, plus a `prop:custom-write` REPL pretty-print pass.
+Expr sort/select is shipped:
+- `expr-reverse` (`expr_unop!`), `expr-filter` / `expr-gather` (`expr_binop!`;
+  `expr-gather` reuses `->membership-expr` so an int list becomes an i64
+  index Series)
+- `expr-sort-by` (`expr_sort_by`: parallel `by` Expr array + `descending`
+  u8 array; uses `SortMultipleOptions::default().with_order_descending_multi`)
+- `expr-rank` (`expr_rank(e, method: u8, descending: u8, has_seed: u8,
+  seed: u64)` → `RankOptions { method, descending }`; method 0..4 →
+  `RankMethod::{Average,Min,Max,Dense,Ordinal}`)
+- `expr-head` / `expr-tail` (`expr_head` / `expr_tail` take `has_len: u8`
+  + `len: usize` since `Expr::head` wants `Option<usize>`), `expr-slice`
+  (`expr_slice(e, offset: i64, length: i64)`)
+- Cargo.toml: added the `rank` polars feature. `top_k` / `bottom_k` were
+  intentionally **deferred**: the `top_k` feature pulls `polars-ops` code
+  that needs `dtype-decimal`, and enabling `dtype-decimal` adds a
+  `DataType::Decimal` variant we'd have to thread through
+  `compat_dtype_from_polars` / `polars_dtype_from_compat` — out of scope
+  for this batch.
+
+Reminders: length-changing Expr ops (`filter`, `gather`, `head`, `tail`,
+`slice`, `sort_by` of mixed lengths) must go through `select` /
+`dataframe-select-exprs`, and every column produced in a single `select`
+must end up the same length — see `examples/39-expr-sort-select.rkt`.
+
+Next planned: optional `prop:custom-write` REPL pretty-print pass; then
+the Expr batches under "Notable remaining gaps" (more `.str` / `.dt`,
+`.list` once nested dtypes land, top_k/bottom_k if `dtype-decimal` is
+adopted).
 
 Post-MVP dtype work:
 - Add nested dtype payload support to the dtype descriptor ABI so
