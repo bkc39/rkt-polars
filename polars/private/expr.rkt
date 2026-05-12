@@ -40,6 +40,7 @@
                     series-new-str
                     series-new-ymdhms
                     make-YMDHMS
+                    polars-null
                     dataframe-new
                     dataframe-write-parquet
                     dataframe-height
@@ -70,6 +71,7 @@
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
+         expr-str-to-date expr-str-to-datetime expr-str-to-time
          expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
          expr-dt-iso-year expr-dt-quarter expr-dt-week
@@ -799,6 +801,51 @@
   (check-equal? (series-ref (dataframe-column str-batch3 "find_digits") 3) 3)
   (check-equal? (series-ref (dataframe-column str-batch3 "find_na") 2) 2)
   (check-equal? (series-ref (dataframe-column str-batch3 "count_a") 2) 3)
+
+  (define str-temporal-df
+    (dataframe-new
+     (list (series-new-str "date_s" '("2024-01-02" "not-a-date" "2024-05-09 extra"))
+           (series-new-str "dt_s" '("2024-01-02 03:04:05"
+                                    "bad"
+                                    "2024-05-09 12:30:45"))
+           (series-new-str "time_s" '("03:04:05.123456789"
+                                      "bad"
+                                      "12:30:45")))))
+  (define str-temporal
+    (dataframe-with-columns
+     str-temporal-df
+     (list (expr-alias (expr-str-to-date (col "date_s") #:strict #f)
+                       "date_infer")
+           (expr-alias (expr-str-to-date (col "date_s")
+                                         #:format "%Y-%m-%d"
+                                         #:strict #f
+                                         #:exact #f)
+                       "date_embedded")
+           (expr-alias (expr-str-to-datetime (col "dt_s")
+                                             #:format "%Y-%m-%d %H:%M:%S"
+                                             #:unit 'milliseconds
+                                             #:strict #f)
+                       "parsed_dt")
+           (expr-alias (expr-str-to-time (col "time_s")
+                                         #:format "%H:%M:%S%.f"
+                                         #:strict #f)
+                       "parsed_time"))))
+  (check-equal? (series-dtype (dataframe-column str-temporal "date_infer")) 'date)
+  (check-equal? (series-ref (dataframe-column str-temporal "date_infer") 0)
+                (date 2024 1 2))
+  (check-equal? (series-ref (dataframe-column str-temporal "date_infer") 1)
+                polars-null)
+  (check-equal? (series-ref (dataframe-column str-temporal "date_embedded") 2)
+                (date 2024 5 9))
+  (check-equal? (series-dtype (dataframe-column str-temporal "parsed_dt"))
+                '(datetime milliseconds #f))
+  (check-equal? (series-ref (dataframe-column str-temporal "parsed_dt") 0)
+                (datetime 2024 1 2 3 4 5))
+  (check-equal? (series-ref (dataframe-column str-temporal "parsed_dt") 1)
+                polars-null)
+  (check-equal? (series-dtype (dataframe-column str-temporal "parsed_time")) 'time)
+  (check-equal? (series-ref (dataframe-column str-temporal "parsed_time") 0)
+                (iso8601->time "03:04:05.123456789"))
 
   ;; --- Expr datetime namespace ---
   (define dt-df

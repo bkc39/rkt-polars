@@ -64,6 +64,7 @@ first argument so code works naturally with Racket threading macros.
 | Expr datetime batch 1 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/09_expr_datetime_batch1.rs` | `examples/23-expr-datetime-batch1.rkt` | `polars/private/expr.rkt` |
 | Expr string batch 2 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/10_expr_string_batch2.rs` | `examples/24-expr-string-batch2.rkt` | `polars/private/expr.rkt` |
 | Expr string batch 3 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/17_expr_string_batch3.rs` | `examples/31-expr-string-batch3.rkt` | `polars/private/expr.rkt` |
+| Expr string-to-temporal | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/19_expr_string_to_temporal.rs` | `examples/33-expr-string-to-temporal.rkt` | `polars/private/expr.rkt` |
 | Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
 | Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
 
@@ -73,7 +74,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Comparison: `expr-{gt,lt,ge,le,eq,ne}`
 - Boolean: `expr-{and,or,xor,not}`
 - Unary: `expr-{neg,is-null,is-not-null}`
-- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`
+- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
 - Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`, `expr-{std,var}` (with `#:ddof`, default 1)
@@ -120,7 +121,7 @@ Racket examples/tests rather than one mirror Rust file per wrapper.
 
 Notable remaining gaps:
 - Series-side: scalar arithmetic and scalar comparisons for additional integer/float widths
-- Expr / lazy: string-to-temporal parsing helpers, schema/projection scan options
+- Expr / lazy: schema/projection scan options
 - Cross-cutting: nested dtype payloads still surface as TODO placeholders and are post-MVP; no `prop:custom-write` wrapper yet so dataframes don't auto-pretty-print at the REPL
 
 ## Build / Iteration Loop
@@ -228,6 +229,14 @@ Expr string batch 3 is shipped:
 - `expr-str-find-literal`
 - `expr-str-count-matches`
 
+Expr string-to-temporal is shipped:
+- `expr-str-to-date`
+- `expr-str-to-datetime`
+- `expr-str-to-time`
+- Parsing wrappers accept `#:format`, `#:strict`, `#:exact`, and `#:cache`.
+  `expr-str-to-datetime` also accepts `#:unit` (`'nanoseconds`,
+  `'microseconds`, or `'milliseconds`).
+
 Expr datetime batch 1 is shipped:
 - `expr-dt-year`
 - `expr-dt-month`
@@ -266,7 +275,6 @@ Post-MVP dtype work:
 
 Expr / LazyFrame work after the low-level surface has public examples
 and tests:
-- string-to-temporal parsing helpers such as `expr-str-to-date`, `expr-str-to-datetime`, and `expr-str-to-time`
 - schema/projection scan options for CSV / Parquet
 
 Keep any high-level Racket DSL in a later `polars/dsl` track. Do not
