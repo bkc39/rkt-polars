@@ -179,7 +179,9 @@ mirror the FFI batches.
 - R1 — test helpers + ABI round trips: **shipped** (`mod test_util`,
   `mod abi`, `mod test_util_smoke`; 25 new tests; `cargo test --release`
   → 64 passed)
-- R2 — Series constructors + value access
+- R2 — Series constructors + value access: **shipped** (`mod series_ctors`,
+  `mod series_opt_ctors`, `mod series_value_access`, `mod series_dtype_tag`;
+  35 new tests; `cargo test --release` → 99 passed)
 - R3 — Series ops (cmp / arith / bool / reductions / reshape / cast)
 - R4 — DataFrame core
 - R5 — DataFrame group-by + joins + reshape + IO (needs `tempfile` in

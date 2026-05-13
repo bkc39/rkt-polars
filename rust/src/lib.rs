@@ -5021,6 +5021,57 @@ mod tests {
             s
         }
 
+        pub(super) fn make_i64(name: &str, values: &[i64]) -> *mut Series {
+            let n = cstr(name);
+            let s = series_new_i64(n.as_ptr(), values.as_ptr(), values.len());
+            assert!(!s.is_null());
+            s
+        }
+
+        /// Build a null-aware primitive series from `Option<T>` values
+        /// the same way `series_new_opt_*` is used from Racket.
+        pub(super) fn make_opt_i32(
+            name: &str,
+            values: &[Option<i32>],
+        ) -> *mut Series {
+            let data: Vec<i32> =
+                values.iter().map(|o| o.unwrap_or(0)).collect();
+            let valid: Vec<u8> = values
+                .iter()
+                .map(|o| if o.is_some() { 1 } else { 0 })
+                .collect();
+            let n = cstr(name);
+            let s = series_new_opt_i32(
+                n.as_ptr(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                data.len(),
+            );
+            assert!(!s.is_null());
+            s
+        }
+
+        pub(super) fn make_opt_f64(
+            name: &str,
+            values: &[Option<f64>],
+        ) -> *mut Series {
+            let data: Vec<f64> =
+                values.iter().map(|o| o.unwrap_or(0.0)).collect();
+            let valid: Vec<u8> = values
+                .iter()
+                .map(|o| if o.is_some() { 1 } else { 0 })
+                .collect();
+            let n = cstr(name);
+            let s = series_new_opt_f64(
+                n.as_ptr(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                data.len(),
+            );
+            assert!(!s.is_null());
+            s
+        }
+
         /// Assert that `series_dtype` reports the given tag and time-unit.
         pub(super) fn assert_dtype(
             series: *mut Series,
@@ -5286,6 +5337,438 @@ mod tests {
         fn make_str_builds_named_series() {
             let s = make_str("words", &["a", "bb", "ccc"]);
             assert_eq!(series_len(s), 3);
+            assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
+            series_drop(s);
+        }
+    }
+
+    // ===== R2: Series constructors + value access =====
+
+    /// Round out the `series_new_*` family: every width gets a happy
+    /// path (length + dtype tag) and the null-name / null-data refusal
+    /// paths the i32 tests already establish are repeated for one
+    /// representative per family to guard the macro expansion.
+    mod series_ctors {
+        use super::*;
+        use super::test_util::*;
+
+        macro_rules! ctor_happy_path {
+            ($name:ident, $build:expr, $tag:ident) => {
+                #[test]
+                fn $name() {
+                    let s = $build;
+                    assert_eq!(series_len(s), 4);
+                    assert_dtype(
+                        s,
+                        CompatDTypeTag::$tag,
+                        CompatTimeUnit::None,
+                    );
+                    series_drop(s);
+                }
+            };
+        }
+
+        ctor_happy_path!(ctor_i8, {
+            let n = cstr("xs");
+            let data: [i8; 4] = [-1, 0, 1, 2];
+            series_new_i8(n.as_ptr(), data.as_ptr(), data.len())
+        }, Int8);
+        ctor_happy_path!(ctor_i16, {
+            let n = cstr("xs");
+            let data: [i16; 4] = [-1, 0, 1, 2];
+            series_new_i16(n.as_ptr(), data.as_ptr(), data.len())
+        }, Int16);
+        ctor_happy_path!(ctor_i64, make_i64("xs", &[-1, 0, 1, 2]), Int64);
+        ctor_happy_path!(ctor_u8, {
+            let n = cstr("xs");
+            let data: [u8; 4] = [0, 1, 2, 3];
+            series_new_u8(n.as_ptr(), data.as_ptr(), data.len())
+        }, UInt8);
+        ctor_happy_path!(ctor_u16, {
+            let n = cstr("xs");
+            let data: [u16; 4] = [0, 1, 2, 3];
+            series_new_u16(n.as_ptr(), data.as_ptr(), data.len())
+        }, UInt16);
+        ctor_happy_path!(ctor_u32, {
+            let n = cstr("xs");
+            let data: [u32; 4] = [0, 1, 2, 3];
+            series_new_u32(n.as_ptr(), data.as_ptr(), data.len())
+        }, UInt32);
+        ctor_happy_path!(ctor_u64, {
+            let n = cstr("xs");
+            let data: [u64; 4] = [0, 1, 2, 3];
+            series_new_u64(n.as_ptr(), data.as_ptr(), data.len())
+        }, UInt64);
+        ctor_happy_path!(ctor_f32, {
+            let n = cstr("xs");
+            let data: [f32; 4] = [0.0, 1.5, -2.5, 3.0];
+            series_new_f32(n.as_ptr(), data.as_ptr(), data.len())
+        }, Float32);
+        ctor_happy_path!(ctor_bool, make_bool("flags", &[1, 0, 1, 0]), Boolean);
+
+        #[test]
+        fn ctor_i64_null_name_returns_null() {
+            let data: [i64; 1] = [42];
+            let s = series_new_i64(ptr::null(), data.as_ptr(), data.len());
+            assert!(s.is_null(), "null name must produce null Series");
+        }
+
+        #[test]
+        fn ctor_u32_null_data_returns_null() {
+            let n = cstr("xs");
+            let s = series_new_u32(n.as_ptr(), ptr::null(), 4);
+            assert!(s.is_null(), "null data + nonzero length must reject");
+        }
+
+        #[test]
+        fn ctor_bool_null_name_returns_null() {
+            let data: [u8; 1] = [1];
+            let s = series_new_bool(ptr::null(), data.as_ptr(), data.len());
+            assert!(s.is_null());
+        }
+
+        #[test]
+        fn ctor_bool_empty_ok() {
+            // Empty bool series is allowed: data may be null when length=0.
+            let n = cstr("flags");
+            let s = series_new_bool(n.as_ptr(), ptr::null(), 0);
+            assert!(!s.is_null());
+            assert_eq!(series_len(s), 0);
+            series_drop(s);
+        }
+
+        #[test]
+        fn ctor_ymdhms_happy_path() {
+            let n = cstr("ts");
+            let data = [
+                YMDHMS { year: 2024, month: 1, day: 2,
+                         hour: 3, minute: 4, second: 5 },
+                YMDHMS { year: 2025, month: 6, day: 7,
+                         hour: 8, minute: 9, second: 10 },
+            ];
+            let s = series_new_ymdhms(n.as_ptr(), data.as_ptr(), data.len());
+            assert!(!s.is_null());
+            assert_eq!(series_len(s), 2);
+            assert_dtype(s, CompatDTypeTag::Datetime,
+                         CompatTimeUnit::Milliseconds);
+            series_drop(s);
+        }
+    }
+
+    /// Null-aware (`series_new_opt_*`) constructors: mixed valid/invalid
+    /// inputs survive the round trip via `series_ref_*`.
+    mod series_opt_ctors {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn opt_i32_mixed_valid_round_trips() {
+            let s = make_opt_i32(
+                "xs",
+                &[Some(10), None, Some(30), None],
+            );
+            assert_eq!(series_len(s), 4);
+            assert_eq!(series_null_count(s), 2);
+            assert_eq!(series_ref_i32(s, 0), CompatOptI32 { valid: 1, value: 10 });
+            assert_eq!(series_ref_i32(s, 1), CompatOptI32 { valid: 0, value: 0 });
+            assert_eq!(series_ref_i32(s, 2), CompatOptI32 { valid: 1, value: 30 });
+            assert_eq!(series_ref_i32(s, 3), CompatOptI32 { valid: 0, value: 0 });
+            series_drop(s);
+        }
+
+        #[test]
+        fn opt_f64_mixed_valid_round_trips() {
+            let s = make_opt_f64("ys", &[Some(1.5), None, Some(-2.25)]);
+            assert_eq!(series_null_count(s), 1);
+            let v0 = series_ref_f64(s, 0);
+            assert_eq!(v0.valid, 1);
+            assert_eq!(v0.value, 1.5);
+            let v1 = series_ref_f64(s, 1);
+            assert_eq!(v1.valid, 0);
+            let v2 = series_ref_f64(s, 2);
+            assert_eq!(v2.valid, 1);
+            assert_eq!(v2.value, -2.25);
+            series_drop(s);
+        }
+
+        #[test]
+        fn opt_str_mixed_valid_round_trips() {
+            // series_new_opt_str: parallel data + valid arrays. NULL
+            // entries in the data slot are tolerated when valid=0.
+            let owned = [cstr("hi"), cstr("there")];
+            let data = [owned[0].as_ptr(), ptr::null(), owned[1].as_ptr()];
+            let valid = [1u8, 0, 1];
+            let n = cstr("ws");
+            let s = series_new_opt_str(
+                n.as_ptr(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                data.len(),
+            );
+            assert!(!s.is_null());
+            assert_eq!(series_null_count(s), 1);
+            assert_eq!(take_cstring(series_ref_str(s, 0)), "hi");
+            assert!(series_ref_str(s, 1).is_null());
+            assert_eq!(take_cstring(series_ref_str(s, 2)), "there");
+            series_drop(s);
+        }
+
+        #[test]
+        fn opt_bool_mixed_valid_round_trips() {
+            let n = cstr("flags");
+            let data: [u8; 3] = [1, 0, 1];
+            let valid: [u8; 3] = [1, 0, 1];
+            let s = series_new_opt_bool(
+                n.as_ptr(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                data.len(),
+            );
+            assert!(!s.is_null());
+            assert_eq!(series_null_count(s), 1);
+            assert_eq!(series_ref_bool(s, 0).valid, 1);
+            assert_eq!(series_ref_bool(s, 0).value, 1);
+            assert_eq!(series_ref_bool(s, 1).valid, 0);
+            assert_eq!(series_ref_bool(s, 2).value, 1);
+            series_drop(s);
+        }
+
+        #[test]
+        fn opt_i32_empty_ok() {
+            let n = cstr("xs");
+            let s = series_new_opt_i32(n.as_ptr(), ptr::null(), ptr::null(), 0);
+            assert!(!s.is_null());
+            assert_eq!(series_len(s), 0);
+            series_drop(s);
+        }
+
+        #[test]
+        fn opt_i64_null_name_returns_null() {
+            let data: [i64; 1] = [1];
+            let valid: [u8; 1] = [1];
+            let s = series_new_opt_i64(
+                ptr::null(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                1,
+            );
+            assert!(s.is_null());
+        }
+
+        #[test]
+        fn opt_ymdhms_mixed_valid_round_trips() {
+            let n = cstr("ts");
+            let data = [
+                YMDHMS { year: 2024, month: 1, day: 2,
+                         hour: 3, minute: 4, second: 5 },
+                YMDHMS { year: 0, month: 0, day: 0,
+                         hour: 0, minute: 0, second: 0 },
+            ];
+            let valid = [1u8, 0];
+            let s = series_new_opt_ymdhms(
+                n.as_ptr(),
+                data.as_ptr(),
+                valid.as_ptr(),
+                data.len(),
+            );
+            assert!(!s.is_null());
+            assert_eq!(series_null_count(s), 1);
+            let v0 = series_ref_ymdhms(s, 0);
+            assert_eq!(v0.valid, 1);
+            assert_eq!(v0.value.year, 2024);
+            assert_eq!(v0.value.month, 1);
+            assert_eq!(v0.value.hour, 3);
+            let v1 = series_ref_ymdhms(s, 1);
+            assert_eq!(v1.valid, 0);
+            series_drop(s);
+        }
+    }
+
+    /// `series_ref_*` happy / null / out-of-range paths, plus the
+    /// temporal accessors (Date / Time / Duration / Datetime).
+    mod series_value_access {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn ref_i32_happy_path() {
+            let s = make_i32("xs", &[10, 20, 30]);
+            assert_eq!(series_ref_i32(s, 0).value, 10);
+            assert_eq!(series_ref_i32(s, 2).value, 30);
+            series_drop(s);
+        }
+
+        #[test]
+        fn ref_i32_null_series_returns_none() {
+            let v = series_ref_i32(ptr::null_mut(), 0);
+            assert_eq!(v, CompatOptI32 { valid: 0, value: 0 });
+        }
+
+        #[test]
+        fn ref_f64_returns_value() {
+            let s = make_f64("ys", &[1.5, 2.5, 3.5]);
+            assert_eq!(series_ref_f64(s, 1).value, 2.5);
+            series_drop(s);
+        }
+
+        #[test]
+        fn ref_str_returns_cstring_and_frees() {
+            let s = make_str("ws", &["hi", "there"]);
+            let p0 = series_ref_str(s, 0);
+            assert!(!p0.is_null());
+            assert_eq!(take_cstring(p0), "hi");
+            assert_eq!(take_cstring(series_ref_str(s, 1)), "there");
+            series_drop(s);
+        }
+
+        #[test]
+        fn ref_str_null_series_returns_null_ptr() {
+            assert!(series_ref_str(ptr::null_mut(), 0).is_null());
+        }
+
+        #[test]
+        fn ref_bool_returns_value() {
+            let s = make_bool("flags", &[1, 0, 1]);
+            assert_eq!(series_ref_bool(s, 0).value, 1);
+            assert_eq!(series_ref_bool(s, 1).value, 0);
+            series_drop(s);
+        }
+
+        #[test]
+        fn ref_is_null_flags_null_entries() {
+            let s = make_opt_i32("xs", &[Some(1), None, Some(3)]);
+            assert_eq!(series_ref_is_null(s, 0), 0);
+            assert_eq!(series_ref_is_null(s, 1), 1);
+            assert_eq!(series_ref_is_null(s, 2), 0);
+            // out-of-range → -1
+            assert_eq!(series_ref_is_null(s, 99), -1);
+            // null series → -1
+            assert_eq!(series_ref_is_null(ptr::null_mut(), 0), -1);
+            series_drop(s);
+        }
+
+        #[test]
+        fn ref_date_returns_ymd() {
+            // Build an i32 series of epoch-days then cast → Date.
+            let raw = make_i32("d", &[0, 1, 365]);
+            let target = CompatDType {
+                tag: CompatDTypeTag::Date as i32,
+                time_unit: CompatTimeUnit::None as i32,
+                flags: 0,
+                array_width: 0,
+            };
+            let dates = series_cast(raw, target);
+            assert!(!dates.is_null());
+            assert_dtype(dates, CompatDTypeTag::Date, CompatTimeUnit::None);
+            let v0 = series_ref_date(dates, 0);
+            assert_eq!(v0.valid, 1);
+            assert_eq!(v0.value.year, 1970);
+            assert_eq!(v0.value.month, 1);
+            assert_eq!(v0.value.day, 1);
+            let v2 = series_ref_date(dates, 2);
+            assert_eq!(v2.valid, 1);
+            assert_eq!(v2.value.year, 1971);
+            assert_eq!(v2.value.month, 1);
+            assert_eq!(v2.value.day, 1);
+            series_drop(raw);
+            series_drop(dates);
+        }
+
+        #[test]
+        fn ref_duration_returns_i64() {
+            let raw = make_i64("d", &[0, 1_000, 60_000]);
+            let target = CompatDType {
+                tag: CompatDTypeTag::Duration as i32,
+                time_unit: CompatTimeUnit::Milliseconds as i32,
+                flags: 0,
+                array_width: 0,
+            };
+            let durs = series_cast(raw, target);
+            assert!(!durs.is_null());
+            assert_dtype(durs, CompatDTypeTag::Duration,
+                         CompatTimeUnit::Milliseconds);
+            assert_eq!(series_ref_duration(durs, 1).value, 1_000);
+            assert_eq!(series_ref_duration(durs, 2).value, 60_000);
+            series_drop(raw);
+            series_drop(durs);
+        }
+
+        #[test]
+        fn ref_time_returns_i64() {
+            // Polars Time stores nanoseconds-since-midnight as i64.
+            let raw = make_i64("t", &[0, 1_000_000_000]);
+            let target = CompatDType {
+                tag: CompatDTypeTag::Time as i32,
+                time_unit: CompatTimeUnit::None as i32,
+                flags: 0,
+                array_width: 0,
+            };
+            let times = series_cast(raw, target);
+            assert!(!times.is_null());
+            assert_dtype(times, CompatDTypeTag::Time, CompatTimeUnit::None);
+            assert_eq!(series_ref_time(times, 0).value, 0);
+            assert_eq!(series_ref_time(times, 1).value, 1_000_000_000);
+            series_drop(raw);
+            series_drop(times);
+        }
+
+        #[test]
+        fn ref_ymdhms_returns_value() {
+            let n = cstr("ts");
+            let data = [YMDHMS { year: 2030, month: 11, day: 22,
+                                 hour: 13, minute: 14, second: 15 }];
+            let s = series_new_ymdhms(n.as_ptr(), data.as_ptr(), data.len());
+            let v = series_ref_ymdhms(s, 0);
+            assert_eq!(v.valid, 1);
+            assert_eq!(v.value.year, 2030);
+            assert_eq!(v.value.month, 11);
+            assert_eq!(v.value.day, 22);
+            assert_eq!(v.value.hour, 13);
+            assert_eq!(v.value.minute, 14);
+            assert_eq!(v.value.second, 15);
+            series_drop(s);
+        }
+    }
+
+    /// `series_dtype` reports the right `CompatDType` tag/time-unit for
+    /// every constructor. Spot-checks the dtype-tag table the FFI
+    /// implements via `compat_dtype_from_polars`.
+    mod series_dtype_tag {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn dtype_each_int_width() {
+            let cases: &[(*mut Series, CompatDTypeTag)] = &[
+                (make_i32("a", &[1]), CompatDTypeTag::Int32),
+                (make_i64("a", &[1]), CompatDTypeTag::Int64),
+            ];
+            for (s, tag) in cases {
+                assert_dtype(*s, *tag, CompatTimeUnit::None);
+                series_drop(*s);
+            }
+        }
+
+        #[test]
+        fn dtype_each_float_width() {
+            let s64 = make_f64("a", &[1.0]);
+            assert_dtype(s64, CompatDTypeTag::Float64, CompatTimeUnit::None);
+            series_drop(s64);
+
+            // f32 needs a direct ctor call since no test_util helper exists.
+            let n = cstr("a");
+            let data: [f32; 1] = [1.0];
+            let s32 = series_new_f32(n.as_ptr(), data.as_ptr(), data.len());
+            assert_dtype(s32, CompatDTypeTag::Float32, CompatTimeUnit::None);
+            series_drop(s32);
+        }
+
+        #[test]
+        fn dtype_bool_and_string() {
+            let b = make_bool("b", &[1, 0]);
+            assert_dtype(b, CompatDTypeTag::Boolean, CompatTimeUnit::None);
+            series_drop(b);
+            let s = make_str("s", &["x"]);
             assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
             series_drop(s);
         }
