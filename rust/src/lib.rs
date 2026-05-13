@@ -4961,4 +4961,333 @@ mod tests {
 
         series_drop(series);
     }
+
+    // ===== R1: test helpers + ABI round trips =====
+
+    /// Shared helpers reused by later test sub-modules. Centralizes the
+    /// CString-lifetime and series-builder patterns the early tests
+    /// open-code so new tests don't have to repeat them.
+    mod test_util {
+        use super::*;
+
+        /// Build an owning `CString` from a Rust `&str`. The caller holds
+        /// the `CString` for as long as the FFI call needs the pointer.
+        pub(super) fn cstr(s: &str) -> CString {
+            CString::new(s).expect("test cstring must not contain a nul byte")
+        }
+
+        /// Materialize a `*const c_char` that an FFI extern returned into
+        /// an owned `String`, freeing the underlying CString.
+        pub(super) fn take_cstring(p: *const c_char) -> String {
+            assert!(!p.is_null(), "expected a non-null CString pointer");
+            let s = unsafe { CStr::from_ptr(p) }
+                .to_str()
+                .expect("FFI string must be valid UTF-8")
+                .to_owned();
+            unsafe { drop(CString::from_raw(p as *mut c_char)) };
+            s
+        }
+
+        pub(super) fn make_i32(name: &str, values: &[i32]) -> *mut Series {
+            let n = cstr(name);
+            let s = series_new_i32(n.as_ptr(), values.as_ptr(), values.len());
+            assert!(!s.is_null(), "series_new_i32 returned null for {:?}", name);
+            s
+        }
+
+        pub(super) fn make_f64(name: &str, values: &[f64]) -> *mut Series {
+            let n = cstr(name);
+            let s = series_new_f64(n.as_ptr(), values.as_ptr(), values.len());
+            assert!(!s.is_null());
+            s
+        }
+
+        pub(super) fn make_bool(name: &str, values: &[u8]) -> *mut Series {
+            let n = cstr(name);
+            let s = series_new_bool(n.as_ptr(), values.as_ptr(), values.len());
+            assert!(!s.is_null());
+            s
+        }
+
+        pub(super) fn make_str(name: &str, values: &[&str]) -> *mut Series {
+            // series_new_str takes an array of `*const c_char`; keep the
+            // CStrings alive for the duration of the call.
+            let owned: Vec<CString> = values.iter().map(|v| cstr(v)).collect();
+            let ptrs: Vec<*const c_char> =
+                owned.iter().map(|c| c.as_ptr()).collect();
+            let n = cstr(name);
+            let s = series_new_str(n.as_ptr(), ptrs.as_ptr(), ptrs.len());
+            assert!(!s.is_null());
+            s
+        }
+
+        /// Assert that `series_dtype` reports the given tag and time-unit.
+        pub(super) fn assert_dtype(
+            series: *mut Series,
+            tag: CompatDTypeTag,
+            time_unit: CompatTimeUnit,
+        ) {
+            let dt = series_dtype(series);
+            assert_eq!(dt.tag, tag as i32, "dtype tag mismatch");
+            assert_eq!(
+                dt.time_unit, time_unit as i32,
+                "dtype time_unit mismatch",
+            );
+        }
+    }
+
+    /// Direct unit tests for the internal ABI conversion helpers
+    /// (`compat_dtype_from_polars`, `polars_dtype_from_compat`,
+    /// `ymdhms_to_naive_datetime`). These aren't `extern "C"`, so the
+    /// only thing that currently exercises them is the dylib being
+    /// loaded by Racket.
+    mod abi {
+        use super::*;
+
+        fn round_trip_simple(tag: CompatDTypeTag, expect: DataType) {
+            let c = CompatDType {
+                tag: tag as i32,
+                time_unit: CompatTimeUnit::None as i32,
+                flags: 0,
+                array_width: 0,
+            };
+            let dt = polars_dtype_from_compat(&c)
+                .expect("simple dtype must lift");
+            assert_eq!(dt, expect);
+            let back = compat_dtype_from_polars(&dt);
+            assert_eq!(back.tag, c.tag);
+            assert_eq!(back.time_unit, CompatTimeUnit::None as i32);
+        }
+
+        #[test]
+        fn round_trip_boolean() {
+            round_trip_simple(CompatDTypeTag::Boolean, DataType::Boolean);
+        }
+        #[test]
+        fn round_trip_uint8() {
+            round_trip_simple(CompatDTypeTag::UInt8, DataType::UInt8);
+        }
+        #[test]
+        fn round_trip_uint16() {
+            round_trip_simple(CompatDTypeTag::UInt16, DataType::UInt16);
+        }
+        #[test]
+        fn round_trip_uint32() {
+            round_trip_simple(CompatDTypeTag::UInt32, DataType::UInt32);
+        }
+        #[test]
+        fn round_trip_uint64() {
+            round_trip_simple(CompatDTypeTag::UInt64, DataType::UInt64);
+        }
+        #[test]
+        fn round_trip_int8() {
+            round_trip_simple(CompatDTypeTag::Int8, DataType::Int8);
+        }
+        #[test]
+        fn round_trip_int16() {
+            round_trip_simple(CompatDTypeTag::Int16, DataType::Int16);
+        }
+        #[test]
+        fn round_trip_int32() {
+            round_trip_simple(CompatDTypeTag::Int32, DataType::Int32);
+        }
+        #[test]
+        fn round_trip_int64() {
+            round_trip_simple(CompatDTypeTag::Int64, DataType::Int64);
+        }
+        #[test]
+        fn round_trip_float32() {
+            round_trip_simple(CompatDTypeTag::Float32, DataType::Float32);
+        }
+        #[test]
+        fn round_trip_float64() {
+            round_trip_simple(CompatDTypeTag::Float64, DataType::Float64);
+        }
+        #[test]
+        fn round_trip_string() {
+            round_trip_simple(CompatDTypeTag::String, DataType::String);
+        }
+        #[test]
+        fn round_trip_binary() {
+            round_trip_simple(CompatDTypeTag::Binary, DataType::Binary);
+        }
+        #[test]
+        fn round_trip_date() {
+            round_trip_simple(CompatDTypeTag::Date, DataType::Date);
+        }
+        #[test]
+        fn round_trip_time() {
+            round_trip_simple(CompatDTypeTag::Time, DataType::Time);
+        }
+        #[test]
+        fn round_trip_null() {
+            round_trip_simple(CompatDTypeTag::Null, DataType::Null);
+        }
+
+        #[test]
+        fn round_trip_datetime_each_unit() {
+            for tu in [
+                CompatTimeUnit::Nanoseconds,
+                CompatTimeUnit::Microseconds,
+                CompatTimeUnit::Milliseconds,
+            ] {
+                let c = CompatDType {
+                    tag: CompatDTypeTag::Datetime as i32,
+                    time_unit: tu as i32,
+                    flags: 0,
+                    array_width: 0,
+                };
+                let dt = polars_dtype_from_compat(&c)
+                    .expect("datetime must lift");
+                match dt {
+                    DataType::Datetime(u, None) => {
+                        assert_eq!(
+                            compat_time_unit_from_polars(&u) as i32,
+                            tu as i32,
+                            "time-unit round-trip failed",
+                        );
+                    }
+                    other => panic!("expected Datetime, got {:?}", other),
+                }
+                let back = compat_dtype_from_polars(&dt);
+                assert_eq!(back.tag, CompatDTypeTag::Datetime as i32);
+                assert_eq!(back.time_unit, tu as i32);
+            }
+        }
+
+        #[test]
+        fn round_trip_duration_each_unit() {
+            for tu in [
+                CompatTimeUnit::Nanoseconds,
+                CompatTimeUnit::Microseconds,
+                CompatTimeUnit::Milliseconds,
+            ] {
+                let c = CompatDType {
+                    tag: CompatDTypeTag::Duration as i32,
+                    time_unit: tu as i32,
+                    flags: 0,
+                    array_width: 0,
+                };
+                let dt = polars_dtype_from_compat(&c)
+                    .expect("duration must lift");
+                match dt {
+                    DataType::Duration(u) => {
+                        assert_eq!(
+                            compat_time_unit_from_polars(&u) as i32,
+                            tu as i32,
+                            "time-unit round-trip failed",
+                        );
+                    }
+                    other => panic!("expected Duration, got {:?}", other),
+                }
+                let back = compat_dtype_from_polars(&dt);
+                assert_eq!(back.tag, CompatDTypeTag::Duration as i32);
+                assert_eq!(back.time_unit, tu as i32);
+            }
+        }
+
+        /// Tags accepted on *output* but not as input — the helper must
+        /// return `None` rather than panic.
+        #[test]
+        fn rejected_input_tags_return_none() {
+            for tag in [
+                CompatDTypeTag::Unknown,
+                CompatDTypeTag::BinaryOffset,
+                CompatDTypeTag::List,
+                CompatDTypeTag::Array,
+                CompatDTypeTag::Struct,
+                CompatDTypeTag::Categorical,
+                CompatDTypeTag::Enum,
+                CompatDTypeTag::Decimal,
+                CompatDTypeTag::Object,
+            ] {
+                let c = CompatDType {
+                    tag: tag as i32,
+                    time_unit: CompatTimeUnit::None as i32,
+                    flags: 0,
+                    array_width: 0,
+                };
+                assert!(
+                    polars_dtype_from_compat(&c).is_none(),
+                    "tag {:?} unexpectedly lifted",
+                    tag,
+                );
+            }
+        }
+
+        #[test]
+        fn ymdhms_round_trip_to_naive_datetime() {
+            let y = YMDHMS {
+                year: 2024,
+                month: 7,
+                day: 15,
+                hour: 9,
+                minute: 30,
+                second: 45,
+            };
+            let ndt =
+                ymdhms_to_naive_datetime(&y).expect("valid YMDHMS converts");
+            assert_eq!(ndt.date().year(), 2024);
+            assert_eq!(ndt.date().month(), 7);
+            assert_eq!(ndt.date().day(), 15);
+            assert_eq!(ndt.time().hour(), 9);
+            assert_eq!(ndt.time().minute(), 30);
+            assert_eq!(ndt.time().second(), 45);
+        }
+
+        #[test]
+        fn ymdhms_invalid_returns_none() {
+            // February 30th doesn't exist — the helper must reject it.
+            let y = YMDHMS {
+                year: 2024,
+                month: 2,
+                day: 30,
+                hour: 0,
+                minute: 0,
+                second: 0,
+            };
+            assert!(ymdhms_to_naive_datetime(&y).is_none());
+        }
+    }
+
+    /// Smoke tests confirming the `test_util` helpers themselves behave
+    /// (so a failure there can't silently mask later batch tests).
+    mod test_util_smoke {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn make_i32_builds_named_series() {
+            let s = make_i32("xs", &[1, 2, 3, 4]);
+            let n = take_cstring(series_name(s));
+            assert_eq!(n, "xs");
+            assert_eq!(series_len(s), 4);
+            assert_dtype(s, CompatDTypeTag::Int32, CompatTimeUnit::None);
+            series_drop(s);
+        }
+
+        #[test]
+        fn make_f64_builds_named_series() {
+            let s = make_f64("ys", &[1.5, 2.5]);
+            assert_eq!(series_len(s), 2);
+            assert_dtype(s, CompatDTypeTag::Float64, CompatTimeUnit::None);
+            series_drop(s);
+        }
+
+        #[test]
+        fn make_bool_builds_named_series() {
+            let s = make_bool("flags", &[1u8, 0, 1]);
+            assert_eq!(series_len(s), 3);
+            assert_dtype(s, CompatDTypeTag::Boolean, CompatTimeUnit::None);
+            series_drop(s);
+        }
+
+        #[test]
+        fn make_str_builds_named_series() {
+            let s = make_str("words", &["a", "bb", "ccc"]);
+            assert_eq!(series_len(s), 3);
+            assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
+            series_drop(s);
+        }
+    }
 }

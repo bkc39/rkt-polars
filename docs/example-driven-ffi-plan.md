@@ -171,6 +171,25 @@ Cross-cutting / post-MVP:
 - Explicit conversion helpers between Gregor values (Racket) and
   `chrono::NaiveDate` / `NaiveDateTime` (Rust).
 
+Rust-side test coverage (R1–R9, see
+`~/.claude/plans/consult-our-plan-for-wild-babbage.md`): the Rust crate
+currently lags the Racket-side surface in unit coverage. Plan grows
+`#[cfg(test)] mod tests` in `rust/src/lib.rs` in nine small batches that
+mirror the FFI batches.
+- R1 — test helpers + ABI round trips: **shipped** (`mod test_util`,
+  `mod abi`, `mod test_util_smoke`; 25 new tests; `cargo test --release`
+  → 64 passed)
+- R2 — Series constructors + value access
+- R3 — Series ops (cmp / arith / bool / reductions / reshape / cast)
+- R4 — DataFrame core
+- R5 — DataFrame group-by + joins + reshape + IO (needs `tempfile` in
+  `[dev-dependencies]`)
+- R6 — Expr core + lazy plumbing
+- R7 — Expr behavior batches (the work T3 added; verifies enum-byte
+  mappings, `expr_when_then` lowering, `expr_clip` routing, etc.)
+- R8 — Expr `.str` / `.dt` namespaces
+- R9 — LazyFrame surface (incl. scan options)
+
 ## Build / Iteration Loop
 
 End-to-end rebuild during dev:
