@@ -5069,6 +5069,55 @@ mod tests {
                 .collect()
         }
 
+        /// Pull a string column out by name and materialize it as a
+        /// `Vec<String>`. Each element is freed via `take_cstring`.
+        pub(super) fn read_str_col(
+            df: *mut DataFrame,
+            name: &str,
+        ) -> Vec<String> {
+            let n = cstr(name);
+            let s = dataframe_column(df, n.as_ptr());
+            assert!(
+                !s.is_null(),
+                "dataframe_column({:?}) returned null",
+                name,
+            );
+            let out: Vec<String> = (0..series_len(s))
+                .map(|i| {
+                    let p = series_ref_str(s, i);
+                    assert!(!p.is_null(), "unexpected null at {}/{}", name, i);
+                    take_cstring(p)
+                })
+                .collect();
+            series_drop(s);
+            out
+        }
+
+        /// Pull an i64 column out by name and materialize it as a Vec.
+        /// CSV / JSON-Lines readers infer integer columns as i64, so
+        /// round-trip tests need to read with this variant.
+        pub(super) fn read_i64_col(
+            df: *mut DataFrame,
+            name: &str,
+        ) -> Vec<i64> {
+            let n = cstr(name);
+            let s = dataframe_column(df, n.as_ptr());
+            assert!(
+                !s.is_null(),
+                "dataframe_column({:?}) returned null",
+                name,
+            );
+            let out: Vec<i64> = (0..series_len(s))
+                .map(|i| {
+                    let v = series_ref_i64(s, i);
+                    assert_eq!(v.valid, 1, "unexpected null at {}/{}", name, i);
+                    v.value
+                })
+                .collect();
+            series_drop(s);
+            out
+        }
+
         /// Pull an i32 column out by name and materialize it as a Vec.
         pub(super) fn read_i32_col(
             df: *mut DataFrame,
@@ -6924,6 +6973,849 @@ mod tests {
         fn unique_and_drop_nulls_null_df_return_null() {
             assert!(dataframe_unique(ptr::null_mut()).is_null());
             assert!(dataframe_drop_nulls(ptr::null_mut()).is_null());
+        }
+    }
+
+    // ===== R5: DataFrame group-by + joins + reshape + IO =====
+
+    /// Build a tiny grouped DataFrame: `g` = ["a","a","b","b","b"],
+    /// `x` = [10,20,30,40,50]. Returned with the input Series so the
+    /// caller can drop everything cleanly.
+    fn make_gx() -> (*mut DataFrame, *mut Series, *mut Series) {
+        let gs = tests::test_util::make_str("g", &["a", "a", "b", "b", "b"]);
+        let xs = tests::test_util::make_i32("x", &[10, 20, 30, 40, 50]);
+        let df = tests::test_util::make_df(&[gs, xs]);
+        (df, gs, xs)
+    }
+
+    /// Group-by aggregation family (`dataframe_group_by_{sum,mean,min,
+    /// max,count}`).
+    mod dataframe_groupby {
+        use super::*;
+        use super::test_util::*;
+
+        /// Wrap the by/agg name array setup that every group-by call
+        /// reuses, then read back the `x` column sorted by `g`.
+        fn run_group_by(
+            df: *mut DataFrame,
+            agg_name: &str,
+            f: extern "C" fn(
+                *mut DataFrame,
+                *const *const c_char,
+                usize,
+                *const *const c_char,
+                usize,
+            ) -> *mut DataFrame,
+        ) -> *mut DataFrame {
+            let by_g = cstr("g");
+            let by_arr: [*const c_char; 1] = [by_g.as_ptr()];
+            let agg = cstr(agg_name);
+            let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
+            let out = f(
+                df,
+                by_arr.as_ptr(),
+                by_arr.len(),
+                agg_arr.as_ptr(),
+                agg_arr.len(),
+            );
+            assert!(!out.is_null(), "group_by returned null");
+            out
+        }
+
+        /// Sort the group-by result by `g` so the test reads back in a
+        /// deterministic order — Polars' group_by output ordering is
+        /// not guaranteed.
+        fn sorted_by_g(df: *mut DataFrame) -> *mut DataFrame {
+            let g = cstr("g");
+            let by: [*const c_char; 1] = [g.as_ptr()];
+            dataframe_sort(df, by.as_ptr(), ptr::null(), by.len())
+        }
+
+        // Polars 0.41 renames the aggregated column by suffixing the
+        // op name — `group_by_sum` on column `x` produces `x_sum`, etc.
+
+        #[test]
+        fn group_by_sum_aggregates_per_key() {
+            let (df, gs, xs) = make_gx();
+            let raw = run_group_by(df, "x", dataframe_group_by_sum);
+            let out = sorted_by_g(raw);
+            assert_eq!(dataframe_height(out), 2);
+            // a -> 10+20 = 30; b -> 30+40+50 = 120.
+            assert_eq!(read_i32_col(out, "x_sum"), vec![30, 120]);
+            dataframe_drop(out);
+            dataframe_drop(raw);
+            dataframe_drop(df);
+            series_drop(gs);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn group_by_min_and_max() {
+            let (df, gs, xs) = make_gx();
+            let raw_min = run_group_by(df, "x", dataframe_group_by_min);
+            let out_min = sorted_by_g(raw_min);
+            assert_eq!(read_i32_col(out_min, "x_min"), vec![10, 30]);
+            dataframe_drop(out_min);
+            dataframe_drop(raw_min);
+
+            let raw_max = run_group_by(df, "x", dataframe_group_by_max);
+            let out_max = sorted_by_g(raw_max);
+            assert_eq!(read_i32_col(out_max, "x_max"), vec![20, 50]);
+            dataframe_drop(out_max);
+            dataframe_drop(raw_max);
+
+            dataframe_drop(df);
+            series_drop(gs);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn group_by_mean_produces_f64_column() {
+            let (df, gs, xs) = make_gx();
+            let raw = run_group_by(df, "x", dataframe_group_by_mean);
+            let out = sorted_by_g(raw);
+            // a -> 15.0, b -> 40.0
+            let n = cstr("x_mean");
+            let col = dataframe_column(out, n.as_ptr());
+            assert!(!col.is_null(), "x_mean column missing");
+            assert_eq!(series_ref_f64(col, 0).value, 15.0);
+            assert_eq!(series_ref_f64(col, 1).value, 40.0);
+            series_drop(col);
+            dataframe_drop(out);
+            dataframe_drop(raw);
+            dataframe_drop(df);
+            series_drop(gs);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn group_by_count_emits_count_column() {
+            let (df, gs, xs) = make_gx();
+            // count produces a "<col>_count" column of u32 — the
+            // outgoing column name carries the agg suffix from Polars.
+            let by = cstr("g");
+            let by_arr: [*const c_char; 1] = [by.as_ptr()];
+            let agg = cstr("x");
+            let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
+            let raw = dataframe_group_by_count(
+                df,
+                by_arr.as_ptr(),
+                by_arr.len(),
+                agg_arr.as_ptr(),
+                agg_arr.len(),
+            );
+            assert!(!raw.is_null());
+            let out = sorted_by_g(raw);
+            assert_eq!(dataframe_height(out), 2);
+            // Either "x_count" or "x" depending on Polars version —
+            // verify the row counts via the second column rather than a
+            // hard-coded name.
+            let names = read_column_names(out);
+            assert_eq!(names.len(), 2);
+            let val_name = cstr(&names[1]);
+            let col = dataframe_column(out, val_name.as_ptr());
+            // group `a` has 2 rows, group `b` has 3 rows. The exact int
+            // type Polars picks (u32) is read via the u32 accessor.
+            assert_eq!(series_ref_u32(col, 0).value, 2);
+            assert_eq!(series_ref_u32(col, 1).value, 3);
+            series_drop(col);
+            dataframe_drop(out);
+            dataframe_drop(raw);
+            dataframe_drop(df);
+            series_drop(gs);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn group_by_unknown_key_returns_null() {
+            let (df, gs, xs) = make_gx();
+            let by = cstr("nope");
+            let by_arr: [*const c_char; 1] = [by.as_ptr()];
+            let agg = cstr("x");
+            let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
+            let out = dataframe_group_by_sum(
+                df,
+                by_arr.as_ptr(),
+                by_arr.len(),
+                agg_arr.as_ptr(),
+                agg_arr.len(),
+            );
+            assert!(out.is_null());
+            dataframe_drop(df);
+            series_drop(gs);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn group_by_null_df_returns_null() {
+            let by = cstr("g");
+            let by_arr: [*const c_char; 1] = [by.as_ptr()];
+            let agg = cstr("x");
+            let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
+            assert!(dataframe_group_by_sum(
+                ptr::null_mut(),
+                by_arr.as_ptr(),
+                by_arr.len(),
+                agg_arr.as_ptr(),
+                agg_arr.len()
+            )
+            .is_null());
+        }
+    }
+
+    /// `dataframe_join` enum-mapping: every `CompatJoinKind` variant
+    /// produces the documented row-count behavior.
+    mod dataframe_join {
+        use super::*;
+        use super::test_util::*;
+
+        /// Left = {k:[1,2,3], v:[10,20,30]}.
+        /// Right = {k:[2,3,4], w:[200,300,400]}.
+        fn make_left_right(
+        ) -> (*mut DataFrame, *mut DataFrame, [*mut Series; 4]) {
+            let lk = make_i32("k", &[1, 2, 3]);
+            let lv = make_i32("v", &[10, 20, 30]);
+            let rk = make_i32("k", &[2, 3, 4]);
+            let rw = make_i32("w", &[200, 300, 400]);
+            let left = make_df(&[lk, lv]);
+            let right = make_df(&[rk, rw]);
+            (left, right, [lk, lv, rk, rw])
+        }
+
+        fn join_on_k(
+            left: *mut DataFrame,
+            right: *mut DataFrame,
+            kind: CompatJoinKind,
+        ) -> *mut DataFrame {
+            let lk = cstr("k");
+            let rk = cstr("k");
+            let lon: [*const c_char; 1] = [lk.as_ptr()];
+            let ron: [*const c_char; 1] = [rk.as_ptr()];
+            dataframe_join(
+                left,
+                right,
+                lon.as_ptr(),
+                lon.len(),
+                ron.as_ptr(),
+                ron.len(),
+                kind as i32,
+            )
+        }
+
+        fn cleanup(
+            left: *mut DataFrame,
+            right: *mut DataFrame,
+            series: [*mut Series; 4],
+        ) {
+            dataframe_drop(left);
+            dataframe_drop(right);
+            for s in series {
+                series_drop(s);
+            }
+        }
+
+        #[test]
+        fn join_inner_returns_only_matches() {
+            let (left, right, series) = make_left_right();
+            let out = join_on_k(left, right, CompatJoinKind::Inner);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 2);
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_left_keeps_all_left_rows() {
+            let (left, right, series) = make_left_right();
+            let out = join_on_k(left, right, CompatJoinKind::Left);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 3);
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_outer_keeps_all_rows_from_both_sides() {
+            let (left, right, series) = make_left_right();
+            let out = join_on_k(left, right, CompatJoinKind::Outer);
+            assert!(!out.is_null());
+            // 2 matched (k=2,3) + 1 left-only (k=1) + 1 right-only (k=4)
+            assert_eq!(dataframe_height(out), 4);
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_cross_produces_cartesian_product() {
+            let (left, right, series) = make_left_right();
+            // Cross join ignores the `on` arrays — pass empties.
+            let out = dataframe_join(
+                left,
+                right,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                CompatJoinKind::Cross as i32,
+            );
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 3 * 3);
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_semi_returns_left_with_matches() {
+            let (left, right, series) = make_left_right();
+            let out = join_on_k(left, right, CompatJoinKind::Semi);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 2);
+            assert_eq!(dataframe_width(out), 2); // semi returns left cols
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_anti_returns_left_without_matches() {
+            let (left, right, series) = make_left_right();
+            let out = join_on_k(left, right, CompatJoinKind::Anti);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 1);
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_invalid_kind_returns_null() {
+            let (left, right, series) = make_left_right();
+            let lk = cstr("k");
+            let rk = cstr("k");
+            let lon: [*const c_char; 1] = [lk.as_ptr()];
+            let ron: [*const c_char; 1] = [rk.as_ptr()];
+            // 99 isn't a CompatJoinKind variant.
+            let out = dataframe_join(
+                left,
+                right,
+                lon.as_ptr(),
+                lon.len(),
+                ron.as_ptr(),
+                ron.len(),
+                99,
+            );
+            assert!(out.is_null());
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_null_inputs_return_null() {
+            let (left, right, series) = make_left_right();
+            assert!(join_on_k(ptr::null_mut(), right,
+                              CompatJoinKind::Inner).is_null());
+            assert!(join_on_k(left, ptr::null_mut(),
+                              CompatJoinKind::Inner).is_null());
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn join_empty_on_arrays_return_null_for_non_cross() {
+            // Inner / left / outer / semi / anti require at least one key.
+            let (left, right, series) = make_left_right();
+            let out = dataframe_join(
+                left,
+                right,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                CompatJoinKind::Inner as i32,
+            );
+            assert!(out.is_null());
+            cleanup(left, right, series);
+        }
+    }
+
+    /// `dataframe_join_asof` and the option-rich `*_options` variant.
+    mod dataframe_join_asof_tests {
+        use super::*;
+        use super::test_util::*;
+
+        /// Quotes (left) and trades (right). Each side is sorted by the
+        /// join key — a prerequisite for asof joins.
+        fn make_quotes_trades(
+        ) -> (*mut DataFrame, *mut DataFrame, [*mut Series; 4]) {
+            let lk = make_i64("ts", &[1, 5, 10]);
+            let lv = make_i32("quote", &[100, 200, 300]);
+            let rk = make_i64("ts", &[2, 6, 11]);
+            let rw = make_i32("trade", &[1000, 2000, 3000]);
+            let left = make_df(&[lk, lv]);
+            let right = make_df(&[rk, rw]);
+            (left, right, [lk, lv, rk, rw])
+        }
+
+        fn run_asof(
+            left: *mut DataFrame,
+            right: *mut DataFrame,
+            strategy: CompatAsofStrategy,
+        ) -> *mut DataFrame {
+            let lk = cstr("ts");
+            let rk = cstr("ts");
+            dataframe_join_asof(
+                left, right, lk.as_ptr(), rk.as_ptr(), strategy as i32,
+            )
+        }
+
+        fn cleanup(
+            left: *mut DataFrame,
+            right: *mut DataFrame,
+            series: [*mut Series; 4],
+        ) {
+            dataframe_drop(left);
+            dataframe_drop(right);
+            for s in series {
+                series_drop(s);
+            }
+        }
+
+        #[test]
+        fn asof_backward_strategy() {
+            let (left, right, series) = make_quotes_trades();
+            let out = run_asof(left, right, CompatAsofStrategy::Backward);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), dataframe_height(left));
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn asof_forward_strategy() {
+            let (left, right, series) = make_quotes_trades();
+            let out = run_asof(left, right, CompatAsofStrategy::Forward);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), dataframe_height(left));
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn asof_nearest_strategy() {
+            let (left, right, series) = make_quotes_trades();
+            let out = run_asof(left, right, CompatAsofStrategy::Nearest);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), dataframe_height(left));
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn asof_invalid_strategy_returns_null() {
+            let (left, right, series) = make_quotes_trades();
+            let lk = cstr("ts");
+            let rk = cstr("ts");
+            let out = dataframe_join_asof(
+                left, right, lk.as_ptr(), rk.as_ptr(), 999,
+            );
+            assert!(out.is_null());
+            cleanup(left, right, series);
+        }
+
+        #[test]
+        fn asof_options_with_by_keys() {
+            // Same shape but each side carries a `by` partition column.
+            let lk = make_i64("ts", &[1, 5, 1, 5]);
+            let lby = make_str("g", &["a", "a", "b", "b"]);
+            let lv = make_i32("v", &[10, 20, 30, 40]);
+            let rk = make_i64("ts", &[2, 6, 2, 6]);
+            let rby = make_str("g", &["a", "a", "b", "b"]);
+            let rw = make_i32("w", &[100, 200, 300, 400]);
+            let left = make_df(&[lk, lby, lv]);
+            let right = make_df(&[rk, rby, rw]);
+
+            let ts_l = cstr("ts");
+            let ts_r = cstr("ts");
+            let g_l = cstr("g");
+            let g_r = cstr("g");
+            let lby_arr: [*const c_char; 1] = [g_l.as_ptr()];
+            let rby_arr: [*const c_char; 1] = [g_r.as_ptr()];
+            let out = dataframe_join_asof_options(
+                left,
+                right,
+                ts_l.as_ptr(),
+                ts_r.as_ptr(),
+                CompatAsofStrategy::Backward as i32,
+                lby_arr.as_ptr(),
+                lby_arr.len(),
+                rby_arr.as_ptr(),
+                rby_arr.len(),
+                CompatAsofToleranceKind::None as i32,
+                0,
+                0.0,
+            );
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), dataframe_height(left));
+            dataframe_drop(out);
+            dataframe_drop(left);
+            dataframe_drop(right);
+            for s in [lk, lby, lv, rk, rby, rw] {
+                series_drop(s);
+            }
+        }
+
+        #[test]
+        fn asof_options_with_integer_tolerance() {
+            let (left, right, series) = make_quotes_trades();
+            let lk = cstr("ts");
+            let rk = cstr("ts");
+            let out = dataframe_join_asof_options(
+                left,
+                right,
+                lk.as_ptr(),
+                rk.as_ptr(),
+                CompatAsofStrategy::Backward as i32,
+                ptr::null(),
+                0,
+                ptr::null(),
+                0,
+                CompatAsofToleranceKind::Integer as i32,
+                3,
+                0.0,
+            );
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), dataframe_height(left));
+            dataframe_drop(out);
+            cleanup(left, right, series);
+        }
+    }
+
+    /// vstack appends rows; hstack appends columns.
+    mod dataframe_stack {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn vstack_appends_rows() {
+            let a_x = make_i32("x", &[1, 2]);
+            let a_g = make_str("g", &["a", "b"]);
+            let a = make_df(&[a_x, a_g]);
+            let b_x = make_i32("x", &[3, 4]);
+            let b_g = make_str("g", &["c", "d"]);
+            let b = make_df(&[b_x, b_g]);
+            let out = dataframe_vstack(a, b);
+            assert!(!out.is_null());
+            assert_eq!(dataframe_height(out), 4);
+            assert_eq!(read_i32_col(out, "x"), vec![1, 2, 3, 4]);
+            dataframe_drop(out);
+            dataframe_drop(a);
+            dataframe_drop(b);
+            for s in [a_x, a_g, b_x, b_g] {
+                series_drop(s);
+            }
+        }
+
+        #[test]
+        fn vstack_schema_mismatch_returns_null() {
+            // Different column types between a and b -> polars rejects.
+            let a_x = make_i32("x", &[1]);
+            let a = make_df(&[a_x]);
+            let b_x = make_f64("x", &[1.0]);
+            let b = make_df(&[b_x]);
+            assert!(dataframe_vstack(a, b).is_null());
+            dataframe_drop(a);
+            dataframe_drop(b);
+            series_drop(a_x);
+            series_drop(b_x);
+        }
+
+        #[test]
+        fn vstack_null_inputs_return_null() {
+            let a_x = make_i32("x", &[1]);
+            let a = make_df(&[a_x]);
+            assert!(dataframe_vstack(ptr::null_mut(), a).is_null());
+            assert!(dataframe_vstack(a, ptr::null_mut()).is_null());
+            dataframe_drop(a);
+            series_drop(a_x);
+        }
+
+        #[test]
+        fn hstack_appends_columns() {
+            let a_x = make_i32("x", &[1, 2, 3]);
+            let a = make_df(&[a_x]);
+            let extra1 = make_i32("y", &[10, 20, 30]);
+            let extra2 = make_str("g", &["a", "b", "c"]);
+            let ptrs: [*const Series; 2] =
+                [extra1 as *const _, extra2 as *const _];
+            let out = dataframe_hstack(a, ptrs.as_ptr(), ptrs.len());
+            assert!(!out.is_null());
+            assert_eq!(dataframe_width(out), 3);
+            assert_eq!(read_column_names(out), vec!["x", "y", "g"]);
+            assert_eq!(read_i32_col(out, "y"), vec![10, 20, 30]);
+            dataframe_drop(out);
+            dataframe_drop(a);
+            series_drop(a_x);
+            series_drop(extra1);
+            series_drop(extra2);
+        }
+
+        #[test]
+        fn hstack_null_inputs_return_null() {
+            assert!(dataframe_hstack(ptr::null_mut(), ptr::null(), 0).is_null());
+            let a_x = make_i32("x", &[1]);
+            let a = make_df(&[a_x]);
+            // null Series in the array
+            let ptrs: [*const Series; 1] = [ptr::null()];
+            assert!(dataframe_hstack(a, ptrs.as_ptr(), ptrs.len()).is_null());
+            dataframe_drop(a);
+            series_drop(a_x);
+        }
+    }
+
+    /// pivot / unpivot reshape operations.
+    mod dataframe_reshape {
+        use super::*;
+        use super::test_util::*;
+
+        /// Long-form table: id ∈ {1,2}, type ∈ {"x","y"}, value ∈ ints.
+        fn make_long(
+        ) -> (*mut DataFrame, *mut Series, *mut Series, *mut Series) {
+            let id = make_i32("id", &[1, 1, 2, 2]);
+            let ty = make_str("type", &["x", "y", "x", "y"]);
+            let v = make_i32("value", &[10, 11, 20, 21]);
+            let df = make_df(&[id, ty, v]);
+            (df, id, ty, v)
+        }
+
+        #[test]
+        fn pivot_with_first_agg() {
+            let (df, id, ty, v) = make_long();
+            let on = cstr("type");
+            let on_arr: [*const c_char; 1] = [on.as_ptr()];
+            let idx = cstr("id");
+            let idx_arr: [*const c_char; 1] = [idx.as_ptr()];
+            let val = cstr("value");
+            let val_arr: [*const c_char; 1] = [val.as_ptr()];
+            let out = dataframe_pivot(
+                df,
+                on_arr.as_ptr(),
+                on_arr.len(),
+                idx_arr.as_ptr(),
+                idx_arr.len(),
+                val_arr.as_ptr(),
+                val_arr.len(),
+                CompatPivotAgg::First as i32,
+            );
+            assert!(!out.is_null());
+            // 2 unique ids x (id col + x col + y col) = 2 rows, 3 cols.
+            assert_eq!(dataframe_height(out), 2);
+            assert_eq!(dataframe_width(out), 3);
+            dataframe_drop(out);
+            dataframe_drop(df);
+            series_drop(id);
+            series_drop(ty);
+            series_drop(v);
+        }
+
+        #[test]
+        fn pivot_unknown_agg_returns_null() {
+            let (df, id, ty, v) = make_long();
+            let on = cstr("type");
+            let on_arr: [*const c_char; 1] = [on.as_ptr()];
+            let idx = cstr("id");
+            let idx_arr: [*const c_char; 1] = [idx.as_ptr()];
+            let val = cstr("value");
+            let val_arr: [*const c_char; 1] = [val.as_ptr()];
+            let out = dataframe_pivot(
+                df,
+                on_arr.as_ptr(),
+                on_arr.len(),
+                idx_arr.as_ptr(),
+                idx_arr.len(),
+                val_arr.as_ptr(),
+                val_arr.len(),
+                999,
+            );
+            assert!(out.is_null());
+            dataframe_drop(df);
+            series_drop(id);
+            series_drop(ty);
+            series_drop(v);
+        }
+
+        #[test]
+        fn unpivot_melts_wide_to_long() {
+            // Wide-form: id + a + b.
+            let id = make_i32("id", &[1, 2]);
+            let a = make_i32("a", &[10, 20]);
+            let b = make_i32("b", &[100, 200]);
+            let df = make_df(&[id, a, b]);
+            let a_n = cstr("a");
+            let b_n = cstr("b");
+            let on: [*const c_char; 2] = [a_n.as_ptr(), b_n.as_ptr()];
+            let id_n = cstr("id");
+            let idx: [*const c_char; 1] = [id_n.as_ptr()];
+            let out = dataframe_unpivot(
+                df,
+                on.as_ptr(),
+                on.len(),
+                idx.as_ptr(),
+                idx.len(),
+            );
+            assert!(!out.is_null());
+            // 2 ids * 2 value columns -> 4 rows.
+            assert_eq!(dataframe_height(out), 4);
+            // Columns: id + "variable" + "value".
+            assert_eq!(read_column_names(out),
+                       vec!["id", "variable", "value"]);
+            dataframe_drop(out);
+            dataframe_drop(df);
+            series_drop(id);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn unpivot_unknown_column_returns_null() {
+            let (df, id, ty, v) = make_long();
+            let bad = cstr("nope");
+            let on: [*const c_char; 1] = [bad.as_ptr()];
+            let id_n = cstr("id");
+            let idx: [*const c_char; 1] = [id_n.as_ptr()];
+            let out = dataframe_unpivot(
+                df,
+                on.as_ptr(),
+                on.len(),
+                idx.as_ptr(),
+                idx.len(),
+            );
+            assert!(out.is_null());
+            dataframe_drop(df);
+            series_drop(id);
+            series_drop(ty);
+            series_drop(v);
+        }
+    }
+
+    /// `dataframe_write_*` / `dataframe_read_*` round trips, plus
+    /// `dataframe_to_string`.
+    mod dataframe_io {
+        use super::*;
+        use super::test_util::*;
+
+        fn write_round_trip(
+            df: *mut DataFrame,
+            ext: &str,
+            writer: extern "C" fn(*mut DataFrame, *const c_char) -> i32,
+            reader: extern "C" fn(*const c_char) -> *mut DataFrame,
+        ) -> *mut DataFrame {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let path = dir.path().join(format!("out.{}", ext));
+            let p_owned = cstr(path.to_str().unwrap());
+            let rc = writer(df, p_owned.as_ptr());
+            assert_eq!(rc, 0, "writer returned non-zero status");
+            let back = reader(p_owned.as_ptr());
+            assert!(!back.is_null(), "reader returned null");
+            back
+        }
+
+        // Use i64 input throughout: CSV / JSON-Lines readers infer
+        // integer columns as i64, and Parquet preserves the i64 schema —
+        // so all three round-trip back to i64 uniformly.
+
+        #[test]
+        fn csv_round_trip_preserves_shape_and_values() {
+            let xs = make_i64("x", &[1, 2, 3]);
+            let gs = make_str("g", &["a", "b", "c"]);
+            let df = make_df(&[xs, gs]);
+            let back = write_round_trip(
+                df,
+                "csv",
+                dataframe_write_csv,
+                dataframe_read_csv,
+            );
+            assert_eq!(dataframe_height(back), 3);
+            assert_eq!(read_column_names(back), vec!["x", "g"]);
+            assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
+            assert_eq!(read_str_col(back, "g"),
+                       vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+            dataframe_drop(back);
+            dataframe_drop(df);
+            series_drop(xs);
+            series_drop(gs);
+        }
+
+        #[test]
+        fn parquet_round_trip_preserves_shape_and_values() {
+            let xs = make_i64("x", &[1, 2, 3]);
+            let gs = make_str("g", &["a", "b", "c"]);
+            let df = make_df(&[xs, gs]);
+            let back = write_round_trip(
+                df,
+                "parquet",
+                dataframe_write_parquet,
+                dataframe_read_parquet,
+            );
+            assert_eq!(dataframe_height(back), 3);
+            assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
+            dataframe_drop(back);
+            dataframe_drop(df);
+            series_drop(xs);
+            series_drop(gs);
+        }
+
+        #[test]
+        fn json_lines_round_trip_preserves_shape_and_values() {
+            let xs = make_i64("x", &[1, 2, 3]);
+            let gs = make_str("g", &["a", "b", "c"]);
+            let df = make_df(&[xs, gs]);
+            let back = write_round_trip(
+                df,
+                "jsonl",
+                dataframe_write_json_lines,
+                dataframe_read_json_lines,
+            );
+            assert_eq!(dataframe_height(back), 3);
+            assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
+            dataframe_drop(back);
+            dataframe_drop(df);
+            series_drop(xs);
+            series_drop(gs);
+        }
+
+        #[test]
+        fn read_csv_missing_path_returns_null() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let p = dir.path().join("nope.csv");
+            let p_owned = cstr(p.to_str().unwrap());
+            assert!(dataframe_read_csv(p_owned.as_ptr()).is_null());
+        }
+
+        #[test]
+        fn write_csv_status_codes_null_inputs() {
+            // write returns 1 for null df / null path, not 0 (success).
+            let xs = make_i32("x", &[1]);
+            let df = make_df(&[xs]);
+            assert_eq!(dataframe_write_csv(ptr::null_mut(),
+                                           cstr("/tmp/x").as_ptr()), 1);
+            assert_eq!(dataframe_write_csv(df, ptr::null()), 1);
+            dataframe_drop(df);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn to_string_returns_non_null_cstring() {
+            let xs = make_i32("x", &[1, 2]);
+            let df = make_df(&[xs]);
+            let s = dataframe_to_string(df);
+            assert!(!s.is_null());
+            let formatted = take_cstring(s);
+            assert!(formatted.contains("x"),
+                    "to_string output missing column header: {:?}",
+                    formatted);
+            dataframe_drop(df);
+            series_drop(xs);
+        }
+
+        #[test]
+        fn to_string_null_df_returns_null() {
+            assert!(dataframe_to_string(ptr::null_mut()).is_null());
         }
     }
 }

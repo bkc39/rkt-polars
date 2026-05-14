@@ -188,8 +188,10 @@ mirror the FFI batches.
   → 140 passed)
 - R4 — DataFrame core: **shipped** (`mod dataframe_core`; 35 new tests;
   `cargo test --release` → 175 passed)
-- R5 — DataFrame group-by + joins + reshape + IO (needs `tempfile` in
-  `[dev-dependencies]`)
+- R5 — DataFrame group-by + joins + reshape + IO: **shipped**
+  (`mod dataframe_groupby`, `_join`, `_join_asof_tests`, `_stack`,
+  `_reshape`, `_io`; added `tempfile` to `[dev-dependencies]`;
+  37 new tests; `cargo test --release` → 212 passed)
 - R6 — Expr core + lazy plumbing
 - R7 — Expr behavior batches (the work T3 added; verifies enum-byte
   mappings, `expr_when_then` lowering, `expr_clip` routing, etc.)
