@@ -182,7 +182,10 @@ mirror the FFI batches.
 - R2 — Series constructors + value access: **shipped** (`mod series_ctors`,
   `mod series_opt_ctors`, `mod series_value_access`, `mod series_dtype_tag`;
   35 new tests; `cargo test --release` → 99 passed)
-- R3 — Series ops (cmp / arith / bool / reductions / reshape / cast)
+- R3 — Series ops: **shipped** (`mod series_cmp_scalar`, `_cmp_series`,
+  `_arith_scalar`, `_arith_series`, `_boolean`, `_reductions`,
+  `_reshaping`, `_cast_tests`; 41 new tests; `cargo test --release`
+  → 140 passed)
 - R4 — DataFrame core
 - R5 — DataFrame group-by + joins + reshape + IO (needs `tempfile` in
   `[dev-dependencies]`)

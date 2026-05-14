@@ -5773,4 +5773,634 @@ mod tests {
             series_drop(s);
         }
     }
+
+    // ===== R3: Series ops =====
+
+    /// Collect the bool entries of a boolean Series (such as a comparison
+    /// or `is_null` result) into a `Vec<bool>` for compact assertions.
+    fn read_bool_series(s: *mut Series) -> Vec<bool> {
+        let n = series_len(s);
+        (0..n)
+            .map(|i| {
+                let v = series_ref_bool(s, i);
+                assert_eq!(v.valid, 1, "unexpected null at index {}", i);
+                v.value != 0
+            })
+            .collect()
+    }
+
+    /// Scalar comparison externs: `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`
+    /// plus the `_str` equality variants. Each test collects the bool
+    /// result vector and asserts the expected mask.
+    mod series_cmp_scalar {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn cmp_i32_all_ops_against_scalar() {
+            let s = make_i32("xs", &[1, 2, 3, 4]);
+            let lt = series_lt_i32(s, 3);
+            assert_eq!(read_bool_series(lt), vec![true, true, false, false]);
+            series_drop(lt);
+            let le = series_le_i32(s, 3);
+            assert_eq!(read_bool_series(le), vec![true, true, true, false]);
+            series_drop(le);
+            let gt = series_gt_i32(s, 3);
+            assert_eq!(read_bool_series(gt), vec![false, false, false, true]);
+            series_drop(gt);
+            let ge = series_ge_i32(s, 3);
+            assert_eq!(read_bool_series(ge), vec![false, false, true, true]);
+            series_drop(ge);
+            let eq = series_eq_i32(s, 3);
+            assert_eq!(read_bool_series(eq), vec![false, false, true, false]);
+            series_drop(eq);
+            let ne = series_ne_i32(s, 3);
+            assert_eq!(read_bool_series(ne), vec![true, true, false, true]);
+            series_drop(ne);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cmp_f64_all_ops_against_scalar() {
+            let s = make_f64("ys", &[1.5, 2.5, 3.5]);
+            let lt = series_lt_f64(s, 2.5);
+            assert_eq!(read_bool_series(lt), vec![true, false, false]);
+            series_drop(lt);
+            let eq = series_eq_f64(s, 2.5);
+            assert_eq!(read_bool_series(eq), vec![false, true, false]);
+            series_drop(eq);
+            let ge = series_ge_f64(s, 2.5);
+            assert_eq!(read_bool_series(ge), vec![false, true, true]);
+            series_drop(ge);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cmp_str_eq_and_ne() {
+            let s = make_str("ws", &["a", "b", "a"]);
+            let rhs = cstr("a");
+            let eq = series_eq_str(s, rhs.as_ptr());
+            assert_eq!(read_bool_series(eq), vec![true, false, true]);
+            series_drop(eq);
+            let ne = series_ne_str(s, rhs.as_ptr());
+            assert_eq!(read_bool_series(ne), vec![false, true, false]);
+            series_drop(ne);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cmp_scalar_null_series_returns_null() {
+            assert!(series_lt_i32(ptr::null_mut(), 0).is_null());
+            assert!(series_eq_f64(ptr::null_mut(), 0.0).is_null());
+            let rhs = cstr("a");
+            assert!(series_eq_str(ptr::null_mut(), rhs.as_ptr()).is_null());
+        }
+
+        #[test]
+        fn cmp_str_null_rhs_returns_null() {
+            let s = make_str("ws", &["a"]);
+            assert!(series_eq_str(s, ptr::null()).is_null());
+            series_drop(s);
+        }
+    }
+
+    /// Series-vs-series comparison externs.
+    mod series_cmp_series {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn eq_ne_gt_ge_lt_le_against_series() {
+            let a = make_i32("a", &[1, 2, 3, 4]);
+            let b = make_i32("b", &[2, 2, 2, 5]);
+            let eq = series_eq(a, b);
+            assert_eq!(read_bool_series(eq), vec![false, true, false, false]);
+            series_drop(eq);
+            let ne = series_ne(a, b);
+            assert_eq!(read_bool_series(ne), vec![true, false, true, true]);
+            series_drop(ne);
+            let gt = series_gt(a, b);
+            assert_eq!(read_bool_series(gt), vec![false, false, true, false]);
+            series_drop(gt);
+            let ge = series_ge(a, b);
+            assert_eq!(read_bool_series(ge), vec![false, true, true, false]);
+            series_drop(ge);
+            let lt = series_lt(a, b);
+            assert_eq!(read_bool_series(lt), vec![true, false, false, true]);
+            series_drop(lt);
+            let le = series_le(a, b);
+            assert_eq!(read_bool_series(le), vec![true, true, false, true]);
+            series_drop(le);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn cmp_series_null_inputs_return_null() {
+            let s = make_i32("a", &[1]);
+            assert!(series_eq(ptr::null_mut(), s).is_null());
+            assert!(series_eq(s, ptr::null_mut()).is_null());
+            series_drop(s);
+        }
+    }
+
+    /// Scalar arithmetic family `series_{add,sub,mul,div,mod}_{i32,i64,
+    /// u32,u64,f64}`.
+    mod series_arith_scalar {
+        use super::*;
+        use super::test_util::*;
+
+        fn read_i32(s: *mut Series) -> Vec<i32> {
+            (0..series_len(s))
+                .map(|i| {
+                    let v = series_ref_i32(s, i);
+                    assert_eq!(v.valid, 1);
+                    v.value
+                })
+                .collect()
+        }
+
+        fn read_f64(s: *mut Series) -> Vec<f64> {
+            (0..series_len(s))
+                .map(|i| {
+                    let v = series_ref_f64(s, i);
+                    assert_eq!(v.valid, 1);
+                    v.value
+                })
+                .collect()
+        }
+
+        #[test]
+        fn arith_i32_family_against_scalar() {
+            let s = make_i32("xs", &[10, 20, 30]);
+            let add = series_add_i32(s, 5);
+            assert_eq!(read_i32(add), vec![15, 25, 35]);
+            series_drop(add);
+            let sub = series_sub_i32(s, 5);
+            assert_eq!(read_i32(sub), vec![5, 15, 25]);
+            series_drop(sub);
+            let mul = series_mul_i32(s, 2);
+            assert_eq!(read_i32(mul), vec![20, 40, 60]);
+            series_drop(mul);
+            let div = series_div_i32(s, 5);
+            // i32 / i32 stays i32 (integer division).
+            assert_eq!(read_i32(div), vec![2, 4, 6]);
+            series_drop(div);
+            let rem = series_mod_i32(s, 7);
+            assert_eq!(read_i32(rem), vec![3, 6, 2]);
+            series_drop(rem);
+            series_drop(s);
+        }
+
+        #[test]
+        fn arith_f64_family_against_scalar() {
+            let s = make_f64("ys", &[1.0, 2.0, 4.0]);
+            let add = series_add_f64(s, 0.5);
+            assert_eq!(read_f64(add), vec![1.5, 2.5, 4.5]);
+            series_drop(add);
+            let div = series_div_f64(s, 4.0);
+            assert_eq!(read_f64(div), vec![0.25, 0.5, 1.0]);
+            series_drop(div);
+            series_drop(s);
+        }
+
+        #[test]
+        fn arith_i64_add_smoke() {
+            let s = make_i64("ys", &[1, 2, 3]);
+            let add = series_add_i64(s, 10);
+            let v0 = series_ref_i64(add, 0);
+            assert_eq!(v0.valid, 1);
+            assert_eq!(v0.value, 11);
+            assert_eq!(series_ref_i64(add, 2).value, 13);
+            series_drop(add);
+            series_drop(s);
+        }
+
+        #[test]
+        fn arith_u32_mul_smoke() {
+            let n = cstr("xs");
+            let data: [u32; 3] = [1, 2, 3];
+            let s = series_new_u32(n.as_ptr(), data.as_ptr(), data.len());
+            let mul = series_mul_u32(s, 4);
+            assert_eq!(series_ref_u32(mul, 0).value, 4);
+            assert_eq!(series_ref_u32(mul, 2).value, 12);
+            series_drop(mul);
+            series_drop(s);
+        }
+
+        #[test]
+        fn arith_scalar_null_series_returns_null() {
+            assert!(series_add_i32(ptr::null_mut(), 1).is_null());
+            assert!(series_div_f64(ptr::null_mut(), 1.0).is_null());
+        }
+    }
+
+    /// Series-vs-series arithmetic externs.
+    mod series_arith_series {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn arith_series_add_i32() {
+            let a = make_i32("a", &[1, 2, 3]);
+            let b = make_i32("b", &[10, 20, 30]);
+            let sum = series_add(a, b);
+            let s0 = series_ref_i32(sum, 0);
+            assert_eq!(s0.valid, 1);
+            assert_eq!(s0.value, 11);
+            assert_eq!(series_ref_i32(sum, 2).value, 33);
+            series_drop(sum);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn arith_series_sub_f64() {
+            let a = make_f64("a", &[5.0, 7.0]);
+            let b = make_f64("b", &[1.5, 2.5]);
+            let diff = series_sub(a, b);
+            assert_eq!(series_ref_f64(diff, 0).value, 3.5);
+            assert_eq!(series_ref_f64(diff, 1).value, 4.5);
+            series_drop(diff);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn arith_series_div_f64_keeps_fractions() {
+            let a = make_f64("a", &[1.0, 3.0]);
+            let b = make_f64("b", &[4.0, 4.0]);
+            let q = series_div(a, b);
+            assert_eq!(series_ref_f64(q, 0).value, 0.25);
+            assert_eq!(series_ref_f64(q, 1).value, 0.75);
+            series_drop(q);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn arith_series_null_input_returns_null() {
+            let a = make_i32("a", &[1]);
+            assert!(series_add(ptr::null_mut(), a).is_null());
+            assert!(series_add(a, ptr::null_mut()).is_null());
+            series_drop(a);
+        }
+    }
+
+    /// Boolean ops and null predicates.
+    mod series_boolean {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn and_or_xor_against_series() {
+            let a = make_bool("a", &[1, 1, 0, 0]);
+            let b = make_bool("b", &[1, 0, 1, 0]);
+            let and = series_and(a, b);
+            assert_eq!(read_bool_series(and), vec![true, false, false, false]);
+            series_drop(and);
+            let or = series_or(a, b);
+            assert_eq!(read_bool_series(or), vec![true, true, true, false]);
+            series_drop(or);
+            let xor = series_xor(a, b);
+            assert_eq!(read_bool_series(xor), vec![false, true, true, false]);
+            series_drop(xor);
+            series_drop(a);
+            series_drop(b);
+        }
+
+        #[test]
+        fn not_inverts_bool_series() {
+            let a = make_bool("a", &[1, 0, 1]);
+            let nb = series_not(a);
+            assert_eq!(read_bool_series(nb), vec![false, true, false]);
+            series_drop(nb);
+            series_drop(a);
+        }
+
+        #[test]
+        fn is_null_and_is_not_null_on_nullable_series() {
+            let s = make_opt_i32("xs", &[Some(1), None, Some(3)]);
+            let isn = series_is_null(s);
+            assert_eq!(read_bool_series(isn), vec![false, true, false]);
+            series_drop(isn);
+            let notn = series_is_not_null(s);
+            assert_eq!(read_bool_series(notn), vec![true, false, true]);
+            series_drop(notn);
+            series_drop(s);
+        }
+
+        #[test]
+        fn boolean_ops_null_inputs_return_null() {
+            let a = make_bool("a", &[1]);
+            assert!(series_and(ptr::null_mut(), a).is_null());
+            assert!(series_and(a, ptr::null_mut()).is_null());
+            assert!(series_not(ptr::null_mut()).is_null());
+            assert!(series_is_null(ptr::null_mut()).is_null());
+            assert!(series_is_not_null(ptr::null_mut()).is_null());
+            series_drop(a);
+        }
+    }
+
+    /// Reductions: typed `series_{sum,min,max,mean}_*` for every width,
+    /// plus `series_std` / `series_var` / `series_n_unique`.
+    mod series_reductions {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn reductions_i32() {
+            let s = make_i32("xs", &[1, 2, 3, 4]);
+            assert_eq!(series_sum_i32(s).value, 10);
+            assert_eq!(series_min_i32(s).value, 1);
+            assert_eq!(series_max_i32(s).value, 4);
+            assert_eq!(series_mean_i32(s).value, 2.5);
+            assert_eq!(series_n_unique(s), 4);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reductions_f64() {
+            let s = make_f64("ys", &[1.0, 2.0, 3.0, 4.0]);
+            assert_eq!(series_sum_f64(s).value, 10.0);
+            assert_eq!(series_min_f64(s).value, 1.0);
+            assert_eq!(series_max_f64(s).value, 4.0);
+            assert_eq!(series_mean_f64(s).value, 2.5);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reductions_each_int_width_sum() {
+            // Hit every typed reduction the series_int_reductions! macro
+            // expands to, so a future macro mistake on any width breaks.
+            macro_rules! check_sum {
+                ($ctor:ident, $sum:ident, $ty:ty, $expected:expr) => {{
+                    let n = cstr("xs");
+                    let data: [$ty; 3] = [1, 2, 3];
+                    let s = $ctor(n.as_ptr(), data.as_ptr(), data.len());
+                    let v = $sum(s);
+                    assert_eq!(v.valid, 1);
+                    assert_eq!(v.value as i64, $expected as i64);
+                    series_drop(s);
+                }};
+            }
+            check_sum!(series_new_i8,  series_sum_i8,  i8,  6i64);
+            check_sum!(series_new_i16, series_sum_i16, i16, 6i64);
+            check_sum!(series_new_i64, series_sum_i64, i64, 6i64);
+            check_sum!(series_new_u8,  series_sum_u8,  u8,  6i64);
+            check_sum!(series_new_u16, series_sum_u16, u16, 6i64);
+            check_sum!(series_new_u32, series_sum_u32, u32, 6i64);
+            check_sum!(series_new_u64, series_sum_u64, u64, 6i64);
+        }
+
+        #[test]
+        fn reductions_f32() {
+            let n = cstr("ys");
+            let data: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+            let s = series_new_f32(n.as_ptr(), data.as_ptr(), data.len());
+            assert_eq!(series_sum_f32(s).value, 10.0);
+            assert_eq!(series_min_f32(s).value, 1.0);
+            assert_eq!(series_max_f32(s).value, 4.0);
+            assert_eq!(series_mean_f32(s).value, 2.5);
+            series_drop(s);
+        }
+
+        #[test]
+        fn std_var_defaults_to_ddof_1() {
+            // [2,4,4,4,5,5,7,9]: sample variance = 32/7 ≈ 4.571.
+            let s = make_f64("ys", &[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]);
+            let var1 = series_var(s, 1);
+            assert_eq!(var1.valid, 1);
+            assert!((var1.value - (32.0 / 7.0)).abs() < 1e-9);
+            let std1 = series_std(s, 1);
+            assert_eq!(std1.valid, 1);
+            assert!((std1.value - (32.0 / 7.0_f64).sqrt()).abs() < 1e-9);
+            // ddof=0 (population) = 32/8 = 4.0.
+            let var0 = series_var(s, 0);
+            assert!((var0.value - 4.0).abs() < 1e-9);
+            series_drop(s);
+        }
+
+        #[test]
+        fn n_unique_counts_distinct_entries() {
+            let s = make_i32("xs", &[1, 2, 2, 3, 3, 3]);
+            assert_eq!(series_n_unique(s), 3);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reductions_all_null_series() {
+            // All-null nullable integer series: Polars treats the sum
+            // of "nothing" as Some(0), but min / max / mean return
+            // None (valid=0).
+            let s = make_opt_i32("xs", &[None, None, None]);
+            let sum = series_sum_i32(s);
+            assert_eq!(sum.valid, 1);
+            assert_eq!(sum.value, 0);
+            assert_eq!(series_min_i32(s).valid, 0);
+            assert_eq!(series_max_i32(s).valid, 0);
+            assert_eq!(series_mean_i32(s).valid, 0);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reductions_null_series_return_none() {
+            assert_eq!(series_sum_i32(ptr::null_mut()).valid, 0);
+            assert_eq!(series_mean_f64(ptr::null_mut()).valid, 0);
+            assert_eq!(series_std(ptr::null_mut(), 1).valid, 0);
+            assert_eq!(series_var(ptr::null_mut(), 1).valid, 0);
+            assert_eq!(series_n_unique(ptr::null_mut()), 0);
+        }
+    }
+
+    /// Reshaping ops: head / tail / slice / reverse / drop_nulls /
+    /// unique / sort.
+    mod series_reshaping {
+        use super::*;
+        use super::test_util::*;
+
+        #[test]
+        fn head_returns_first_n() {
+            let s = make_i32("xs", &[1, 2, 3, 4, 5]);
+            let h = series_head(s, 2);
+            assert_eq!(series_len(h), 2);
+            assert_eq!(series_ref_i32(h, 0).value, 1);
+            assert_eq!(series_ref_i32(h, 1).value, 2);
+            series_drop(h);
+            series_drop(s);
+        }
+
+        #[test]
+        fn tail_returns_last_n() {
+            let s = make_i32("xs", &[1, 2, 3, 4, 5]);
+            let t = series_tail(s, 2);
+            assert_eq!(series_len(t), 2);
+            assert_eq!(series_ref_i32(t, 0).value, 4);
+            assert_eq!(series_ref_i32(t, 1).value, 5);
+            series_drop(t);
+            series_drop(s);
+        }
+
+        #[test]
+        fn slice_offset_length() {
+            let s = make_i32("xs", &[10, 20, 30, 40, 50]);
+            let sl = series_slice(s, 1, 3);
+            assert_eq!(series_len(sl), 3);
+            assert_eq!(series_ref_i32(sl, 0).value, 20);
+            assert_eq!(series_ref_i32(sl, 2).value, 40);
+            series_drop(sl);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reverse_reverses_order() {
+            let s = make_i32("xs", &[1, 2, 3]);
+            let r = series_reverse(s);
+            assert_eq!(series_ref_i32(r, 0).value, 3);
+            assert_eq!(series_ref_i32(r, 2).value, 1);
+            series_drop(r);
+            series_drop(s);
+        }
+
+        #[test]
+        fn drop_nulls_collapses_length() {
+            let s = make_opt_i32("xs", &[Some(1), None, Some(3), None, Some(5)]);
+            let d = series_drop_nulls(s);
+            assert_eq!(series_len(d), 3);
+            // The remaining values keep their order.
+            assert_eq!(series_ref_i32(d, 0).value, 1);
+            assert_eq!(series_ref_i32(d, 1).value, 3);
+            assert_eq!(series_ref_i32(d, 2).value, 5);
+            series_drop(d);
+            series_drop(s);
+        }
+
+        #[test]
+        fn unique_dedupes_entries() {
+            let s = make_i32("xs", &[1, 2, 2, 3, 3, 3]);
+            let u = series_unique(s);
+            // Order isn't guaranteed; check the count + sum.
+            assert_eq!(series_len(u), 3);
+            let mut got: Vec<i32> = (0..series_len(u))
+                .map(|i| series_ref_i32(u, i).value)
+                .collect();
+            got.sort();
+            assert_eq!(got, vec![1, 2, 3]);
+            series_drop(u);
+            series_drop(s);
+        }
+
+        #[test]
+        fn sort_ascending_and_descending() {
+            let s = make_i32("xs", &[3, 1, 2]);
+            let asc = series_sort(s, 0);
+            assert_eq!(series_ref_i32(asc, 0).value, 1);
+            assert_eq!(series_ref_i32(asc, 2).value, 3);
+            series_drop(asc);
+            let desc = series_sort(s, 1);
+            assert_eq!(series_ref_i32(desc, 0).value, 3);
+            assert_eq!(series_ref_i32(desc, 2).value, 1);
+            series_drop(desc);
+            series_drop(s);
+        }
+
+        #[test]
+        fn reshaping_null_series_returns_null() {
+            assert!(series_head(ptr::null_mut(), 1).is_null());
+            assert!(series_tail(ptr::null_mut(), 1).is_null());
+            assert!(series_slice(ptr::null_mut(), 0, 1).is_null());
+            assert!(series_reverse(ptr::null_mut()).is_null());
+            assert!(series_drop_nulls(ptr::null_mut()).is_null());
+            assert!(series_unique(ptr::null_mut()).is_null());
+            assert!(series_sort(ptr::null_mut(), 0).is_null());
+        }
+    }
+
+    /// `series_cast`: happy paths for numeric → numeric and numeric →
+    /// string, plus the rejected-target-tag and null-series refusals
+    /// (the temporal cast paths are covered by R2's `mod
+    /// series_value_access`).
+    mod series_cast_tests {
+        use super::*;
+        use super::test_util::*;
+
+        fn dtype(tag: CompatDTypeTag, tu: CompatTimeUnit) -> CompatDType {
+            CompatDType {
+                tag: tag as i32,
+                time_unit: tu as i32,
+                flags: 0,
+                array_width: 0,
+            }
+        }
+
+        #[test]
+        fn cast_i32_to_i64_changes_dtype() {
+            let s = make_i32("xs", &[1, 2, 3]);
+            let out = series_cast(
+                s,
+                dtype(CompatDTypeTag::Int64, CompatTimeUnit::None),
+            );
+            assert!(!out.is_null());
+            assert_dtype(out, CompatDTypeTag::Int64, CompatTimeUnit::None);
+            assert_eq!(series_ref_i64(out, 0).value, 1);
+            assert_eq!(series_ref_i64(out, 2).value, 3);
+            series_drop(out);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cast_f64_to_i32_truncates() {
+            let s = make_f64("ys", &[1.7, 2.2, -3.9]);
+            let out = series_cast(
+                s,
+                dtype(CompatDTypeTag::Int32, CompatTimeUnit::None),
+            );
+            assert!(!out.is_null());
+            assert_dtype(out, CompatDTypeTag::Int32, CompatTimeUnit::None);
+            // Polars f64 -> i32 truncates toward zero.
+            assert_eq!(series_ref_i32(out, 0).value, 1);
+            assert_eq!(series_ref_i32(out, 1).value, 2);
+            assert_eq!(series_ref_i32(out, 2).value, -3);
+            series_drop(out);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cast_i32_to_string_produces_string_series() {
+            let s = make_i32("xs", &[1, 2, 3]);
+            let out = series_cast(
+                s,
+                dtype(CompatDTypeTag::String, CompatTimeUnit::None),
+            );
+            assert!(!out.is_null());
+            assert_dtype(out, CompatDTypeTag::String, CompatTimeUnit::None);
+            assert_eq!(take_cstring(series_ref_str(out, 0)), "1");
+            assert_eq!(take_cstring(series_ref_str(out, 2)), "3");
+            series_drop(out);
+            series_drop(s);
+        }
+
+        #[test]
+        fn cast_rejected_target_tag_returns_null() {
+            // List is accepted on output but not as a cast target, so
+            // polars_dtype_from_compat returns None and series_cast must
+            // produce a null pointer rather than panic.
+            let s = make_i32("xs", &[1]);
+            let out = series_cast(
+                s,
+                dtype(CompatDTypeTag::List, CompatTimeUnit::None),
+            );
+            assert!(out.is_null());
+            series_drop(s);
+        }
+
+        #[test]
+        fn cast_null_series_returns_null() {
+            let out = series_cast(
+                ptr::null_mut(),
+                dtype(CompatDTypeTag::Int64, CompatTimeUnit::None),
+            );
+            assert!(out.is_null());
+        }
+    }
 }
