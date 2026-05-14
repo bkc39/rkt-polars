@@ -186,7 +186,8 @@ mirror the FFI batches.
   `_arith_scalar`, `_arith_series`, `_boolean`, `_reductions`,
   `_reshaping`, `_cast_tests`; 41 new tests; `cargo test --release`
   → 140 passed)
-- R4 — DataFrame core
+- R4 — DataFrame core: **shipped** (`mod dataframe_core`; 35 new tests;
+  `cargo test --release` → 175 passed)
 - R5 — DataFrame group-by + joins + reshape + IO (needs `tempfile` in
   `[dev-dependencies]`)
 - R6 — Expr core + lazy plumbing
