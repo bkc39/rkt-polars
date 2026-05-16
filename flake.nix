@@ -56,7 +56,7 @@
               mkdir -p ./polars/native-libs
               cp ${rust}/lib/libcompat.* ./polars/native-libs/
 
-              raco pkg install --batch --deps fail --no-setup --copy --scope user \
+              raco pkg install --batch --auto --no-setup --copy --scope user \
                 --name rkt-polars "$PWD"
 
               raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
