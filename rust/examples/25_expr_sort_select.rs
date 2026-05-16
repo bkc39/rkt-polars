@@ -13,7 +13,10 @@ fn main() -> PolarsResult<()> {
         .with_columns([
             col("x")
                 .rank(
-                    RankOptions { method: RankMethod::Dense, descending: false },
+                    RankOptions {
+                        method: RankMethod::Dense,
+                        descending: false,
+                    },
                     None,
                 )
                 .alias("rank_dense"),
@@ -26,17 +29,25 @@ fn main() -> PolarsResult<()> {
     let sorted = df
         .clone()
         .lazy()
-        .select([col("x").sort_by(vec![col("x")], SortMultipleOptions::default()).alias("x_sorted"),
-                 col("g").sort_by(vec![col("x")], SortMultipleOptions::default()).alias("g_by_x")])
+        .select([
+            col("x")
+                .sort_by(vec![col("x")], SortMultipleOptions::default())
+                .alias("x_sorted"),
+            col("g")
+                .sort_by(vec![col("x")], SortMultipleOptions::default())
+                .alias("g_by_x"),
+        ])
         .collect()?;
     println!("sorted:\n{sorted}");
 
     let windowed = df
         .clone()
         .lazy()
-        .select([col("x").head(Some(2)).alias("x_head2"),
-                 col("x").tail(Some(2)).alias("x_tail2"),
-                 col("x").slice(lit(1i64), lit(2i64)).alias("x_slice")])
+        .select([
+            col("x").head(Some(2)).alias("x_head2"),
+            col("x").tail(Some(2)).alias("x_tail2"),
+            col("x").slice(lit(1i64), lit(2i64)).alias("x_slice"),
+        ])
         .collect()?;
     println!("windowed:\n{windowed}");
 
@@ -49,7 +60,9 @@ fn main() -> PolarsResult<()> {
 
     let gathered = df
         .lazy()
-        .select([col("x").gather(lit(Series::new("idx".into(), &[0i64, 2, 4]))).alias("x_gathered")])
+        .select([col("x")
+            .gather(lit(Series::new("idx".into(), &[0i64, 2, 4])))
+            .alias("x_gathered")])
         .collect()?;
     println!("gathered:\n{gathered}");
     Ok(())
