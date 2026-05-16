@@ -101,6 +101,7 @@
         copy-native-libs = {
           type = "app";
           program = "${self.packages.${system}.copy-native-libs}/bin/copy-native-libs";
+          meta.description = "Copy the Nix-built libcompat shared library into polars/native-libs";
         };
       });
 
