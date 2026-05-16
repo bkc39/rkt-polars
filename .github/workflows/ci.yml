@@ -1,54 +1,17 @@
 on: [push, pull_request]
 name: CI
 jobs:
-  build:
-    name: "Build on Racket '${{ matrix.racket-version }}' (${{ matrix.racket-variant }})"
+  flake-check:
+    name: Nix Flake Check
     runs-on: ubuntu-latest
-    continue-on-error: ${{ matrix.experimental || false }}
-    strategy:
-      fail-fast: false
-      matrix:
-        racket-version: ["stable", "current"]
-        racket-variant: ["BC", "CS"]
-        include:
-          - racket-version: current
-            experimental: true
     steps:
-      - uses: actions/checkout@v3.1.0
+      - uses: actions/checkout@v4
 
-      # Step to set up Rust
-      - name: Set up Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
 
-      # Step to build the Rust project
-      - name: Build Rust project
-        run: |
-          cd polars/private/compat
-          cargo build --release
+      - name: Configure Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
-      # Step to run tests for Rust project
-      - name: Test Rust project
-        run: |
-          cd polars/private/compat
-          cargo test
-
-      # Step to set up Racket
-      - uses: Bogdanp/setup-racket@v1.9.1
-        with:
-          architecture: x64
-          distribution: full
-          variant: ${{ matrix.racket-variant }}
-          version: ${{ matrix.racket-version }}
-
-      - name: Installing polars and its dependencies
-        run: raco pkg install --no-docs --auto --name rkt-polars
-
-      - name: Compiling polars and building its docs
-        run: raco setup --check-pkg-deps --unused-pkg-deps polars
-
-      - name: Testing polars
-        run: raco test -x -c polars
+      - name: Run flake checks
+        run: nix flake check --print-build-logs

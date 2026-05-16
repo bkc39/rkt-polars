@@ -1,0 +1,14 @@
+[package]
+name = "compat"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+chrono = "0.4.38"
+polars = { version = "0.41.3", features = ["lazy", "parquet", "json", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "abs", "round_series", "sign", "log", "is_in", "is_unique", "is_first_distinct", "is_last_distinct", "is_between", "cum_agg", "diff", "rank"] }
