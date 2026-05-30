@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 #
-# Build the libcompat shared object with cargo and stage it as a committed,
-# per-platform candidate under polars/native-libs/candidates/<platform>/.
+# Build the libcompat shared object and stage it as a committed, per-platform
+# candidate under polars/native-libs/candidates/<platform>/.  The candidates
+# are what pkgs.rkt-lang.org installs from, since its build host has no Rust
+# toolchain.
 #
-# This is the cargo analogue of the cmake-based build-so.sh in the xgboost
-# Racket binding.  The candidates are what pkgs.rkt-lang.org installs from,
-# since its build host has no Rust toolchain.
+# Linux: built inside the manylinux2014 container (glibc 2.17) so the .so
+# requires only GLIBC <= 2.17 and loads on every Linux from the last decade,
+# including pkg-build.racket-lang.org's test host (glibc < 2.27).  Building
+# natively against an old glibc avoids any ELF post-processing.
+#
+# Darwin: built natively with cargo.
 #
 # Usage:
-#   scripts/build-so.sh [platform]
-#
-# platform defaults to the current OS (linux or darwin).
+#   scripts/build-so.sh [platform]      # platform defaults to current OS
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,63 +35,54 @@ esac
 
 lib="libcompat.${ext}"
 dest="$ROOT/polars/native-libs/candidates/$platform"
-
-echo ">> cargo build --release (manifest: rust/Cargo.toml)"
-cargo build --release --manifest-path "$ROOT/rust/Cargo.toml"
-
-built="$ROOT/rust/target/release/$lib"
-if [[ ! -f "$built" ]]; then
-  echo "error: expected build output not found: $built" >&2
-  exit 1
-fi
-
 mkdir -p "$dest"
-cp -f "$built" "$dest/$lib"
-echo ">> staged $dest/$lib"
 
-# cargo bakes the absolute build path into the dylib's install name (LC_ID).
-# Racket loads libcompat by path via dlopen, so the id is never resolved, but
-# rewrite it to @rpath so the committed binary carries no machine-specific
-# path.  (ELF .so files have no such embedded path, so this is darwin-only.)
-if [[ "$platform" == "darwin" ]] && command -v install_name_tool >/dev/null 2>&1; then
-  install_name_tool -id "@rpath/$lib" "$dest/$lib"
-fi
-
-# On Linux, lower the glibc floor of libcompat.so to 2.17 so it loads on
-# pkg-build.racket-lang.org's old-glibc test host (glibc < 2.27).  Mirrors the
-# xgboost binding: build a tiny shim (libcompatshim.so) for the symbols
-# polyfill-glibc can't rewrite, run polyfill-glibc --target-glibc=2.17, then
-# set RPATH=$ORIGIN so the shim resolves from native-libs/ at load time.
-# gcc / patchelf / polyfill-glibc all come from Nix, so this runs the same in
-# CI and on a Linux dev box.
 if [[ "$platform" == "linux" ]]; then
-  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # Build against glibc 2.17 inside manylinux2014.  The source is mounted
+  # read-only; cargo writes to a container-local target dir and copies just
+  # the .so out to the mounted candidate directory.
+  echo ">> building $lib inside manylinux2014 (glibc 2.17)"
+  docker run --rm \
+    -v "$ROOT:/src:ro" \
+    -v "$dest:/out" \
+    quay.io/pypa/manylinux2014_x86_64 bash -ec '
+      set -euo pipefail
+      curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal
+      . "$HOME/.cargo/env"
+      cargo build --release --locked \
+        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
+      cp /tmp/target/release/libcompat.so /out/
+    '
+  echo ">> staged $dest/$lib"
+else
+  echo ">> cargo build --release (manifest: rust/Cargo.toml)"
+  cargo build --release --manifest-path "$ROOT/rust/Cargo.toml"
 
-  echo ">> building libcompatshim.so"
-  cc_pkg=$(nix build --no-link --print-out-paths 'nixpkgs#gcc^out')
-  "$cc_pkg/bin/gcc" -shared -fPIC -O2 \
-    -Wl,-soname,libcompatshim.so \
-    -o "$dest/libcompatshim.so" \
-    "$script_dir/glibc-shim.c"
+  built="$ROOT/rust/target/release/$lib"
+  if [[ ! -f "$built" ]]; then
+    echo "error: expected build output not found: $built" >&2
+    exit 1
+  fi
+  cp -f "$built" "$dest/$lib"
+  echo ">> staged $dest/$lib"
 
-  patchelf=$(nix build --no-link --print-out-paths nixpkgs#patchelf)/bin/patchelf
-  polyfill=$(nix build --no-link --print-out-paths .#polyfill-glibc)/bin/polyfill-glibc
-
-  echo ">> polyfilling libcompat.so to require only glibc <= 2.17"
-  "$polyfill" --rename-dynamic-symbols="$script_dir/glibc-renames.txt" \
-              --target-glibc=2.17 "$dest/$lib"
-  "$patchelf" --set-rpath '$ORIGIN' "$dest/$lib"
-
-  floor=$(objdump -T "$dest/$lib" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tail -1)
-  echo ">> libcompat.so max glibc dep now: ${floor:-unknown}"
-  echo ">> libcompatshim.so glibc deps: $(objdump -T "$dest/libcompatshim.so" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tr '\n' ' ')"
+  # cargo bakes the absolute build path into the dylib's install name (LC_ID).
+  # Racket loads libcompat by path via dlopen, so the id is never resolved, but
+  # rewrite it to @rpath so the committed binary carries no machine-specific
+  # path.
+  if command -v install_name_tool >/dev/null 2>&1; then
+    install_name_tool -id "@rpath/$lib" "$dest/$lib"
+  fi
 fi
 
-# Sanity: show the dynamic dependencies so a reviewer can confirm the
-# binary is self-contained (system libs only, no /nix/store paths).
+# Sanity: show the dynamic dependencies / glibc floor so a reviewer can
+# confirm the binary is portable.
 echo ">> dynamic dependencies:"
 if command -v otool >/dev/null 2>&1; then
   otool -L "$dest/$lib"
+elif command -v objdump >/dev/null 2>&1; then
+  echo "max glibc dep: $(objdump -T "$dest/$lib" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tail -1)"
 elif command -v ldd >/dev/null 2>&1; then
   ldd "$dest/$lib" || true
 fi

@@ -165,48 +165,10 @@
               ls -la "$DEST"
             '';
           };
-
-          # polyfill-glibc rewrites ELF binaries built against a newer glibc so
-          # they resolve only symbols available on a chosen older target.  Used
-          # by scripts/build-so.sh to lower the committed linux libcompat.so
-          # floor to glibc 2.17, so it loads on pkg-build.racket-lang.org's
-          # old-glibc test host.  Not in nixpkgs; pinned to a known-good commit.
-          polyfill-glibc = pkgs.stdenv.mkDerivation {
-            pname = "polyfill-glibc";
-            version = "unstable-2025-dd59051";
-            src = pkgs.fetchFromGitHub {
-              owner = "corsix";
-              repo = "polyfill-glibc";
-              rev = "dd59051faaa10ee63c1b96f1b47bf9fcd3770ee2";
-              hash = "sha256-Qkzy33dIGnv9BOmRwql+LpYaEukZZIADSux09Fz3h7E=";
-            };
-            nativeBuildInputs = [ pkgs.ninja ];
-            dontConfigure = true;
-            buildPhase = ''
-              runHook preBuild
-              ninja polyfill-glibc
-              runHook postBuild
-            '';
-            installPhase = ''
-              runHook preInstall
-              install -Dm755 polyfill-glibc $out/bin/polyfill-glibc
-              runHook postInstall
-            '';
-            meta = {
-              description = "Patch ELF binaries to require an older glibc version";
-              homepage = "https://github.com/corsix/polyfill-glibc";
-              license = pkgs.lib.licenses.mit;
-              platforms = [ "x86_64-linux" "aarch64-linux" ];
-            };
-          };
         in
         {
           default = racket;
           inherit rust racket racket-deps copy-native-libs;
-        }
-        # polyfill-glibc only builds/runs on Linux; expose it only there.
-        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-          inherit polyfill-glibc;
         });
 
       apps = forAllSystems (system: {

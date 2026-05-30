@@ -27,23 +27,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # darwin builds natively with cargo; the linux candidate is built inside
+      # the manylinux2014 container (glibc 2.17) by build-so.sh, so the host
+      # only needs docker there.
       - name: Install Rust toolchain
+        if: matrix.platform == 'darwin'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo build
+        if: matrix.platform == 'darwin'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-
-      # The linux build runs polyfill-glibc (+ a gcc-built shim) from Nix to
-      # lower libcompat.so's glibc floor to 2.17; darwin needs none of this.
-      - name: Install Nix
-        if: matrix.platform == 'linux'
-        uses: DeterminateSystems/nix-installer-action@main
-
-      - name: Configure Nix Cache
-        if: matrix.platform == 'linux'
-        uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Build shared object
         run: scripts/build-so.sh ${{ matrix.platform }}
@@ -175,42 +170,6 @@ jobs:
           }
           EOF
             gcc /tmp/probe.c -o /tmp/probe -ldl
-            # Copy to a writable dir so the $ORIGIN rpath finds libcompatshim.so.
-            cp /cand/libcompat.so /cand/libcompatshim.so /tmp/
+            cp /cand/libcompat.so /tmp/
             /tmp/probe /tmp/libcompat.so
           '
-
-  # TEMPORARY: diagnose the new-glibc dlopen segfault. ubuntu-latest (glibc
-  # 2.39) reproduces it. Capture LD_DEBUG + a gdb backtrace, then remove.
-  diagnose:
-    name: TEMP diagnose new-glibc segfault
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download linux candidate
-        uses: actions/download-artifact@v4
-        with:
-          name: libcompat-linux
-          path: cand
-      - name: Probe + LD_DEBUG + gdb backtrace
-        run: |
-          set -uo pipefail
-          ldd --version | head -1
-          cp cand/libcompat.so cand/libcompatshim.so /tmp/
-          cat > /tmp/probe.c <<'EOF'
-          #include <dlfcn.h>
-          #include <stdio.h>
-          int main(int argc, char **argv) {
-            void *h = dlopen(argv[1], RTLD_NOW | RTLD_GLOBAL);
-            if (!h) { fprintf(stderr, "dlopen failed: %s\n", dlerror()); return 2; }
-            printf("dlopen OK\n"); return 0;
-          }
-          EOF
-          gcc /tmp/probe.c -o /tmp/probe -ldl
-          echo "===== ldd ====="; ldd /tmp/libcompat.so 2>&1 | head -40 || true
-          echo "===== LD_DEBUG (last 60 lines before crash) ====="
-          LD_DEBUG=libs,reloc,versions,bindings LD_DEBUG_OUTPUT=/tmp/lddbg /tmp/probe /tmp/libcompat.so 2>&1 || true
-          tail -60 /tmp/lddbg.* 2>/dev/null || true
-          echo "===== gdb backtrace ====="
-          sudo apt-get install -y -q gdb >/dev/null 2>&1 || true
-          gdb -batch -nx -ex 'set pagination off' -ex run -ex bt -ex 'info sharedlibrary' --args /tmp/probe /tmp/libcompat.so 2>&1 | tail -40 || true

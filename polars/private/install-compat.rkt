@@ -5,9 +5,7 @@
 (provide pre-installer)
 
 (define compat-lib-env-var "RKT_POLARS_COMPAT_LIB_PATH")
-;; Matches libcompat.{so,dylib} and, on Linux, the bundled libcompatshim.so
-;; (the glibc shim that libcompat.so resolves via RPATH=$ORIGIN at load time).
-(define compat-lib-pattern #rx"^libcompat(shim)?\\.")
+(define compat-lib-pattern #rx"^libcompat\\.")
 
 (define (preinstall-error . args)
   (apply error (cons 'pre-installer args)))
