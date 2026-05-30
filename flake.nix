@@ -105,9 +105,40 @@
         };
       });
 
-      checks = forAllSystems (system: {
-        inherit (self.packages.${system}) rust racket;
-      });
+      checks = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          rustfmt = pkgs.stdenvNoCC.mkDerivation {
+            pname = "rkt-polars-rustfmt";
+            inherit version;
+            src = pkgs.lib.cleanSource ./.;
+
+            nativeBuildInputs = [
+              pkgs.cargo
+              pkgs.rustfmt
+            ];
+
+            doCheck = true;
+            dontConfigure = true;
+            dontBuild = true;
+
+            checkPhase = ''
+              runHook preCheck
+              cargo fmt --manifest-path rust/Cargo.toml --all --check
+              runHook postCheck
+            '';
+
+            installPhase = ''
+              runHook preInstall
+              touch $out
+              runHook postInstall
+            '';
+          };
+        in
+        {
+          inherit rustfmt;
+          inherit (self.packages.${system}) rust racket;
+        });
 
       devShells = forAllSystems (system:
         let

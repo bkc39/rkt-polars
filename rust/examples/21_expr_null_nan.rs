@@ -26,9 +26,7 @@ fn main() -> PolarsResult<()> {
     // drop_nulls / drop_nans collapse the column length
     let dn = df
         .lazy()
-        .select([
-            col("x").drop_nulls().alias("x_no_null"),
-        ])
+        .select([col("x").drop_nulls().alias("x_no_null")])
         .collect()?;
     println!("after drop_nulls: {dn}");
     Ok(())

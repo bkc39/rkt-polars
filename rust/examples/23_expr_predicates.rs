@@ -5,7 +5,7 @@ fn main() -> PolarsResult<()> {
         "x" => [1i32, 2, 2, 3, 5, 5, 8],
     ]?;
 
-    let allowed = Series::new("allowed".into(), &[2i32, 3, 8]);
+    let allowed = Series::new("allowed", &[2i32, 3, 8]);
 
     let out = df
         .lazy()

@@ -17,7 +17,9 @@ fn main() -> PolarsResult<()> {
             col("x").cum_count(false).alias("cumcount"),
             col("x").shift(lit(1)).alias("shift1"),
             col("x").shift(lit(-1)).alias("shift_m1"),
-            col("x").shift_and_fill(lit(1), lit(0)).alias("shift1_fill0"),
+            col("x")
+                .shift_and_fill(lit(1), lit(0))
+                .alias("shift1_fill0"),
             col("x").diff(1, NullBehavior::Ignore).alias("diff1"),
         ])
         .collect()?;
