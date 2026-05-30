@@ -54,6 +54,36 @@ if [[ "$platform" == "darwin" ]] && command -v install_name_tool >/dev/null 2>&1
   install_name_tool -id "@rpath/$lib" "$dest/$lib"
 fi
 
+# On Linux, lower the glibc floor of libcompat.so to 2.17 so it loads on
+# pkg-build.racket-lang.org's old-glibc test host (glibc < 2.27).  Mirrors the
+# xgboost binding: build a tiny shim (libcompatshim.so) for the symbols
+# polyfill-glibc can't rewrite, run polyfill-glibc --target-glibc=2.17, then
+# set RPATH=$ORIGIN so the shim resolves from native-libs/ at load time.
+# gcc / patchelf / polyfill-glibc all come from Nix, so this runs the same in
+# CI and on a Linux dev box.
+if [[ "$platform" == "linux" ]]; then
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+  echo ">> building libcompatshim.so"
+  cc_pkg=$(nix build --no-link --print-out-paths 'nixpkgs#gcc^out')
+  "$cc_pkg/bin/gcc" -shared -fPIC -O2 \
+    -Wl,-soname,libcompatshim.so \
+    -o "$dest/libcompatshim.so" \
+    "$script_dir/glibc-shim.c"
+
+  patchelf=$(nix build --no-link --print-out-paths nixpkgs#patchelf)/bin/patchelf
+  polyfill=$(nix build --no-link --print-out-paths .#polyfill-glibc)/bin/polyfill-glibc
+
+  echo ">> polyfilling libcompat.so to require only glibc <= 2.17"
+  "$polyfill" --rename-dynamic-symbols="$script_dir/glibc-renames.txt" \
+              --target-glibc=2.17 "$dest/$lib"
+  "$patchelf" --set-rpath '$ORIGIN' "$dest/$lib"
+
+  floor=$(objdump -T "$dest/$lib" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tail -1)
+  echo ">> libcompat.so max glibc dep now: ${floor:-unknown}"
+  echo ">> libcompatshim.so glibc deps: $(objdump -T "$dest/libcompatshim.so" 2>/dev/null | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tr '\n' ' ')"
+fi
+
 # Sanity: show the dynamic dependencies so a reviewer can confirm the
 # binary is self-contained (system libs only, no /nix/store paths).
 echo ">> dynamic dependencies:"

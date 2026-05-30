@@ -8,9 +8,10 @@ compiled/
 rust/target/
 polars/private/compat/target/
 **/*.rs.bk
-# Ignore the staged copy of the shared object, but keep the committed
+# Ignore the staged copy of the shared object(s), but keep the committed
 # per-platform prebuilt candidates that pkgs.rkt-lang.org installs from.
 polars/native-libs/libcompat.*
+polars/native-libs/libcompatshim.*
 !polars/native-libs/candidates/
 result
 .racket-user/
