@@ -1,0 +1,91 @@
+on: [push, pull_request]
+name: Native
+jobs:
+  # Build the libcompat shared object with the Rust toolchain (cargo plays
+  # the role cmake plays in the xgboost binding) and publish it as a
+  # per-platform artifact.
+  build:
+    name: Build libcompat (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build shared object
+        run: scripts/build-so.sh ${{ matrix.platform }}
+
+      - name: Upload candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: polars/native-libs/candidates/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  # Reproduce the pkgs.rkt-lang.org catalog install: no Rust toolchain, the
+  # pre-installer copies the prebuilt candidate into place, then run tests.
+  catalog:
+    name: Catalog install (${{ matrix.platform }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Racket
+        uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: stable
+
+      - name: Download candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: polars/native-libs/candidates/${{ matrix.platform }}/
+
+      - name: Portability check (no toolchain / store paths)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          libs=(polars/native-libs/candidates/${{ matrix.platform }}/libcompat.*)
+          if [ ${#libs[@]} -eq 0 ]; then
+            echo "error: no libcompat candidate found" >&2
+            exit 1
+          fi
+          for lib in "${libs[@]}"; do
+            echo ">> $lib"
+            if command -v otool >/dev/null 2>&1; then
+              deps=$(otool -L "$lib")
+            else
+              deps=$(ldd "$lib" || true)
+            fi
+            echo "$deps"
+            if echo "$deps" | grep -q "/nix/store"; then
+              echo "error: $lib references /nix/store" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install from candidate and test
+        run: scripts/test-local.sh

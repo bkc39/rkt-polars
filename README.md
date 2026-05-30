@@ -76,3 +76,40 @@ raco pkg install --name rkt-polars .
 raco setup --pkgs rkt-polars
 raco test -x -c polars
 ```
+
+## Prebuilt Native Libraries (pkgs.rkt-lang.org)
+
+The package catalog's build host has no Rust toolchain, so it cannot compile
+`libcompat` at install time. To support it, prebuilt shared objects are
+committed per platform under `polars/native-libs/candidates/`:
+
+```
+polars/native-libs/candidates/
+├── linux/libcompat.so       # x86_64
+└── darwin/libcompat.dylib   # arm64
+```
+
+The `pre-install-collection` hook (`polars/private/install-compat.rkt`) selects
+a library at `raco pkg install` time, in priority order:
+
+1. `RKT_POLARS_COMPAT_LIB_PATH` — copy from `$VAR/lib` (Nix build / dev shell).
+2. the committed candidate for the current platform (catalog install).
+3. an already-staged `polars/native-libs/libcompat.*`.
+
+To (re)build and stage a candidate with the Rust toolchain — the cargo
+analogue of a cmake build — run, on the matching platform:
+
+```sh
+scripts/build-so.sh            # auto-detects linux/darwin
+scripts/build-so.sh darwin     # or name the platform explicitly
+```
+
+To reproduce the catalog install locally (no toolchain, no env override),
+forcing the installer to copy from `candidates/`:
+
+```sh
+scripts/test-local.sh
+```
+
+CI (`.github/workflows/native.yml`) builds both candidates with cargo and runs
+this catalog install on Linux and macOS.
