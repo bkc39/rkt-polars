@@ -70,14 +70,23 @@
               export GIT_SSL_CAINFO=$SSL_CERT_FILE
               mkdir -p "$PLTUSERHOME"
 
-              # Resolve and download gregor-lib + its closure (network).
-              raco pkg install --batch --auto --no-setup --scope user gregor-lib
+              # Resolve and download gregor-lib + its closure (network).  The
+              # closure is whatever this Racket distribution does not already
+              # provide, so enumerate it dynamically (below) rather than
+              # hard-coding a list that drifts between distributions.
+              #
+              # tzdata is requested explicitly: tzinfo only depends on it on
+              # Windows, falling back to the system /usr/share/zoneinfo
+              # elsewhere -- but the Nix build sandbox has no system zoneinfo,
+              # so we must ship the tzdata package's copy.
+              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata
 
-              # Repack the non-distribution packages, then unpack each into a
-              # per-package source directory (content-addressed, mtime-free).
-              raco pkg archive "$TMPDIR/archive" \
-                gregor-lib cldr-core cldr-bcp47 cldr-dates-modern \
-                cldr-numbers-modern cldr-localenames-modern tzinfo memoize-lib
+              mapfile -t deps < <(racket -e \
+                '(require pkg/lib)(for ([p (installed-pkg-names #:scope (quote user))]) (displayln p))')
+
+              # Repack the closure, then unpack each into a per-package source
+              # directory (content-addressed, mtime-free).
+              raco pkg archive "$TMPDIR/archive" "''${deps[@]}"
 
               mkdir -p "$out"
               for z in "$TMPDIR"/archive/pkgs/*.zip; do
@@ -93,7 +102,7 @@
 
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-R7vgmTAVOXqqk1kd9e5zEdNA2s/fW4SxfJyI4Op/FYs=";
+            outputHash = "sha256-atA4hZLWNvH3Kyrq7dyyC/EKqh0O5p13+vzXKIn9UB4=";
           };
 
           racket = pkgs.stdenv.mkDerivation {
