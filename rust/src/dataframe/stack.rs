@@ -16,7 +16,7 @@ pub extern "C" fn dataframe_hstack(
         if slice.iter().any(|p| p.is_null()) {
             return ptr::null_mut();
         }
-        slice.iter().map(|&p| unsafe { (&*p).clone() }).collect()
+        slice.iter().map(|&p| unsafe { (*p).clone() }).collect()
     };
     let df = unsafe { &*df_ptr };
     match df.hstack(&columns) {

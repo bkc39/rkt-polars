@@ -1,8 +1,9 @@
 use super::*;
 use std::ptr;
+
 #[test]
 fn test_series_new_i32_valid() {
-    let data = vec![1, 2, 3, 4];
+    let data = [1, 2, 3, 4];
     let data_ptr = data.as_ptr();
 
     let name = CString::new("i32_series").unwrap();
@@ -30,7 +31,7 @@ fn test_series_new_i32_valid() {
 
 #[test]
 fn test_series_new_i32_null_name() {
-    let data = vec![1, 2, 3, 4];
+    let data = [1, 2, 3, 4];
     let data_ptr = data.as_ptr();
 
     let series = series_new_i32(ptr::null(), data_ptr, data.len());
@@ -90,7 +91,7 @@ fn test_string_drop_null() {
 
 #[test]
 fn test_series_new_f64_valid() {
-    let data = vec![1.1, 2.2, 3.3, 4.4];
+    let data = [1.1, 2.2, 3.3, 4.4];
     let data_ptr = data.as_ptr();
 
     let name = CString::new("f64_series").unwrap();
@@ -118,7 +119,7 @@ fn test_series_new_f64_valid() {
 
 #[test]
 fn test_series_new_str_valid() {
-    let data = vec![
+    let data = [
         CString::new("one").unwrap(),
         CString::new("two").unwrap(),
         CString::new("three").unwrap(),
@@ -152,7 +153,7 @@ fn test_series_new_str_valid() {
 
 #[test]
 fn test_series_new_str_null_name() {
-    let data = vec![
+    let data = [
         CString::new("one").unwrap(),
         CString::new("two").unwrap(),
         CString::new("three").unwrap(),
@@ -204,7 +205,7 @@ fn test_series_new_str_empty_data() {
 
 #[test]
 fn test_series_new_ymdhms_valid() {
-    let data = vec![
+    let data = [
         YMDHMS {
             year: 2021,
             month: 5,
@@ -249,7 +250,7 @@ fn test_series_new_ymdhms_valid() {
 
 #[test]
 fn test_series_new_ymdhms_null_name() {
-    let data = vec![
+    let data = [
         YMDHMS {
             year: 2021,
             month: 5,

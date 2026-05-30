@@ -5,11 +5,7 @@ pub(crate) fn name_from_ptr(p: *const c_char) -> &'static str {
     if p.is_null() {
         return "";
     }
-    if let Ok(name) = unsafe { CStr::from_ptr(p).to_str() } {
-        name
-    } else {
-        ""
-    }
+    unsafe { CStr::from_ptr(p).to_str() }.unwrap_or_default()
 }
 
 #[no_mangle]

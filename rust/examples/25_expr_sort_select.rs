@@ -61,7 +61,7 @@ fn main() -> PolarsResult<()> {
     let gathered = df
         .lazy()
         .select([col("x")
-            .gather(lit(Series::new("idx".into(), &[0i64, 2, 4])))
+            .gather(lit(Series::new("idx", &[0i64, 2, 4])))
             .alias("x_gathered")])
         .collect()?;
     println!("gathered:\n{gathered}");
