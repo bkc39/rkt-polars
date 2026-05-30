@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn dataframe_select(
     df_ptr: *mut DataFrame,
     name_ptrs: *const *const c_char,

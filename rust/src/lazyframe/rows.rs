@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_unique(lf: *mut LazyFrame) -> *mut LazyFrame {
     if lf.is_null() {
         return ptr::null_mut();

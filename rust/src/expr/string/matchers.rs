@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn expr_str_contains(
     e: *const Expr,
     pat: *const Expr,
@@ -39,6 +40,7 @@ pub extern "C" fn expr_str_ends_with(
     Box::into_raw(Box::new(ee.str().ends_with(ss)))
 }
 
+#[no_mangle]
 pub extern "C" fn expr_str_extract(
     e: *const Expr,
     pat: *const Expr,
@@ -52,6 +54,7 @@ pub extern "C" fn expr_str_extract(
     Box::into_raw(Box::new(ee.str().extract(pp, group_index)))
 }
 
+#[no_mangle]
 pub extern "C" fn expr_str_find(
     e: *const Expr,
     pat: *const Expr,

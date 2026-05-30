@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_join(
     left_ptr: *mut LazyFrame,
     right_ptr: *mut LazyFrame,

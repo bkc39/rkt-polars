@@ -130,6 +130,7 @@ pub extern "C" fn expr_backward_fill(
     Box::into_raw(Box::new(ee.backward_fill(lim)))
 }
 
+#[no_mangle]
 pub extern "C" fn expr_over(
     e: *const Expr,
     partition_ptrs: *const *const Expr,

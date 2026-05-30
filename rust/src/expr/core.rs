@@ -7,6 +7,7 @@ pub extern "C" fn expr_drop(e: *mut Expr) {
     }
 }
 
+#[no_mangle]
 pub extern "C" fn expr_col(name: *const c_char) -> *mut Expr {
     if name.is_null() {
         return ptr::null_mut();

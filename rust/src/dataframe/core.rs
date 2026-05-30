@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn dataframe_make() -> *mut DataFrame {
     let df = DataFrame::default();
     let boxed_df = Box::new(df);
@@ -33,7 +34,7 @@ pub extern "C" fn dataframe_new(
         if slice.iter().any(|p| p.is_null()) {
             return ptr::null_mut();
         }
-        slice.iter().map(|&p| unsafe { (&*p).clone() }).collect()
+        slice.iter().map(|&p| unsafe { (*p).clone() }).collect()
     };
     match DataFrame::new(columns) {
         Ok(df) => Box::into_raw(Box::new(df)),
@@ -46,7 +47,7 @@ pub extern "C" fn dataframe_height(df_ptr: *mut DataFrame) -> usize {
     if df_ptr.is_null() {
         0
     } else {
-        unsafe { (&*df_ptr).height() }
+        unsafe { (*df_ptr).height() }
     }
 }
 
@@ -55,7 +56,7 @@ pub extern "C" fn dataframe_width(df_ptr: *mut DataFrame) -> usize {
     if df_ptr.is_null() {
         0
     } else {
-        unsafe { (&*df_ptr).width() }
+        unsafe { (*df_ptr).width() }
     }
 }
 

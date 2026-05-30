@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn expr_cast(e: *mut Expr, target: CompatDType) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();

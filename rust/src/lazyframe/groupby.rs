@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_group_by_agg(
     lf: *mut LazyFrame,
     key_ptrs: *const *const Expr,

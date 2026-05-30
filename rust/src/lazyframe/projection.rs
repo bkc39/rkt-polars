@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_with_columns(
     lf: *mut LazyFrame,
     expr_ptrs: *const *const Expr,
@@ -17,6 +18,7 @@ pub extern "C" fn lazyframe_with_columns(
     Box::into_raw(Box::new(lf_ref.with_columns(exprs)))
 }
 
+#[no_mangle]
 pub extern "C" fn lazyframe_filter(
     lf: *mut LazyFrame,
     predicate: *const Expr,

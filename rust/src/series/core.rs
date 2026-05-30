@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn series_make() -> *mut Series {
     let s = Series::new("example", &[1, 2, 3, 4]);
     let boxed_s = Box::new(s);
@@ -25,7 +26,7 @@ pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
         return ptr::null();
     }
 
-    unsafe { rust_string_to_ptr((&*s_ptr).name()) }
+    unsafe { rust_string_to_ptr((*s_ptr).name()) }
 }
 
 #[no_mangle]
@@ -39,7 +40,7 @@ pub extern "C" fn series_dtype(s_ptr: *mut Series) -> CompatDType {
         };
     }
 
-    unsafe { compat_dtype_from_polars((&*s_ptr).dtype()) }
+    unsafe { compat_dtype_from_polars((*s_ptr).dtype()) }
 }
 
 #[no_mangle]

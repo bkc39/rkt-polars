@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn expr_str_to_lowercase(e: *const Expr) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
@@ -49,6 +50,7 @@ pub extern "C" fn expr_str_replace_all(
     Box::into_raw(Box::new(ee.str().replace_all(pp, vv, literal != 0)))
 }
 
+#[no_mangle]
 pub extern "C" fn expr_str_strip_chars(
     e: *const Expr,
     chars: *const Expr,

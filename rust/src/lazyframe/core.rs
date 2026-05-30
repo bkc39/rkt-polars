@@ -1,11 +1,13 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_drop(lf: *mut LazyFrame) {
     if !lf.is_null() {
         unsafe { drop(Box::from_raw(lf)) };
     }
 }
 
+#[no_mangle]
 pub extern "C" fn dataframe_lazy(df: *mut DataFrame) -> *mut LazyFrame {
     if df.is_null() {
         return ptr::null_mut();
@@ -14,6 +16,7 @@ pub extern "C" fn dataframe_lazy(df: *mut DataFrame) -> *mut LazyFrame {
     Box::into_raw(Box::new(cloned.lazy()))
 }
 
+#[no_mangle]
 pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
     if lf.is_null() {
         return ptr::null_mut();

@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_scan_csv(path: *const c_char) -> *mut LazyFrame {
     if path.is_null() {
         return ptr::null_mut();

@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn dataframe_filter(
     df_ptr: *mut DataFrame,
     mask_ptr: *mut Series,
@@ -20,6 +21,7 @@ pub extern "C" fn dataframe_filter(
     }
 }
 
+#[no_mangle]
 pub extern "C" fn dataframe_sort(
     df_ptr: *mut DataFrame,
     by_ptrs: *const *const c_char,

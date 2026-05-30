@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::*;
 
+#[no_mangle]
 pub extern "C" fn lazyframe_sort(
     lf: *mut LazyFrame,
     by_ptrs: *const *const c_char,

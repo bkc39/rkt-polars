@@ -1,5 +1,6 @@
 use crate::prelude::*;
 
+#[no_mangle]
 pub extern "C" fn expr_str_len_bytes(e: *const Expr) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
