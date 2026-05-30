@@ -38,6 +38,52 @@
               '';
           };
 
+          # gregor-lib and its non-distribution dependency closure, captured
+          # as installable .zip package sources via a fixed-output derivation
+          # (network is permitted here).  The sandboxed `racket` build below
+          # installs these offline, so it never has to reach the package
+          # catalog -- which is what made `nix flake check` fail on Linux,
+          # whose build sandbox has no network.
+          #
+          # Bump `outputHash` when the gregor/cldr/tzinfo/memoize versions in
+          # the Racket release catalog change; `nix build` prints the new hash
+          # on mismatch.
+          racket-deps = pkgs.stdenvNoCC.mkDerivation {
+            name = "rkt-polars-racket-deps";
+            dontUnpack = true;
+
+            nativeBuildInputs = [ pkgs.racket pkgs.cacert pkgs.git ];
+
+            buildPhase = ''
+              runHook preBuild
+
+              export HOME=$TMPDIR/home
+              export PLTUSERHOME=$TMPDIR/plt
+              export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+              export GIT_SSL_CAINFO=$SSL_CERT_FILE
+              mkdir -p "$PLTUSERHOME"
+
+              # Resolve and download gregor-lib + its closure (network).
+              raco pkg install --batch --auto --no-setup --scope user gregor-lib
+
+              # Repack the non-distribution packages as standalone source zips.
+              raco pkg archive "$TMPDIR/archive" \
+                gregor-lib cldr-core cldr-bcp47 cldr-dates-modern \
+                cldr-numbers-modern cldr-localenames-modern tzinfo memoize-lib
+
+              mkdir -p "$out"
+              cp "$TMPDIR"/archive/pkgs/*.zip "$out/"
+
+              runHook postBuild
+            '';
+
+            dontInstall = true;
+
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-rHTAhZFezHo1mFaMft4vRylI3B28tgz/fwZ2+dgn1vU=";
+          };
+
           racket = pkgs.stdenv.mkDerivation {
             pname = "rkt-polars";
             inherit version;
@@ -49,14 +95,19 @@
             buildPhase = ''
               runHook preBuild
 
+              export HOME=$TMPDIR/home
               export PLTUSERHOME=$TMPDIR/racket-home
               export RKT_POLARS_COMPAT_LIB_PATH=${rust}
               mkdir -p $PLTUSERHOME
 
+              # Install gregor-lib's dependency closure offline from the
+              # prefetched zips so this sandboxed build needs no network.
+              raco pkg install --batch --no-setup --scope user ${racket-deps}/*.zip
+
               mkdir -p ./polars/native-libs
               cp ${rust}/lib/libcompat.* ./polars/native-libs/
 
-              raco pkg install --batch --auto --no-setup --copy --scope user \
+              raco pkg install --batch --no-setup --copy --scope user \
                 --name rkt-polars "$PWD"
 
               raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
@@ -94,7 +145,7 @@
         in
         {
           default = racket;
-          inherit rust racket copy-native-libs;
+          inherit rust racket racket-deps copy-native-libs;
         });
 
       apps = forAllSystems (system: {
