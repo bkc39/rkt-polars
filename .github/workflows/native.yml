@@ -27,16 +27,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # darwin builds natively with cargo; the linux candidate is built inside
+      # the manylinux2014 container (glibc 2.17) by build-so.sh, so the host
+      # only needs docker there.
       - name: Install Rust toolchain
+        if: matrix.platform == 'darwin'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo build
+        if: matrix.platform == 'darwin'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
 
       - name: Build shared object
         run: scripts/build-so.sh ${{ matrix.platform }}
+
+      # Guard the deploy requirement: the committed linux candidate must not
+      # require glibc newer than 2.17 (pkg-build.racket-lang.org's test host is
+      # older than 2.27).  This is the check that would have caught the
+      # original GLIBC_2.34 binary.
+      - name: Assert glibc floor <= 2.17 (linux)
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          lib=polars/native-libs/candidates/linux/libcompat.so
+          echo "== libcompat.so GLIBC symbol versions =="
+          objdump -T "$lib" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u
+          newer=$(objdump -T "$lib" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u \
+                  | awk -F_ '{split($2,v,"."); if (v[1]>2 || (v[1]==2 && v[2]>17)) print}')
+          if [ -n "$newer" ]; then
+            echo "ERROR: libcompat.so requires glibc newer than 2.17:" >&2
+            echo "$newer" >&2
+            exit 1
+          fi
+          echo "OK: libcompat.so glibc floor <= 2.17"
 
       - name: Upload candidate
         uses: actions/upload-artifact@v4
@@ -111,3 +136,40 @@ jobs:
 
       - name: Install from candidate and test
         run: scripts/test-local.sh
+
+  # Faithful reproduction of the deploy floor: actually load the linux
+  # candidate under glibc 2.17 (manylinux2014), which is older than
+  # pkg-build.racket-lang.org's test host.  The GitHub Actions runner agents
+  # (node) can't run inside a glibc-2.17 container, so we drive it via docker
+  # from a normal runner instead.
+  old-glibc-load:
+    name: Old-glibc load test (glibc 2.17)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download linux candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: libcompat-linux
+          path: cand
+
+      - name: dlopen libcompat.so under glibc 2.17
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD/cand:/cand:ro" quay.io/pypa/manylinux2014_x86_64 bash -c '
+            set -euo pipefail
+            echo "container glibc: $(ldd --version | head -1)"
+            cat > /tmp/probe.c <<EOF
+          #include <dlfcn.h>
+          #include <stdio.h>
+          int main(int argc, char **argv) {
+            void *h = dlopen(argv[1], RTLD_NOW | RTLD_GLOBAL);
+            if (!h) { fprintf(stderr, "dlopen failed: %s\n", dlerror()); return 1; }
+            printf("dlopen OK: %s\n", argv[1]);
+            return 0;
+          }
+          EOF
+            gcc /tmp/probe.c -o /tmp/probe -ldl
+            cp /cand/libcompat.so /tmp/
+            /tmp/probe /tmp/libcompat.so
+          '
