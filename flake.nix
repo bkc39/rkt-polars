@@ -39,11 +39,18 @@
           };
 
           # gregor-lib and its non-distribution dependency closure, captured
-          # as installable .zip package sources via a fixed-output derivation
+          # as unpacked package source trees via a fixed-output derivation
           # (network is permitted here).  The sandboxed `racket` build below
           # installs these offline, so it never has to reach the package
           # catalog -- which is what made `nix flake check` fail on Linux,
           # whose build sandbox has no network.
+          #
+          # The sources are unpacked into directories rather than kept as
+          # `raco pkg archive` zips on purpose: those zips embed each source
+          # file's checkout mtime, so their bytes differ per build machine and
+          # a fixed output hash never matches.  Nix's NAR hashing normalises
+          # mtimes, so an unpacked tree hashes purely by content and is
+          # identical on every platform.
           #
           # Bump `outputHash` when the gregor/cldr/tzinfo/memoize versions in
           # the Racket release catalog change; `nix build` prints the new hash
@@ -52,7 +59,7 @@
             name = "rkt-polars-racket-deps";
             dontUnpack = true;
 
-            nativeBuildInputs = [ pkgs.racket pkgs.cacert pkgs.git ];
+            nativeBuildInputs = [ pkgs.racket pkgs.cacert pkgs.git pkgs.unzip ];
 
             buildPhase = ''
               runHook preBuild
@@ -66,13 +73,18 @@
               # Resolve and download gregor-lib + its closure (network).
               raco pkg install --batch --auto --no-setup --scope user gregor-lib
 
-              # Repack the non-distribution packages as standalone source zips.
+              # Repack the non-distribution packages, then unpack each into a
+              # per-package source directory (content-addressed, mtime-free).
               raco pkg archive "$TMPDIR/archive" \
                 gregor-lib cldr-core cldr-bcp47 cldr-dates-modern \
                 cldr-numbers-modern cldr-localenames-modern tzinfo memoize-lib
 
               mkdir -p "$out"
-              cp "$TMPDIR"/archive/pkgs/*.zip "$out/"
+              for z in "$TMPDIR"/archive/pkgs/*.zip; do
+                name="$(basename "$z" .zip)"
+                mkdir -p "$out/$name"
+                unzip -q "$z" -d "$out/$name"
+              done
 
               runHook postBuild
             '';
@@ -81,7 +93,7 @@
 
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-rHTAhZFezHo1mFaMft4vRylI3B28tgz/fwZ2+dgn1vU=";
+            outputHash = "sha256-R7vgmTAVOXqqk1kd9e5zEdNA2s/fW4SxfJyI4Op/FYs=";
           };
 
           racket = pkgs.stdenv.mkDerivation {
@@ -101,8 +113,10 @@
               mkdir -p $PLTUSERHOME
 
               # Install gregor-lib's dependency closure offline from the
-              # prefetched zips so this sandboxed build needs no network.
-              raco pkg install --batch --no-setup --scope user ${racket-deps}/*.zip
+              # prefetched source trees so this sandboxed build needs no
+              # network.  --copy moves them out of the read-only store so they
+              # can be compiled.
+              raco pkg install --batch --copy --no-docs --scope user ${racket-deps}/*/
 
               mkdir -p ./polars/native-libs
               cp ${rust}/lib/libcompat.* ./polars/native-libs/
