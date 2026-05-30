@@ -1,5 +1,11 @@
 on: [push, pull_request]
 name: Native
+
+# Cancel superseded runs for the same ref so rapid re-pushes don't pile up.
+concurrency:
+  group: native-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Build the libcompat shared object with the Rust toolchain (cargo plays
   # the role cmake plays in the xgboost binding) and publish it as a
@@ -52,13 +58,18 @@ jobs:
           # The actual pkgs.rkt-lang.org catalog-build simulation.
           - os: ubuntu-22.04
             platform: linux
+            arch: x64
             label: ubuntu-22.04 (racket catalog target)
           # Forward-compat: the 22.04-built .so must also load on newer glibc.
           - os: ubuntu-latest
             platform: linux
+            arch: x64
             label: ubuntu-latest (forward-compat)
+          # macos-latest runners are Apple Silicon; the Racket VM arch must
+          # match the arm64 dylib, otherwise dlopen fails on a mismatch.
           - os: macos-latest
             platform: darwin
+            arch: arm64
             label: macos-latest (darwin)
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +78,7 @@ jobs:
         uses: Bogdanp/setup-racket@v1.15
         with:
           version: stable
+          architecture: ${{ matrix.arch }}
 
       - name: Download candidate
         uses: actions/download-artifact@v4
