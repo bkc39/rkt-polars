@@ -85,9 +85,13 @@ committed per platform under `polars/native-libs/candidates/`:
 
 ```
 polars/native-libs/candidates/
-├── linux/libcompat.so       # x86_64
+├── linux/libcompat.so       # x86_64, built on Ubuntu 22.04 (glibc 2.35)
 └── darwin/libcompat.dylib   # arm64
 ```
+
+The linux candidate is built on Ubuntu 22.04 to match the glibc the
+pkgs.rkt-lang.org build host runs, so it does not require a newer glibc than
+that host provides.
 
 The `pre-install-collection` hook (`polars/private/install-compat.rkt`) selects
 a library at `raco pkg install` time, in priority order:
