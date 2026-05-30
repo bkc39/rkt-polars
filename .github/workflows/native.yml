@@ -42,21 +42,24 @@ jobs:
   # Reproduce the pkgs.rkt-lang.org catalog install: no Rust toolchain, the
   # pre-installer copies the prebuilt candidate into place, then run tests.
   catalog:
-    name: Catalog install (${{ matrix.os }})
+    name: Catalog install — ${{ matrix.label }}
     needs: build
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Same runner the catalog build host uses; the binding target.
+          # The actual pkgs.rkt-lang.org catalog-build simulation.
           - os: ubuntu-22.04
             platform: linux
+            label: ubuntu-22.04 (racket catalog target)
           # Forward-compat: the 22.04-built .so must also load on newer glibc.
           - os: ubuntu-latest
             platform: linux
+            label: ubuntu-latest (forward-compat)
           - os: macos-latest
             platform: darwin
+            label: macos-latest (darwin)
     steps:
       - uses: actions/checkout@v4
 
