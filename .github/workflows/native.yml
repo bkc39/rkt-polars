@@ -1,0 +1,113 @@
+on: [push, pull_request]
+name: Native
+
+# Cancel superseded runs for the same ref so rapid re-pushes don't pile up.
+concurrency:
+  group: native-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build the libcompat shared object with the Rust toolchain (cargo plays
+  # the role cmake plays in the xgboost binding) and publish it as a
+  # per-platform artifact.
+  build:
+    name: Build libcompat (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Build the linux candidate on the same Ubuntu the
+          # pkgs.rkt-lang.org build host uses (22.04 / glibc 2.35), so the
+          # committed .so does not require a newer glibc than that host has.
+          - os: ubuntu-22.04
+            platform: linux
+          - os: macos-latest
+            platform: darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build shared object
+        run: scripts/build-so.sh ${{ matrix.platform }}
+
+      - name: Upload candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: polars/native-libs/candidates/${{ matrix.platform }}/
+          if-no-files-found: error
+
+  # Reproduce the pkgs.rkt-lang.org catalog install: no Rust toolchain, the
+  # pre-installer copies the prebuilt candidate into place, then run tests.
+  catalog:
+    name: Catalog install — ${{ matrix.label }}
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The actual pkgs.rkt-lang.org catalog-build simulation.
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            label: ubuntu-22.04 (racket catalog target)
+          # Forward-compat: the 22.04-built .so must also load on newer glibc.
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            label: ubuntu-latest (forward-compat)
+          # macos-latest runners are Apple Silicon; the Racket VM arch must
+          # match the arm64 dylib, otherwise dlopen fails on a mismatch.
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            label: macos-latest (darwin)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Racket
+        uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: stable
+          architecture: ${{ matrix.arch }}
+
+      - name: Download candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: polars/native-libs/candidates/${{ matrix.platform }}/
+
+      - name: Portability check (no toolchain / store paths)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          libs=(polars/native-libs/candidates/${{ matrix.platform }}/libcompat.*)
+          if [ ${#libs[@]} -eq 0 ]; then
+            echo "error: no libcompat candidate found" >&2
+            exit 1
+          fi
+          for lib in "${libs[@]}"; do
+            echo ">> $lib"
+            if command -v otool >/dev/null 2>&1; then
+              deps=$(otool -L "$lib")
+            else
+              deps=$(ldd "$lib" || true)
+            fi
+            echo "$deps"
+            if echo "$deps" | grep -q "/nix/store"; then
+              echo "error: $lib references /nix/store" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install from candidate and test
+        run: scripts/test-local.sh

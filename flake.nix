@@ -38,6 +38,73 @@
               '';
           };
 
+          # gregor-lib and its non-distribution dependency closure, captured
+          # as unpacked package source trees via a fixed-output derivation
+          # (network is permitted here).  The sandboxed `racket` build below
+          # installs these offline, so it never has to reach the package
+          # catalog -- which is what made `nix flake check` fail on Linux,
+          # whose build sandbox has no network.
+          #
+          # The sources are unpacked into directories rather than kept as
+          # `raco pkg archive` zips on purpose: those zips embed each source
+          # file's checkout mtime, so their bytes differ per build machine and
+          # a fixed output hash never matches.  Nix's NAR hashing normalises
+          # mtimes, so an unpacked tree hashes purely by content and is
+          # identical on every platform.
+          #
+          # Bump `outputHash` when the gregor/cldr/tzinfo/memoize versions in
+          # the Racket release catalog change; `nix build` prints the new hash
+          # on mismatch.
+          racket-deps = pkgs.stdenvNoCC.mkDerivation {
+            name = "rkt-polars-racket-deps";
+            dontUnpack = true;
+
+            nativeBuildInputs = [ pkgs.racket pkgs.cacert pkgs.git pkgs.unzip ];
+
+            buildPhase = ''
+              runHook preBuild
+
+              export HOME=$TMPDIR/home
+              export PLTUSERHOME=$TMPDIR/plt
+              export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+              export GIT_SSL_CAINFO=$SSL_CERT_FILE
+              mkdir -p "$PLTUSERHOME"
+
+              # Resolve and download gregor-lib + its closure (network).  The
+              # closure is whatever this Racket distribution does not already
+              # provide, so enumerate it dynamically (below) rather than
+              # hard-coding a list that drifts between distributions.
+              #
+              # tzdata is requested explicitly: tzinfo only depends on it on
+              # Windows, falling back to the system /usr/share/zoneinfo
+              # elsewhere -- but the Nix build sandbox has no system zoneinfo,
+              # so we must ship the tzdata package's copy.
+              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata
+
+              mapfile -t deps < <(racket -e \
+                '(require pkg/lib)(for ([p (installed-pkg-names #:scope (quote user))]) (displayln p))')
+
+              # Repack the closure, then unpack each into a per-package source
+              # directory (content-addressed, mtime-free).
+              raco pkg archive "$TMPDIR/archive" "''${deps[@]}"
+
+              mkdir -p "$out"
+              for z in "$TMPDIR"/archive/pkgs/*.zip; do
+                name="$(basename "$z" .zip)"
+                mkdir -p "$out/$name"
+                unzip -q "$z" -d "$out/$name"
+              done
+
+              runHook postBuild
+            '';
+
+            dontInstall = true;
+
+            outputHashMode = "recursive";
+            outputHashAlgo = "sha256";
+            outputHash = "sha256-atA4hZLWNvH3Kyrq7dyyC/EKqh0O5p13+vzXKIn9UB4=";
+          };
+
           racket = pkgs.stdenv.mkDerivation {
             pname = "rkt-polars";
             inherit version;
@@ -49,14 +116,21 @@
             buildPhase = ''
               runHook preBuild
 
+              export HOME=$TMPDIR/home
               export PLTUSERHOME=$TMPDIR/racket-home
               export RKT_POLARS_COMPAT_LIB_PATH=${rust}
               mkdir -p $PLTUSERHOME
 
+              # Install gregor-lib's dependency closure offline from the
+              # prefetched source trees so this sandboxed build needs no
+              # network.  --copy moves them out of the read-only store so they
+              # can be compiled.
+              raco pkg install --batch --copy --no-docs --scope user ${racket-deps}/*/
+
               mkdir -p ./polars/native-libs
               cp ${rust}/lib/libcompat.* ./polars/native-libs/
 
-              raco pkg install --batch --auto --no-setup --copy --scope user \
+              raco pkg install --batch --no-setup --copy --scope user \
                 --name rkt-polars "$PWD"
 
               raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
@@ -94,7 +168,7 @@
         in
         {
           default = racket;
-          inherit rust racket copy-native-libs;
+          inherit rust racket racket-deps copy-native-libs;
         });
 
       apps = forAllSystems (system: {
