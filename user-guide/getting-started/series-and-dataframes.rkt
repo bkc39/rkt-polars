@@ -17,7 +17,7 @@
 
 (displayln "a series:")
 (displayln s)                           ; prints in Polars' format
-(describe s)                            ; name, length, dtype, null count
+(displayln (describe s))                ; summary-statistics dataframe (.describe())
 (printf "sum=~a  min=~a  max=~a  mean=~a\n"
         (sum s) (min s) (max s) (mean s))
 (newline)
@@ -26,7 +26,7 @@
 ;; A DataFrame is a collection of named series of equal length.  gregor
 ;; datetimes map to Polars datetime columns.
 (define df
-  (dataframe-new
+  (dataframe
    (list (series (list (datetime 2025 1 1) (datetime 2025 1 2)
                        (datetime 2025 1 3) (datetime 2025 1 4))
                  #:name "date")
@@ -49,8 +49,8 @@
 (display-dataframe (dataframe-tail df 2))
 (newline)
 
-(displayln "describe (per-column dtypes):")
-(describe df)                           ; dispatches on dataframe
+(displayln "describe:")
+(displayln (describe df))               ; per-column summary statistics
 (newline)
 
 ;; `ref` is the generic accessor: a column out of a dataframe, an element out
