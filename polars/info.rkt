@@ -9,7 +9,8 @@
 (define deps '("base" "gregor-lib"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 
-(define scribblings '(("scribblings/polars.scrbl" ())))
+(define scribblings '(("scribblings/polars.scrbl" ())
+                      ("scribblings/getting-started.scrbl" ())))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
 (define version "0.0.1")
