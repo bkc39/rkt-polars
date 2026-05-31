@@ -1,7 +1,7 @@
 #lang setup/infotab
 
 (define collection 'multi)
-(define deps '("base" "gregor-lib"))
+(define deps '("base" "gregor-lib" "threading-lib"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
 ;; Documentation lives in the published `polars` collection
 ;; (polars/scribblings/polars.scrbl); this whole-repo package builds it from
