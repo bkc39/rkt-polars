@@ -10,8 +10,13 @@
 
 ;; The generic `series` constructor infers a dtype from the values, or takes an
 ;; explicit #:dtype (short spellings like 'i32 or canonical 'int32 both work).
+;; A series is a wrapper value (`series?`) that prints like a Polars series.
 (define ints
   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
+
+;; Series print in Polars' format (this is also how they show in the REPL):
+(displayln ints)
+(newline)
 
 (define floats
   (series '(1.5 2.0 4.25 8.0) #:name "floats"))

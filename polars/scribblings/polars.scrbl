@@ -33,15 +33,21 @@ datetimes.
 
 Alongside the monomorphic, dtype-suffixed bindings (@racket[series-new-i32],
 @racket[series-sum-f64], and friends), @racketmodname[polars] provides a small
-set of generic operations that dispatch at runtime on a series' dtype (read via
-@racket[series-dtype]) or on whether a value is a series or a dataframe. A
-series is a single opaque value that already carries its dtype, so these
-generics need no wrapper struct.
+set of generic operations over a @deftech{series} value. A series wraps a typed
+column and prints in the REPL the way Polars prints it; @racket[series?] is its
+predicate. (The underlying foreign pointer is an implementation detail and not
+part of the public series API.) The generics dispatch at runtime on the series'
+dtype (read via @racket[series-dtype]) or, for @racket[describe] and
+@racket[ref], on whether the argument is a series or a dataframe — using the
+@racket[gen:describable] and @racket[gen:has-ref] interfaces.
+
+@defproc[(series? [v any/c]) boolean?]{
+  Returns @racket[#t] if @racket[v] is a series.}
 
 @defproc[(series [elements (or/c list? vector?)]
                  [#:name name string? ""]
                  [#:dtype dtype (or/c #f symbol? pair?) #f])
-         Series-ptr?]{
+         series?]{
   Builds a series from a list or vector. When @racket[#:dtype] is omitted the
   dtype is inferred from the elements; otherwise it is taken from
   @racket[dtype]. Both short spellings (@racket['i32], @racket['f64],
@@ -49,6 +55,12 @@ generics need no wrapper struct.
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
   @racket[polars-null] for missing values. Exact integers are coerced to
   flonums when the target dtype is floating point.}
+
+@defproc[(series->string [s series?]) string?]{
+  Renders @racket[s] in Polars' series format (a @tt{shape} line, a
+  @tt{Series: 'name' [dtype]} line, then the bracketed values, truncated to the
+  first and last five when longer than ten). This is also what a series prints
+  as in the REPL.}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...) any/c]
@@ -60,20 +72,22 @@ generics need no wrapper struct.
   preserve the input dtype; @racket[mean] always returns a @racket[float64], so
   the mean of an integer series is a flonum. See @secref["promotion"].}
 
-@defproc[(describe [x (or/c Series-ptr? DataFrame-ptr?)]) void?]{
+@defproc[(describe [x describable?]) void?]{
   Prints a one-line summary (name, length, dtype, null count) for a series, or
-  a shape and per-column dtype summary for a dataframe.}
+  a shape and per-column dtype summary for a dataframe. Provided by the
+  @racket[gen:describable] interface.}
 
-@defproc[(ref [x (or/c Series-ptr? DataFrame-ptr?)]
+@defproc[(ref [x has-ref?]
               [key (or/c exact-nonnegative-integer? string?)]) any/c]{
   On a series, returns the element at the given index (like @racket[series-ref]).
-  On a dataframe, returns the column named @racket[key], or the column at index
-  @racket[key]. It is data-first, so it threads.}
+  On a dataframe, returns the column named @racket[key] (or the column at index
+  @racket[key]) as a series. It is data-first, so it threads. Provided by the
+  @racket[gen:has-ref] interface.}
 
-@deftogether[(@defproc[(rename [s Series-ptr?] [new-name string?]) Series-ptr?]
-              @defproc[(rename! [s Series-ptr?] [new-name string?]) void?]
-              @defproc[(clone [s Series-ptr?]) Series-ptr?]
-              @defproc[(series-clone [s Series-ptr?]) Series-ptr?])]{
+@deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
+              @defproc[(rename! [s series?] [new-name string?]) void?]
+              @defproc[(clone [s series?]) series?]
+              @defproc[(series-clone [s series?]) series?])]{
   @racket[rename!] renames a series in place (matching Polars), returning
   @racket[void] as is conventional for @litchar{!} mutators; @racket[rename]
   returns a renamed copy and leaves the original untouched. @racket[clone] (and

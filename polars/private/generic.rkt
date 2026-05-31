@@ -3,11 +3,19 @@
 ;; High-level, "rackety" generic API layered over the monomorphic Series /
 ;; DataFrame bindings in polars/private/foreign.
 ;;
-;; A Series is a single opaque pointer that already carries its dtype at
-;; runtime (see series-dtype in foreign.rkt), so these generics dispatch on
-;; that tag rather than introducing a wrapper struct.  The result is one
-;; representation everywhere: every value handled here is a raw Series-ptr or
-;; DataFrame-ptr, exactly as produced by the rest of the package.
+;; A series is exposed as a wrapper struct (the `series` predicate is `series?`)
+;; rather than the raw FFI pointer.  The struct carries `prop:cpointer`, so a
+;; wrapped series still marshals transparently as a `_Series-ptr` through every
+;; existing binding (series-dtype, series-sum-i32, dataframe-new, …); we only
+;; pay for the wrapper at the boundary.  It also carries `prop:custom-write`, so
+;; a series prints in the REPL the way Polars prints it.  The underlying pointer
+;; is deliberately not part of the public series API.
+;;
+;; Dispatch uses small, purpose-named racket/generic interfaces:
+;;   gen:describable  — (describe x)
+;;   gen:has-ref      — (ref x key)
+;; The series wrapper implements both; the dataframe (still a raw DataFrame-ptr,
+;; pending its own wrapper) is handled via #:defaults keyed on DataFrame-ptr?.
 ;;
 ;; Naming convention: a trailing `!` marks an operation that mutates its
 ;; argument in place (rename!); the un-suffixed form returns a fresh value
@@ -29,6 +37,10 @@
 ;; Casts between dtypes are performed with series-cast.
 
 (require racket/match
+         racket/generic
+         racket/list
+         racket/string
+         (only-in ffi/unsafe prop:cpointer)
          (prefix-in base: racket/base)
          (only-in gregor datetime?)
          polars/private/foreign
@@ -37,12 +49,50 @@
 (module+ test
   (require rackunit gregor))
 
-(provide series
-         describe
-         ref
+(provide series series? series->string
+         describe ref
+         gen:describable describable?
+         gen:has-ref has-ref?
          sum mean min max
-         rename rename!
-         clone series-clone)
+         rename rename! clone series-clone)
+
+;; ---------------------------------------------------------------------------
+;; generic interfaces
+
+;; describe: print a one-line summary for a series, a shape + per-column dtype
+;; summary for a dataframe.
+(define-generics describable
+  (describe describable)
+  #:defaults
+  ([DataFrame-ptr?
+    (define (describe d) (describe-dataframe d))]))
+
+;; ref: index a series (returns the element) or a dataframe (returns the named
+;; / indexed column as a wrapped series).  Data-first, so it threads.
+(define-generics has-ref
+  (ref has-ref key)
+  #:defaults
+  ([DataFrame-ptr?
+    (define (ref d key) (dataframe-ref d key))]))
+
+;; ---------------------------------------------------------------------------
+;; the series wrapper
+
+(struct series-rec (ptr)
+  #:reflection-name 'series
+  ;; marshals as a _Series-ptr wherever the FFI expects one
+  #:property prop:cpointer 0
+  ;; prints like a Polars series
+  #:property prop:custom-write
+  (lambda (s port mode)
+    (write-string (series->string s) port))
+  #:methods gen:describable
+  [(define (describe s) (describe-series s))]
+  #:methods gen:has-ref
+  [(define (ref s key) (series-ref s key))])
+
+(define series? series-rec?)
+(define (wrap-series ptr) (series-rec ptr))
 
 ;; ---------------------------------------------------------------------------
 ;; dtype aliases
@@ -133,11 +183,11 @@
     [else elements]))
 
 ;; (series elements #:name "n" #:dtype 'i32)
-;; elements may be a list or a vector; nulls are polars-null.
+;; elements may be a list or a vector; nulls are polars-null.  Returns a series.
 (define (series elements #:name [name ""] #:dtype [dtype #f])
   (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
   (define ctor (dtype->constructor canonical (vector? elements)))
-  (ctor name (coerce-elements canonical elements)))
+  (wrap-series (ctor name (coerce-elements canonical elements))))
 
 ;; ---------------------------------------------------------------------------
 ;; dtype-dispatched reductions
@@ -183,53 +233,45 @@
 
 (define (sum . args)
   (match args
-    [(list (? Series-ptr? s)) (series-reduce 'sum sum-table s)]
+    [(list (? series? s)) (series-reduce 'sum sum-table s)]
     [_ (apply base:+ args)]))
 
 (define (mean . args)
   (match args
-    [(list (? Series-ptr? s)) (series-reduce 'mean mean-table s)]
+    [(list (? series? s)) (series-reduce 'mean mean-table s)]
     [(list) (error 'mean "expected at least one argument")]
     [_ (/ (apply base:+ args) (length args))]))
 
 (define (min . args)
   (match args
-    [(list (? Series-ptr? s)) (series-reduce 'min min-table s)]
+    [(list (? series? s)) (series-reduce 'min min-table s)]
     [_ (apply base:min args)]))
 
 (define (max . args)
   (match args
-    [(list (? Series-ptr? s)) (series-reduce 'max max-table s)]
+    [(list (? series? s)) (series-reduce 'max max-table s)]
     [_ (apply base:max args)]))
 
 ;; ---------------------------------------------------------------------------
-;; describe / ref: dispatch on series vs dataframe
+;; describe / ref helpers (used by the generic methods above)
 
-(define (describe x)
-  (cond
-    [(Series-ptr? x)
-     (printf "name=~s len=~a dtype=~a nulls=~a\n"
-             (series-name x) (series-len x)
-             (series-dtype x) (series-null-count x))]
-    [(DataFrame-ptr? x)
-     (define-values (rows cols) (dataframe-shape x))
-     (printf "DataFrame shape=(~a ~a)\n" rows cols)
-     (for ([nm (in-list (dataframe-column-names x))])
-       (printf "  ~a: ~a\n" nm (series-dtype (dataframe-column x nm))))]
-    [else (error 'describe "expected a series or dataframe, got ~v" x)]))
+(define (describe-series s)
+  (printf "name=~s len=~a dtype=~a nulls=~a\n"
+          (series-name s) (series-len s)
+          (series-dtype s) (series-null-count s)))
 
-;; (ref series index) -> element ; (ref dataframe name-or-index) -> column
-;; data-first so it threads naturally: (~> df (ref "col") (ref 0))
-(define (ref x key)
+(define (describe-dataframe d)
+  (define-values (rows cols) (dataframe-shape d))
+  (printf "DataFrame shape=(~a ~a)\n" rows cols)
+  (for ([nm (in-list (dataframe-column-names d))])
+    (printf "  ~a: ~a\n" nm (series-dtype (dataframe-column d nm)))))
+
+(define (dataframe-ref d key)
   (cond
-    [(Series-ptr? x) (series-ref x key)]
-    [(DataFrame-ptr? x)
-     (cond
-       [(string? key) (dataframe-column x key)]
-       [(exact-nonnegative-integer? key)
-        (dataframe-column x (dataframe-column-name x key))]
-       [else (error 'ref "dataframe column key must be a string or index, got ~v" key)])]
-    [else (error 'ref "expected a series or dataframe, got ~v" x)]))
+    [(string? key) (wrap-series (dataframe-column d key))]
+    [(exact-nonnegative-integer? key)
+     (wrap-series (dataframe-column d (dataframe-column-name d key)))]
+    [else (error 'ref "dataframe column key must be a string or index, got ~v" key)]))
 
 ;; ---------------------------------------------------------------------------
 ;; clone / rename
@@ -237,32 +279,88 @@
 ;; series-slice already returns a fresh series, so a full-length slice is a
 ;; cheap clone that needs no native-lib support.
 (define (series-clone s)
-  (series-slice s 0 (series-len s)))
+  (wrap-series (series-slice s 0 (series-len s))))
 
 (define (clone x)
   (cond
-    [(Series-ptr? x) (series-clone x)]
+    [(series? x) (series-clone x)]
     [else (error 'clone "expected a series, got ~v" x)]))
 
 ;; mutating: renames in place, returns void (as is conventional for ! mutators)
 (define (rename! x new-name)
   (cond
-    [(Series-ptr? x) (series-rename x new-name)]
+    [(series? x) (series-rename x new-name)]
     [else (error 'rename! "expected a series, got ~v" x)]))
 
 ;; non-mutating: returns a renamed copy, leaving the original untouched
 (define (rename x new-name)
   (cond
-    [(Series-ptr? x)
+    [(series? x)
      (define c (series-clone x))
      (series-rename c new-name)
      c]
     [else (error 'rename "expected a series, got ~v" x)]))
 
 ;; ---------------------------------------------------------------------------
+;; Polars-style printing
+
+(define (dtype->polars-label dt)
+  (define (tu->label tu)
+    (case tu
+      [(milliseconds) "ms"]
+      [(microseconds) "us"]
+      [(nanoseconds)  "ns"]
+      [else (format "~a" tu)]))
+  (cond
+    [(symbol? dt)
+     (case dt
+       [(int8) "i8"] [(int16) "i16"] [(int32) "i32"] [(int64) "i64"]
+       [(uint8) "u8"] [(uint16) "u16"] [(uint32) "u32"] [(uint64) "u64"]
+       [(float32) "f32"] [(float64) "f64"]
+       [(string) "str"] [(boolean) "bool"]
+       [(date) "date"] [(time) "time"]
+       [else (format "~a" dt)])]
+    [(and (pair? dt) (eq? (car dt) 'datetime))
+     (format "datetime[~a]" (tu->label (cadr dt)))]
+    [(and (pair? dt) (eq? (car dt) 'duration))
+     (format "duration[~a]" (tu->label (cadr dt)))]
+    [else (format "~a" dt)]))
+
+(define (value->cell v)
+  (cond
+    [(polars-null? v) "null"]
+    [(string? v) (format "~s" v)]      ; quoted, like Polars
+    [else (format "~a" v)]))
+
+;; Polars shows at most ~10 rows: the first 5, an ellipsis, then the last 5.
+(define (row-indices len)
+  (if (<= len 10)
+      (range len)
+      (append (range 0 5) (list 'ellipsis) (range (- len 5) len))))
+
+(define (series->string s)
+  (define len (series-len s))
+  (define lines
+    (for/list ([i (in-list (row-indices len))])
+      (if (eq? i 'ellipsis)
+          "\t…"
+          (string-append "\t" (value->cell (series-ref s i))))))
+  (string-append
+   (format "shape: (~a,)\n" len)
+   (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label (series-dtype s)))
+   "[\n"
+   (string-join lines "\n")
+   "\n]"))
+
+;; ---------------------------------------------------------------------------
 
 (module+ test
-  ;; constructor + dtype inference
+  ;; constructor returns a series wrapper; series? distinguishes it
+  (check-pred series? (series '(1 2 3)))
+  (check-false (series? 5))
+  (check-false (series? '(1 2 3)))
+
+  ;; dtype inference + alias parity
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'i32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'int32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3))) 'int32)
@@ -272,7 +370,6 @@
   (check-equal? (series-dtype (series (list (datetime 2024 1 1)))) '(datetime milliseconds #f))
   (check-equal? (series-dtype (series (vector 1 2 3) #:dtype 'f64)) 'float64)
   (check-equal? (series-name (series '(1 2 3) #:name "xs")) "xs")
-  ;; big integers widen to int64
   (check-equal? (series-dtype (series (list (expt 2 40)))) 'int64)
 
   ;; reductions dispatch on dtype
@@ -281,7 +378,6 @@
   (check-equal? (sum ints) 10)
   (check-equal? (max floats) 8.0)
   (check-equal? (min ints) 1)
-  ;; mean of ints promotes to float64
   (check-equal? (mean ints) 2.5)
   (check-pred flonum? (mean ints))
 
@@ -292,17 +388,29 @@
   (check-equal? (sum) 0)
   (check-equal? (mean 2 4) 3)
 
-  ;; ref on series and dataframe
-  (define nullable (series (list 10 polars-null 30) #:name "n" #:dtype 'i32))
-  (check-equal? (ref nullable 0) 10)
-  (check-equal? (ref nullable 1) polars-null)
-  (define df (dataframe-new (list ints floats)))
+  ;; Polars-style printing
+  (check-true (regexp-match? #rx"shape: \\(4,\\)" (series->string ints)))
+  (check-true (regexp-match? #rx"Series: 'ints' \\[i32\\]" (series->string ints)))
+  (check-equal? (format "~a" ints) (series->string ints))   ; custom-write
+  ;; null and truncation
+  (define big (series (range 100) #:dtype 'i64))
+  (check-true (regexp-match? #rx"…" (series->string big)))
+  (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
+  (check-true (regexp-match? #rx"null" (series->string withnull)))
+
+  ;; ref on series and dataframe; df ref returns a wrapped series
+  (check-equal? (ref withnull 0) 10)
+  (check-equal? (ref withnull 1) polars-null)
+  (define df (dataframe-new (list ints floats)))   ; accepts wrappers
+  (check-pred series? (ref df "floats"))
+  (check-pred series? (ref df 0))
   (check-equal? (series-name (ref df "floats")) "floats")
   (check-equal? (series-name (ref df 0)) "ints")
 
   ;; clone / rename / rename!
   (define original (series '(1 2 3) #:name "orig" #:dtype 'i32))
   (define renamed (rename original "copy"))
+  (check-pred series? renamed)
   (check-equal? (series-name original) "orig")  ; untouched
   (check-equal? (series-name renamed) "copy")
   (check-pred void? (rename! original "mutated"))

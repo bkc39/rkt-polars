@@ -16,6 +16,7 @@
 (define s (series '(1 2 3 4 5) #:name "a"))
 
 (displayln "a series:")
+(displayln s)                           ; prints in Polars' format
 (describe s)                            ; name, length, dtype, null count
 (printf "sum=~a  min=~a  max=~a  mean=~a\n"
         (sum s) (min s) (max s) (mean s))
