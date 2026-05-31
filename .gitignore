@@ -4,6 +4,7 @@
 .DS_Store
 compiled/
 /doc/
+polars/doc/
 
 rust/target/
 polars/private/compat/target/

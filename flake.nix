@@ -226,6 +226,9 @@
               pkgs.rustc
               pkgs.cargo
               pkgs.stdenv.cc
+              # Python with polars, for the side-by-side reference programs
+              # under user-guide/ (e.g. python user-guide/getting-started/*.py).
+              (pkgs.python3.withPackages (ps: [ ps.polars ]))
             ];
 
             shellHook = ''
