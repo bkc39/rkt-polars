@@ -3,11 +3,10 @@
                     @; polars re-exports generic min/max that shadow racket/base
                     (except-in racket/base min max)]]
 
-@title[#:tag "top"]{Getting started with rkt-polars}
-@author{bkc}
+@title[#:tag "guide"]{Guide}
 
-This guide is a short tour of @racketmodname[polars], modelled section by
-section on the upstream
+This guide is a short, narrative tour of @racketmodname[polars], modelled
+section by section on the upstream
 @hyperlink["https://docs.pola.rs/user-guide/getting-started/"]{Polars
 getting-started guide}. Every snippet below has a complete, runnable
 counterpart under @tt{user-guide/getting-started/} in the project repository,
@@ -19,11 +18,15 @@ the dev shell:
   python user-guide/getting-started/series_and_dataframes.py
 }|
 
+For the full definition of every binding mentioned here, see the
+@secref["reference"].
+
 @section{Series}
 
 A @deftech{series} is a typed, one-dimensional column. The generic
 @racket[series] constructor infers a dtype from the values, or takes an explicit
-@racket[#:dtype]; @racket[polars-null] marks missing entries.
+@racket[#:dtype]; @racket[polars-null] marks missing entries. A series is a
+wrapper value (@racket[series?]) that prints in Polars' format.
 
 @racketblock[
 (define s (series '(1 2 3 4 5) #:name "a"))
@@ -32,29 +35,36 @@ A @deftech{series} is a typed, one-dimensional column. The generic
 ]
 
 @racket[sum], @racket[min] and @racket[max] preserve the dtype; @racket[mean]
-returns a @racket[float64].
+returns a @racket[float64]. The generic accessors @racket[len], @racket[dtype]
+and @racket[null-count] read a series' length, element dtype and null count.
 
 @section{DataFrames}
 
 A @deftech{dataframe} is a collection of equal-length named series, built with
-@racket[dataframe-new]. gregor datetimes become Polars datetime columns.
+the @racket[dataframe] constructor. It is a wrapper value (@racket[dataframe?])
+that prints as a Polars table, so plain @racket[display] (or @racket[~a]) shows
+it. gregor datetimes become Polars datetime columns.
 
 @racketblock[
 (require gregor)
 (define df
-  (dataframe-new
+  (dataframe
    (list (series (list (datetime 2025 1 1) (datetime 2025 1 2)) #:name "date")
          (series '(1.0 2.0) #:name "float")
          (series '("a" "b") #:name "string"))))
-(display-dataframe df)
+(displayln df)
 ]
 
-View it with @racket[dataframe-shape], @racket[dataframe-head],
-@racket[dataframe-tail], and @racket[describe]. @racket[ref] is the generic
-accessor: a column out of a dataframe, an element out of a series.
+Inspect it with @racket[shape], @racket[height], @racket[width],
+@racket[column-names], and @racket[describe]. @racket[ref] is the generic
+accessor: an element out of a series, a column (or, with a list, a projection)
+out of a dataframe.
 
 @racketblock[
-(ref (ref df "float") 0)
+(shape df)
+(column-names df)
+(ref (ref df #:columns "float") 0)
+(ref df #:columns '("date" "float"))
 ]
 
 @section{Reading & writing}
