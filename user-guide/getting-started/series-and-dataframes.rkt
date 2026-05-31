@@ -13,7 +13,8 @@
 ;; --- Series -------------------------------------------------------------
 ;; The generic `series` constructor infers a dtype from the values, or takes
 ;; an explicit #:dtype.  Use polars-null for missing entries.
-(define s (series '(1 2 3 4 5) #:name "a"))
+;; (#:dtype 'i64 to match Polars' default integer width in the .py version)
+(define s (series '(1 2 3 4 5) #:name "a" #:dtype 'i64))
 
 (displayln "a series:")
 (displayln s)                           ; prints in Polars' format
