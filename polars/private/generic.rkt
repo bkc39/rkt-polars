@@ -11,11 +11,20 @@
 ;; a series prints in the REPL the way Polars prints it.  The underlying pointer
 ;; is deliberately not part of the public series API.
 ;;
+;; The dataframe is exposed the same way: a `dataframe` wrapper struct
+;; (`dataframe?`) with prop:cpointer + a Polars-table prop:custom-write, built by
+;; the smart `dataframe` constructor.
+;;
 ;; Dispatch uses small, purpose-named racket/generic interfaces:
-;;   gen:describable  — (describe x)
-;;   gen:has-ref      — (ref x key)
-;; The series wrapper implements both; the dataframe (still a raw DataFrame-ptr,
-;; pending its own wrapper) is handled via #:defaults keyed on DataFrame-ptr?.
+;;   gen:describable    — (describe x)        series, dataframe
+;;   gen:has-ref        — (ref x [key] #:columns ...)  series, dataframe
+;;   gen:sized          — (len x)             series (#elements), dataframe (height)
+;;   gen:has-shape      — (shape x)           series (n), dataframe (rows cols)
+;;   gen:has-dtype      — (dtype x)           series
+;;   gen:has-null-count — (null-count x)      series
+;; Both wrappers implement the interfaces they have a capability for via
+;; #:methods.  Dataframe-only metadata (width, height, column-name(s)) are plain
+;; guarded functions.
 ;;
 ;; Naming convention: a trailing `!` marks an operation that mutates its
 ;; argument in place (rename!); the un-suffixed form returns a fresh value
@@ -50,30 +59,56 @@
   (require rackunit gregor))
 
 (provide series series? series->string
+         dataframe dataframe?
          describe ref
+         len shape shape/values dtype null-count
+         width height column-name column-names
          gen:describable describable?
          gen:has-ref has-ref?
+         gen:sized sized?
+         gen:has-shape has-shape?
+         gen:has-dtype has-dtype?
+         gen:has-null-count has-null-count?
          sum mean min max
          rename rename! clone series-clone)
 
 ;; ---------------------------------------------------------------------------
 ;; generic interfaces
+;;
+;; Small, purpose-named capability interfaces (per the project's
+;; "name capability generics, not catch-alls" rule).  Some are genuinely
+;; cross-type (a series and a dataframe both have a `len` and a `shape`);
+;; others have a single implementor today but are named so a future type
+;; (e.g. an expression) can join without a rename.
+
+;; sentinel for "argument not supplied" in ref's optional positional/keyword args
+(define unset (gensym 'unset))
 
 ;; describe: print a one-line summary for a series, a shape + per-column dtype
 ;; summary for a dataframe.
 (define-generics describable
-  (describe describable)
-  #:defaults
-  ([DataFrame-ptr?
-    (define (describe d) (describe-dataframe d))]))
+  (describe describable))
 
-;; ref: index a series (returns the element) or a dataframe (returns the named
-;; / indexed column as a wrapped series).  Data-first, so it threads.
+;; ref: index a series (returns the element) or slice columns out of a
+;; dataframe.  Data-first, so it threads.  See series-ref* / dataframe-ref*.
 (define-generics has-ref
-  (ref has-ref key)
-  #:defaults
-  ([DataFrame-ptr?
-    (define (ref d key) (dataframe-ref d key))]))
+  (ref has-ref [key] #:columns [columns] #:rows [rows]))
+
+;; len: number of elements (series) / number of rows (dataframe).
+(define-generics sized
+  (len sized))
+
+;; shape: (values n) for a series, (values rows cols) for a dataframe.
+(define-generics has-shape
+  (shape has-shape))
+
+;; dtype: a series' element dtype (canonical symbol).
+(define-generics has-dtype
+  (dtype has-dtype))
+
+;; null-count: number of null entries in a series.
+(define-generics has-null-count
+  (null-count has-null-count))
 
 ;; ---------------------------------------------------------------------------
 ;; the series wrapper
@@ -89,10 +124,74 @@
   #:methods gen:describable
   [(define (describe s) (describe-series s))]
   #:methods gen:has-ref
-  [(define (ref s key) (series-ref s key))])
+  [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
+     (series-ref* s key columns rows))]
+  #:methods gen:sized
+  [(define (len s) (series-len s))]
+  #:methods gen:has-shape
+  [(define (shape s) (list (series-len s)))]
+  #:methods gen:has-dtype
+  [(define (dtype s) (series-dtype s))]
+  #:methods gen:has-null-count
+  [(define (null-count s) (series-null-count s))])
 
 (define series? series-rec?)
 (define (wrap-series ptr) (series-rec ptr))
+
+;; ---------------------------------------------------------------------------
+;; the dataframe wrapper
+;;
+;; Mirrors the series wrapper: carries prop:cpointer (so it still marshals as a
+;; _DataFrame-ptr through every dataframe-* binding) and prop:custom-write (so a
+;; dataframe prints in Polars' table format under display / ~a, with no need for
+;; a separate display-dataframe).
+
+(struct dataframe-rec (ptr)
+  #:reflection-name 'dataframe
+  #:property prop:cpointer 0
+  #:property prop:custom-write
+  (lambda (d port mode)
+    (write-string (dataframe->string d) port))
+  #:methods gen:describable
+  [(define (describe d) (describe-dataframe d))]
+  #:methods gen:has-ref
+  [(define (ref d [key unset] #:columns [columns unset] #:rows [rows unset])
+     (dataframe-ref* d key columns rows))]
+  #:methods gen:sized
+  [(define (len d) (dataframe-height d))]
+  #:methods gen:has-shape
+  [(define (shape d)
+     (let-values ([(rows cols) (dataframe-shape d)])
+       (list rows cols)))])
+
+(define dataframe? dataframe-rec?)
+(define (wrap-dataframe ptr) (dataframe-rec ptr))
+
+;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
+;; they marshal as _Series-ptr).  Keep the raw dataframe-new as the low-level API.
+(define (dataframe series-list)
+  (wrap-dataframe (dataframe-new series-list)))
+
+;; dataframe-only accessors.  Only one tabular type exists today, so these are
+;; plain functions guarded on dataframe?; promote to a gen:tabular capability if
+;; a second tabular type (e.g. a lazyframe wrapper) appears.
+(define (guard-dataframe who d)
+  (unless (dataframe? d)
+    (error who "expected a dataframe, got ~v" d)))
+
+(define (width d)  (guard-dataframe 'width d)  (dataframe-width d))
+(define (height d) (guard-dataframe 'height d) (dataframe-height d))
+(define (column-name d i)
+  (guard-dataframe 'column-name d)
+  (dataframe-column-name d i))
+(define (column-names d)
+  (guard-dataframe 'column-names d)
+  (dataframe-column-names d))
+
+;; shape returns the dimensions as a list (the list-based interface used in the
+;; examples); shape/values is the multiple-values variant for callers that want
+;; to bind the dimensions positionally with let-values / define-values.
+(define (shape/values x) (apply values (shape x)))
 
 ;; ---------------------------------------------------------------------------
 ;; dtype aliases
@@ -263,12 +362,36 @@
   (for ([nm (in-list (dataframe-column-names d))])
     (printf "  ~a: ~a\n" nm (series-dtype (dataframe-column d nm)))))
 
-(define (dataframe-ref d key)
+;; ref dispatch for a series: positional index only.
+(define (series-ref* s key columns rows)
   (cond
-    [(string? key) (wrap-series (dataframe-column d key))]
-    [(exact-nonnegative-integer? key)
-     (wrap-series (dataframe-column d (dataframe-column-name d key)))]
-    [else (error 'ref "dataframe column key must be a string or index, got ~v" key)]))
+    [(not (eq? columns unset)) (error 'ref "a series has no columns to select")]
+    [(not (eq? rows unset)) (error 'ref "series row slicing not supported")]
+    [(eq? key unset) (error 'ref "ref on a series requires an index")]
+    [else (series-ref s key)]))
+
+;; ref dispatch for a dataframe: column selection (by name or index) via either
+;; a positional key or #:columns.  A single selector returns a wrapped series; a
+;; list of selectors returns a wrapped dataframe (a column-projected slice).
+;; Row slicing (#:rows) is reserved but not yet implemented.
+(define (column->name d c)
+  (cond
+    [(string? c) c]
+    [(exact-nonnegative-integer? c) (dataframe-column-name d c)]
+    [else (error 'ref "dataframe column selector must be a string or index, got ~v" c)]))
+
+(define (dataframe-ref* d key columns rows)
+  (unless (eq? rows unset)
+    (error 'ref "dataframe row slicing not yet implemented"))
+  (define sel
+    (cond
+      [(not (eq? columns unset)) columns]
+      [(not (eq? key unset)) key]
+      [else (error 'ref "ref on a dataframe requires a column key or #:columns")]))
+  (cond
+    [(list? sel)
+     (wrap-dataframe (dataframe-select d (map (lambda (c) (column->name d c)) sel)))]
+    [else (wrap-series (dataframe-column d (column->name d sel)))]))
 
 ;; ---------------------------------------------------------------------------
 ;; clone / rename
@@ -398,7 +521,7 @@
   ;; ref on series and dataframe; df ref returns a wrapped series
   (check-equal? (ref withnull 0) 10)
   (check-equal? (ref withnull 1) polars-null)
-  (define df (dataframe-new (list ints floats)))   ; accepts wrappers
+  (define df (dataframe (list ints floats)))   ; accepts series wrappers
   (check-pred series? (ref df "floats"))
   (check-pred series? (ref df 0))
   (check-equal? (series-name (ref df "floats")) "floats")
@@ -411,4 +534,46 @@
   (check-equal? (series-name original) "orig")  ; untouched
   (check-equal? (series-name renamed) "copy")
   (check-pred void? (rename! original "mutated"))
-  (check-equal? (series-name original) "mutated"))
+  (check-equal? (series-name original) "mutated")
+
+  ;; series capability generics
+  (check-equal? (len floats) 4)
+  (check-equal? (shape floats) '(4))
+  (check-equal? (call-with-values (lambda () (shape/values floats)) list) '(4))
+  (check-equal? (dtype ints) 'int32)
+  (check-equal? (null-count withnull) 1)
+
+  ;; dataframe wrapper
+  (define users (series '("alice" "bob" "carol") #:name "user"))
+  (define sc (series '(10 25 18) #:name "score" #:dtype 'i32))
+  (define cost (series '(1.2 3.5 2.0) #:name "cost"))
+  (define frame (dataframe (list users sc cost)))
+  (check-pred dataframe? frame)
+  (check-false (dataframe? sc))
+
+  ;; shape / len / width / height / column metadata
+  (check-equal? (shape frame) '(3 3))
+  (check-equal? (call-with-values (lambda () (shape/values frame)) list) '(3 3))
+  (check-equal? (len frame) 3)
+  (check-equal? (height frame) 3)
+  (check-equal? (width frame) 3)
+  (check-equal? (column-name frame 0) "user")
+  (check-equal? (column-names frame) '("user" "score" "cost"))
+
+  ;; ref: single column (positional or #:columns) -> series; list -> dataframe
+  (check-pred series? (ref frame "score"))
+  (check-pred series? (ref frame #:columns "score"))
+  (check-pred series? (ref frame #:columns 1))
+  (check-equal? (dtype (ref frame #:columns "score")) 'int32)
+  (define projected (ref frame #:columns '("user" "cost")))
+  (check-pred dataframe? projected)
+  (check-equal? (width projected) 2)
+  (check-equal? (column-names projected) '("user" "cost"))
+
+  ;; row slicing is reserved, not yet implemented
+  (check-exn exn:fail? (lambda () (ref frame #:rows 0)))
+
+  ;; custom-write prints the Polars table; describe works on the wrapper
+  (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame)))
+  (check-pred void? (describe frame))
+  (check-pred void? (describe sc)))
