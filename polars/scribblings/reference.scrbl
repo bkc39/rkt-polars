@@ -102,13 +102,17 @@ renders it with no separate display call.
   series wrappers built with @racket[series]; their names become the column
   names.}
 
-@deftogether[(@defproc[(shape [x has-shape?]) (values exact-nonnegative-integer? ...)]
+@deftogether[(@defproc[(shape [x has-shape?]) (listof exact-nonnegative-integer?)]
+              @defproc[(shape/values [x has-shape?]) (values exact-nonnegative-integer? ...)]
               @defproc[(height [d dataframe?]) exact-nonnegative-integer?]
               @defproc[(width [d dataframe?]) exact-nonnegative-integer?])]{
-  @racket[shape] returns the dimensions: two values @racket[(values rows cols)]
-  for a dataframe, and a single value (the length) for a series.
-  @racket[height] and @racket[width] return the row and column counts of a
-  dataframe; @racket[height] is also @racket[(len d)].}
+  @racket[shape] returns the dimensions as a list — @racket[(list rows cols)] for
+  a dataframe and @racket[(list n)] for a series — mirroring Polars' shape
+  tuples. @racket[shape/values] returns the same dimensions as multiple
+  @racket[values], for callers that want to bind them positionally with
+  @racket[let-values] or @racket[define-values]. @racket[height] and
+  @racket[width] return the row and column counts of a dataframe; @racket[height]
+  is also @racket[(len d)].}
 
 @deftogether[(@defproc[(column-names [d dataframe?]) (listof string?)]
               @defproc[(column-name [d dataframe?] [i exact-nonnegative-integer?]) string?])]{

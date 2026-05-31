@@ -32,8 +32,9 @@
   (dataframe (list users scores costs created-at)))
 
 ;; shape / height / width are generic accessors (no dataframe- prefix needed).
+;; shape returns the dimensions as a list; shape/values is the values variant.
 (printf "shape=~a height=~a width=~a\n"
-        (call-with-values (lambda () (shape df)) cons)
+        (shape df)
         (height df)
         (width df))
 

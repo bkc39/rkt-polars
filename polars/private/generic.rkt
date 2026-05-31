@@ -61,7 +61,7 @@
 (provide series series? series->string
          dataframe dataframe?
          describe ref
-         len shape dtype null-count
+         len shape shape/values dtype null-count
          width height column-name column-names
          gen:describable describable?
          gen:has-ref has-ref?
@@ -129,7 +129,7 @@
   #:methods gen:sized
   [(define (len s) (series-len s))]
   #:methods gen:has-shape
-  [(define (shape s) (series-len s))]
+  [(define (shape s) (list (series-len s)))]
   #:methods gen:has-dtype
   [(define (dtype s) (series-dtype s))]
   #:methods gen:has-null-count
@@ -160,7 +160,9 @@
   #:methods gen:sized
   [(define (len d) (dataframe-height d))]
   #:methods gen:has-shape
-  [(define (shape d) (dataframe-shape d))])
+  [(define (shape d)
+     (let-values ([(rows cols) (dataframe-shape d)])
+       (list rows cols)))])
 
 (define dataframe? dataframe-rec?)
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
@@ -185,6 +187,11 @@
 (define (column-names d)
   (guard-dataframe 'column-names d)
   (dataframe-column-names d))
+
+;; shape returns the dimensions as a list (the list-based interface used in the
+;; examples); shape/values is the multiple-values variant for callers that want
+;; to bind the dimensions positionally with let-values / define-values.
+(define (shape/values x) (apply values (shape x)))
 
 ;; ---------------------------------------------------------------------------
 ;; dtype aliases
@@ -531,7 +538,8 @@
 
   ;; series capability generics
   (check-equal? (len floats) 4)
-  (check-equal? (shape floats) 4)
+  (check-equal? (shape floats) '(4))
+  (check-equal? (call-with-values (lambda () (shape/values floats)) list) '(4))
   (check-equal? (dtype ints) 'int32)
   (check-equal? (null-count withnull) 1)
 
@@ -544,7 +552,8 @@
   (check-false (dataframe? sc))
 
   ;; shape / len / width / height / column metadata
-  (check-equal? (call-with-values (lambda () (shape frame)) list) '(3 3))
+  (check-equal? (shape frame) '(3 3))
+  (check-equal? (call-with-values (lambda () (shape/values frame)) list) '(3 3))
   (check-equal? (len frame) 3)
   (check-equal? (height frame) 3)
   (check-equal? (width frame) 3)
