@@ -37,3 +37,39 @@ pub extern "C" fn series_var(s_ptr: *mut Series, ddof: u8) -> CompatOptF64 {
     let s = unsafe { &*s_ptr };
     CompatOptF64::from_option(s.var(ddof))
 }
+
+// Quantile of a series, computed in f64 (cast first so every numeric dtype is
+// supported uniformly).  `interpol` selects the interpolation strategy; the
+// Racket side defaults to Nearest, which is what `describe` uses.  Returns NONE
+// for an empty/all-null series or a non-numeric dtype.
+#[no_mangle]
+pub extern "C" fn series_quantile(
+    s_ptr: *mut Series,
+    quantile: f64,
+    interpol: u8,
+) -> CompatOptF64 {
+    if s_ptr.is_null() {
+        return CompatOptF64::NONE;
+    }
+    let interpol = match interpol {
+        0 => QuantileInterpolOptions::Nearest,
+        1 => QuantileInterpolOptions::Linear,
+        2 => QuantileInterpolOptions::Lower,
+        3 => QuantileInterpolOptions::Higher,
+        4 => QuantileInterpolOptions::Midpoint,
+        _ => QuantileInterpolOptions::Nearest,
+    };
+    let s = unsafe { &*s_ptr };
+    let casted = match s.cast(&DataType::Float64) {
+        Ok(c) => c,
+        Err(_) => return CompatOptF64::NONE,
+    };
+    let ca = match casted.f64() {
+        Ok(ca) => ca,
+        Err(_) => return CompatOptF64::NONE,
+    };
+    match ca.quantile(quantile, interpol) {
+        Ok(opt) => CompatOptF64::from_option(opt),
+        Err(_) => CompatOptF64::NONE,
+    }
+}

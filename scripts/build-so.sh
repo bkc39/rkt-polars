@@ -74,6 +74,13 @@ else
   if command -v install_name_tool >/dev/null 2>&1; then
     install_name_tool -id "@rpath/$lib" "$dest/$lib"
   fi
+
+  # install_name_tool invalidates the linker's ad-hoc code signature, and on
+  # Apple Silicon an unsigned/mismatched dylib is SIGKILL'd ("Killed: 9") the
+  # moment Racket dlopen()s it.  Re-sign ad-hoc so the committed candidate loads.
+  if command -v codesign >/dev/null 2>&1; then
+    codesign -f -s - "$dest/$lib"
+  fi
 fi
 
 # Sanity: show the dynamic dependencies / glibc floor so a reviewer can
