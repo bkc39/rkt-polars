@@ -127,10 +127,6 @@
 ;; ---------------------------------------------------------------------------
 ;; series: keyword constructor with dtype inference
 
-(define i32-min (- (expt 2 31)))
-(define i32-max (sub1 (expt 2 31)))
-(define (fits-i32? n) (<= i32-min n i32-max))
-
 (define (infer-dtype elements)
   (define vals
     (for/list ([x (in-list (if (vector? elements)
@@ -138,11 +134,12 @@
                                elements))]
                #:unless (polars-null? x))
       x))
+  ;; Defaults mirror Polars' inference for a Python list: integers -> Int64,
+  ;; reals -> Float64, strings -> String, booleans -> Boolean.
   (cond
-    [(null? vals) 'int32]                       ; matches series-empty default
+    [(null? vals) 'int64]
     [(andmap boolean? vals) 'boolean]
-    [(andmap exact-integer? vals)
-     (if (andmap fits-i32? vals) 'int32 'int64)]
+    [(andmap exact-integer? vals) 'int64]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
     [(andmap datetime? vals) 'datetime]
@@ -363,7 +360,7 @@
   ;; dtype inference + alias parity
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'i32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'int32)) 'int32)
-  (check-equal? (series-dtype (series '(1 2 3))) 'int32)
+  (check-equal? (series-dtype (series '(1 2 3))) 'int64)   ; Polars default
   (check-equal? (series-dtype (series '(1.0 2.0))) 'float64)
   (check-equal? (series-dtype (series '("a" "b"))) 'string)
   (check-equal? (series-dtype (series '(#t #f))) 'boolean)
