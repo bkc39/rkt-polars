@@ -1,7 +1,8 @@
 #lang scribble/manual
 @require[@for-label[polars
-                    @; polars re-exports generic min/max that shadow racket/base
-                    (except-in racket/base min max)]]
+                    (only-in threading ~> ~>>)
+                    @; polars re-exports generic ops (min max sum sort filter comparisons) that shadow racket/base
+                    (except-in racket/base min max sort filter > < >= <= =)]]
 
 @title[#:tag "guide"]{Guide}
 
@@ -112,6 +113,41 @@ Expressions (@racket[col], @racket[expr-mul], @racket[expr-sum], @racket[expr-al
  (list (expr-alias (expr-sum (col "value")) "sum_value")
        (expr-alias (expr-count (col "value")) "n")))
 ]
+
+@section[#:tag "method-chaining"]{Method chaining with @racket[~>]}
+
+Polars' Python API reads as a chain of methods:
+
+@verbatim|{
+  df.filter(pl.col("value") > 15)
+    .group_by("group")
+    .agg(pl.col("value").sum().alias("sum_value"))
+}|
+
+The same pipeline reads as a thread-first @racket[~>] chain — re-provided from
+@racketmodname[polars], so @racket[(require polars)] is all you need. Each step
+takes the frame as its first argument, so the frame flows through the chain:
+
+@racketblock[
+(~> df
+    (filter (> (col "value") 15))
+    (group-by "group")
+    (agg (alias (sum (col "value")) "sum_value")))
+]
+
+The comparison operators (@racket[>], @racket[<], @racket[>=], @racket[<=],
+@racket[=], @racket[!=]) are overloaded: they build an @emph{expression} when an
+operand is an expression — @racket[(> (col "value") 15)] — an eager boolean-mask
+series when an operand is a series — @racket[(> (ref df #:columns "value") 15)] —
+and otherwise fall back to the numeric @racketmodname[racket/base] operator, so
+@racket[(> 3 2)] still works. @racket[filter], @racket[sort], @racket[group-by]
+and @racket[agg] are data-first so they thread; @racket[group-by] returns a
+deferred handle that @racket[agg] consumes. Inside @racket[agg], @racket[sum],
+@racket[mean], @racket[min], @racket[max], @racket[count], @racket[first] and
+friends take an expression (or a bare column name) and produce an aggregation,
+matching @tt{col("value").sum()}. See @secref["ref-fluent"] for the full set,
+including the @racket[first]/@racket[last] name clash with
+@racketmodname[racket/list].
 
 @section{Combining DataFrames}
 

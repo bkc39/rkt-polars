@@ -38,8 +38,8 @@
               '';
           };
 
-          # gregor-lib and its non-distribution dependency closure, captured
-          # as unpacked package source trees via a fixed-output derivation
+          # gregor-lib, threading-lib, and their non-distribution dependency
+          # closure, captured as unpacked package source trees via a fixed-output derivation
           # (network is permitted here).  The sandboxed `racket` build below
           # installs these offline, so it never has to reach the package
           # catalog -- which is what made `nix flake check` fail on Linux,
@@ -52,8 +52,9 @@
           # mtimes, so an unpacked tree hashes purely by content and is
           # identical on every platform.
           #
-          # Bump `outputHash` when the gregor/cldr/tzinfo/memoize versions in
-          # the Racket release catalog change; `nix build` prints the new hash
+          # Bump `outputHash` when the gregor/cldr/tzinfo/memoize/threading
+          # versions in the Racket release catalog change, or when a new
+          # runtime dep is added to info.rkt; `nix build` prints the new hash
           # on mismatch.
           racket-deps = pkgs.stdenvNoCC.mkDerivation {
             name = "rkt-polars-racket-deps";
@@ -70,7 +71,8 @@
               export GIT_SSL_CAINFO=$SSL_CERT_FILE
               mkdir -p "$PLTUSERHOME"
 
-              # Resolve and download gregor-lib + its closure (network).  The
+              # Resolve and download the runtime deps from info.rkt
+              # (gregor-lib, threading-lib) + their closure (network).  The
               # closure is whatever this Racket distribution does not already
               # provide, so enumerate it dynamically (below) rather than
               # hard-coding a list that drifts between distributions.
@@ -79,7 +81,7 @@
               # Windows, falling back to the system /usr/share/zoneinfo
               # elsewhere -- but the Nix build sandbox has no system zoneinfo,
               # so we must ship the tzdata package's copy.
-              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata
+              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata threading-lib
 
               mapfile -t deps < <(racket -e \
                 '(require pkg/lib)(for ([p (installed-pkg-names #:scope (quote user))]) (displayln p))')
@@ -102,7 +104,7 @@
 
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-atA4hZLWNvH3Kyrq7dyyC/EKqh0O5p13+vzXKIn9UB4=";
+            outputHash = "sha256-mqqeBKrE6QQ5vaimnSPHpZc2MFWfbhr57cuchvDgw2A=";
           };
 
           racket = pkgs.stdenv.mkDerivation {

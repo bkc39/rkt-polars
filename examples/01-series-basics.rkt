@@ -35,13 +35,13 @@
          (datetime 2024 1 4 10 30 0))
    #:name "timestamps"))
 
-;; `describe` dispatches on its argument: it prints a one-line summary for a
-;; series and a shape + column/dtype summary for a dataframe.
-(describe ints)
-(describe floats)
-(describe strings)
-(describe nullable-scores)
-(describe timestamps)
+;; `describe` mirrors Polars' .describe(): it returns a summary-statistics
+;; dataframe (which prints as a table), with rows adapted to the dtype.
+(displayln (describe ints))
+(displayln (describe floats))
+(displayln (describe strings))
+(displayln (describe nullable-scores))
+(displayln (describe timestamps))
 
 ;; `ref` is the generic element/column accessor: on a series it indexes, on a
 ;; dataframe it selects a column.  Being data-first, it threads cleanly.
@@ -51,7 +51,7 @@
 ;; Mutation uses a trailing `!`.  `rename!` renames in place (matching Polars);
 ;; the un-suffixed `rename` returns a renamed copy via `clone`.
 (rename! ints "ints_renamed")
-(describe ints)
+(displayln (describe ints))
 
 ;; `sum`/`mean`/`min`/`max` dispatch on the series dtype.  `mean` promotes to
 ;; float64, so the mean of an integer series is a flonum.  On non-series

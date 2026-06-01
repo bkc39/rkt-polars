@@ -1135,6 +1135,31 @@
 (define (series-var s #:ddof [ddof 1])
   (compat-opt-f64->datum (series-var/raw s ddof)))
 
+(define-compat series-quantile/raw
+  (_fun _Series-ptr _double _uint8 -> _CompatOptF64)
+  #:c-id series_quantile)
+
+(define (quantile-interpolation->code who interpolation)
+  (case interpolation
+    [(nearest) 0]
+    [(linear) 1]
+    [(lower) 2]
+    [(higher) 3]
+    [(midpoint) 4]
+    [else (error who
+                 "interpolation must be one of 'nearest 'linear 'lower 'higher 'midpoint, got ~v"
+                 interpolation)]))
+
+;; Quantile of a series, computed in f64.  `quantile` is in [0, 1].
+;; `#:interpolation` defaults to 'nearest, matching what describe uses.
+;; Returns a flonum, or polars-null for an empty/all-null or non-numeric series.
+(define (series-quantile s quantile #:interpolation [interpolation 'nearest])
+  (unless (and (real? quantile) (<= 0 quantile 1))
+    (error 'series-quantile "quantile must be a real in [0, 1], got ~v" quantile))
+  (compat-opt-f64->datum
+   (series-quantile/raw s (exact->inexact quantile)
+                        (quantile-interpolation->code 'series-quantile interpolation))))
+
 (define-syntax-parse-rule (define-series-series-op public-name:id rust-id:id)
   (begin
     (define-compat public-name/c

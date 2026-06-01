@@ -47,16 +47,17 @@
 
 (require racket/match
          racket/generic
-         racket/list
+         (except-in racket/list first last)
          racket/string
          (only-in ffi/unsafe prop:cpointer)
          (prefix-in base: racket/base)
-         (only-in gregor datetime?)
+         (only-in gregor datetime? date? ~t)
          polars/private/foreign
+         polars/private/expr
          polars/private/series)
 
 (module+ test
-  (require rackunit gregor))
+  (require rackunit gregor (only-in threading ~>)))
 
 (provide series series? series->string
          dataframe dataframe?
@@ -70,6 +71,10 @@
          gen:has-dtype has-dtype?
          gen:has-null-count has-null-count?
          sum mean min max
+         count n-unique first last median std var alias
+         > < >= <= = !=
+         filter sort
+         group-by agg grouped?
          rename rename! clone series-clone)
 
 ;; ---------------------------------------------------------------------------
@@ -323,44 +328,285 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
-;; sum / mean / min / max are generic: on a series they reduce (dispatching on
-;; dtype); on anything else they fall back to the numeric racket/base
-;; behaviour, so requiring polars does not break (max 1 2 3) or (sum) etc.
+;; sum / mean / min / max are generic across three worlds:
+;;   * a single Expr   -> the corresponding aggregation Expr (expr-sum, …), so
+;;                        (sum (col "value")) reads like Polars' col("value").sum()
+;;   * a single series -> reduce to a scalar (dispatching on dtype)
+;;   * anything else   -> the numeric racket/base behaviour, so requiring polars
+;;                        does not break (max 1 2 3) or (sum) etc.
 
 (define (sum . args)
   (match args
+    [(list (? Expr-ptr? e)) (expr-sum e)]
+    [(list (? string? s)) (expr-sum (col s))]
     [(list (? series? s)) (series-reduce 'sum sum-table s)]
     [_ (apply base:+ args)]))
 
 (define (mean . args)
   (match args
+    [(list (? Expr-ptr? e)) (expr-mean e)]
+    [(list (? string? s)) (expr-mean (col s))]
     [(list (? series? s)) (series-reduce 'mean mean-table s)]
     [(list) (error 'mean "expected at least one argument")]
     [_ (/ (apply base:+ args) (length args))]))
 
 (define (min . args)
   (match args
+    [(list (? Expr-ptr? e)) (expr-min e)]
+    [(list (? string? s)) (expr-min (col s))]
     [(list (? series? s)) (series-reduce 'min min-table s)]
     [_ (apply base:min args)]))
 
 (define (max . args)
   (match args
+    [(list (? Expr-ptr? e)) (expr-max e)]
+    [(list (? string? s)) (expr-max (col s))]
     [(list (? series? s)) (series-reduce 'max max-table s)]
     [_ (apply base:max args)]))
 
+;; --- additional Expr aggregators (Polars col(...).agg() spellings) ----------
+;;
+;; These take an Expr or a bare column name (lifted via col), so both
+;; (count (col "value")) and (count "value") work inside agg.  first / last
+;; additionally keep their racket/list list-accessor behaviour so requiring
+;; polars does not break (first '(1 2 3)).
+
+(define (->agg-expr who x)
+  (cond
+    [(Expr-ptr? x) x]
+    [(string? x) (col x)]
+    [else (error who "expected an Expr or column-name string, got ~v" x)]))
+
+(define (count x)     (expr-count    (->agg-expr 'count x)))
+(define (n-unique x)  (expr-n-unique (->agg-expr 'n-unique x)))
+(define (median x)    (expr-median   (->agg-expr 'median x)))
+(define (std x #:ddof [ddof 1]) (expr-std (->agg-expr 'std x) #:ddof ddof))
+(define (var x #:ddof [ddof 1]) (expr-var (->agg-expr 'var x) #:ddof ddof))
+
+;; first / last: Expr / column-name -> aggregation Expr; list -> list accessor.
+(define (first x)
+  (cond
+    [(Expr-ptr? x) (expr-first x)]
+    [(string? x) (expr-first (col x))]
+    [(pair? x) (car x)]
+    [else (error 'first "expected an Expr, column name, or non-empty list, got ~v" x)]))
+
+(define (last x)
+  (cond
+    [(Expr-ptr? x) (expr-last x)]
+    [(string? x) (expr-last (col x))]
+    [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
+    [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
+
+;; alias: name an Expr (Polars' .alias) — e.g. (alias (sum (col "value")) "total").
+(define (alias e name) (expr-alias e name))
+
+;; --- generic comparison operators -------------------------------------------
+;;
+;; Binary dispatch, mirroring the sum/min/max precedent:
+;;   * an Expr operand -> build a comparison Expr (scalars auto-lifted), so
+;;                        (> (col "value") 15) reads like Polars' col(..) > 15
+;;   * a series operand -> build an eager boolean-mask series by broadcasting the
+;;                        scalar into a constant series of the operand's dtype and
+;;                        running the element-wise series-series op
+;;   * otherwise        -> the numeric racket/base operator (variadic preserved)
+
+;; A constant series of `dt`, length `n`, every slot = `value`.  Reuses the
+;; same dtype->constructor / coerce-elements machinery as the `series` ctor.
+(define (const-series dt n value)
+  (define ctor (dtype->constructor dt #f))
+  (wrap-series (ctor "" (coerce-elements dt (make-list n value)))))
+
+;; The other operand of a series comparison, as a series matching `s`.
+(define (cmp-other s other)
+  (if (series? other) other (const-series (series-dtype s) (series-len s) other)))
+
+;; Each operator: expr builder, series op (series on the left), the reflected
+;; series op (series on the right), and the numeric fallback.
+(define-syntax-rule (define-cmp name expr-op series-op series-op-reflected base-op)
+  (define (name . args)
+    (cond
+      [(andmap base:number? args) (apply base-op args)]
+      [(base:= (length args) 2)
+       (let ([a (base:car args)] [b (base:cadr args)])
+         (cond
+           [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+           [(series? a) (wrap-series (series-op a (cmp-other a b)))]
+           [(series? b) (wrap-series (series-op-reflected b (cmp-other b a)))]
+           [else (apply base-op args)]))]
+      [else (apply base-op args)])))
+
+;; `!=` has no racket/base spelling; fall back to (not (= …)).
+(define (base:!= . args) (base:not (apply base:= args)))
+
+(define-cmp >  expr-gt series-gt series-lt base:>)
+(define-cmp <  expr-lt series-lt series-gt base:<)
+(define-cmp >= expr-ge series-ge series-le base:>=)
+(define-cmp <= expr-le series-le series-ge base:<=)
+(define-cmp =  expr-eq series-eq series-eq base:=)
+(define-cmp != expr-ne series-ne series-ne base:!=)
+
+;; --- data-first frame operations (thread with ~>) ---------------------------
+
+;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
+;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
+(define (filter . args)
+  (match args
+    [(list (? dataframe? d) (? Expr-ptr? pred))
+     (wrap-dataframe (dataframe-filter-expr d pred))]
+    [(list (? dataframe? d) (? series? mask))
+     (wrap-dataframe (dataframe-filter d mask))]
+    [_ (apply base:filter args)]))
+
+;; sort: (sort df names #:descending d) -> dataframe; otherwise racket/base sort.
+;; `names` may be a single column name or a list of names.
+(define (sort x [second unset] #:descending [descending unset])
+  (cond
+    [(dataframe? x)
+     (when (eq? second unset)
+       (error 'sort "sorting a dataframe requires column name(s)"))
+     (wrap-dataframe
+      (dataframe-sort x (if (list? second) second (list second))
+                      #:descending (if (eq? descending unset) #f descending)))]
+    [(eq? second unset)
+     (error 'sort "racket/base sort needs a less-than? procedure")]
+    [else (base:sort x second)]))
+
+;; --- group-by / agg: the deferred, threading-compatible group handle --------
+;;
+;; Rust's LazyGroupBy::agg consumes self, so there is no standalone group handle
+;; to round-trip across the FFI.  `group-by` instead returns a lightweight Racket
+;; struct that just captures the source frame and the key columns (no FFI yet);
+;; `agg` then performs the single folded dataframe-group-by-agg call.  This lets
+;;   (~> df (group-by "group") (agg (sum (col "value"))))
+;; read exactly like df.group_by("group").agg(col("value").sum()).
+(struct grouped (frame keys) #:reflection-name 'grouped)
+
+(define (group-by frame . keys)
+  (when (null? keys)
+    (error 'group-by "needs at least one group key"))
+  (grouped frame keys))
+
+(define (agg g . agg-exprs)
+  (unless (grouped? g)
+    (error 'agg "expected a grouped frame from group-by, got ~v" g))
+  (wrap-dataframe
+   (dataframe-group-by-agg (grouped-frame g) (grouped-keys g) agg-exprs)))
+
 ;; ---------------------------------------------------------------------------
 ;; describe / ref helpers (used by the generic methods above)
+;;
+;; describe mirrors Polars' .describe(): it returns a summary-statistics
+;; *dataframe* (which prints as a table), not a one-line string.  A series'
+;; describe adapts its rows to the dtype — numeric gets the full
+;; count/null_count/mean/std/min/25%/50%/75%/max, boolean drops std and the
+;; quantiles, and other dtypes (string, temporal) keep just
+;; count/null_count/min/max.  A dataframe's describe uses Polars' fixed nine-row
+;; layout for every column, leaving cells a column has no statistic for null.
+
+(define numeric-dtypes
+  '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 float32 float64))
+
+(define (numeric-dtype? dt) (and (symbol? dt) (memq dt numeric-dtypes) #t))
+
+;; The nine statistic labels, in Polars' order.
+(define describe-stat-names
+  '("count" "null_count" "mean" "std" "min" "25%" "50%" "75%" "max"))
+
+;; mean / min / max of a series via the expr engine (works for every dtype,
+;; including string min/max), returned as three values.
+(define (series-mean-min-max s)
+  (define name (series-name s))
+  (define out
+    (dataframe-select-exprs
+     (dataframe-new (list s))
+     (list (expr-alias (expr-mean (col name)) "mean")
+           (expr-alias (expr-min (col name)) "min")
+           (expr-alias (expr-max (col name)) "max"))))
+  (values (series-ref (dataframe-column out "mean") 0)
+          (series-ref (dataframe-column out "min") 0)
+          (series-ref (dataframe-column out "max") 0)))
+
+(define (->f64-or-null v) (if (polars-null? v) v (exact->inexact v)))
+
+;; Render a min/max scalar as a string for the non-numeric describe path.
+;; Strings pass through; gregor temporal values get a clean ISO-ish rendering
+;; instead of their #<datetime …> write form.
+(define (->string-or-null v)
+  (cond
+    [(polars-null? v) v]
+    [(datetime? v) (~t v "yyyy-MM-dd HH:mm:ss")]
+    [(date? v) (~t v "yyyy-MM-dd")]
+    [else (format "~a" v)]))
+
+;; The nine numeric statistics for `s`, all as flonums (or polars-null), in
+;; describe-stat-names order.
+(define (numeric-describe-values s)
+  (define n (series-len s))
+  (define nulls (series-null-count s))
+  (define-values (mean mn mx) (series-mean-min-max s))
+  (list (exact->inexact (- n nulls))
+        (exact->inexact nulls)
+        (->f64-or-null mean)
+        (series-std s)
+        (->f64-or-null mn)
+        (series-quantile s 0.25)
+        (series-quantile s 0.50)
+        (series-quantile s 0.75)
+        (->f64-or-null mx)))
+
+;; Build the two-column (statistic, value) result frame.
+(define (stats-frame names values)
+  (dataframe (list (series names #:name "statistic")
+                   (series values #:name "value"))))
 
 (define (describe-series s)
-  (printf "name=~s len=~a dtype=~a nulls=~a\n"
-          (series-name s) (series-len s)
-          (series-dtype s) (series-null-count s)))
+  (define dt (series-dtype s))
+  (define n (series-len s))
+  (define nulls (series-null-count s))
+  (define count (- n nulls))
+  (cond
+    [(numeric-dtype? dt)
+     (stats-frame describe-stat-names (numeric-describe-values s))]
+    [(eq? dt 'boolean)
+     (define-values (mean mn mx) (series-mean-min-max s))
+     (define (bool->f v) (if (polars-null? v) v (if v 1.0 0.0)))
+     (stats-frame '("count" "null_count" "mean" "min" "max")
+                  (list (exact->inexact count) (exact->inexact nulls)
+                        (->f64-or-null mean) (bool->f mn) (bool->f mx)))]
+    [else
+     (define-values (_mean mn mx) (series-mean-min-max s))
+     (stats-frame '("count" "null_count" "min" "max")
+                  (list (number->string count) (number->string nulls)
+                        (->string-or-null mn) (->string-or-null mx)))]))
+
+;; One value column for a dataframe's describe: always nine rows, with nulls in
+;; the slots the column's dtype has no statistic for.
+(define (describe-column-values s)
+  (define dt (series-dtype s))
+  (define n (series-len s))
+  (define nulls (series-null-count s))
+  (define count (- n nulls))
+  (cond
+    [(numeric-dtype? dt) (numeric-describe-values s)]
+    [(eq? dt 'boolean)
+     (define-values (mean mn mx) (series-mean-min-max s))
+     (define (bool->f v) (if (polars-null? v) v (if v 1.0 0.0)))
+     (list (exact->inexact count) (exact->inexact nulls) (->f64-or-null mean)
+           polars-null (bool->f mn) polars-null polars-null polars-null (bool->f mx))]
+    [else
+     (define-values (_mean mn mx) (series-mean-min-max s))
+     (list (number->string count) (number->string nulls)
+           polars-null polars-null (->string-or-null mn)
+           polars-null polars-null polars-null (->string-or-null mx))]))
 
 (define (describe-dataframe d)
-  (define-values (rows cols) (dataframe-shape d))
-  (printf "DataFrame shape=(~a ~a)\n" rows cols)
-  (for ([nm (in-list (dataframe-column-names d))])
-    (printf "  ~a: ~a\n" nm (series-dtype (dataframe-column d nm)))))
+  (define names (dataframe-column-names d))
+  (define value-cols
+    (for/list ([nm (in-list names)])
+      (series (describe-column-values (wrap-series (dataframe-column d nm)))
+              #:name nm)))
+  (dataframe (cons (series describe-stat-names #:name "statistic") value-cols)))
 
 ;; ref dispatch for a series: positional index only.
 (define (series-ref* s key columns rows)
@@ -573,7 +819,93 @@
   ;; row slicing is reserved, not yet implemented
   (check-exn exn:fail? (lambda () (ref frame #:rows 0)))
 
-  ;; custom-write prints the Polars table; describe works on the wrapper
+  ;; custom-write prints the Polars table
   (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame)))
-  (check-pred void? (describe frame))
-  (check-pred void? (describe sc)))
+
+  ;; describe returns a Polars-style stats dataframe (matching .describe())
+  (define sc-desc (describe sc))             ; sc = i32 '(10 25 18)
+  (check-pred dataframe? sc-desc)
+  (check-equal? (column-names sc-desc) '("statistic" "value"))
+  (check-equal? (height sc-desc) 9)          ; numeric -> 9 rows
+  (check-equal? (ref (ref sc-desc #:columns "statistic") 0) "count")
+  (check-equal? (ref (ref sc-desc #:columns "value") 0) 3.0)   ; count
+  (check-equal? (ref (ref sc-desc #:columns "value") 4) 10.0)  ; min
+  (check-equal? (ref (ref sc-desc #:columns "value") 8) 25.0)  ; max
+
+  (define fr-desc (describe frame))          ; user(str) score(i32) cost(f64)
+  (check-pred dataframe? fr-desc)
+  (check-equal? (height fr-desc) 9)          ; fixed nine-row layout
+  (check-equal? (column-names fr-desc) '("statistic" "user" "score" "cost"))
+  (check-equal? (ref (ref fr-desc #:columns "user") 0) "3")       ; string count
+  (check-equal? (ref (ref fr-desc #:columns "user") 4) "alice")   ; string min
+  (check-equal? (ref (ref fr-desc #:columns "user") 8) "carol")   ; string max
+  (check-pred polars-null? (ref (ref fr-desc #:columns "user") 2)) ; mean -> null
+  (check-equal? (ref (ref fr-desc #:columns "score") 4) 10.0)     ; numeric min
+
+  ;; --- fluent / threading-compatible API -----------------------------------
+
+  (define ops-df
+    (dataframe (list (series '("a" "a" "b" "b" "c") #:name "group")
+                     (series '(10 25 7 30 18) #:name "value" #:dtype 'i32)
+                     (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
+
+  ;; comparison operators dispatch three ways
+  ;;  * Expr operand -> a comparison Expr
+  (check-pred Expr-ptr? (> (col "value") 15))
+  (check-pred Expr-ptr? (< 15 (col "value")))
+  (check-pred Expr-ptr? (= (col "group") "a"))
+  ;;  * series operand -> an eager boolean mask (works on int64, the default)
+  (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64
+  (define mask (> v64 15))
+  (check-pred series? mask)
+  (check-equal? (dtype mask) 'boolean)
+  (check-equal? (for/list ([i (in-range (len mask))]) (ref mask i))
+                '(#f #t #f #t #t))
+  ;; series on the right reflects the comparison
+  (check-equal? (for/list ([i (in-range 5)]) (ref (< 15 v64) i))
+                '(#f #t #f #t #t))
+  ;;  * numbers -> racket/base behaviour (variadic preserved)
+  (check-equal? (> 3 2) #t)
+  (check-equal? (< 1 2 3) #t)
+  (check-equal? (= 2 2) #t)
+  (check-equal? (!= 2 3) #t)
+  (check-equal? (!= 2 2) #f)
+
+  ;; filter: Expr predicate, mask series, and racket/base fallback
+  (check-equal? (height (filter ops-df (> (col "value") 15))) 3)
+  (check-equal? (height (filter ops-df mask)) 3)
+  (check-equal? (filter even? '(1 2 3 4)) '(2 4))
+
+  ;; sort: dataframe (multi-key, descending list) and racket/base fallback
+  (define sorted (sort ops-df '("group" "value") #:descending '(#f #t)))
+  (check-pred dataframe? sorted)
+  (check-equal? (ref (ref sorted #:columns "value") 0) 25)   ; a, value desc
+  (check-equal? (sort '(3 1 2) <) '(1 2 3))
+
+  ;; group-by + agg: deferred handle threads, agg performs the single FFI call
+  (check-pred grouped? (group-by ops-df "group"))
+  (define rolled
+    (~> ops-df
+        (group-by "group")
+        (agg (alias (sum (col "value")) "sum_value")
+             (alias (count (col "value")) "n"))))
+  (check-pred dataframe? rolled)
+  (check-equal? (height rolled) 3)
+  (check-equal? (sort (column-names rolled) string<?) '("group" "n" "sum_value"))
+  ;; per-group sums: a=35, b=37, c=18 (group order is not guaranteed)
+  (define (group-sum g)
+    (for/first ([i (in-range (height rolled))]
+                #:when (string=? (ref (ref rolled #:columns "group") i) g))
+      (ref (ref rolled #:columns "sum_value") i)))
+  (check-equal? (group-sum "a") 35)
+  (check-equal? (group-sum "b") 37)
+  (check-equal? (group-sum "c") 18)
+
+  ;; Expr aggregators accept a bare column name too
+  (check-pred Expr-ptr? (sum "value"))
+  (check-pred Expr-ptr? (mean (col "value")))
+  (check-pred Expr-ptr? (n-unique "group"))
+  ;; first / last keep their list-accessor behaviour
+  (check-equal? (first '(1 2 3)) 1)
+  (check-equal? (last '(1 2 3)) 3)
+  (check-pred Expr-ptr? (first (col "value"))))
