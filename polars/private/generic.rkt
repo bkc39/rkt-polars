@@ -75,6 +75,7 @@
          count n-unique first last median std var alias
          > < >= <= = !=
          filter sort
+         head tail slice reverse unique drop-nulls
          group-by agg grouped?
          rename rename! clone series-clone
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]))
@@ -389,7 +390,10 @@
     [else (error who "expected an Expr or column-name string, got ~v" x)]))
 
 (define (count x)     (expr-count    (->agg-expr 'count x)))
-(define (n-unique x)  (expr-n-unique (->agg-expr 'n-unique x)))
+;; n-unique: eager count on a series; otherwise an aggregation Expr.
+(define (n-unique x)
+  (cond [(series? x) (series-n-unique x)]
+        [else (expr-n-unique (->agg-expr 'n-unique x))]))
 (define (median x)    (expr-median   (->agg-expr 'median x)))
 (define (std x #:ddof [ddof 1]) (expr-std (->agg-expr 'std x) #:ddof ddof))
 (define (var x #:ddof [ddof 1]) (expr-var (->agg-expr 'var x) #:ddof ddof))
@@ -517,8 +521,8 @@
      (wrap-dataframe (dataframe-filter d mask))]
     [_ (apply base:filter args)]))
 
-;; sort: (sort df names #:descending d) -> dataframe; otherwise racket/base sort.
-;; `names` may be a single column name or a list of names.
+;; sort: (sort df names #:descending d) -> dataframe; (sort series #:descending d)
+;; -> series; otherwise racket/base sort.  `names` may be one name or a list.
 (define (sort x [second unset] #:descending [descending unset])
   (cond
     [(dataframe? x)
@@ -527,9 +531,50 @@
      (wrap-dataframe
       (dataframe-sort x (if (list? second) second (list second))
                       #:descending (if (eq? descending unset) #f descending)))]
+    [(series? x)
+     (wrap-series
+      (series-sort x #:descending (if (eq? descending unset) #f descending)))]
     [(eq? second unset)
      (error 'sort "racket/base sort needs a less-than? procedure")]
     [else (base:sort x second)]))
+
+;; --- generic reshaping verbs (data-first, thread with ~>) -------------------
+;;
+;; head / tail / slice / unique / drop-nulls dispatch on a series or a
+;; dataframe.  reverse is series-only with a racket/base list fallback (there is
+;; no dataframe-reverse FFI), so requiring polars still leaves (reverse '(1 2 3))
+;; working.  Being data-first, all thread: (~> s (head 3) sum).
+
+(define (head x n)
+  (cond [(series? x)    (wrap-series    (series-head x n))]
+        [(dataframe? x) (wrap-dataframe (dataframe-head x n))]
+        [else (error 'head "expected a series or dataframe, got ~v" x)]))
+
+(define (tail x n)
+  (cond [(series? x)    (wrap-series    (series-tail x n))]
+        [(dataframe? x) (wrap-dataframe (dataframe-tail x n))]
+        [else (error 'tail "expected a series or dataframe, got ~v" x)]))
+
+(define (slice x offset length)
+  (cond [(series? x)    (wrap-series    (series-slice x offset length))]
+        [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
+        [else (error 'slice "expected a series or dataframe, got ~v" x)]))
+
+(define (unique x)
+  (cond [(series? x)    (wrap-series    (series-unique x))]
+        [(dataframe? x) (wrap-dataframe (dataframe-unique x))]
+        [else (error 'unique "expected a series or dataframe, got ~v" x)]))
+
+(define (drop-nulls x)
+  (cond [(series? x)    (wrap-series    (series-drop-nulls x))]
+        [(dataframe? x) (wrap-dataframe (dataframe-drop-nulls x))]
+        [else (error 'drop-nulls "expected a series or dataframe, got ~v" x)]))
+
+;; reverse shadows racket/base reverse; series -> reversed series, list -> base.
+(define (reverse x)
+  (cond [(series? x) (wrap-series (series-reverse x))]
+        [(list? x)   (base:reverse x)]
+        [else (error 'reverse "expected a series or list, got ~v" x)]))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 ;;
@@ -1024,4 +1069,25 @@
   (check-equal? (mask->list (p-or  m1 m2)) '(#t #t #t #t #t))
   (check-equal? (mask->list (p-not m1))    '(#t #f #t #f #f))
   (check-equal? (mask->list (p-xor m1 m2)) '(#t #t #t #t #f))
-  (check-equal? (height (filter ops-df (p-and m1 m2))) 1))
+  (check-equal? (height (filter ops-df (p-and m1 m2))) 1)
+
+  ;; --- reshaping verbs (series + dataframe) ---------------------------------
+  ;; series paths, observed via element lists / len / reductions
+  (check-equal? (mask->list (head v64 3)) '(10 25 7))
+  (check-equal? (mask->list (tail v64 2)) '(30 18))
+  (check-equal? (mask->list (slice v64 1 2)) '(25 7))
+  (check-equal? (mask->list (reverse v64)) '(18 30 7 25 10))
+  (check-equal? (min (head (sort v64) 1)) 7)               ; ascending, first
+  (check-equal? (max (head (sort v64 #:descending #t) 1)) 30)
+  (define dups (series '(1 1 2 3 3 3) #:dtype 'i32))
+  (check-equal? (len (unique dups)) 3)
+  (check-equal? (n-unique dups) 3)                         ; eager series n-unique
+  (define wn (series (list 1 polars-null 3) #:dtype 'i32))
+  (check-equal? (len (drop-nulls wn)) 2)
+  (check-equal? (reverse '(1 2 3)) '(3 2 1))               ; list fallback intact
+  ;; dataframe paths, observed via height
+  (check-equal? (height (head ops-df 2)) 2)
+  (check-equal? (height (tail ops-df 2)) 2)
+  (check-equal? (height (slice ops-df 1 3)) 3)
+  (check-equal? (height (drop-nulls ops-df)) 5)            ; no nulls
+  (check-equal? (height (unique ops-df)) 5))               ; all rows distinct

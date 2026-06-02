@@ -1,43 +1,41 @@
 #lang racket/base
 
-;; Series reshaping — head/tail/slice/reverse/unique/sort/drop-nulls.
+;; Series reshaping — head / tail / slice / reverse / unique / sort / drop-nulls.
+;; All prefix-free and data-first, so each reshaping step threads with `~>`:
+;;   s.head(3).sum()   ->  (~> founded (head 3) sum)
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/07-reshaping.rkt
 
-(require racket/file
-         polars)
+(require polars)
 
 (define df
-  (dataframe-new
-   (list (series-new-str "city" '("Boston" "New York" "Chicago" "Houston"
-                                  "Phoenix" "Philadelphia" "San Antonio"
-                                  "San Diego"))
-         (series-new-i32 "founded" '(1630 1624 1837 1837 1881 1682 1718 1769)))))
+  (dataframe
+   (list (series '("Boston" "New York" "Chicago" "Houston"
+                   "Phoenix" "Philadelphia" "San Antonio" "San Diego")
+                 #:name "city")
+         (series '(1630 1624 1837 1837 1881 1682 1718 1769)
+                 #:name "founded" #:dtype 'i32))))
 
 (displayln "input:")
-(display-dataframe df)
+(displayln df)
 (newline)
 
-(define founded (dataframe-column df "founded"))
+(define founded (ref df #:columns "founded"))
 
-(printf "founded head 3 sum: ~a\n" (series-sum-i32 (series-head founded 3)))
-(printf "founded tail 3 sum: ~a\n" (series-sum-i32 (series-tail founded 3)))
-(printf "founded slice (offset=2 length=3) sum: ~a\n"
-        (series-sum-i32 (series-slice founded 2 3)))
-(printf "founded reverse first: ~a\n"
-        (series-min-i32 (series-head (series-reverse founded) 1)))
-(printf "founded n_unique: ~a\n" (series-n-unique founded))
-(printf "founded unique len: ~a\n" (series-len (series-unique founded)))
+(printf "founded head 3 sum: ~a\n"                    (~> founded (head 3) sum))
+(printf "founded tail 3 sum: ~a\n"                    (~> founded (tail 3) sum))
+(printf "founded slice (offset=2 length=3) sum: ~a\n" (~> founded (slice 2 3) sum))
+(printf "founded reverse first: ~a\n"                 (~> founded reverse (head 1) min))
+(printf "founded n_unique: ~a\n"                      (n-unique founded))
+(printf "founded unique len: ~a\n"                    (~> founded unique len))
 (newline)
 
 ;; Sort: ascending then descending
-(define sorted-asc  (series-sort founded))
-(define sorted-desc (series-sort founded #:descending #t))
 (printf "earliest founded: ~a (sort ascending, head 1 min)\n"
-        (series-min-i32 (series-head sorted-asc 1)))
+        (~> founded sort (head 1) min))
 (printf "latest founded:   ~a (sort descending, head 1 max)\n"
-        (series-max-i32 (series-head sorted-desc 1)))
+        (~> founded (sort #:descending #t) (head 1) max))
 
 ;; drop-nulls: round-trip a CSV with an empty cell to demonstrate.
 (define csv-path (build-path (find-system-path 'temp-dir)
@@ -49,10 +47,9 @@
     (displayln "bob,")
     (displayln "carol,30")))
 
-(define csv-df (dataframe-read-csv csv-path))
-(define score (dataframe-column csv-df "score"))
+(define score (ref (read-csv csv-path) #:columns "score"))
 (printf "\nscore from csv (with one empty cell):\n")
-(printf "  series-len:        ~a\n" (series-len score))
-(printf "  series-null-count: ~a\n" (series-null-count score))
-(printf "  after drop-nulls:  ~a\n" (series-len (series-drop-nulls score)))
+(printf "  len:        ~a\n" (len score))
+(printf "  null-count: ~a\n" (null-count score))
+(printf "  drop-nulls: ~a\n" (~> score drop-nulls len))
 (delete-file csv-path)
