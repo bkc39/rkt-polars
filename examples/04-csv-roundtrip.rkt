@@ -2,30 +2,33 @@
 
 ;; Mirror of rust/examples/04_csv_roundtrip.rs.
 ;;
+;; Build a frame with the smart `series`/`dataframe` constructors (example 02),
+;; write it to CSV, read it back, and inspect the round-tripped frame with the
+;; prefix-free UX vocabulary (`write-csv`, `read-csv`, `shape/values`,
+;; `column-names`) — the same style as example 03.  All come from `(require polars)`.
+;;
 ;; Inside `nix develop`:
 ;;   racket examples/04-csv-roundtrip.rkt
 
-(require racket/file
-         polars)
+(require polars)
 
 (define original
-  (dataframe-new
-   (list (series-new-str "city" '("Boston" "New York" "Chicago"))
-         (series-new-f64 "population_millions" '(0.65 8.8 2.7))
-         (series-new-i32 "founded" '(1630 1624 1837)))))
+  (dataframe
+   (list (series '("Boston" "New York" "Chicago") #:name "city")
+         (series '(0.65 8.8 2.7)                  #:name "population_millions")
+         (series '(1630 1624 1837)                #:name "founded" #:dtype 'i32))))
 
 (define csv-path
   (build-path (find-system-path 'temp-dir) "rkt-polars-example.csv"))
 
-(dataframe-write-csv original csv-path)
-
-(define roundtrip (dataframe-read-csv csv-path))
+(write-csv original csv-path)
+(define roundtrip (read-csv csv-path))
 
 (printf "wrote csv to ~a\n" csv-path)
-(printf "roundtrip shape=~a\n"
-        (call-with-values (lambda () (dataframe-shape roundtrip)) cons))
-(printf "roundtrip columns=~a\n"
-        (for/list ([i (in-range (dataframe-width roundtrip))])
-          (dataframe-column-name roundtrip i)))
+
+(define-values (rows cols) (shape/values roundtrip))
+(printf "roundtrip shape=(~a, ~a)\n" rows cols)
+(printf "roundtrip columns=~a\n" (column-names roundtrip))
+
 (displayln "roundtrip:")
-(display-dataframe roundtrip)
+(displayln roundtrip)

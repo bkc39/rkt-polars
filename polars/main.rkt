@@ -4,7 +4,14 @@
          polars/private/foreign
          polars/private/generic
          polars/private/series
-         (only-in threading ~> ~>> lambda~> lambda~>>))
+         (only-in threading ~> ~>> lambda~> lambda~>>)
+         ;; generic exports its dispatching and/or/not/xor via `rename-out`, and
+         ;; `all-from-out` below silently drops those (they collide with this
+         ;; module language's own racket/base `and`/`or`/`not`).  Pull them in
+         ;; under private aliases so we can re-export them explicitly.
+         (only-in polars/private/generic
+                  [and polars:and] [or polars:or]
+                  [not polars:not] [xor polars:xor]))
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -13,4 +20,6 @@
          (all-from-out polars/private/foreign)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
-         ~> ~>> lambda~> lambda~>>)
+         ~> ~>> lambda~> lambda~>>
+         (rename-out [polars:and and] [polars:or or]
+                     [polars:not not] [polars:xor xor]))

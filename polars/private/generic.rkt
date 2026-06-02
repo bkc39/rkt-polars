@@ -57,13 +57,14 @@
          polars/private/series)
 
 (module+ test
-  (require rackunit gregor (only-in threading ~>)))
+  (require rackunit gregor racket/file (only-in threading ~>)))
 
 (provide series series? series->string
          dataframe dataframe?
          describe ref
          len shape shape/values dtype null-count
          width height column-name column-names
+         write-csv read-csv
          gen:describable describable?
          gen:has-ref has-ref?
          gen:sized sized?
@@ -75,7 +76,8 @@
          > < >= <= = !=
          filter sort
          group-by agg grouped?
-         rename rename! clone series-clone)
+         rename rename! clone series-clone
+         (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]))
 
 ;; ---------------------------------------------------------------------------
 ;; generic interfaces
@@ -192,6 +194,15 @@
 (define (column-names d)
   (guard-dataframe 'column-names d)
   (dataframe-column-names d))
+
+;; csv round-trip, prefix-free (Polars' df.write_csv / pl.read_csv).  write-csv
+;; guards + delegates like the other dataframe-only accessors; read-csv is a
+;; constructor, so it wraps the raw frame the way `dataframe` wraps dataframe-new.
+(define (write-csv d path)
+  (guard-dataframe 'write-csv d)
+  (dataframe-write-csv d path))
+(define (read-csv path)
+  (wrap-dataframe (dataframe-read-csv path)))
 
 ;; shape returns the dimensions as a list (the list-based interface used in the
 ;; examples); shape/values is the multiple-values variant for callers that want
@@ -445,6 +456,54 @@
 (define-cmp <= expr-le series-le series-ge base:<=)
 (define-cmp =  expr-eq series-eq series-eq base:=)
 (define-cmp != expr-ne series-ne series-ne base:!=)
+
+;; --- generic boolean / logical operators ------------------------------------
+;;
+;; Same dispatch idea as the comparison operators, for and / or / not / xor:
+;;   * an Expr operand -> build the combined Expr (scalars auto-lifted by expr-*)
+;;   * a series operand -> combine the eager boolean-mask series
+;;   * otherwise        -> racket/base boolean behaviour
+;;
+;; `and` / `or` are short-circuit *macros* in racket/base, so they stay macros
+;; here: the boolean path keeps racket's laziness, and only an Expr/series
+;; operand routes into the eager combiners.  `not` / `xor` are strict, so they
+;; are plain functions like the comparison operators.  All four are defined under
+;; internal names and exposed via `rename-out`, leaving the module's own use of
+;; and/or/not untouched.
+
+;; Runtime combiners for the Expr/series path (used by the and/or macros).
+(define (combine-and a b)
+  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b) (wrap-series (series-and a b))))
+(define (combine-or a b)
+  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)  (wrap-series (series-or a b))))
+
+(define-syntax p-and
+  (syntax-rules ()
+    [(_)         #t]
+    [(_ e)       e]
+    [(_ e0 e ...) (let ([v e0])
+                    (if (or (Expr-ptr? v) (series? v))
+                        (combine-and v (p-and e ...))   ; predicate build (eager)
+                        (if v (p-and e ...) v)))]))      ; booleans: racket `and`
+
+(define-syntax p-or
+  (syntax-rules ()
+    [(_)         #f]
+    [(_ e)       e]
+    [(_ e0 e ...) (let ([v e0])
+                    (if (or (Expr-ptr? v) (series? v))
+                        (combine-or v (p-or e ...))
+                        (if v v (p-or e ...))))]))        ; booleans: racket `or`
+
+(define (p-not x)
+  (cond [(Expr-ptr? x) (expr-not x)]
+        [(series? x)   (wrap-series (series-not x))]
+        [else          (base:not x)]))
+
+(define (p-xor a b)
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
+        [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
+        [else (and (or a b) (not (and a b)))]))   ; boolean xor
 
 ;; --- data-first frame operations (thread with ~>) ---------------------------
 
@@ -806,6 +865,15 @@
   (check-equal? (column-name frame 0) "user")
   (check-equal? (column-names frame) '("user" "score" "cost"))
 
+  ;; csv round-trip: write-csv -> read-csv preserves shape + column names
+  (define csv-tmp (make-temporary-file "rkt-polars-test-~a.csv"))
+  (write-csv frame csv-tmp)
+  (define frame-rt (read-csv csv-tmp))
+  (check-pred dataframe? frame-rt)
+  (check-equal? (shape frame-rt) '(3 3))
+  (check-equal? (column-names frame-rt) '("user" "score" "cost"))
+  (delete-file csv-tmp)
+
   ;; ref: single column (positional or #:columns) -> series; list -> dataframe
   (check-pred series? (ref frame "score"))
   (check-pred series? (ref frame #:columns "score"))
@@ -908,4 +976,52 @@
   ;; first / last keep their list-accessor behaviour
   (check-equal? (first '(1 2 3)) 1)
   (check-equal? (last '(1 2 3)) 3)
-  (check-pred Expr-ptr? (first (col "value"))))
+  (check-pred Expr-ptr? (first (col "value")))
+
+  ;; --- boolean / logical operators (provided as and / or / not / xor) -------
+  ;; Tested by behaviour only: evaluated values, short-circuit via no-raise,
+  ;; filter row counts, and produced mask element lists.  (Inside this module
+  ;; the bare names are racket's, so we exercise the internal p-* names.)
+
+  ;; plain-boolean values + short-circuit (and / or are short-circuit macros)
+  (check-equal? (p-and #t #f) #f)
+  (check-equal? (p-and 1 2 3) 3)
+  (check-equal? (p-and) #t)
+  (check-equal? (p-or #f 5) 5)
+  (check-equal? (p-or #f #f) #f)
+  (check-equal? (p-or) #f)
+  (check-not-exn (lambda () (p-and #f (error "boom"))))   ; tail not evaluated
+  (check-equal? (p-or 1 (error "boom")) 1)
+  (check-equal? (p-and #t #f (error "boom")) #f)          ; variadic short-circuit
+  ;; laziness is real: the skipped branch must not run its side effect
+  (define ran (box #f))
+  (check-equal? (p-and #f (begin (set-box! ran #t) #t)) #f)
+  (check-false (unbox ran))
+  (check-true (p-and #t (begin (set-box! ran #t) #t)))
+  (check-true (unbox ran))
+
+  ;; not / xor plain-boolean values
+  (check-equal? (p-not #f) #t)
+  (check-equal? (p-not 5) #f)
+  (check-equal? (p-xor #t #f) #t)
+  (check-equal? (p-xor #t #t) #f)
+  (check-equal? (p-xor #f #f) #f)
+
+  ;; Expr predicates — observed through filter row counts
+  (check-equal? (height (filter ops-df (p-and (>= (col "value") 10)
+                                              (<= (col "value") 25)))) 3)
+  (check-equal? (height (filter ops-df (p-and (> (col "value") 15)
+                                              (= (col "group") "a")))) 1)
+  (check-equal? (height (filter ops-df (p-or (= (col "group") "a")
+                                             (= (col "group") "c")))) 3)
+  (check-equal? (height (filter ops-df (p-not (= (col "group") "a")))) 3)
+
+  ;; series masks — observed through produced element values + filter
+  (define m1 (> v64 15))   ; v64 = (10 25 7 30 18)
+  (define m2 (< v64 20))
+  (define (mask->list m) (for/list ([i (in-range (len m))]) (ref m i)))
+  (check-equal? (mask->list (p-and m1 m2)) '(#f #f #f #f #t))
+  (check-equal? (mask->list (p-or  m1 m2)) '(#t #t #t #t #t))
+  (check-equal? (mask->list (p-not m1))    '(#t #f #t #f #f))
+  (check-equal? (mask->list (p-xor m1 m2)) '(#t #t #t #t #f))
+  (check-equal? (height (filter ops-df (p-and m1 m2))) 1))
