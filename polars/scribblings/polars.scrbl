@@ -1,7 +1,8 @@
 #lang scribble/manual
 @require[@for-label[polars
-                    @; polars re-exports generic ops (min max sum sort filter comparisons) that shadow racket/base
-                    (except-in racket/base min max sort filter > < >= <= =)]]
+                    @; polars re-exports generic ops (min max sum sort filter comparisons,
+                    @; logical and/or/not, reverse) that shadow racket/base
+                    (except-in racket/base min max sort filter reverse and or not > < >= <= =)]]
 
 @title{Polars: Racket bindings to Polars}
 @author{bkc}

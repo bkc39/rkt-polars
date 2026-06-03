@@ -1,8 +1,9 @@
 #lang scribble/manual
 @require[@for-label[polars
                     (only-in threading ~> ~>>)
-                    @; polars re-exports generic ops (min max sum sort filter comparisons) that shadow racket/base
-                    (except-in racket/base min max sort filter > < >= <= =)]]
+                    @; polars re-exports generic ops (min max sum sort filter comparisons,
+                    @; logical and/or/not, reverse) that shadow racket/base
+                    (except-in racket/base min max sort filter reverse and or not > < >= <= =)]]
 
 @title[#:tag "guide"]{Guide}
 
@@ -64,7 +65,7 @@ out of a dataframe.
 @racketblock[
 (shape df)
 (column-names df)
-(ref (ref df #:columns "float") 0)
+(~> df (ref #:columns "float") (ref 0))
 (ref df #:columns '("date" "float"))
 ]
 
