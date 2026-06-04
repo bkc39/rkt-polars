@@ -11,7 +11,9 @@
          ;; under private aliases so we can re-export them explicitly.
          (only-in polars/private/generic
                   [and polars:and] [or polars:or]
-                  [not polars:not] [xor polars:xor]))
+                  [not polars:not] [xor polars:xor]
+                  [+ polars:+] [- polars:-] [* polars:*] [/ polars:/]
+                  [when polars:when]))
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -22,4 +24,6 @@
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
          (rename-out [polars:and and] [polars:or or]
-                     [polars:not not] [polars:xor xor]))
+                     [polars:not not] [polars:xor xor]
+                     [polars:+ +] [polars:- -] [polars:* *] [polars:/ /]
+                     [polars:when when]))

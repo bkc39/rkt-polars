@@ -47,7 +47,8 @@
 
 (require racket/match
          racket/generic
-         (except-in racket/list first last)
+         (except-in racket/list first last drop)
+         (only-in racket/list [drop list-drop])
          racket/string
          (only-in ffi/unsafe prop:cpointer)
          (prefix-in base: racket/base)
@@ -76,9 +77,12 @@
          > < >= <= = !=
          filter sort
          head tail slice reverse unique drop-nulls
+         select drop with-column
          group-by agg grouped?
          rename rename! clone series-clone
-         (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]))
+         then otherwise
+         (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
+                     [p+ +] [p- -] [p* *] [p/ /] [p-when when]))
 
 ;; ---------------------------------------------------------------------------
 ;; generic interfaces
@@ -461,6 +465,37 @@
 (define-cmp =  expr-eq series-eq series-eq base:=)
 (define-cmp != expr-ne series-ne series-ne base:!=)
 
+;; --- generic arithmetic operators -------------------------------------------
+;;
+;; Same dispatch as the comparison operators: an Expr operand builds an
+;; arithmetic Expr (scalars auto-lifted by expr-*), a series operand does eager
+;; elementwise arithmetic (broadcasting a scalar via const-series), and
+;; otherwise the racket/base numeric operator (variadic), so requiring polars
+;; leaves (+ 1 2 3), (* 2 3), etc. unchanged.  Defined under p+/p-/p*/p/ and
+;; exposed via rename-out so the module's own arithmetic stays racket/base.
+
+(define (binary-arith expr-op series-op base-op a b)
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+        [(series? a) (wrap-series (series-op a (cmp-other a b)))]
+        [(series? b) (wrap-series (series-op (cmp-other b a) b))]
+        [else (base-op a b)]))
+
+(define-syntax-rule (define-arith name expr-op series-op base-op)
+  (define (name . args)
+    (cond
+      [(andmap base:number? args) (apply base-op args)]   ; numeric fast path
+      [(null? args) (base-op)]
+      [(null? (cdr args))
+       (let ([a (car args)])
+         (if (or (Expr-ptr? a) (series? a)) a (base-op a)))]
+      [else (foldl (lambda (b acc) (binary-arith expr-op series-op base-op acc b))
+                   (car args) (cdr args))])))
+
+(define-arith p+ expr-add series-add base:+)
+(define-arith p- expr-sub series-sub base:-)
+(define-arith p* expr-mul series-mul base:*)
+(define-arith p/ expr-div series-div base:/)
+
 ;; --- generic boolean / logical operators ------------------------------------
 ;;
 ;; Same dispatch idea as the comparison operators, for and / or / not / xor:
@@ -508,6 +543,32 @@
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
         [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
         [else (and (or a b) (not (and a b)))]))   ; boolean xor
+
+;; --- when / then / otherwise: conditional Expr builder ----------------------
+;;
+;; Polars' pl.when(cond).then(value).otherwise(default), spelled data-first so it
+;; threads:  (~> (when (> (col "x") 0)) (then 10) (otherwise 0)).  `when` shadows
+;; racket/base `when`: one argument starts the conditional builder, two-or-more
+;; keep racket/base control-flow `when`.  (Multi-clause chains use expr-when.)
+
+(struct when-pending (cond))         ; produced by (when cond)
+(struct when-clause (cond value))    ; produced by (then ... value)
+
+(define (then wp value)
+  (unless (when-pending? wp)
+    (error 'then "`then` must follow `when`, got ~v" wp))
+  (when-clause (when-pending-cond wp) value))
+
+(define (otherwise wc default)
+  (unless (when-clause? wc)
+    (error 'otherwise "`otherwise` must follow `then`, got ~v" wc))
+  (expr-when (list (list (when-clause-cond wc) (when-clause-value wc)))
+             #:otherwise default))
+
+(define-syntax p-when
+  (syntax-rules ()
+    [(_ c) (when-pending c)]                          ; one arg: start the builder
+    [(_ test body ...) (base:when test body ...)]))   ; else: racket control-flow
 
 ;; --- data-first frame operations (thread with ~>) ---------------------------
 
@@ -575,6 +636,39 @@
   (cond [(series? x) (wrap-series (series-reverse x))]
         [(list? x)   (base:reverse x)]
         [else (error 'reverse "expected a series or list, got ~v" x)]))
+
+;; --- dataframe column operations (data-first) -------------------------------
+
+;; select: project / derive columns -> dataframe (Polars df.select).  Variadic
+;; and expression-aware: each argument is a column name, a column index, an Expr,
+;; or a list thereof; names/indices are lifted to (col ...).  Always a dataframe,
+;; so (select df "x") yields a 1-column frame.
+(define (select d . specs)
+  (guard-dataframe 'select d)
+  (define (spec->expr s)
+    (cond [(Expr-ptr? s) s]
+          [(string? s) (col s)]
+          [(exact-nonnegative-integer? s) (col (dataframe-column-name d s))]
+          [else (error 'select
+                       "expected a column name, index, or Expr, got ~v" s)]))
+  (wrap-dataframe
+   (dataframe-select-exprs
+    d (append-map (lambda (s) (if (list? s) (map spec->expr s) (list (spec->expr s))))
+                  specs))))
+
+;; drop: dataframe -> drop the named column(s); list -> racket/list drop, so
+;; (drop '(1 2 3) 1) still works after requiring polars.
+(define (drop x arg)
+  (cond
+    [(dataframe? x)
+     (wrap-dataframe (dataframe-drop-columns x (if (list? arg) arg (list arg))))]
+    [(list? x) (list-drop x arg)]
+    [else (error 'drop "expected a dataframe or list, got ~v" x)]))
+
+;; with-column: attach a Series as a new column -> dataframe.
+(define (with-column d s)
+  (guard-dataframe 'with-column d)
+  (wrap-dataframe (dataframe-with-column d s)))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 ;;
@@ -762,14 +856,20 @@
     [(series? x) (series-rename x new-name)]
     [else (error 'rename! "expected a series, got ~v" x)]))
 
-;; non-mutating: returns a renamed copy, leaving the original untouched
-(define (rename x new-name)
+;; non-mutating: returns a renamed copy, leaving the original untouched.
+;; (rename series new-name) renames the series; (rename df old new) renames a
+;; dataframe column.
+(define (rename x a [b unset])
   (cond
     [(series? x)
      (define c (series-clone x))
-     (series-rename c new-name)
+     (series-rename c a)
      c]
-    [else (error 'rename "expected a series, got ~v" x)]))
+    [(dataframe? x)
+     (when (eq? b unset)
+       (error 'rename "renaming a dataframe column needs old and new names"))
+     (wrap-dataframe (dataframe-rename x a b))]
+    [else (error 'rename "expected a series or dataframe, got ~v" x)]))
 
 ;; ---------------------------------------------------------------------------
 ;; Polars-style printing
@@ -1090,4 +1190,49 @@
   (check-equal? (height (tail ops-df 2)) 2)
   (check-equal? (height (slice ops-df 1 3)) 3)
   (check-equal? (height (drop-nulls ops-df)) 5)            ; no nulls
-  (check-equal? (height (unique ops-df)) 5))               ; all rows distinct
+  (check-equal? (height (unique ops-df)) 5)                ; all rows distinct
+
+  ;; --- dataframe column ops: select / drop / rename / with-column -----------
+  (check-equal? (column-names (select frame '("user" "cost"))) '("user" "cost"))
+  (check-equal? (column-names (select frame "score")) '("score"))   ; single -> 1-col df
+  ;; expression-aware select (df.select parity): names + derived Expr columns
+  (define sel-expr (select frame (col "user") (alias (expr-add (col "score") 1) "score1")))
+  (check-equal? (column-names sel-expr) '("user" "score1"))
+  (check-equal? (ref (ref sel-expr #:columns "score1") 0) 11)       ; 10 + 1
+  (check-equal? (column-names (drop frame '("score"))) '("user" "cost"))
+  (check-equal? (column-names (drop frame "cost")) '("user" "score"))
+  (check-equal? (drop '(1 2 3 4) 2) '(3 4))                         ; racket/list fallback
+  (check-equal? (column-names (rename frame "score" "points")) '("user" "points" "cost"))
+  (check-equal? (height (rename frame "score" "points")) 3)
+  (define withcol (with-column frame (series '(10 20 30) #:name "bonus" #:dtype 'i32)))
+  (check-equal? (column-names withcol) '("user" "score" "cost" "bonus"))
+  (check-equal? (ref (ref withcol #:columns "bonus") 1) 20)
+
+  ;; --- arithmetic operators (provided as + - * /) ---------------------------
+  ;; numbers: racket/base behaviour (variadic) is preserved
+  (check-equal? (p+ 1 2 3) 6)
+  (check-equal? (p- 10 3 2) 5)
+  (check-equal? (p* 2 3 4) 24)
+  (check-equal? (p/ 12 3) 4)
+  ;; Expr arithmetic, observed through select
+  (let ([d (select frame (alias (p+ (col "score") 1) "s1"))])
+    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "s1") i))
+                  '(11 26 19)))                         ; score + 1
+  ;; series eager arithmetic (broadcast scalar)
+  (check-equal? (for/list ([i (in-range 5)]) (ref (p+ v64 100) i))
+                '(110 125 107 130 118))
+  (check-equal? (for/list ([i (in-range 5)]) (ref (p* v64 2) i))
+                '(20 50 14 60 36))
+
+  ;; --- when / then / otherwise ----------------------------------------------
+  ;; Expr conditional, observed through select
+  (let ([d (select frame
+                   (col "user")
+                   (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0)
+                       (alias "th")))])
+    (check-equal? (column-names d) '("user" "th"))
+    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i))
+                  '(0 10 10)))                           ; score 10,25,18 -> 0,10,10
+  ;; p-when with a body stays racket/base control-flow `when`
+  (check-equal? (let ([acc 0]) (p-when #t (set! acc 1)) acc) 1)
+  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0))
