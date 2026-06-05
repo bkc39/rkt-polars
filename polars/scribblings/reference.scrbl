@@ -142,7 +142,7 @@ renders it with no separate display call.
   row slicing and currently raises an error. Provided by the @racket[gen:has-ref]
   interface.}
 
-@defproc[(describe [x describable?]) dataframe?]{
+@defproc[(describe [x (or/c series? dataframe?)]) dataframe?]{
   Mirrors Polars' @tt{.describe()}: returns a summary-statistics @tech{dataframe}
   (which prints as a table). For a series the result has a @racket["statistic"]
   column and a @racket["value"] column, with rows adapted to the dtype — a
@@ -153,8 +153,8 @@ renders it with no separate display call.
   @racket["min"] and @racket["max"]. For a dataframe the result uses Polars'
   fixed nine-row layout (a @racket["statistic"] column plus one column per input
   column), leaving a cell @racket[polars-null] where a column has no value for
-  that statistic. Quantiles use nearest interpolation. Provided by the
-  @racket[gen:describable] interface.}
+  that statistic. Quantiles use nearest interpolation. Dispatches on
+  @racket[series?] / @racket[dataframe?].}
 
 @subsection{Low-level DataFrame API}
 
@@ -315,11 +315,6 @@ for each capability it has — a series and a dataframe both have a @racket[len]
 and a @racket[shape], so both implement @racket[gen:sized] and
 @racket[gen:has-shape]; only a series has a @racket[dtype]. Each interface
 exports its method(s) and a predicate that recognises values implementing it.
-
-@deftogether[(@defidform[gen:describable]
-              @defproc[(describable? [v any/c]) boolean?])]{
-  The @racket[describe] capability (method: @racket[describe]). Implemented by
-  series and dataframes.}
 
 @deftogether[(@defidform[gen:has-ref]
               @defproc[(has-ref? [v any/c]) boolean?])]{
