@@ -105,6 +105,20 @@
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
 
+;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
+;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
+(define (join left right
+              #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
+              #:how [how 'inner])
+  (guard-dataframe 'join left)
+  (wrap-dataframe
+   (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how)))
+
+;; vstack: append the rows of another (compatible) dataframe -> dataframe.
+(define (vstack a b)
+  (guard-dataframe 'vstack a)
+  (wrap-dataframe (dataframe-vstack a b)))
+
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
 
@@ -241,4 +255,19 @@
   (let ([d (select frame (col "user")
                    (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0) (alias "th")))])
     (check-equal? (column-names d) '("user" "th"))
-    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10))))
+    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10)))
+
+  ;; --- join / vstack --------------------------------------------------------
+  (define usr (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
+                               (series '("alice" "bob" "carol" "dora") #:name "name"))))
+  (define ord (dataframe (list (series '(1 2 2 5) #:name "uid" #:dtype 'i32)
+                               (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
+  (check-equal? (height (join usr ord #:on '("uid") #:how 'inner)) 3)   ; uid 1,2,2
+  (check-equal? (height (join usr ord #:on '("uid") #:how 'left)) 5)    ; +uid 3,4 (null)
+  (check-equal? (height (join (head usr 2) (head ord 2) #:how 'cross)) 4)
+  (check-equal? (sort (column-names (join usr ord #:on '("uid") #:how 'inner)) string<?)
+                '("amount" "name" "uid"))
+  (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
+                                (series '("eve" "frank") #:name "name"))))
+  (check-equal? (height (vstack usr more)) 6)
+  (check-equal? (column-names (vstack usr more)) '("uid" "name")))

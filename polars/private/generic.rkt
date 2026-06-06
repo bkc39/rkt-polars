@@ -39,7 +39,7 @@
          > < >= <= = !=
          filter sort
          head tail slice reverse unique drop-nulls
-         select drop with-column
+         select drop with-column join vstack
          group-by agg grouped?
          rename rename! clone series-clone
          then otherwise
