@@ -94,6 +94,23 @@
   (wrap-dataframe (dataframe-new series-list)))
 
 ;; ---------------------------------------------------------------------------
+;; the lazyframe wrapper
+;;
+;; A lazyframe is a deferred query plan, not a materialized table, so (unlike the
+;; series/dataframe wrappers) it has no len/shape/ref/dtype — you build a plan
+;; with the data-first verbs and run it with `collect`.  prop:cpointer lets it
+;; marshal as a _LazyFrame-ptr through the lazyframe-* bindings.
+
+(struct lazyframe-rec (ptr)
+  #:reflection-name 'lazyframe
+  #:property prop:cpointer 0
+  #:property prop:custom-write
+  (lambda (lf port mode) (write-string "#<lazyframe>" port)))
+
+(define lazyframe? lazyframe-rec?)
+(define (wrap-lazyframe ptr) (lazyframe-rec ptr))
+
+;; ---------------------------------------------------------------------------
 ;; dataframe-only accessors (plain functions guarded on dataframe?).
 
 (define (guard-dataframe who d)
