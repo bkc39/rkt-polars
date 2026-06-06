@@ -1,60 +1,56 @@
 #lang racket/base
 
-;; DataFrame aggregations + dedup/null cleanup (DF Phases 3-4).
+;; DataFrame aggregations + dedup / null cleanup, in the fluent `~>` style:
+;; df.group_by("group").agg(col("value").sum(), ...) maps onto
+;; (~> df (group-by "group") (agg (sum (col "value")) ...)).
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/09-aggregations.rkt
 
-(require racket/file
-         polars)
+(require polars)
 
 (define df
-  (dataframe-new
-   (list (series-new-str "group" '("a" "a" "b" "b" "c"))
-         (series-new-i32 "value" '(10 25 7 30 18))
-         (series-new-f64 "cost"  '(1.2 2.4 0.5 3.1 1.8)))))
+  (dataframe
+   (list (series '("a" "a" "b" "b" "c") #:name "group")
+         (series '(10 25 7 30 18)        #:name "value" #:dtype 'i32)
+         (series '(1.2 2.4 0.5 3.1 1.8)  #:name "cost"))))
 
 (displayln "input:")
-(display-dataframe df)
+(displayln df)
 (newline)
 
 (displayln "group-by sum (value, cost):")
-(display-dataframe
- (dataframe-group-by-sum df #:by '("group") #:agg '("value" "cost")))
+(displayln (~> df (group-by "group") (agg (sum (col "value")) (sum (col "cost")))))
 (newline)
 
 (displayln "group-by mean:")
-(display-dataframe
- (dataframe-group-by-mean df #:by '("group") #:agg '("value" "cost")))
+(displayln (~> df (group-by "group") (agg (mean (col "value")) (mean (col "cost")))))
 (newline)
 
 (displayln "group-by min:")
-(display-dataframe
- (dataframe-group-by-min df #:by '("group") #:agg '("value")))
+(displayln (~> df (group-by "group") (agg (min (col "value")))))
 (newline)
 
 (displayln "group-by max:")
-(display-dataframe
- (dataframe-group-by-max df #:by '("group") #:agg '("value")))
+(displayln (~> df (group-by "group") (agg (max (col "value")))))
 (newline)
 
 (displayln "group-by count:")
-(display-dataframe
- (dataframe-group-by-count df #:by '("group") #:agg '("value")))
+(displayln (~> df (group-by "group") (agg (count (col "value")))))
 (newline)
 
 ;; Dedup
 (define dup-df
-  (dataframe-new
-   (list (series-new-i32 "x" '(1 2 1 3 2 1))
-         (series-new-str "y" '("a" "b" "a" "c" "b" "a")))))
+  (dataframe
+   (list (series '(1 2 1 3 2 1)            #:name "x" #:dtype 'i32)
+         (series '("a" "b" "a" "c" "b" "a") #:name "y"))))
 
 (displayln "duplicates:")
-(display-dataframe dup-df)
+(displayln dup-df)
 (newline)
 
 (displayln "unique rows:")
-(display-dataframe (dataframe-unique dup-df))
+(displayln (unique dup-df))
 (newline)
 
 ;; Null cleanup via CSV
@@ -67,12 +63,12 @@
     (displayln "bob,")
     (displayln "carol,30")
     (displayln ",40")))
-(define np-df (dataframe-read-csv csv-path))
+(define np-df (read-csv csv-path))
 
 (displayln "with nulls:")
-(display-dataframe np-df)
+(displayln np-df)
 (newline)
 
 (displayln "after drop-nulls:")
-(display-dataframe (dataframe-drop-nulls np-df))
+(displayln (drop-nulls np-df))
 (delete-file csv-path)
