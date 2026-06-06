@@ -40,6 +40,7 @@
          filter sort
          head tail slice reverse unique drop-nulls
          select drop with-column with-columns cast join vstack hstack
+         join-asof pivot unpivot
          group-by agg grouped? lazy collect
          rename rename! clone series-clone
          then otherwise

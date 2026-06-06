@@ -157,6 +157,30 @@
   (guard-dataframe 'hstack d)
   (wrap-dataframe (dataframe-hstack d cols)))
 
+;; join-asof: as-of join (Polars left.join_asof).  #:on (shared key) or
+;; #:left-on/#:right-on; #:strategy 'backward/'forward/'nearest; optional
+;; #:by / #:left-by / #:right-by and #:tolerance.
+(define (join-asof left right
+                   #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
+                   #:by [by #f] #:left-by [left-by #f] #:right-by [right-by #f]
+                   #:strategy [strategy 'backward] #:tolerance [tolerance #f])
+  (guard-dataframe 'join-asof left)
+  (wrap-dataframe
+   (dataframe-join-asof left right
+                        #:on on #:left-on left-on #:right-on right-on
+                        #:by by #:left-by left-by #:right-by right-by
+                        #:strategy strategy #:tolerance tolerance)))
+
+;; pivot: long -> wide (Polars df.pivot).
+(define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
+  (guard-dataframe 'pivot d)
+  (wrap-dataframe (dataframe-pivot d #:on on #:index index #:values values #:agg agg)))
+
+;; unpivot: wide -> long (Polars df.unpivot).
+(define (unpivot d #:on on #:index index)
+  (guard-dataframe 'unpivot d)
+  (wrap-dataframe (dataframe-unpivot d #:on on #:index index)))
+
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
 
@@ -337,6 +361,19 @@
   ;; hstack: append column(s)
   (check-equal? (column-names (hstack usr (series '(10 20 30 40) #:name "extra")))
                 '("uid" "name" "extra"))
+  ;; join-asof / pivot / unpivot
+  (let ([obs (dataframe (list (series '(1 3 5) #:name "time" #:dtype 'i32)
+                              (series '(100 300 500) #:name "reading" #:dtype 'i32)))]
+        [cal (dataframe (list (series '(1 2 4) #:name "time" #:dtype 'i32)
+                              (series '(10 20 40) #:name "offset" #:dtype 'i32)))])
+    (check-equal? (height (join-asof obs cal #:on "time" #:strategy 'backward)) 3))
+  (let* ([sales (dataframe (list (series '("a" "a" "b" "b")     #:name "store")
+                                 (series '("q1" "q2" "q1" "q2") #:name "quarter")
+                                 (series '(10 20 30 40)         #:name "sales" #:dtype 'i32)))]
+         [pv (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)])
+    (check-equal? (sort (column-names pv) string<?) '("q1" "q2" "store"))
+    (check-equal? (height pv) 2)
+    (check-equal? (height (unpivot pv #:on '("q1" "q2") #:index '("store"))) 4))
 
   ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
   (check-pred lazyframe? (lazy ops-df))
