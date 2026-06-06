@@ -1,8 +1,10 @@
 #lang racket/base
 
-;; Expr / lazy DSL — with_columns, select_exprs, filter_expr.
-;; Mirrors the kind of one-pass column derivation that Polars Python
-;; users get with `df.with_columns(...)`.
+;; Expr DSL — one-pass column derivation, prefix-free and threaded.  Each derived
+;; column is itself a thread: (~> (col "value") (* 2) (alias "double_value")).
+;;   df.with_columns(...)  ->  (~> df (with-columns ...))
+;;   df.select(...)        ->  (~> df (select ...))
+;;   df.filter(expr)       ->  (~> df (filter ...))
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/11-expr-with-columns.rkt
@@ -10,45 +12,32 @@
 (require polars)
 
 (define df
-  (dataframe-new
-   (list (series-new-str "group" '("a" "a" "b" "b" "c"))
-         (series-new-i32 "value" '(10 25 7 30 18))
-         (series-new-f64 "cost"  '(1.2 2.4 0.5 3.1 1.8)))))
+  (dataframe
+   (list (series '("a" "a" "b" "b" "c") #:name "group")
+         (series '(10 25 7 30 18)        #:name "value" #:dtype 'i32)
+         (series '(1.2 2.4 0.5 3.1 1.8)  #:name "cost"))))
 
 (displayln "input:")
-(display-dataframe df)
+(displayln df)
 (newline)
 
 ;; Derive two new columns in one pass:
 ;;   double_value = value * 2
 ;;   cost_plus_1  = cost + 1.0
-(define df2
-  (dataframe-with-columns
-   df
-   (list (expr-alias (expr-mul (col "value") 2) "double_value")
-         (expr-alias (expr-add (col "cost") 1.0) "cost_plus_1"))))
-
 (displayln "with_columns(double_value, cost_plus_1):")
-(display-dataframe df2)
+(displayln (~> df
+               (with-columns
+                 (~> (col "value") (* 2)   (alias "double_value"))
+                 (~> (col "cost")  (+ 1.0) (alias "cost_plus_1")))))
 (newline)
 
-;; select-exprs: project + transform in one pass
-(define df3
-  (dataframe-select-exprs
-   df
-   (list (col "group")
-         (expr-alias (expr-mul (col "value") (col "cost")) "spend"))))
-
+;; select + transform in one pass
 (displayln "select(group, value*cost as spend):")
-(display-dataframe df3)
+(displayln (~> df
+               (select (col "group")
+                       (~> (col "value") (* (col "cost")) (alias "spend")))))
 (newline)
 
 ;; filter via Expr predicate:  (value > 15) AND (cost < 3.0)
-(define df4
-  (dataframe-filter-expr
-   df
-   (expr-and (expr-gt (col "value") 15)
-             (expr-lt (col "cost") 3.0))))
-
 (displayln "filter(value>15 AND cost<3.0):")
-(display-dataframe df4)
+(displayln (~> df (filter (and (> (col "value") 15) (< (col "cost") 3.0)))))
