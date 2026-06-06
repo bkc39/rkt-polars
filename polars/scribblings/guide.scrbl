@@ -2,8 +2,8 @@
 @require[@for-label[polars
                     (only-in threading ~> ~>>)
                     @; polars re-exports generic ops (min max sum sort filter comparisons,
-                    @; logical and/or/not, reverse) that shadow racket/base
-                    (except-in racket/base min max sort filter reverse and or not > < >= <= =)]]
+                    @; arithmetic + - * /, logical and/or/not, reverse, when) that shadow racket/base
+                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= =)]]
 
 @title[#:tag "guide"]{Guide}
 
