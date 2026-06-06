@@ -28,7 +28,7 @@
          describe ref
          len shape shape/values dtype null-count
          width height column-name column-names
-         write-csv read-csv
+         write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
          gen:has-ref has-ref?
          gen:sized sized?
          gen:has-shape has-shape?
@@ -39,7 +39,7 @@
          > < >= <= = !=
          filter sort
          head tail slice reverse unique drop-nulls
-         select drop with-column with-columns cast join vstack
+         select drop with-column with-columns cast join vstack hstack
          group-by agg grouped? lazy collect
          rename rename! clone series-clone
          then otherwise

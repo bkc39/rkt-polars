@@ -152,6 +152,11 @@
   (guard-dataframe 'vstack a)
   (wrap-dataframe (dataframe-vstack a b)))
 
+;; hstack: append column(s) (series) to a dataframe -> dataframe (Polars df.hstack).
+(define (hstack d . cols)
+  (guard-dataframe 'hstack d)
+  (wrap-dataframe (dataframe-hstack d cols)))
+
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
 
@@ -329,6 +334,9 @@
                                 (series '("eve" "frank") #:name "name"))))
   (check-equal? (height (vstack usr more)) 6)
   (check-equal? (column-names (vstack usr more)) '("uid" "name"))
+  ;; hstack: append column(s)
+  (check-equal? (column-names (hstack usr (series '(10 20 30 40) #:name "extra")))
+                '("uid" "name" "extra"))
 
   ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
   (check-pred lazyframe? (lazy ops-df))
