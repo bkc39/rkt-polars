@@ -121,8 +121,13 @@
   (cond [(series? x) (series-n-unique x)]
         [else (expr-n-unique (->agg-expr 'n-unique x))]))
 (define (median x)    (expr-median   (->agg-expr 'median x)))
-(define (std x #:ddof [ddof 1]) (expr-std (->agg-expr 'std x) #:ddof ddof))
-(define (var x #:ddof [ddof 1]) (expr-var (->agg-expr 'var x) #:ddof ddof))
+;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
+(define (std x #:ddof [ddof 1])
+  (cond [(series? x) (series-std x #:ddof ddof)]
+        [else (expr-std (->agg-expr 'std x) #:ddof ddof)]))
+(define (var x #:ddof [ddof 1])
+  (cond [(series? x) (series-var x #:ddof ddof)]
+        [else (expr-var (->agg-expr 'var x) #:ddof ddof)]))
 
 (define (first x)
   (cond
@@ -165,4 +170,9 @@
   ;; first / last keep their list-accessor behaviour
   (check-equal? (first '(1 2 3)) 1)
   (check-equal? (last '(1 2 3)) 3)
-  (check-pred Expr-ptr? (first (col "value"))))
+  (check-pred Expr-ptr? (first (col "value")))
+  ;; std / var eager on a series (with #:ddof)
+  (let ([s (series '(1.0 2.0 3.0 4.0))])     ; deviations from mean 2.5 sum-sq = 5.0
+    (check-= (var s) (/ 5.0 3.0) 1e-9)        ; sample (ddof=1)
+    (check-= (var s #:ddof 0) 1.25 1e-9)      ; population (ddof=0)
+    (check-= (std s #:ddof 0) (sqrt 1.25) 1e-9)))
