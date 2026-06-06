@@ -101,8 +101,12 @@
 ;; and expression-aware: each argument is a column name, index, an Expr, or a
 ;; list thereof.  Always a dataframe.
 (define (select d . specs)
-  (guard-dataframe 'select d)
-  (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs))))
+  (cond
+    [(dataframe? d)
+     (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs)))]
+    [(lazyframe? d)
+     (wrap-lazyframe (lazyframe-select d (specs->exprs 'select d specs)))]
+    [else (error 'select "expected a dataframe or lazyframe, got ~v" d)]))
 
 ;; with-columns: add/replace columns in one pass (Polars df.with_columns).
 ;; Same variadic, expression-aware specs as select, but keeps the existing
@@ -212,6 +216,18 @@
     (error 'collect "expected a lazyframe, got ~v" lf))
   (wrap-dataframe (lazyframe-collect lf)))
 
+;; scan-csv / scan-parquet: start a lazy plan straight from a file (Polars'
+;; pl.scan_csv / pl.scan_parquet) — no eager read; collect runs it.
+(define (scan-csv path
+                  #:has-header [has-header #t] #:separator [separator #\,]
+                  #:skip-rows [skip-rows 0] #:n-rows [n-rows #f])
+  (wrap-lazyframe
+   (lazyframe-scan-csv path #:has-header has-header #:separator separator
+                       #:skip-rows skip-rows #:n-rows n-rows)))
+
+(define (scan-parquet path #:n-rows [n-rows #f])
+  (wrap-lazyframe (lazyframe-scan-parquet path #:n-rows n-rows)))
+
 ;; --- clone / rename ---------------------------------------------------------
 ;; series-slice already returns a fresh series, so a full-length slice clones.
 (define (series-clone s)
@@ -243,7 +259,7 @@
     [else (error 'rename "expected a series or dataframe, got ~v" x)]))
 
 (module+ test
-  (require rackunit (only-in threading ~>)
+  (require rackunit racket/file (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/operators
            polars/private/generic/reductions
@@ -394,4 +410,14 @@
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
   ;; lazy join (both sides lazy)
-  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3))
+  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3)
+  ;; scan-parquet: round-trip a frame to disk, scan lazily, then filter/select/collect
+  (let ([pq (make-temporary-file "rkt-polars-scan-~a.parquet")])
+    (dynamic-wind
+     void
+     (lambda ()
+       (write-parquet ops-df pq)
+       (check-equal? (height (~> (scan-parquet pq) (filter (> (col "value") 8)) collect)) 4)
+       (check-equal? (column-names (~> (scan-parquet pq) (select (col "group")) collect))
+                     '("group")))
+     (lambda () (delete-file pq)))))

@@ -41,7 +41,7 @@
          head tail slice reverse unique drop-nulls
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
-         group-by agg grouped? lazy collect
+         group-by agg grouped? lazy collect scan-csv scan-parquet
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]

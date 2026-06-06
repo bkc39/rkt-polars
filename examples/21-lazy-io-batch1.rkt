@@ -2,6 +2,9 @@
 
 ;; Lazy IO Batch 1: scan CSV and Parquet directly into lazy pipelines.
 ;;
+;; scan-csv / scan-parquet start a lazy plan straight from a file (no eager
+;; read); the threaded ops just build the plan and `collect` runs it.
+;;
 ;; Inside `nix develop`:
 ;;   racket examples/21-lazy-io-batch1.rkt
 
@@ -19,38 +22,32 @@
     (displayln "b,30")))
 
 (define csv-result
-  (lazyframe-collect
-   (lazyframe-sort
-    (lazyframe-group-by-agg
-     (lazyframe-filter (lazyframe-scan-csv csv-path)
-                       (expr-gt (col "value") 10))
-     '("group")
-     (list (expr-alias (expr-sum (expr-cast (col "value") 'int32))
-                       "total")))
-    '("group"))))
+  (~> (scan-csv csv-path)
+      (filter (> (col "value") 10))
+      (group-by "group")
+      (agg (alias (sum (cast (col "value") 'int32)) "total"))
+      (sort "group")
+      collect))
 
 (displayln "csv scan pipeline:")
-(display-dataframe csv-result)
+(displayln csv-result)
 (delete-file csv-path)
 (newline)
 
 (define parquet-source
-  (dataframe-new
-   (list (series-new-i32 "x" '(1 2 3 4))
-         (series-new-f64 "y" '(0.5 1.5 2.5 3.5)))))
+  (dataframe (list (series '(1 2 3 4)         #:name "x" #:dtype 'i32)
+                   (series '(0.5 1.5 2.5 3.5) #:name "y" #:dtype 'f64))))
 
 (define parquet-path (make-temporary-file "rkt-polars-lazy-io-~a.parquet"))
 
-(dataframe-write-parquet parquet-source parquet-path)
+(write-parquet parquet-source parquet-path)
 
 (define parquet-result
-  (lazyframe-collect
-   (lazyframe-select
-    (lazyframe-filter (lazyframe-scan-parquet parquet-path)
-                      (expr-ge (col "x") 2))
-    (list (col "x")
-          (expr-alias (expr-mul (col "x") 10) "ten_x")))))
+  (~> (scan-parquet parquet-path)
+      (filter (>= (col "x") 2))
+      (select (col "x") (alias (* (col "x") 10) "ten_x"))
+      collect))
 
 (displayln "parquet scan pipeline:")
-(display-dataframe parquet-result)
+(displayln parquet-result)
 (delete-file parquet-path)
