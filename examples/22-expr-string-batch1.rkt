@@ -5,10 +5,10 @@
 ;; Inside `nix develop`:
 ;;   racket examples/22-expr-string-batch1.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
-(define csv-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-expr-string.csv"))
+(define csv-path (make-temporary-file "rkt-polars-expr-string-~a.csv"))
 
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
@@ -29,3 +29,4 @@
           (expr-alias (expr-str-ends-with (col "name") "ta") "ends_ta")))))
 
 (display-dataframe result)
+(delete-file csv-path)

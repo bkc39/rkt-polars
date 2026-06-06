@@ -5,10 +5,10 @@
 ;; Inside `nix develop`:
 ;;   racket examples/21-lazy-io-batch1.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
-(define csv-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-io.csv"))
+(define csv-path (make-temporary-file "rkt-polars-lazy-io-~a.csv"))
 
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
@@ -31,6 +31,7 @@
 
 (displayln "csv scan pipeline:")
 (display-dataframe csv-result)
+(delete-file csv-path)
 (newline)
 
 (define parquet-source
@@ -38,8 +39,7 @@
    (list (series-new-i32 "x" '(1 2 3 4))
          (series-new-f64 "y" '(0.5 1.5 2.5 3.5)))))
 
-(define parquet-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-io.parquet"))
+(define parquet-path (make-temporary-file "rkt-polars-lazy-io-~a.parquet"))
 
 (dataframe-write-parquet parquet-source parquet-path)
 
@@ -53,3 +53,4 @@
 
 (displayln "parquet scan pipeline:")
 (display-dataframe parquet-result)
+(delete-file parquet-path)

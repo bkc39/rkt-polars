@@ -7,7 +7,8 @@
 ;; Inside `nix develop`:
 ;;   racket examples/07-reshaping.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
 (define df
   (dataframe
@@ -38,8 +39,7 @@
         (~> founded (sort #:descending #t) (head 1) max))
 
 ;; drop-nulls: round-trip a CSV with an empty cell to demonstrate.
-(define csv-path (build-path (find-system-path 'temp-dir)
-                             "rkt-polars-reshape-demo.csv"))
+(define csv-path (make-temporary-file "rkt-polars-reshape-~a.csv"))
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
     (displayln "name,score")

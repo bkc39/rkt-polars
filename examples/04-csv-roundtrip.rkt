@@ -5,12 +5,13 @@
 ;; Build a frame with the smart `series`/`dataframe` constructors (example 02),
 ;; write it to CSV, read it back, and inspect the round-tripped frame with the
 ;; prefix-free UX vocabulary (`write-csv`, `read-csv`, `shape/values`,
-;; `column-names`) — the same style as example 03.  All come from `(require polars)`.
+;; `column-names`) — the same style as example 03.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/04-csv-roundtrip.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
 (define original
   (dataframe
@@ -18,8 +19,7 @@
          (series '(0.65 8.8 2.7)                  #:name "population_millions")
          (series '(1630 1624 1837)                #:name "founded" #:dtype 'i32))))
 
-(define csv-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-example.csv"))
+(define csv-path (make-temporary-file "rkt-polars-example-~a.csv"))
 
 (write-csv original csv-path)
 (define roundtrip (read-csv csv-path))
@@ -32,3 +32,4 @@
 
 (displayln "roundtrip:")
 (displayln roundtrip)
+(delete-file csv-path)

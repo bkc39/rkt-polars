@@ -5,10 +5,10 @@
 ;; Inside `nix develop`:
 ;;   racket examples/25-lazy-scan-options-batch1.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
-(define csv-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan-options.csv"))
+(define csv-path (make-temporary-file "rkt-polars-lazy-scan-options-~a.csv"))
 
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
@@ -31,6 +31,7 @@
 
 (displayln "csv scan with options:")
 (display-dataframe csv-result)
+(delete-file csv-path)
 (newline)
 
 (define parquet-source
@@ -38,8 +39,7 @@
    (list (series-new-i32 "x" '(1 2 3 4))
          (series-new-f64 "y" '(0.5 1.5 2.5 3.5)))))
 
-(define parquet-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan-options.parquet"))
+(define parquet-path (make-temporary-file "rkt-polars-lazy-scan-options-~a.parquet"))
 
 (dataframe-write-parquet parquet-source parquet-path)
 
@@ -49,3 +49,4 @@
 
 (displayln "parquet scan with row limit:")
 (display-dataframe parquet-result)
+(delete-file parquet-path)
