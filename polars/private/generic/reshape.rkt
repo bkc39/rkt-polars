@@ -129,9 +129,14 @@
 (define (join left right
               #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
               #:how [how 'inner])
-  (guard-dataframe 'join left)
-  (wrap-dataframe
-   (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how)))
+  (cond
+    [(dataframe? left)
+     (wrap-dataframe
+      (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]
+    [(lazyframe? left)
+     (wrap-lazyframe
+      (lazyframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]
+    [else (error 'join "expected a dataframe or lazyframe, got ~v" left)]))
 
 ;; vstack: append the rows of another (compatible) dataframe -> dataframe.
 (define (vstack a b)
@@ -329,4 +334,6 @@
   ;; lazy head / tail / slice (build the plan, then collect)
   (check-equal? (height (~> ops-df lazy (head 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
-  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3))
+  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
+  ;; lazy join (both sides lazy)
+  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3))
