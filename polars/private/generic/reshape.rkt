@@ -124,6 +124,15 @@
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
 
+;; cast: change dtype.  Expr -> cast Expr; series -> eager cast; a column name
+;; lifts to (col name).  `dtype` is a canonical symbol ('float64 / 'string /
+;; 'datetime / ...) or a list like '(datetime microseconds).
+(define (cast x dtype)
+  (cond [(Expr-ptr? x) (expr-cast x dtype)]
+        [(series? x)   (wrap-series (series-cast x dtype))]
+        [(string? x)   (expr-cast (col x) dtype)]
+        [else (error 'cast "expected an Expr, series, or column name, got ~v" x)]))
+
 ;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
 ;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
 (define (join left right
@@ -287,6 +296,10 @@
   (let ([d (with-columns frame (alias (p+ (col "score") 1) "score1"))])
     (check-equal? (column-names d) '("user" "score" "cost" "score1"))
     (check-equal? (ref (ref d #:columns "score1") 0) 11))
+  ;; cast: eager series, and Expr via with-columns
+  (check-equal? (dtype (cast (series '(1 2 3) #:dtype 'i32) 'float64)) 'float64)
+  (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
+    (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)

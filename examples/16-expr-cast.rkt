@@ -1,12 +1,8 @@
 #lang racket/base
 
-;; Expr cast — change a column's dtype inside a lazy/with-columns plan.
-;; Mirrors the canonical Polars Python flow:
-;;   df.with_columns([
-;;     col("x").cast(pl.Float64).alias("xf"),
-;;     col("x").cast(pl.Utf8).alias("xs"),
-;;     (col("x").cast(pl.Float64) / col("y")).alias("ratio"),
-;;   ])
+;; Expr cast — change a column's dtype inside a with_columns plan.  Each derived
+;; column threads:  (~> (col "x") (cast 'float64) (alias "xf")) mirrors
+;; col("x").cast(pl.Float64).alias("xf").
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/16-expr-cast.rkt
@@ -14,37 +10,28 @@
 (require polars)
 
 (define df
-  (dataframe-new
-   (list (series-new-i32 "x" '(10 20 30 40))
-         (series-new-i32 "y" '(3 4 5 6)))))
+  (dataframe (list (series '(10 20 30 40) #:name "x" #:dtype 'i32)
+                   (series '(3 4 5 6)      #:name "y" #:dtype 'i32))))
 
 (displayln "input (x and y are i32):")
-(display-dataframe df)
+(displayln df)
 (newline)
 
-;; Promote both to f64 to get a real-valued ratio; tag with string label.
-(define out
-  (dataframe-with-columns
-   df
-   (list (expr-alias (expr-cast (col "x") 'float64) "xf")
-         (expr-alias (expr-cast (col "x") 'string)  "xs")
-         (expr-alias (expr-div (expr-cast (col "x") 'float64)
-                               (expr-cast (col "y") 'float64))
-                     "ratio"))))
-
+;; Promote to f64 for a real-valued ratio; tag x with a string label too.
 (displayln "with_columns(cast x->f64, cast x->str, x/y as f64):")
-(display-dataframe out)
+(displayln (~> df
+               (with-columns
+                 (~> (col "x") (cast 'float64) (alias "xf"))
+                 (~> (col "x") (cast 'string)  (alias "xs"))
+                 (~> (col "x")
+                     (cast 'float64)
+                     (/ (cast (col "y") 'float64))
+                     (alias "ratio")))))
 (newline)
 
 ;; Datetime cast: interpret an i64 column as microsecond-resolution timestamps.
 (define df-ts
-  (dataframe-new
-   (list (series-new-i64 "t" '(0 1000000 2000000 3000000)))))
-
-(define ts
-  (dataframe-with-columns
-   df-ts
-   (list (expr-alias (expr-cast (col "t") 'datetime) "ts"))))
+  (dataframe (list (series '(0 1000000 2000000 3000000) #:name "t" #:dtype 'i64))))
 
 (displayln "cast i64 -> datetime (defaults to microseconds):")
-(display-dataframe ts)
+(displayln (~> df-ts (with-columns (~> (col "t") (cast 'datetime) (alias "ts")))))
