@@ -22,6 +22,8 @@
      (wrap-dataframe (dataframe-filter-expr d pred))]
     [(list (? dataframe? d) (? series? mask))
      (wrap-dataframe (dataframe-filter d mask))]
+    [(list (? lazyframe? lf) (? Expr-ptr? pred))
+     (wrap-lazyframe (lazyframe-filter lf pred))]
     [_ (apply base:filter args)]))
 
 ;; sort: (sort df names #:descending d) -> dataframe; (sort series #:descending d)
@@ -33,6 +35,12 @@
        (error 'sort "sorting a dataframe requires column name(s)"))
      (wrap-dataframe
       (dataframe-sort x (if (list? second) second (list second))
+                      #:descending (if (eq? descending unset) #f descending)))]
+    [(lazyframe? x)
+     (when (eq? second unset)
+       (error 'sort "sorting a lazyframe requires column name(s)"))
+     (wrap-lazyframe
+      (lazyframe-sort x (if (list? second) second (list second))
                       #:descending (if (eq? descending unset) #f descending)))]
     [(series? x)
      (wrap-series
@@ -138,8 +146,25 @@
 (define (agg g . agg-exprs)
   (unless (grouped? g)
     (error 'agg "expected a grouped frame from group-by, got ~v" g))
-  (wrap-dataframe
-   (dataframe-group-by-agg (grouped-frame g) (grouped-keys g) agg-exprs)))
+  (define frame (grouped-frame g))
+  (define keys (grouped-keys g))
+  ;; dispatch on whether the grouped frame is eager or lazy
+  (if (lazyframe? frame)
+      (wrap-lazyframe (lazyframe-group-by-agg frame keys agg-exprs))
+      (wrap-dataframe (dataframe-group-by-agg frame keys agg-exprs))))
+
+;; --- lazy: a DataFrame's deferred query plan, and back ----------------------
+;; (~> df lazy (filter ...) (group-by ...) (agg ...) (sort ...) collect) mirrors
+;; df.lazy().filter(...)...collect().  filter / sort / group-by+agg above
+;; dispatch on lazyframe? to build the plan instead of running eagerly.
+(define (lazy d)
+  (guard-dataframe 'lazy d)
+  (wrap-lazyframe (dataframe-lazy d)))
+
+(define (collect lf)
+  (unless (lazyframe? lf)
+    (error 'collect "expected a lazyframe, got ~v" lf))
+  (wrap-dataframe (lazyframe-collect lf)))
 
 ;; --- clone / rename ---------------------------------------------------------
 ;; series-slice already returns a fresh series, so a full-length slice clones.
@@ -282,4 +307,19 @@
   (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
                                 (series '("eve" "frank") #:name "name"))))
   (check-equal? (height (vstack usr more)) 6)
-  (check-equal? (column-names (vstack usr more)) '("uid" "name")))
+  (check-equal? (column-names (vstack usr more)) '("uid" "name"))
+
+  ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
+  (check-pred lazyframe? (lazy ops-df))
+  (define ranked
+    (~> ops-df lazy
+        (filter (> (col "value") 8))          ; drops value 7 (group b's 7)
+        (group-by "group")
+        (agg (~> (col "value") sum (alias "sum_value")))
+        (sort "sum_value" #:descending #t)
+        collect))
+  (check-pred dataframe? ranked)
+  (check-equal? (height ranked) 3)
+  (check-equal? (sort (column-names ranked) string<?) '("group" "sum_value"))
+  (check-equal? (ref (ref ranked #:columns "group") 0) "a")    ; a: 10+25 = 35 (highest)
+  (check-equal? (ref (ref ranked #:columns "sum_value") 0) 35))

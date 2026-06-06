@@ -24,7 +24,7 @@
          polars/private/generic/describe)
 
 (provide series series? series->string
-         dataframe dataframe?
+         dataframe dataframe? lazyframe?
          describe ref
          len shape shape/values dtype null-count
          width height column-name column-names
@@ -40,7 +40,7 @@
          filter sort
          head tail slice reverse unique drop-nulls
          select drop with-column with-columns join vstack
-         group-by agg grouped?
+         group-by agg grouped? lazy collect
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
