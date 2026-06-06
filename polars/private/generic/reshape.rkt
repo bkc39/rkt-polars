@@ -55,17 +55,20 @@
 (define (head x n)
   (cond [(series? x)    (wrap-series    (series-head x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-head x n))]
-        [else (error 'head "expected a series or dataframe, got ~v" x)]))
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
+        [else (error 'head "expected a series, dataframe, or lazyframe, got ~v" x)]))
 
 (define (tail x n)
   (cond [(series? x)    (wrap-series    (series-tail x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-tail x n))]
-        [else (error 'tail "expected a series or dataframe, got ~v" x)]))
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
+        [else (error 'tail "expected a series, dataframe, or lazyframe, got ~v" x)]))
 
 (define (slice x offset length)
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
         [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
-        [else (error 'slice "expected a series or dataframe, got ~v" x)]))
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
+        [else (error 'slice "expected a series, dataframe, or lazyframe, got ~v" x)]))
 
 (define (unique x)
   (cond [(series? x)    (wrap-series    (series-unique x))]
@@ -322,4 +325,8 @@
   (check-equal? (height ranked) 3)
   (check-equal? (sort (column-names ranked) string<?) '("group" "sum_value"))
   (check-equal? (ref (ref ranked #:columns "group") 0) "a")    ; a: 10+25 = 35 (highest)
-  (check-equal? (ref (ref ranked #:columns "sum_value") 0) 35))
+  (check-equal? (ref (ref ranked #:columns "sum_value") 0) 35)
+  ;; lazy head / tail / slice (build the plan, then collect)
+  (check-equal? (height (~> ops-df lazy (head 2) collect)) 2)
+  (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
+  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3))
