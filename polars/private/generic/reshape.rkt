@@ -76,21 +76,29 @@
 
 ;; --- dataframe column operations --------------------------------------------
 
-;; select: project / derive columns -> dataframe (Polars df.select).  Variadic
-;; and expression-aware: each argument is a column name, index, an Expr, or a
-;; list thereof; names/indices are lifted to (col ...).  Always a dataframe.
-(define (select d . specs)
-  (guard-dataframe 'select d)
+;; Coerce select/with-columns specs into a flat Expr list: an Expr passes
+;; through, a string/index is lifted via (col ...), a list splices.
+(define (specs->exprs who d specs)
   (define (spec->expr s)
     (cond [(Expr-ptr? s) s]
           [(string? s) (col s)]
           [(exact-nonnegative-integer? s) (col (dataframe-column-name d s))]
-          [else (error 'select
-                       "expected a column name, index, or Expr, got ~v" s)]))
-  (wrap-dataframe
-   (dataframe-select-exprs
-    d (append-map (lambda (s) (if (list? s) (map spec->expr s) (list (spec->expr s))))
-                  specs))))
+          [else (error who "expected a column name, index, or Expr, got ~v" s)]))
+  (append-map (lambda (s) (if (list? s) (map spec->expr s) (list (spec->expr s)))) specs))
+
+;; select: project / derive columns -> dataframe (Polars df.select).  Variadic
+;; and expression-aware: each argument is a column name, index, an Expr, or a
+;; list thereof.  Always a dataframe.
+(define (select d . specs)
+  (guard-dataframe 'select d)
+  (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs))))
+
+;; with-columns: add/replace columns in one pass (Polars df.with_columns).
+;; Same variadic, expression-aware specs as select, but keeps the existing
+;; columns and appends the (typically aliased) derived ones.
+(define (with-columns d . specs)
+  (guard-dataframe 'with-columns d)
+  (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs))))
 
 ;; drop: dataframe -> drop the named column(s); list -> racket/list drop.
 (define (drop x arg)
@@ -104,6 +112,20 @@
 (define (with-column d s)
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
+
+;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
+;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
+(define (join left right
+              #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
+              #:how [how 'inner])
+  (guard-dataframe 'join left)
+  (wrap-dataframe
+   (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how)))
+
+;; vstack: append the rows of another (compatible) dataframe -> dataframe.
+(define (vstack a b)
+  (guard-dataframe 'vstack a)
+  (wrap-dataframe (dataframe-vstack a b)))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
@@ -228,6 +250,10 @@
   (define withcol (with-column frame (series '(10 20 30) #:name "bonus" #:dtype 'i32)))
   (check-equal? (column-names withcol) '("user" "score" "cost" "bonus"))
   (check-equal? (ref (ref withcol #:columns "bonus") 1) 20)
+  ;; with-columns: derive columns from Exprs in one pass
+  (let ([d (with-columns frame (alias (p+ (col "score") 1) "score1"))])
+    (check-equal? (column-names d) '("user" "score" "cost" "score1"))
+    (check-equal? (ref (ref d #:columns "score1") 0) 11))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)
@@ -241,4 +267,19 @@
   (let ([d (select frame (col "user")
                    (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0) (alias "th")))])
     (check-equal? (column-names d) '("user" "th"))
-    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10))))
+    (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10)))
+
+  ;; --- join / vstack --------------------------------------------------------
+  (define usr (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
+                               (series '("alice" "bob" "carol" "dora") #:name "name"))))
+  (define ord (dataframe (list (series '(1 2 2 5) #:name "uid" #:dtype 'i32)
+                               (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
+  (check-equal? (height (join usr ord #:on '("uid") #:how 'inner)) 3)   ; uid 1,2,2
+  (check-equal? (height (join usr ord #:on '("uid") #:how 'left)) 5)    ; +uid 3,4 (null)
+  (check-equal? (height (join (head usr 2) (head ord 2) #:how 'cross)) 4)
+  (check-equal? (sort (column-names (join usr ord #:on '("uid") #:how 'inner)) string<?)
+                '("amount" "name" "uid"))
+  (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
+                                (series '("eve" "frank") #:name "name"))))
+  (check-equal? (height (vstack usr more)) 6)
+  (check-equal? (column-names (vstack usr more)) '("uid" "name")))
