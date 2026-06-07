@@ -14,7 +14,8 @@
          str-strip-chars str-strip-prefix str-strip-suffix
          str-replace str-replace-all str-extract
          str-len-bytes str-len-chars str-slice str-head str-tail
-         str-find str-find-literal str-count-matches)
+         str-find str-find-literal str-count-matches
+         str-to-date str-to-datetime str-to-time)
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->str-expr who x)
@@ -69,8 +70,27 @@
 (define (str-count-matches x pat #:literal [literal #f])
   (expr-str-count-matches (->str-expr 'str-count-matches x) pat #:literal literal))
 
+;; parse strings to Date / Datetime / Time.  #:strict #f turns unparseable
+;; values into null instead of raising; #:format is a chrono strptime pattern
+;; (inferred when omitted); #:exact #f allows surrounding text;
+;; str-to-datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
+(define (str-to-date x #:format [format #f] #:strict [strict #t]
+                     #:exact [exact #t] #:cache [cache #t])
+  (expr-str-to-date (->str-expr 'str-to-date x)
+                    #:format format #:strict strict #:exact exact #:cache cache))
+(define (str-to-datetime x #:format [format #f] #:unit [unit 'microseconds]
+                         #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
+  (expr-str-to-datetime (->str-expr 'str-to-datetime x)
+                        #:format format #:unit unit
+                        #:strict strict #:exact exact #:cache cache))
+(define (str-to-time x #:format [format #f] #:strict [strict #t]
+                     #:exact [exact #t] #:cache [cache #t])
+  (expr-str-to-time (->str-expr 'str-to-time x)
+                    #:format format #:strict strict #:exact exact #:cache cache))
+
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in gregor date datetime)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape)     ; lazy / with-columns / collect
@@ -135,4 +155,23 @@
   (check-equal? (ref (ref out3 #:columns "tail") 2) "na")
   (check-equal? (ref (ref out3 #:columns "find_d") 3) 3)
   (check-equal? (ref (ref out3 #:columns "find_na") 2) 2)
-  (check-equal? (ref (ref out3 #:columns "count_a") 2) 3))
+  (check-equal? (ref (ref out3 #:columns "count_a") 2) 3)
+  ;; string-to-temporal: parse Date/Datetime/Time; #:strict #f -> null on failure
+  (define p
+    (dataframe (list (series '("2024-01-02" "not-a-date" "2024-05-09 extra") #:name "date_s")
+                     (series '("2024-01-02 03:04:05" "bad" "x") #:name "dt_s")
+                     (series '("03:04:05.123456789" "bad" "x") #:name "time_s"))))
+  (define out4
+    (~> p (with-columns
+            (alias (str-to-date "date_s" #:strict #f) "d_infer")
+            (alias (str-to-date "date_s" #:format "%Y-%m-%d" #:strict #f #:exact #f) "d_embed")
+            (alias (str-to-datetime "dt_s" #:format "%Y-%m-%d %H:%M:%S"
+                                    #:unit 'milliseconds #:strict #f) "dt")
+            (alias (str-to-time "time_s" #:format "%H:%M:%S%.f" #:strict #f) "tm"))))
+  (check-equal? (ref (ref out4 #:columns "d_infer") 0) (date 2024 1 2))
+  (check-equal? (ref (ref out4 #:columns "d_infer") 1) polars-null)
+  (check-equal? (ref (ref out4 #:columns "d_embed") 2) (date 2024 5 9)) ; #:exact #f
+  (check-equal? (ref (ref out4 #:columns "dt") 0) (datetime 2024 1 2 3 4 5))
+  (check-equal? (ref (ref out4 #:columns "dt") 1) polars-null)
+  (check-not-eq? (ref (ref out4 #:columns "tm") 0) polars-null)
+  (check-equal? (ref (ref out4 #:columns "tm") 1) polars-null))

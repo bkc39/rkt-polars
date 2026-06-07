@@ -51,6 +51,7 @@
          str-replace str-replace-all str-extract
          str-len-bytes str-len-chars str-slice str-head str-tail
          str-find str-find-literal str-count-matches
+         str-to-date str-to-datetime str-to-time
          dt-year dt-month dt-day dt-hour dt-minute dt-second
          dt-iso-year dt-quarter dt-week dt-weekday dt-ordinal-day
          dt-is-leap-year dt-date dt-time
