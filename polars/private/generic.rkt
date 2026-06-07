@@ -22,6 +22,7 @@
          polars/private/generic/operators
          polars/private/generic/reshape
          polars/private/generic/strings
+         polars/private/generic/datetime
          polars/private/generic/describe)
 
 (provide series series? series->string
@@ -45,6 +46,7 @@
          group-by agg grouped? lazy collect scan-csv scan-parquet
          str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
+         year month day hour minute second
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
