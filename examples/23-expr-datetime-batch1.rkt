@@ -2,7 +2,7 @@
 
 ;; Expr datetime batch 1: extract calendar and clock fields from datetimes.
 ;;
-;; The .dt field extractors are prefix-free and data-first, with bare
+;; The .dt field extractors are dt-prefixed and data-first, with bare
 ;; column-name strings auto-lifted to (col ...), so they thread straight
 ;; through with-columns.
 ;;
@@ -23,11 +23,11 @@
 (define out
   (~> df
       (with-columns
-        (alias (year "ts") "year")
-        (alias (cast (month "ts") 'int32) "month")
-        (alias (cast (day "ts") 'int32) "day")
-        (alias (cast (hour "ts") 'int32) "hour")
-        (alias (cast (minute "ts") 'int32) "minute")
-        (alias (cast (second "ts") 'int32) "second"))))
+        (alias (dt-year "ts") "year")
+        (alias (cast (dt-month "ts") 'int32) "month")
+        (alias (cast (dt-day "ts") 'int32) "day")
+        (alias (cast (dt-hour "ts") 'int32) "hour")
+        (alias (cast (dt-minute "ts") 'int32) "minute")
+        (alias (cast (dt-second "ts") 'int32) "second"))))
 
 (displayln out)

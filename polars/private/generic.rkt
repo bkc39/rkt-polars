@@ -48,7 +48,7 @@
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
          str-replace str-replace-all str-extract
-         year month day hour minute second
+         dt-year dt-month dt-day dt-hour dt-minute dt-second
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
