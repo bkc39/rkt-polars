@@ -52,6 +52,10 @@
          str-len-bytes str-len-chars str-slice str-head str-tail
          str-find str-find-literal str-count-matches
          dt-year dt-month dt-day dt-hour dt-minute dt-second
+         dt-iso-year dt-quarter dt-week dt-weekday dt-ordinal-day
+         dt-is-leap-year dt-date dt-time
+         dt-millisecond dt-microsecond dt-nanosecond
+         dt-timestamp dt-strftime dt-truncate
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
