@@ -2,30 +2,32 @@
 
 ;; Expr string batch 2: trim, strip prefixes/suffixes, replace, and extract.
 ;;
+;; All .str transforms are prefix-free and data-first, with bare column-name
+;; strings auto-lifted to (col ...), so they thread through with-columns.
+;;
 ;; Inside `nix develop`:
 ;;   racket examples/24-expr-string-batch2.rkt
 
 (require polars)
 
 (define df
-  (dataframe-new
-   (list (series-new-str "text"
-                         '("  alpha  "
-                           "--beta--"
-                           "id=123"
-                           "report.txt"
-                           "banana")))))
+  (dataframe
+   (list (series '("  alpha  "
+                   "--beta--"
+                   "id=123"
+                   "report.txt"
+                   "banana")
+                 #:name "text"))))
 
 (define out
-  (dataframe-with-columns
-   df
-   (list (expr-alias (expr-str-strip-chars (col "text")) "trimmed")
-         (expr-alias (expr-str-strip-chars (col "text") "-") "stripped")
-         (expr-alias (expr-str-strip-prefix (col "text") "id=") "no_prefix")
-         (expr-alias (expr-str-strip-suffix (col "text") ".txt") "no_suffix")
-         (expr-alias (expr-str-replace (col "text") "\\d+" "#") "replace_digits")
-         (expr-alias (expr-str-replace-all (col "text") "a" "A" #:literal #t)
-                     "replace_all_a")
-         (expr-alias (expr-str-extract (col "text") "([0-9]+)") "digits"))))
+  (~> df
+      (with-columns
+        (alias (str-strip-chars "text") "trimmed")
+        (alias (str-strip-chars "text" "-") "stripped")
+        (alias (str-strip-prefix "text" "id=") "no_prefix")
+        (alias (str-strip-suffix "text" ".txt") "no_suffix")
+        (alias (str-replace "text" "\\d+" "#") "replace_digits")
+        (alias (str-replace-all "text" "a" "A" #:literal #t) "replace_all_a")
+        (alias (str-extract "text" "([0-9]+)") "digits"))))
 
-(display-dataframe out)
+(displayln out)

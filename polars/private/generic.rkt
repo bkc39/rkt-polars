@@ -46,6 +46,8 @@
          group-by agg grouped? lazy collect scan-csv scan-parquet
          str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
+         str-strip-chars str-strip-prefix str-strip-suffix
+         str-replace str-replace-all str-extract
          year month day hour minute second
          rename rename! clone series-clone
          then otherwise
