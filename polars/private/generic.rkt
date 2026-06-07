@@ -39,6 +39,7 @@
          sum mean min max
          count n-unique first last median std var alias
          > < >= <= = !=
+         mod
          filter sort
          head tail slice reverse unique drop-nulls
          select drop with-column with-columns cast join vstack hstack

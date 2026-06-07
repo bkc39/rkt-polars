@@ -75,6 +75,11 @@
 (define-arith p* expr-mul series-mul base:*)
 (define-arith p/ expr-div series-div base:/)
 
+;; `mod` does not collide with racket/base (which spells it `modulo`), so it
+;; is provided under its own name rather than via the rename-out dance.  Plain
+;; numbers fall back to racket/base `modulo`.
+(define-arith mod expr-mod series-mod base:modulo)
+
 ;; --- boolean / logical operators --------------------------------------------
 ;; and / or stay short-circuit macros; only an Expr/series operand routes into
 ;; the eager combiners.  not / xor are strict, so plain functions.
@@ -199,6 +204,9 @@
   (check-pred Expr-ptr? (p+ (col "score") 1))
   (check-equal? (for/list ([i (in-range 5)]) (ref (p+ v64 100) i)) '(110 125 107 130 118))
   (check-equal? (for/list ([i (in-range 5)]) (ref (p* v64 2) i)) '(20 50 14 60 36))
+  (check-equal? (for/list ([i (in-range 5)]) (ref (mod v64 3) i)) '(1 1 1 0 0))
+  (check-equal? (mod 10 3) 1)
+  (check-pred Expr-ptr? (mod (col "value") 2))
 
   ;; when / then / otherwise build an Expr; control-flow path stays racket `when`
   (check-pred Expr-ptr? (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0)))
