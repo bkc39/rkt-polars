@@ -78,7 +78,8 @@
 (define (drop-nulls x)
   (cond [(series? x)    (wrap-series    (series-drop-nulls x))]
         [(dataframe? x) (wrap-dataframe (dataframe-drop-nulls x))]
-        [else (error 'drop-nulls "expected a series or dataframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-drop-nulls x)]   ; length-changing; use inside select
+        [else (error 'drop-nulls "expected a series, dataframe, or Expr, got ~v" x)]))
 
 (define (reverse x)
   (cond [(series? x) (wrap-series (series-reverse x))]

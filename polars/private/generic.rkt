@@ -23,6 +23,7 @@
          polars/private/generic/reshape
          polars/private/generic/strings
          polars/private/generic/datetime
+         polars/private/generic/nullable
          polars/private/generic/describe)
 
 (provide series series? series->string
@@ -41,7 +42,9 @@
          > < >= <= = !=
          mod
          filter sort
-         head tail slice reverse unique drop-nulls
+         head tail slice reverse unique drop-nulls drop-nans
+         is-null is-not-null is-nan is-not-nan is-finite is-infinite
+         fill-null fill-nan forward-fill backward-fill
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
          group-by agg grouped? lazy collect scan-csv scan-parquet
