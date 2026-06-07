@@ -12,7 +12,9 @@
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
-         str-replace str-replace-all str-extract)
+         str-replace str-replace-all str-extract
+         str-len-bytes str-len-chars str-slice str-head str-tail
+         str-find str-find-literal str-count-matches)
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->str-expr who x)
@@ -48,6 +50,24 @@
   (expr-str-replace-all (->str-expr 'str-replace-all x) pat value #:literal literal))
 (define (str-extract x pat #:group-index [group-index 1])
   (expr-str-extract (->str-expr 'str-extract x) pat #:group-index group-index))
+
+;; byte / char length; substring by (offset length); first / last n chars.
+;; These are the .str-namespaced analogues of the row-level slice / head / tail.
+(define (str-len-bytes x) (expr-str-len-bytes (->str-expr 'str-len-bytes x)))
+(define (str-len-chars x) (expr-str-len-chars (->str-expr 'str-len-chars x)))
+(define (str-slice x offset length)
+  (expr-str-slice (->str-expr 'str-slice x) offset length))
+(define (str-head x n) (expr-str-head (->str-expr 'str-head x) n))
+(define (str-tail x n) (expr-str-tail (->str-expr 'str-tail x) n))
+
+;; find a regex (`#:strict` raises on invalid pattern) / a literal substring;
+;; count matches (`#:literal #t` counts a plain substring instead of a regex).
+(define (str-find x pat #:strict [strict #t])
+  (expr-str-find (->str-expr 'str-find x) pat #:strict strict))
+(define (str-find-literal x pat)
+  (expr-str-find-literal (->str-expr 'str-find-literal x) pat))
+(define (str-count-matches x pat #:literal [literal #f])
+  (expr-str-count-matches (->str-expr 'str-count-matches x) pat #:literal literal))
 
 (module+ test
   (require rackunit (only-in threading ~>)
@@ -94,4 +114,25 @@
   (check-equal? (ref (ref out2 #:columns "no_suffix") 3) "report")
   (check-equal? (ref (ref out2 #:columns "rep") 2) "id=#")
   (check-equal? (ref (ref out2 #:columns "rep_all") 4) "bAnAnA")
-  (check-equal? (ref (ref out2 #:columns "digits") 2) "123"))
+  (check-equal? (ref (ref out2 #:columns "digits") 2) "123")
+  ;; batch 3: lengths / slice / head / tail / find / count
+  (define u
+    (dataframe (list (series '("hello" "héllo" "banana" "abc123abc") #:name "text"))))
+  (define out3
+    (~> u (with-columns
+            (alias (str-len-bytes "text") "bytes")
+            (alias (str-len-chars "text") "chars")
+            (alias (str-slice "text" 1 3) "slice")
+            (alias (str-head "text" 2) "head")
+            (alias (str-tail "text" 2) "tail")
+            (alias (str-find "text" "[0-9]+") "find_d")
+            (alias (str-find-literal "text" "na") "find_na")
+            (alias (str-count-matches "text" "a" #:literal #t) "count_a"))))
+  (check-equal? (ref (ref out3 #:columns "bytes") 1) 6)   ; é is 2 bytes
+  (check-equal? (ref (ref out3 #:columns "chars") 1) 5)
+  (check-equal? (ref (ref out3 #:columns "slice") 0) "ell")
+  (check-equal? (ref (ref out3 #:columns "head") 1) "hé")
+  (check-equal? (ref (ref out3 #:columns "tail") 2) "na")
+  (check-equal? (ref (ref out3 #:columns "find_d") 3) 3)
+  (check-equal? (ref (ref out3 #:columns "find_na") 2) 2)
+  (check-equal? (ref (ref out3 #:columns "count_a") 2) 3))

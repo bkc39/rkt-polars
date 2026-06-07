@@ -49,6 +49,8 @@
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
          str-replace str-replace-all str-extract
+         str-len-bytes str-len-chars str-slice str-head str-tail
+         str-find str-find-literal str-count-matches
          dt-year dt-month dt-day dt-hour dt-minute dt-second
          rename rename! clone series-clone
          then otherwise
