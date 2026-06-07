@@ -27,6 +27,7 @@
          polars/private/generic/nullable
          polars/private/generic/predicates
          polars/private/generic/cumulative
+         polars/private/generic/ordering
          polars/private/generic/describe)
 
 (provide series series? series->string
@@ -51,6 +52,7 @@
          is-in is-between
          is-unique is-duplicated is-first-distinct is-last-distinct
          cum-sum cum-prod cum-min cum-max cum-count shift diff
+         sort-by rank gather
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
          group-by agg grouped? lazy collect scan-csv scan-parquet

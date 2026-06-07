@@ -24,6 +24,8 @@
      (wrap-dataframe (dataframe-filter d mask))]
     [(list (? lazyframe? lf) (? Expr-ptr? pred))
      (wrap-lazyframe (lazyframe-filter lf pred))]
+    [(list (? Expr-ptr? e) (? Expr-ptr? pred))
+     (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
 
 ;; sort: (sort df names #:descending d) -> dataframe; (sort series #:descending d)
@@ -56,19 +58,22 @@
   (cond [(series? x)    (wrap-series    (series-head x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-head x n))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
-        [else (error 'head "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-head x #:n n)]   ; length-changing; use inside select
+        [else (error 'head "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (tail x n)
   (cond [(series? x)    (wrap-series    (series-tail x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-tail x n))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
-        [else (error 'tail "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-tail x #:n n)]   ; length-changing; use inside select
+        [else (error 'tail "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (slice x offset length)
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
         [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
-        [else (error 'slice "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-slice x offset length)]   ; length-changing; in select
+        [else (error 'slice "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (unique x)
   (cond [(series? x)    (wrap-series    (series-unique x))]
@@ -82,9 +87,10 @@
         [else (error 'drop-nulls "expected a series, dataframe, or Expr, got ~v" x)]))
 
 (define (reverse x)
-  (cond [(series? x) (wrap-series (series-reverse x))]
-        [(list? x)   (base:reverse x)]
-        [else (error 'reverse "expected a series or list, got ~v" x)]))
+  (cond [(series? x)   (wrap-series (series-reverse x))]
+        [(Expr-ptr? x) (expr-reverse x)]
+        [(list? x)     (base:reverse x)]
+        [else (error 'reverse "expected a series, Expr, or list, got ~v" x)]))
 
 ;; --- dataframe column operations --------------------------------------------
 
