@@ -117,28 +117,40 @@
         [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
         [else (and (or a b) (not (and a b)))]))   ; boolean xor
 
-;; --- when / then / otherwise ------------------------------------------------
-;; Data-first builder that threads: (~> (when (> (col "x") 0)) (then 10) (otherwise 0)).
+;; --- when / then / else-when / otherwise ------------------------------------
+;; Data-first builder that threads, mirroring Polars'
+;; when().then()(.when().then())*.otherwise():
+;;   (~> (when (> (col "x") 0)) (then 10) (otherwise 0))
+;;   (~> (when (< (col "x") 0)) (then -1)
+;;       (else-when (= (col "x") 0)) (then 0)
+;;       (otherwise 1))
 ;; `when` (one arg) starts the builder; two-or-more keep racket/base `when`.
 
-(struct when-pending (cond))         ; produced by (when cond)
-(struct when-clause (cond value))    ; produced by (then ... value)
+;; when-pending: clauses accumulated so far + the open condition awaiting `then`.
+;; when-acc:     clauses accumulated so far, awaiting `else-when` or `otherwise`.
+(struct when-pending (clauses cond))   ; produced by (when cond) / (else-when cond)
+(struct when-acc (clauses))            ; produced by (then ... value)
 
 (define (then wp value)
   (unless (when-pending? wp)
-    (error 'then "`then` must follow `when`, got ~v" wp))
-  (when-clause (when-pending-cond wp) value))
+    (error 'then "`then` must follow `when` / `else-when`, got ~v" wp))
+  (when-acc (append (when-pending-clauses wp)
+                    (list (list (when-pending-cond wp) value)))))
 
-(define (otherwise wc default)
-  (unless (when-clause? wc)
-    (error 'otherwise "`otherwise` must follow `then`, got ~v" wc))
-  (expr-when (list (list (when-clause-cond wc) (when-clause-value wc)))
-             #:otherwise default))
+(define (else-when wa cond)
+  (unless (when-acc? wa)
+    (error 'else-when "`else-when` must follow `then`, got ~v" wa))
+  (when-pending (when-acc-clauses wa) cond))
+
+(define (otherwise wa default)
+  (unless (when-acc? wa)
+    (error 'otherwise "`otherwise` must follow `then`, got ~v" wa))
+  (expr-when (when-acc-clauses wa) #:otherwise default))
 
 (define-syntax p-when
   (syntax-rules ()
-    [(_ c) (when-pending c)]                          ; one arg: start the builder
-    [(_ test body ...) (base:when test body ...)]))   ; else: racket control-flow
+    [(_ c) (when-pending '() c)]                       ; one arg: start the builder
+    [(_ test body ...) (base:when test body ...)]))    ; else: racket control-flow
 
 (module+ test
   ;; pure operator behaviour only (Expr-ptr? / series via ref / numbers); the
@@ -210,5 +222,12 @@
 
   ;; when / then / otherwise build an Expr; control-flow path stays racket `when`
   (check-pred Expr-ptr? (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0)))
+  ;; chained when / then / else-when / then / otherwise (end-to-end values are
+  ;; checked in reshape's with-columns tests; here we only confirm it builds)
+  (check-pred Expr-ptr?
+              (~> (p-when (> (col "score") 20)) (then 2)
+                  (else-when (> (col "score") 10)) (then 1)
+                  (otherwise 0)))
+  (check-exn exn:fail? (lambda () (else-when (when-pending '() #t) #t))) ; else-when needs a then
   (check-equal? (let ([acc 0]) (p-when #t (set! acc 1)) acc) 1)
   (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0))

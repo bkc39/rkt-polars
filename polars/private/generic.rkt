@@ -58,6 +58,6 @@
          dt-millisecond dt-microsecond dt-nanosecond
          dt-timestamp dt-strftime dt-truncate
          rename rename! clone series-clone
-         then otherwise
+         then otherwise else-when
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
                      [p+ +] [p- -] [p* *] [p/ /] [p-when when]))

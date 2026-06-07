@@ -345,6 +345,16 @@
   (let ([d (with-columns frame (alias (p+ (col "score") 1) "score1"))])
     (check-equal? (column-names d) '("user" "score" "cost" "score1"))
     (check-equal? (ref (ref d #:columns "score1") 0) 11))
+  ;; chained when / then / else-when / otherwise -> bucketed values
+  (let ([d (with-columns
+            (dataframe (list (series '(-3 0 4 12 7) #:name "x" #:dtype 'i32)))
+            (alias (~> (p-when (< (col "x") 0)) (then 0)
+                       (else-when (= (col "x") 0)) (then 1)
+                       (else-when (< (col "x") 10)) (then 2)
+                       (otherwise 3))
+                   "bucket"))])
+    (check-equal? (for/list ([i (in-range 5)]) (ref (ref d #:columns "bucket") i))
+                  '(0 1 2 3 2)))
   ;; cast: eager series, and Expr via with-columns
   (check-equal? (dtype (cast (series '(1 2 3) #:dtype 'i32) 'float64)) 'float64)
   (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
