@@ -20,6 +20,7 @@
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators
+         polars/private/generic/math
          polars/private/generic/reshape
          polars/private/generic/strings
          polars/private/generic/datetime
@@ -40,7 +41,7 @@
          sum mean min max
          count n-unique first last median std var alias
          > < >= <= = !=
-         mod
+         mod sign ceil log1p pow clip
          filter sort
          head tail slice reverse unique drop-nulls drop-nans
          is-null is-not-null is-nan is-not-nan is-finite is-infinite
@@ -63,4 +64,6 @@
          rename rename! clone series-clone
          then otherwise else-when
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
-                     [p+ +] [p- -] [p* *] [p/ /] [p-when when]))
+                     [p+ +] [p- -] [p* *] [p/ /] [p-when when]
+                     [p-abs abs] [p-round round] [p-floor floor]
+                     [p-sqrt sqrt] [p-exp exp] [p-log log]))
