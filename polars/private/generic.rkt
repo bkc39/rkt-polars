@@ -21,6 +21,7 @@
          polars/private/generic/reductions
          polars/private/generic/operators
          polars/private/generic/reshape
+         polars/private/generic/strings
          polars/private/generic/describe)
 
 (provide series series? series->string
@@ -42,6 +43,8 @@
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
          group-by agg grouped? lazy collect scan-csv scan-parquet
+         str-to-lowercase str-to-uppercase
+         str-contains str-starts-with str-ends-with
          rename rename! clone series-clone
          then otherwise
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]

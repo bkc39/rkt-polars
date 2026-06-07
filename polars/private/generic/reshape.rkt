@@ -112,8 +112,12 @@
 ;; Same variadic, expression-aware specs as select, but keeps the existing
 ;; columns and appends the (typically aliased) derived ones.
 (define (with-columns d . specs)
-  (guard-dataframe 'with-columns d)
-  (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs))))
+  (cond
+    [(dataframe? d)
+     (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs)))]
+    [(lazyframe? d)
+     (wrap-lazyframe (lazyframe-with-columns d (specs->exprs 'with-columns d specs)))]
+    [else (error 'with-columns "expected a dataframe or lazyframe, got ~v" d)]))
 
 ;; drop: dataframe -> drop the named column(s); list -> racket/list drop.
 (define (drop x arg)

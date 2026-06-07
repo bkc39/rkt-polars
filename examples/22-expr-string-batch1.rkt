@@ -2,6 +2,10 @@
 
 ;; Expr String Batch 1: string predicates and case conversion in lazy plans.
 ;;
+;; The `.str` ops are prefix-free and data-first, and a bare column-name
+;; string is auto-lifted to `(col ...)`, so they thread cleanly: the plan
+;; is just scan-csv -> with-columns -> collect.
+;;
 ;; Inside `nix develop`:
 ;;   racket examples/22-expr-string-batch1.rkt
 
@@ -19,14 +23,14 @@
     (displayln "delta,4")))
 
 (define result
-  (lazyframe-collect
-   (lazyframe-with-columns
-    (lazyframe-scan-csv csv-path)
-    (list (expr-alias (expr-str-to-lowercase (col "name")) "lower_name")
-          (expr-alias (expr-str-to-uppercase (col "name")) "upper_name")
-          (expr-alias (expr-str-contains (col "name") "a") "has_a")
-          (expr-alias (expr-str-starts-with (col "name") "A") "starts_a")
-          (expr-alias (expr-str-ends-with (col "name") "ta") "ends_ta")))))
+  (~> (scan-csv csv-path)
+      (with-columns
+        (alias (str-to-lowercase "name") "lower_name")
+        (alias (str-to-uppercase "name") "upper_name")
+        (alias (str-contains "name" "a") "has_a")
+        (alias (str-starts-with "name" "A") "starts_a")
+        (alias (str-ends-with "name" "ta") "ends_ta"))
+      collect))
 
-(display-dataframe result)
+(displayln result)
 (delete-file csv-path)
