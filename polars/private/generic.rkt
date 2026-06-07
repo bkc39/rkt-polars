@@ -25,6 +25,7 @@
          polars/private/generic/strings
          polars/private/generic/datetime
          polars/private/generic/nullable
+         polars/private/generic/predicates
          polars/private/generic/describe)
 
 (provide series series? series->string
@@ -46,6 +47,8 @@
          head tail slice reverse unique drop-nulls drop-nans
          is-null is-not-null is-nan is-not-nan is-finite is-infinite
          fill-null fill-nan forward-fill backward-fill
+         is-in is-between
+         is-unique is-duplicated is-first-distinct is-last-distinct
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
          group-by agg grouped? lazy collect scan-csv scan-parquet

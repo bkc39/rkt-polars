@@ -10,17 +10,17 @@
 (require polars)
 
 (define df
-  (dataframe-new (list (series-new-i64 "x" '(1 2 2 3 5 5 8)))))
+  (dataframe (list (series '(1 2 2 3 5 5 8) #:name "x" #:dtype 'i64))))
 
 (define out
-  (dataframe-with-columns
-   df
-   (list (expr-alias (expr-is-in (col "x") '(2 3 8)) "in_allowed")
-         (expr-alias (expr-is-between (col "x") 2 5) "in_2_5_both")
-         (expr-alias (expr-is-between (col "x") 2 5 #:closed 'left) "in_2_5_left")
-         (expr-alias (expr-is-unique (col "x")) "uniq")
-         (expr-alias (expr-is-duplicated (col "x")) "dup")
-         (expr-alias (expr-is-first-distinct (col "x")) "first")
-         (expr-alias (expr-is-last-distinct (col "x")) "last"))))
+  (~> df
+      (with-columns
+        (alias (is-in "x" '(2 3 8)) "in_allowed")
+        (alias (is-between "x" 2 5) "in_2_5_both")
+        (alias (is-between "x" 2 5 #:closed 'left) "in_2_5_left")
+        (alias (is-unique "x") "uniq")
+        (alias (is-duplicated "x") "dup")
+        (alias (is-first-distinct "x") "first")
+        (alias (is-last-distinct "x") "last"))))
 
-(display-dataframe out)
+(displayln out)
