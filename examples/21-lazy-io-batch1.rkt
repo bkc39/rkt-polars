@@ -25,7 +25,7 @@
   (~> (scan-csv csv-path)
       (filter (> (col "value") 10))
       (group-by "group")
-      (agg (alias (sum (cast (col "value") 'int32)) "total"))
+      (agg (~> (col "value") (cast 'int32) sum (alias "total")))
       (sort "group")
       collect))
 
@@ -45,7 +45,7 @@
 (define parquet-result
   (~> (scan-parquet parquet-path)
       (filter (>= (col "x") 2))
-      (select (col "x") (alias (* (col "x") 10) "ten_x"))
+      (select (col "x") (~> (col "x") (* 10) (alias "ten_x")))
       collect))
 
 (displayln "parquet scan pipeline:")

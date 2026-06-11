@@ -25,11 +25,11 @@
 (define result
   (~> (scan-csv csv-path)
       (with-columns
-        (alias (str-to-lowercase "name") "lower_name")
-        (alias (str-to-uppercase "name") "upper_name")
-        (alias (str-contains "name" "a") "has_a")
-        (alias (str-starts-with "name" "A") "starts_a")
-        (alias (str-ends-with "name" "ta") "ends_ta"))
+        (~> "name" str-to-lowercase (alias "lower_name"))
+        (~> "name" str-to-uppercase (alias "upper_name"))
+        (~> "name" (str-contains "a") (alias "has_a"))
+        (~> "name" (str-starts-with "A") (alias "starts_a"))
+        (~> "name" (str-ends-with "ta") (alias "ends_ta")))
       collect))
 
 (displayln result)
