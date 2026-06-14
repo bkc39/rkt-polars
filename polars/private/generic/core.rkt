@@ -133,6 +133,20 @@
 (define (read-csv path)
   (wrap-dataframe (dataframe-read-csv path)))
 
+;; parquet round-trip (Polars' df.write_parquet / pl.read_parquet).
+(define (write-parquet d path)
+  (guard-dataframe 'write-parquet d)
+  (dataframe-write-parquet d path))
+(define (read-parquet path)
+  (wrap-dataframe (dataframe-read-parquet path)))
+
+;; newline-delimited JSON / JSON Lines (Polars' df.write_ndjson / pl.read_ndjson).
+(define (write-ndjson d path)
+  (guard-dataframe 'write-ndjson d)
+  (dataframe-write-json-lines d path))
+(define (read-ndjson path)
+  (wrap-dataframe (dataframe-read-json-lines path)))
+
 ;; shape as a list (examples); shape/values is the multiple-values variant.
 (define (shape/values x) (apply values (shape x)))
 
@@ -246,6 +260,17 @@
   (check-equal? (shape frame-rt) '(3 3))
   (check-equal? (column-names frame-rt) '("user" "score" "cost"))
   (delete-file csv-tmp)
+
+  ;; parquet + ndjson round-trips preserve shape + column names
+  (define pq-tmp (make-temporary-file "rkt-polars-test-~a.parquet"))
+  (write-parquet frame pq-tmp)
+  (check-equal? (shape (read-parquet pq-tmp)) '(3 3))
+  (check-equal? (column-names (read-parquet pq-tmp)) '("user" "score" "cost"))
+  (delete-file pq-tmp)
+  (define nd-tmp (make-temporary-file "rkt-polars-test-~a.jsonl"))
+  (write-ndjson frame nd-tmp)
+  (check-equal? (shape (read-ndjson nd-tmp)) '(3 3))
+  (delete-file nd-tmp)
 
   ;; ref: single column (positional or #:columns) -> series; list -> dataframe
   (check-pred series? (ref frame "score"))

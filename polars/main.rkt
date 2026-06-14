@@ -13,7 +13,9 @@
                   [and polars:and] [or polars:or]
                   [not polars:not] [xor polars:xor]
                   [+ polars:+] [- polars:-] [* polars:*] [/ polars:/]
-                  [when polars:when]))
+                  [when polars:when]
+                  [abs polars:abs] [round polars:round] [floor polars:floor]
+                  [sqrt polars:sqrt] [exp polars:exp] [log polars:log]))
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -26,4 +28,6 @@
          (rename-out [polars:and and] [polars:or or]
                      [polars:not not] [polars:xor xor]
                      [polars:+ +] [polars:- -] [polars:* *] [polars:/ /]
-                     [polars:when when]))
+                     [polars:when when]
+                     [polars:abs abs] [polars:round round] [polars:floor floor]
+                     [polars:sqrt sqrt] [polars:exp exp] [polars:log log]))

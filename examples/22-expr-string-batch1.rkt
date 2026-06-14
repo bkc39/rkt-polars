@@ -2,13 +2,17 @@
 
 ;; Expr String Batch 1: string predicates and case conversion in lazy plans.
 ;;
+;; The `.str` ops are prefix-free and data-first, and a bare column-name
+;; string is auto-lifted to `(col ...)`, so they thread cleanly: the plan
+;; is just scan-csv -> with-columns -> collect.
+;;
 ;; Inside `nix develop`:
 ;;   racket examples/22-expr-string-batch1.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
-(define csv-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-expr-string.csv"))
+(define csv-path (make-temporary-file "rkt-polars-expr-string-~a.csv"))
 
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
@@ -19,13 +23,14 @@
     (displayln "delta,4")))
 
 (define result
-  (lazyframe-collect
-   (lazyframe-with-columns
-    (lazyframe-scan-csv csv-path)
-    (list (expr-alias (expr-str-to-lowercase (col "name")) "lower_name")
-          (expr-alias (expr-str-to-uppercase (col "name")) "upper_name")
-          (expr-alias (expr-str-contains (col "name") "a") "has_a")
-          (expr-alias (expr-str-starts-with (col "name") "A") "starts_a")
-          (expr-alias (expr-str-ends-with (col "name") "ta") "ends_ta")))))
+  (~> (scan-csv csv-path)
+      (with-columns
+        (~> "name" str-to-lowercase (alias "lower_name"))
+        (~> "name" str-to-uppercase (alias "upper_name"))
+        (~> "name" (str-contains "a") (alias "has_a"))
+        (~> "name" (str-starts-with "A") (alias "starts_a"))
+        (~> "name" (str-ends-with "ta") (alias "ends_ta")))
+      collect))
 
-(display-dataframe result)
+(displayln result)
+(delete-file csv-path)

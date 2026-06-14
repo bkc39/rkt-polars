@@ -1,48 +1,48 @@
 #lang racket/base
 
-;; DataFrame Batch 1: hstack, semi/anti joins, Parquet, JSON Lines.
+;; DataFrame Batch 1: hstack, semi/anti joins, Parquet, JSON Lines — all
+;; prefix-free.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/19-dataframe-batch1.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
 (define users
-  (dataframe-new
-   (list (series-new-i32 "uid" '(1 2 3 4))
-         (series-new-str "name" '("alice" "bob" "carol" "dora")))))
+  (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
+                   (series '("alice" "bob" "carol" "dora") #:name "name"))))
 
 (define orders
-  (dataframe-new
-   (list (series-new-i32 "uid" '(1 2 2 5))
-         (series-new-i32 "amount" '(10 20 30 40)))))
+  (dataframe (list (series '(1 2 2 5)   #:name "uid" #:dtype 'i32)
+                   (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
 
 (define with-region
-  (dataframe-hstack users
-                    (list (series-new-str "region"
-                                          '("east" "west" "west" "east")))))
+  (~> users (hstack (series '("east" "west" "west" "east") #:name "region"))))
 
 (displayln "hstack:")
-(display-dataframe with-region)
+(displayln with-region)
 (newline)
 
 (displayln "semi join:")
-(display-dataframe (dataframe-join users orders #:on '("uid") #:how 'semi))
+(displayln (~> users (join orders #:on '("uid") #:how 'semi)))
 (newline)
 
 (displayln "anti join:")
-(display-dataframe (dataframe-join users orders #:on '("uid") #:how 'anti))
+(displayln (~> users (join orders #:on '("uid") #:how 'anti)))
 (newline)
 
-(define parquet-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-batch1.parquet"))
-(dataframe-write-parquet with-region parquet-path)
+;; make-temporary-file creates a uniquely-named file (the ~a is filled in) and
+;; returns its path; delete it when we're done.
+(define parquet-path (make-temporary-file "rkt-polars-batch1-~a.parquet"))
+(write-parquet with-region parquet-path)
 (displayln "parquet roundtrip:")
-(display-dataframe (dataframe-read-parquet parquet-path))
+(displayln (read-parquet parquet-path))
+(delete-file parquet-path)
 (newline)
 
-(define jsonl-path
-  (build-path (find-system-path 'temp-dir) "rkt-polars-batch1.jsonl"))
-(dataframe-write-json-lines with-region jsonl-path)
+(define jsonl-path (make-temporary-file "rkt-polars-batch1-~a.jsonl"))
+(write-ndjson with-region jsonl-path)
 (displayln "json lines roundtrip:")
-(display-dataframe (dataframe-read-json-lines jsonl-path))
+(displayln (read-ndjson jsonl-path))
+(delete-file jsonl-path)

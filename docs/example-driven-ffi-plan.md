@@ -447,6 +447,23 @@ When `str.*` / `dt.*` work resumes, extend
 `polars/private/expr-str.rkt` and `polars/private/expr-dt.rkt` instead
 of growing `expr.rkt`.
 
+## UX layer naming policy
+
+The prefix-free generic UX layer (`polars/private/generic/*`, re-exported
+from `(require polars)`) names Polars' per-type namespaces with a uniform
+hyphen prefix: `str-*` for `.str`, `dt-*` for `.dt`, and `list-*` / `arr-*`
+/ `struct-*` when those land. The prefix is the Lisp realization of Polars'
+`.str` / `.dt` namespaces (cf. `string-*`, `hash-*`, `dict-*`) and is
+load-bearing, not cosmetic: namespace methods collide *intra-library* with
+general verbs (`slice` / `head` / `tail` / `replace` / `reverse` mean one
+thing on rows and another on string contents), so they cannot all be bare in
+one module, and `prefix-in` at the require site cannot fix a same-module
+clash. Some also collide with other modules a user co-requires (`dt-date` vs
+gregor's `date`, `dt-time` vs `racket/base`'s `time`). Collision-free
+top-level verbs stay bare (`with-columns`, `group-by`, `agg`, `pivot`,
+`vstack`, `scan-csv`, …). So: example 31 uses `str-head` / `str-slice`,
+example 32 uses `dt-date` / `dt-time`, example 33 uses `str-to-date`.
+
 ## Development Rule
 
 For each new capability:

@@ -3,7 +3,7 @@
                     (only-in threading ~> ~>>)
                     @; polars re-exports generic ops (min max sum sort filter comparisons,
                     @; arithmetic + - * /, logical and/or/not, reverse, when) that shadow racket/base
-                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= =)]]
+                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= = abs round floor sqrt exp log)]]
 
 @title[#:tag "guide"]{Guide}
 

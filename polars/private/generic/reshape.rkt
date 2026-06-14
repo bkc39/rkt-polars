@@ -24,6 +24,8 @@
      (wrap-dataframe (dataframe-filter d mask))]
     [(list (? lazyframe? lf) (? Expr-ptr? pred))
      (wrap-lazyframe (lazyframe-filter lf pred))]
+    [(list (? Expr-ptr? e) (? Expr-ptr? pred))
+     (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
 
 ;; sort: (sort df names #:descending d) -> dataframe; (sort series #:descending d)
@@ -56,19 +58,22 @@
   (cond [(series? x)    (wrap-series    (series-head x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-head x n))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
-        [else (error 'head "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-head x #:n n)]   ; length-changing; use inside select
+        [else (error 'head "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (tail x n)
   (cond [(series? x)    (wrap-series    (series-tail x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-tail x n))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
-        [else (error 'tail "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-tail x #:n n)]   ; length-changing; use inside select
+        [else (error 'tail "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (slice x offset length)
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
         [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
-        [else (error 'slice "expected a series, dataframe, or lazyframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-slice x offset length)]   ; length-changing; in select
+        [else (error 'slice "expected a series, dataframe, lazyframe, or Expr, got ~v" x)]))
 
 (define (unique x)
   (cond [(series? x)    (wrap-series    (series-unique x))]
@@ -78,12 +83,14 @@
 (define (drop-nulls x)
   (cond [(series? x)    (wrap-series    (series-drop-nulls x))]
         [(dataframe? x) (wrap-dataframe (dataframe-drop-nulls x))]
-        [else (error 'drop-nulls "expected a series or dataframe, got ~v" x)]))
+        [(Expr-ptr? x)  (expr-drop-nulls x)]   ; length-changing; use inside select
+        [else (error 'drop-nulls "expected a series, dataframe, or Expr, got ~v" x)]))
 
 (define (reverse x)
-  (cond [(series? x) (wrap-series (series-reverse x))]
-        [(list? x)   (base:reverse x)]
-        [else (error 'reverse "expected a series or list, got ~v" x)]))
+  (cond [(series? x)   (wrap-series (series-reverse x))]
+        [(Expr-ptr? x) (expr-reverse x)]
+        [(list? x)     (base:reverse x)]
+        [else (error 'reverse "expected a series, Expr, or list, got ~v" x)]))
 
 ;; --- dataframe column operations --------------------------------------------
 
@@ -101,15 +108,23 @@
 ;; and expression-aware: each argument is a column name, index, an Expr, or a
 ;; list thereof.  Always a dataframe.
 (define (select d . specs)
-  (guard-dataframe 'select d)
-  (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs))))
+  (cond
+    [(dataframe? d)
+     (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs)))]
+    [(lazyframe? d)
+     (wrap-lazyframe (lazyframe-select d (specs->exprs 'select d specs)))]
+    [else (error 'select "expected a dataframe or lazyframe, got ~v" d)]))
 
 ;; with-columns: add/replace columns in one pass (Polars df.with_columns).
 ;; Same variadic, expression-aware specs as select, but keeps the existing
 ;; columns and appends the (typically aliased) derived ones.
 (define (with-columns d . specs)
-  (guard-dataframe 'with-columns d)
-  (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs))))
+  (cond
+    [(dataframe? d)
+     (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs)))]
+    [(lazyframe? d)
+     (wrap-lazyframe (lazyframe-with-columns d (specs->exprs 'with-columns d specs)))]
+    [else (error 'with-columns "expected a dataframe or lazyframe, got ~v" d)]))
 
 ;; drop: dataframe -> drop the named column(s); list -> racket/list drop.
 (define (drop x arg)
@@ -123,6 +138,15 @@
 (define (with-column d s)
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
+
+;; cast: change dtype.  Expr -> cast Expr; series -> eager cast; a column name
+;; lifts to (col name).  `dtype` is a canonical symbol ('float64 / 'string /
+;; 'datetime / ...) or a list like '(datetime microseconds).
+(define (cast x dtype)
+  (cond [(Expr-ptr? x) (expr-cast x dtype)]
+        [(series? x)   (wrap-series (series-cast x dtype))]
+        [(string? x)   (expr-cast (col x) dtype)]
+        [else (error 'cast "expected an Expr, series, or column name, got ~v" x)]))
 
 ;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
 ;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
@@ -142,6 +166,35 @@
 (define (vstack a b)
   (guard-dataframe 'vstack a)
   (wrap-dataframe (dataframe-vstack a b)))
+
+;; hstack: append column(s) (series) to a dataframe -> dataframe (Polars df.hstack).
+(define (hstack d . cols)
+  (guard-dataframe 'hstack d)
+  (wrap-dataframe (dataframe-hstack d cols)))
+
+;; join-asof: as-of join (Polars left.join_asof).  #:on (shared key) or
+;; #:left-on/#:right-on; #:strategy 'backward/'forward/'nearest; optional
+;; #:by / #:left-by / #:right-by and #:tolerance.
+(define (join-asof left right
+                   #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
+                   #:by [by #f] #:left-by [left-by #f] #:right-by [right-by #f]
+                   #:strategy [strategy 'backward] #:tolerance [tolerance #f])
+  (guard-dataframe 'join-asof left)
+  (wrap-dataframe
+   (dataframe-join-asof left right
+                        #:on on #:left-on left-on #:right-on right-on
+                        #:by by #:left-by left-by #:right-by right-by
+                        #:strategy strategy #:tolerance tolerance)))
+
+;; pivot: long -> wide (Polars df.pivot).
+(define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
+  (guard-dataframe 'pivot d)
+  (wrap-dataframe (dataframe-pivot d #:on on #:index index #:values values #:agg agg)))
+
+;; unpivot: wide -> long (Polars df.unpivot).
+(define (unpivot d #:on on #:index index)
+  (guard-dataframe 'unpivot d)
+  (wrap-dataframe (dataframe-unpivot d #:on on #:index index)))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
@@ -174,6 +227,18 @@
     (error 'collect "expected a lazyframe, got ~v" lf))
   (wrap-dataframe (lazyframe-collect lf)))
 
+;; scan-csv / scan-parquet: start a lazy plan straight from a file (Polars'
+;; pl.scan_csv / pl.scan_parquet) — no eager read; collect runs it.
+(define (scan-csv path
+                  #:has-header [has-header #t] #:separator [separator #\,]
+                  #:skip-rows [skip-rows 0] #:n-rows [n-rows #f])
+  (wrap-lazyframe
+   (lazyframe-scan-csv path #:has-header has-header #:separator separator
+                       #:skip-rows skip-rows #:n-rows n-rows)))
+
+(define (scan-parquet path #:n-rows [n-rows #f])
+  (wrap-lazyframe (lazyframe-scan-parquet path #:n-rows n-rows)))
+
 ;; --- clone / rename ---------------------------------------------------------
 ;; series-slice already returns a fresh series, so a full-length slice clones.
 (define (series-clone s)
@@ -205,7 +270,7 @@
     [else (error 'rename "expected a series or dataframe, got ~v" x)]))
 
 (module+ test
-  (require rackunit (only-in threading ~>)
+  (require rackunit racket/file (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/operators
            polars/private/generic/reductions
@@ -287,6 +352,20 @@
   (let ([d (with-columns frame (alias (p+ (col "score") 1) "score1"))])
     (check-equal? (column-names d) '("user" "score" "cost" "score1"))
     (check-equal? (ref (ref d #:columns "score1") 0) 11))
+  ;; chained when / then / else-when / otherwise -> bucketed values
+  (let ([d (with-columns
+            (dataframe (list (series '(-3 0 4 12 7) #:name "x" #:dtype 'i32)))
+            (alias (~> (p-when (< (col "x") 0)) (then 0)
+                       (else-when (= (col "x") 0)) (then 1)
+                       (else-when (< (col "x") 10)) (then 2)
+                       (otherwise 3))
+                   "bucket"))])
+    (check-equal? (for/list ([i (in-range 5)]) (ref (ref d #:columns "bucket") i))
+                  '(0 1 2 3 2)))
+  ;; cast: eager series, and Expr via with-columns
+  (check-equal? (dtype (cast (series '(1 2 3) #:dtype 'i32) 'float64)) 'float64)
+  (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
+    (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)
@@ -316,6 +395,22 @@
                                 (series '("eve" "frank") #:name "name"))))
   (check-equal? (height (vstack usr more)) 6)
   (check-equal? (column-names (vstack usr more)) '("uid" "name"))
+  ;; hstack: append column(s)
+  (check-equal? (column-names (hstack usr (series '(10 20 30 40) #:name "extra")))
+                '("uid" "name" "extra"))
+  ;; join-asof / pivot / unpivot
+  (let ([obs (dataframe (list (series '(1 3 5) #:name "time" #:dtype 'i32)
+                              (series '(100 300 500) #:name "reading" #:dtype 'i32)))]
+        [cal (dataframe (list (series '(1 2 4) #:name "time" #:dtype 'i32)
+                              (series '(10 20 40) #:name "offset" #:dtype 'i32)))])
+    (check-equal? (height (join-asof obs cal #:on "time" #:strategy 'backward)) 3))
+  (let* ([sales (dataframe (list (series '("a" "a" "b" "b")     #:name "store")
+                                 (series '("q1" "q2" "q1" "q2") #:name "quarter")
+                                 (series '(10 20 30 40)         #:name "sales" #:dtype 'i32)))]
+         [pv (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)])
+    (check-equal? (sort (column-names pv) string<?) '("q1" "q2" "store"))
+    (check-equal? (height pv) 2)
+    (check-equal? (height (unpivot pv #:on '("q1" "q2") #:index '("store"))) 4))
 
   ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
   (check-pred lazyframe? (lazy ops-df))
@@ -336,4 +431,14 @@
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
   ;; lazy join (both sides lazy)
-  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3))
+  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3)
+  ;; scan-parquet: round-trip a frame to disk, scan lazily, then filter/select/collect
+  (let ([pq (make-temporary-file "rkt-polars-scan-~a.parquet")])
+    (dynamic-wind
+     void
+     (lambda ()
+       (write-parquet ops-df pq)
+       (check-equal? (height (~> (scan-parquet pq) (filter (> (col "value") 8)) collect)) 4)
+       (check-equal? (column-names (~> (scan-parquet pq) (select (col "group")) collect))
+                     '("group")))
+     (lambda () (delete-file pq)))))

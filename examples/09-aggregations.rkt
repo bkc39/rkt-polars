@@ -7,7 +7,8 @@
 ;; Inside `nix develop`:
 ;;   racket examples/09-aggregations.rkt
 
-(require polars)
+(require racket/file              ; make-temporary-file
+         polars)
 
 (define df
   (dataframe
@@ -54,8 +55,7 @@
 (newline)
 
 ;; Null cleanup via CSV
-(define csv-path (build-path (find-system-path 'temp-dir)
-                             "rkt-polars-dropnulls.csv"))
+(define csv-path (make-temporary-file "rkt-polars-dropnulls-~a.csv"))
 (with-output-to-file csv-path #:exists 'replace
   (lambda ()
     (displayln "name,score")
