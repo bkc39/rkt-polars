@@ -7,33 +7,29 @@
 ;; it also covers eager series / dataframe; it accepts an Expr there too.
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide is-null is-not-null is-nan is-not-nan is-finite is-infinite
          fill-null fill-nan forward-fill backward-fill drop-nans)
 
-(define (->null-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
-
-(define (is-null x)     (expr-is-null     (->null-expr 'is-null x)))
-(define (is-not-null x) (expr-is-not-null (->null-expr 'is-not-null x)))
-(define (is-nan x)      (expr-is-nan      (->null-expr 'is-nan x)))
-(define (is-not-nan x)  (expr-is-not-nan  (->null-expr 'is-not-nan x)))
-(define (is-finite x)   (expr-is-finite   (->null-expr 'is-finite x)))
-(define (is-infinite x) (expr-is-infinite (->null-expr 'is-infinite x)))
+(define-expr-unop is-null     'is-null     expr-is-null)
+(define-expr-unop is-not-null 'is-not-null expr-is-not-null)
+(define-expr-unop is-nan      'is-nan      expr-is-nan)
+(define-expr-unop is-not-nan  'is-not-nan  expr-is-not-nan)
+(define-expr-unop is-finite   'is-finite   expr-is-finite)
+(define-expr-unop is-infinite 'is-infinite expr-is-infinite)
 
 ;; fill-null / fill-nan replace missing / NaN with a value (auto-lifted to a
 ;; literal); forward/backward-fill carry the last/next valid value forward or
 ;; back (#:limit caps how far a single run is carried).
-(define (fill-null x value) (expr-fill-null (->null-expr 'fill-null x) value))
-(define (fill-nan x value)  (expr-fill-nan  (->null-expr 'fill-nan x) value))
+(define (fill-null x value) (expr-fill-null (->col-expr 'fill-null x) value))
+(define (fill-nan x value)  (expr-fill-nan  (->col-expr 'fill-nan x) value))
 (define (forward-fill x #:limit [limit #f])
-  (expr-forward-fill (->null-expr 'forward-fill x) #:limit limit))
+  (expr-forward-fill (->col-expr 'forward-fill x) #:limit limit))
 (define (backward-fill x #:limit [limit #f])
-  (expr-backward-fill (->null-expr 'backward-fill x) #:limit limit))
-(define (drop-nans x) (expr-drop-nans (->null-expr 'drop-nans x)))
+  (expr-backward-fill (->col-expr 'backward-fill x) #:limit limit))
+(define-expr-unop drop-nans 'drop-nans expr-drop-nans)
 
 (module+ test
   (require rackunit (only-in threading ~>)

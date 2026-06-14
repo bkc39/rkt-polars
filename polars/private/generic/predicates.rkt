@@ -6,26 +6,22 @@
 ;; an Expr or a bare column-name string (auto-lifted via col).
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide is-in is-between
          is-unique is-duplicated is-first-distinct is-last-distinct)
 
-(define (->pred-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
-
 ;; is-in: membership against a homogeneous Racket list, a Series, or an Expr.
-(define (is-in x rhs) (expr-is-in (->pred-expr 'is-in x) rhs))
+(define (is-in x rhs) (expr-is-in (->col-expr 'is-in x) rhs))
 ;; is-between: lower..upper, #:closed 'both | 'left | 'right | 'none.
 (define (is-between x lower upper #:closed [closed 'both])
-  (expr-is-between (->pred-expr 'is-between x) lower upper #:closed closed))
+  (expr-is-between (->col-expr 'is-between x) lower upper #:closed closed))
 
-(define (is-unique x)         (expr-is-unique         (->pred-expr 'is-unique x)))
-(define (is-duplicated x)     (expr-is-duplicated     (->pred-expr 'is-duplicated x)))
-(define (is-first-distinct x) (expr-is-first-distinct (->pred-expr 'is-first-distinct x)))
-(define (is-last-distinct x)  (expr-is-last-distinct  (->pred-expr 'is-last-distinct x)))
+(define-expr-unop is-unique         'is-unique         expr-is-unique)
+(define-expr-unop is-duplicated     'is-duplicated     expr-is-duplicated)
+(define-expr-unop is-first-distinct 'is-first-distinct expr-is-first-distinct)
+(define-expr-unop is-last-distinct  'is-last-distinct  expr-is-last-distinct)
 
 (module+ test
   (require rackunit (only-in threading ~>)

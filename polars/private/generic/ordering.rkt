@@ -8,27 +8,23 @@
 ;; every produced column shares a length.
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide sort-by rank gather)
-
-(define (->ord-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
 
 ;; sort-by: reorder x by #:by (a column name / Expr / list of them); #:descending
 ;; is a bool or a per-key list of bools.
 (define (sort-by x #:by by #:descending [descending #f])
-  (expr-sort-by (->ord-expr 'sort-by x) #:by by #:descending descending))
+  (expr-sort-by (->col-expr 'sort-by x) #:by by #:descending descending))
 
 ;; rank: #:method 'average | 'min | 'max | 'dense | 'ordinal, #:descending, #:seed.
 (define (rank x #:method [method 'average] #:descending [descending #f] #:seed [seed #f])
-  (expr-rank (->ord-expr 'rank x) #:method method #:descending descending #:seed seed))
+  (expr-rank (->col-expr 'rank x) #:method method #:descending descending #:seed seed))
 
 ;; gather: pick rows by position (an Expr, a Series, or a list of ints).
 (define (gather x indices)
-  (expr-gather (->ord-expr 'gather x) indices))
+  (expr-gather (->col-expr 'gather x) indices))
 
 (module+ test
   (require rackunit (only-in threading ~>)

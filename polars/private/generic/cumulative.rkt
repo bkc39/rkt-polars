@@ -6,33 +6,29 @@
 ;; (auto-lifted via col).
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide cum-sum cum-prod cum-min cum-max cum-count shift diff)
 
-(define (->seq-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
-
 (define (cum-sum x #:reverse [reverse #f])
-  (expr-cum-sum (->seq-expr 'cum-sum x) #:reverse reverse))
+  (expr-cum-sum (->col-expr 'cum-sum x) #:reverse reverse))
 (define (cum-prod x #:reverse [reverse #f])
-  (expr-cum-prod (->seq-expr 'cum-prod x) #:reverse reverse))
+  (expr-cum-prod (->col-expr 'cum-prod x) #:reverse reverse))
 (define (cum-min x #:reverse [reverse #f])
-  (expr-cum-min (->seq-expr 'cum-min x) #:reverse reverse))
+  (expr-cum-min (->col-expr 'cum-min x) #:reverse reverse))
 (define (cum-max x #:reverse [reverse #f])
-  (expr-cum-max (->seq-expr 'cum-max x) #:reverse reverse))
+  (expr-cum-max (->col-expr 'cum-max x) #:reverse reverse))
 (define (cum-count x #:reverse [reverse #f])
-  (expr-cum-count (->seq-expr 'cum-count x) #:reverse reverse))
+  (expr-cum-count (->col-expr 'cum-count x) #:reverse reverse))
 
 ;; shift rows by #:n (positive = later, negative = earlier); #:fill-value fills
 ;; the vacated slots instead of null.  diff takes successive differences over a
 ;; lag of #:n, with #:null-behavior 'ignore | 'drop.
 (define (shift x #:n [n 1] #:fill-value [fill-value #f])
-  (expr-shift (->seq-expr 'shift x) #:n n #:fill-value fill-value))
+  (expr-shift (->col-expr 'shift x) #:n n #:fill-value fill-value))
 (define (diff x #:n [n 1] #:null-behavior [null-behavior 'ignore])
-  (expr-diff (->seq-expr 'diff x) #:n n #:null-behavior null-behavior))
+  (expr-diff (->col-expr 'diff x) #:n n #:null-behavior null-behavior))
 
 (module+ test
   (require rackunit (only-in threading ~>)

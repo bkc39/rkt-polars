@@ -7,7 +7,8 @@
 ;; work.
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
@@ -17,58 +18,50 @@
          str-find str-find-literal str-count-matches
          str-to-date str-to-datetime str-to-time)
 
-;; Lift a column-name string to an Expr; pass an Expr through unchanged.
-(define (->str-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
-
-(define (str-to-lowercase x)
-  (expr-str-to-lowercase (->str-expr 'str-to-lowercase x)))
-(define (str-to-uppercase x)
-  (expr-str-to-uppercase (->str-expr 'str-to-uppercase x)))
+(define-expr-unop str-to-lowercase 'str-to-lowercase expr-str-to-lowercase)
+(define-expr-unop str-to-uppercase 'str-to-uppercase expr-str-to-uppercase)
 (define (str-contains x pattern)
-  (expr-str-contains (->str-expr 'str-contains x) pattern))
+  (expr-str-contains (->col-expr 'str-contains x) pattern))
 (define (str-starts-with x prefix)
-  (expr-str-starts-with (->str-expr 'str-starts-with x) prefix))
+  (expr-str-starts-with (->col-expr 'str-starts-with x) prefix))
 (define (str-ends-with x suffix)
-  (expr-str-ends-with (->str-expr 'str-ends-with x) suffix))
+  (expr-str-ends-with (->col-expr 'str-ends-with x) suffix))
 
 ;; strip whitespace (no chars) or the given chars from both ends; strip a fixed
 ;; prefix / suffix.
 (define (str-strip-chars x [chars #f])
-  (expr-str-strip-chars (->str-expr 'str-strip-chars x) chars))
+  (expr-str-strip-chars (->col-expr 'str-strip-chars x) chars))
 (define (str-strip-prefix x prefix)
-  (expr-str-strip-prefix (->str-expr 'str-strip-prefix x) prefix))
+  (expr-str-strip-prefix (->col-expr 'str-strip-prefix x) prefix))
 (define (str-strip-suffix x suffix)
-  (expr-str-strip-suffix (->str-expr 'str-strip-suffix x) suffix))
+  (expr-str-strip-suffix (->col-expr 'str-strip-suffix x) suffix))
 
 ;; regex replace (first / all matches); `#:literal #t` treats pattern as plain
 ;; text.  `str-extract` returns the `#:group-index` capture group (default 1).
 (define (str-replace x pat value #:literal [literal #f])
-  (expr-str-replace (->str-expr 'str-replace x) pat value #:literal literal))
+  (expr-str-replace (->col-expr 'str-replace x) pat value #:literal literal))
 (define (str-replace-all x pat value #:literal [literal #f])
-  (expr-str-replace-all (->str-expr 'str-replace-all x) pat value #:literal literal))
+  (expr-str-replace-all (->col-expr 'str-replace-all x) pat value #:literal literal))
 (define (str-extract x pat #:group-index [group-index 1])
-  (expr-str-extract (->str-expr 'str-extract x) pat #:group-index group-index))
+  (expr-str-extract (->col-expr 'str-extract x) pat #:group-index group-index))
 
 ;; byte / char length; substring by (offset length); first / last n chars.
 ;; These are the .str-namespaced analogues of the row-level slice / head / tail.
-(define (str-len-bytes x) (expr-str-len-bytes (->str-expr 'str-len-bytes x)))
-(define (str-len-chars x) (expr-str-len-chars (->str-expr 'str-len-chars x)))
+(define-expr-unop str-len-bytes 'str-len-bytes expr-str-len-bytes)
+(define-expr-unop str-len-chars 'str-len-chars expr-str-len-chars)
 (define (str-slice x offset length)
-  (expr-str-slice (->str-expr 'str-slice x) offset length))
-(define (str-head x n) (expr-str-head (->str-expr 'str-head x) n))
-(define (str-tail x n) (expr-str-tail (->str-expr 'str-tail x) n))
+  (expr-str-slice (->col-expr 'str-slice x) offset length))
+(define (str-head x n) (expr-str-head (->col-expr 'str-head x) n))
+(define (str-tail x n) (expr-str-tail (->col-expr 'str-tail x) n))
 
 ;; find a regex (`#:strict` raises on invalid pattern) / a literal substring;
 ;; count matches (`#:literal #t` counts a plain substring instead of a regex).
 (define (str-find x pat #:strict [strict #t])
-  (expr-str-find (->str-expr 'str-find x) pat #:strict strict))
+  (expr-str-find (->col-expr 'str-find x) pat #:strict strict))
 (define (str-find-literal x pat)
-  (expr-str-find-literal (->str-expr 'str-find-literal x) pat))
+  (expr-str-find-literal (->col-expr 'str-find-literal x) pat))
 (define (str-count-matches x pat #:literal [literal #f])
-  (expr-str-count-matches (->str-expr 'str-count-matches x) pat #:literal literal))
+  (expr-str-count-matches (->col-expr 'str-count-matches x) pat #:literal literal))
 
 ;; parse strings to Date / Datetime / Time.  #:strict #f turns unparseable
 ;; values into null instead of raising; #:format is a chrono strptime pattern
@@ -76,16 +69,16 @@
 ;; str-to-datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
 (define (str-to-date x #:format [format #f] #:strict [strict #t]
                      #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-date (->str-expr 'str-to-date x)
+  (expr-str-to-date (->col-expr 'str-to-date x)
                     #:format format #:strict strict #:exact exact #:cache cache))
 (define (str-to-datetime x #:format [format #f] #:unit [unit 'microseconds]
                          #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-datetime (->str-expr 'str-to-datetime x)
+  (expr-str-to-datetime (->col-expr 'str-to-datetime x)
                         #:format format #:unit unit
                         #:strict strict #:exact exact #:cache cache))
 (define (str-to-time x #:format [format #f] #:strict [strict #t]
                      #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-time (->str-expr 'str-to-time x)
+  (expr-str-to-time (->col-expr 'str-to-time x)
                     #:format format #:strict strict #:exact exact #:cache cache))
 
 (module+ test

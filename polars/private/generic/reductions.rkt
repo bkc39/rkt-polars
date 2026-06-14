@@ -12,7 +12,8 @@
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
-         polars/private/generic/dtype)
+         polars/private/generic/dtype
+         polars/private/generic/expr-util)
 
 (provide (all-defined-out))
 
@@ -109,25 +110,19 @@
 ;; Take an Expr or a bare column name (lifted via col).  first / last also keep
 ;; their racket/list list-accessor behaviour.
 
-(define (->agg-expr who x)
-  (cond
-    [(Expr-ptr? x) x]
-    [(string? x) (col x)]
-    [else (error who "expected an Expr or column-name string, got ~v" x)]))
-
-(define (count x)     (expr-count    (->agg-expr 'count x)))
+(define (count x)     (expr-count    (->col-expr 'count x)))
 ;; n-unique: eager count on a series; otherwise an aggregation Expr.
 (define (n-unique x)
   (cond [(series? x) (series-n-unique x)]
-        [else (expr-n-unique (->agg-expr 'n-unique x))]))
-(define (median x)    (expr-median   (->agg-expr 'median x)))
+        [else (expr-n-unique (->col-expr 'n-unique x))]))
+(define (median x)    (expr-median   (->col-expr 'median x)))
 ;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
 (define (std x #:ddof [ddof 1])
   (cond [(series? x) (series-std x #:ddof ddof)]
-        [else (expr-std (->agg-expr 'std x) #:ddof ddof)]))
+        [else (expr-std (->col-expr 'std x) #:ddof ddof)]))
 (define (var x #:ddof [ddof 1])
   (cond [(series? x) (series-var x #:ddof ddof)]
-        [else (expr-var (->agg-expr 'var x) #:ddof ddof)]))
+        [else (expr-var (->col-expr 'var x) #:ddof ddof)]))
 
 (define (first x)
   (cond

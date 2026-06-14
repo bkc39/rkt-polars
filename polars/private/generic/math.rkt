@@ -13,25 +13,11 @@
 
 (require (prefix-in base: racket/base)
          polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide p-abs p-round p-floor p-sqrt p-exp p-log
          sign ceil log1p pow clip)
-
-;; unary, racket/base-shadowing: Expr/colname -> Expr; number -> racket/base.
-(define-syntax-rule (define-math-unop name who expr-op base-op)
-  (define (name x)
-    (cond [(Expr-ptr? x) (expr-op x)]
-          [(string? x)   (expr-op (col x))]
-          [(number? x)   (base-op x)]
-          [else (error who "expected an Expr, column name, or number, got ~v" x)])))
-
-;; unary, non-shadowing (Polars-only): Expr/colname -> Expr.
-(define-syntax-rule (define-expr-unop name who expr-op)
-  (define (name x)
-    (cond [(Expr-ptr? x) (expr-op x)]
-          [(string? x)   (expr-op (col x))]
-          [else (error who "expected an Expr or column name, got ~v" x)])))
 
 (define-math-unop p-abs   'abs   expr-abs   base:abs)
 (define-math-unop p-floor 'floor expr-floor base:floor)
@@ -44,30 +30,22 @@
 
 ;; round to #:decimals places (default 0); numbers round with the same rule.
 (define (p-round x #:decimals [decimals 0])
-  (cond [(Expr-ptr? x) (expr-round x #:decimals decimals)]
-        [(string? x)   (expr-round (col x) #:decimals decimals)]
-        [(number? x)   (let ([f (base:expt 10 decimals)])
-                         (base:/ (base:round (base:* x f)) f))]
-        [else (error 'round "expected an Expr, column name, or number, got ~v" x)]))
+  (cond [(number? x) (let ([f (base:expt 10 decimals)])
+                       (base:/ (base:round (base:* x f)) f))]
+        [else (expr-round (->col-expr 'round x) #:decimals decimals)]))
 
 ;; logarithm; #:base defaults to natural (e).  Numbers use racket/base log.
 (define (p-log x #:base [base #f])
-  (cond [(Expr-ptr? x) (if base (expr-log x #:base base) (expr-log x))]
-        [(string? x)   (if base (expr-log (col x) #:base base) (expr-log (col x)))]
-        [(number? x)   (if base (base:log x base) (base:log x))]
-        [else (error 'log "expected an Expr, column name, or number, got ~v" x)]))
+  (cond [(number? x) (if base (base:log x base) (base:log x))]
+        [else (let ([e (->col-expr 'log x)])
+                (if base (expr-log e #:base base) (expr-log e)))]))
 
 ;; raise to a power (exponent auto-lifted to a literal); clamp to [lower, upper]
 ;; (either bound may be omitted).
-(define (pow x exponent)
-  (cond [(Expr-ptr? x) (expr-pow x exponent)]
-        [(string? x)   (expr-pow (col x) exponent)]
-        [else (error 'pow "expected an Expr or column name, got ~v" x)]))
+(define (pow x exponent) (expr-pow (->col-expr 'pow x) exponent))
 
 (define (clip x #:lower [lower #f] #:upper [upper #f])
-  (cond [(Expr-ptr? x) (expr-clip x #:lower lower #:upper upper)]
-        [(string? x)   (expr-clip (col x) #:lower lower #:upper upper)]
-        [else (error 'clip "expected an Expr or column name, got ~v" x)]))
+  (expr-clip (->col-expr 'clip x) #:lower lower #:upper upper))
 
 (module+ test
   (require rackunit (only-in threading ~>)

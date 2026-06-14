@@ -10,7 +10,8 @@
 ;; time).
 
 (require polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         polars/private/generic/expr-util)
 
 (provide dt-year dt-month dt-day dt-hour dt-minute dt-second
          dt-iso-year dt-quarter dt-week dt-weekday dt-ordinal-day
@@ -18,38 +19,32 @@
          dt-millisecond dt-microsecond dt-nanosecond
          dt-timestamp dt-strftime dt-truncate)
 
-;; Lift a column-name string to an Expr; pass an Expr through unchanged.
-(define (->dt-expr who x)
-  (cond [(Expr-ptr? x) x]
-        [(string? x)   (col x)]
-        [else (error who "expected an Expr or column name, got ~v" x)]))
-
-(define (dt-year x)   (expr-dt-year   (->dt-expr 'dt-year x)))
-(define (dt-month x)  (expr-dt-month  (->dt-expr 'dt-month x)))
-(define (dt-day x)    (expr-dt-day    (->dt-expr 'dt-day x)))
-(define (dt-hour x)   (expr-dt-hour   (->dt-expr 'dt-hour x)))
-(define (dt-minute x) (expr-dt-minute (->dt-expr 'dt-minute x)))
-(define (dt-second x) (expr-dt-second (->dt-expr 'dt-second x)))
+(define-expr-unop dt-year   'dt-year   expr-dt-year)
+(define-expr-unop dt-month  'dt-month  expr-dt-month)
+(define-expr-unop dt-day    'dt-day    expr-dt-day)
+(define-expr-unop dt-hour   'dt-hour   expr-dt-hour)
+(define-expr-unop dt-minute 'dt-minute expr-dt-minute)
+(define-expr-unop dt-second 'dt-second expr-dt-second)
 
 ;; ISO / calendar fields, date+time extraction, and subsecond fields.
-(define (dt-iso-year x)     (expr-dt-iso-year     (->dt-expr 'dt-iso-year x)))
-(define (dt-quarter x)      (expr-dt-quarter      (->dt-expr 'dt-quarter x)))
-(define (dt-week x)         (expr-dt-week         (->dt-expr 'dt-week x)))
-(define (dt-weekday x)      (expr-dt-weekday      (->dt-expr 'dt-weekday x)))
-(define (dt-ordinal-day x)  (expr-dt-ordinal-day  (->dt-expr 'dt-ordinal-day x)))
-(define (dt-is-leap-year x) (expr-dt-is-leap-year (->dt-expr 'dt-is-leap-year x)))
-(define (dt-date x)         (expr-dt-date         (->dt-expr 'dt-date x)))
-(define (dt-time x)         (expr-dt-time         (->dt-expr 'dt-time x)))
-(define (dt-millisecond x)  (expr-dt-millisecond  (->dt-expr 'dt-millisecond x)))
-(define (dt-microsecond x)  (expr-dt-microsecond  (->dt-expr 'dt-microsecond x)))
-(define (dt-nanosecond x)   (expr-dt-nanosecond   (->dt-expr 'dt-nanosecond x)))
+(define-expr-unop dt-iso-year     'dt-iso-year     expr-dt-iso-year)
+(define-expr-unop dt-quarter      'dt-quarter      expr-dt-quarter)
+(define-expr-unop dt-week         'dt-week         expr-dt-week)
+(define-expr-unop dt-weekday      'dt-weekday      expr-dt-weekday)
+(define-expr-unop dt-ordinal-day  'dt-ordinal-day  expr-dt-ordinal-day)
+(define-expr-unop dt-is-leap-year 'dt-is-leap-year expr-dt-is-leap-year)
+(define-expr-unop dt-date         'dt-date         expr-dt-date)
+(define-expr-unop dt-time         'dt-time         expr-dt-time)
+(define-expr-unop dt-millisecond  'dt-millisecond  expr-dt-millisecond)
+(define-expr-unop dt-microsecond  'dt-microsecond  expr-dt-microsecond)
+(define-expr-unop dt-nanosecond   'dt-nanosecond   expr-dt-nanosecond)
 
 ;; epoch timestamp (#:unit 'milliseconds|'microseconds|'nanoseconds), strftime
 ;; formatting, and truncation to a fixed interval (e.g. "1h", "1d").
 (define (dt-timestamp x #:unit [unit 'microseconds])
-  (expr-dt-timestamp (->dt-expr 'dt-timestamp x) #:unit unit))
-(define (dt-strftime x fmt) (expr-dt-strftime (->dt-expr 'dt-strftime x) fmt))
-(define (dt-truncate x every) (expr-dt-truncate (->dt-expr 'dt-truncate x) every))
+  (expr-dt-timestamp (->col-expr 'dt-timestamp x) #:unit unit))
+(define (dt-strftime x fmt) (expr-dt-strftime (->col-expr 'dt-strftime x) fmt))
+(define (dt-truncate x every) (expr-dt-truncate (->col-expr 'dt-truncate x) every))
 
 (module+ test
   (require rackunit (only-in threading ~>)
