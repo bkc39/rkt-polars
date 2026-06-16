@@ -179,8 +179,8 @@ To reproduce a catalog install locally (no toolchain, no env override):
 scripts/test-local.sh
 ```
 
-CI (`.github/workflows/native.yml`) builds both candidates with cargo and runs
-the catalog install on Linux and macOS.
+CI (`.github/workflows/ci.yml`, which calls the reusable `native.yml`) builds
+both candidates with cargo and runs the catalog install on Linux and macOS.
 
 ## License
 
