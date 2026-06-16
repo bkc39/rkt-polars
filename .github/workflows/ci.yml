@@ -1,0 +1,16 @@
+on: [push, pull_request]
+name: CI
+
+# Cancel superseded runs for the same ref so rapid re-pushes don't pile up.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+# CI runs both reusable workflows; the workflow (and its badge) is green only
+# when both the native and nix checks pass.
+jobs:
+  native:
+    uses: ./.github/workflows/native.yml
+
+  nix:
+    uses: ./.github/workflows/nix.yml

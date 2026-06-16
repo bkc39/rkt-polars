@@ -1,40 +1,128 @@
+<div align="center">
+
 # rkt-polars
 
-Racket bindings to [polars](https://pola.rs/).
+**Fast, multi-threaded DataFrames for Racket — [Polars](https://pola.rs/)**
 
-The project now uses Nix as its primary build infrastructure:
+[![Build](https://img.shields.io/github/actions/workflow/status/bkc39/rkt-polars/ci.yml?label=build)](https://github.com/bkc39/rkt-polars/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-racket--lang.org-blue.svg)](https://docs.racket-lang.org/polars)
+[![Package](https://img.shields.io/badge/raco%20pkg-polars-purple.svg)](https://pkgs.racket-lang.org/package/polars)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
 
-- the Rust compatibility library lives in `rust/`
-- Nix builds the shared library and the Racket package separately
-- the Racket package loads `libcompat` from `polars/native-libs/`
+</div>
 
-## Build With Nix
+`rkt-polars` provides Racket bindings to [Polars](https://pola.rs/), the
+blazingly fast DataFrame library written in Rust. This package supports both Linux and macOS.
 
-Build the default Racket package environment:
+For the full API, see the [reference documentation](https://docs.racket-lang.org/polars)
+and the runnable scripts in [`examples/`](examples/).
 
-```sh
-nix build
-```
+## Install
 
-Build the Rust compatibility library on its own:
-
-```sh
-nix build .#rust
-```
-
-Build the packaged Racket environment explicitly:
+To install run:
 
 ```sh
-nix build .#racket
+raco pkg install polars
 ```
 
-Run the full check set:
+then
+
+```racket
+(require polars)
+```
+
+## Usage
+
+Here is a brief example:
+
+```racket
+#lang racket/base
+(require polars)
+
+(define df
+  (dataframe (list (series '(1 2 3 4)     #:name "x" #:dtype 'i64)
+                   (series '(10 20 30 40) #:name "y" #:dtype 'i64))))
+
+(~> df
+    (with-columns (~> (col "x") (* (col "y")) (alias "x_times_y"))
+                  (~> (col "y") sqrt          (alias "sqrt_y"))))
+```
+
+```text
+shape: (4, 4)
+┌─────┬─────┬───────────┬──────────┐
+│ x   ┆ y   ┆ x_times_y ┆ sqrt_y   │
+│ --- ┆ --- ┆ ---       ┆ ---      │
+│ i64 ┆ i64 ┆ i64       ┆ f64      │
+╞═════╪═════╪═══════════╪══════════╡
+│ 1   ┆ 10  ┆ 10        ┆ 3.162278 │
+│ 2   ┆ 20  ┆ 40        ┆ 4.472136 │
+│ 3   ┆ 30  ┆ 90        ┆ 5.477226 │
+│ 4   ┆ 40  ┆ 160       ┆ 6.324555 │
+└─────┴─────┴───────────┴──────────┘
+```
+
+### Lazy queries
+
+Build a query plan with `lazy`, chain the verbs, and execute it with `collect`.
+
+```racket
+#lang racket/base
+(require polars)
+
+(define df
+  (dataframe
+   (list (series '("setosa" "setosa" "versicolor" "versicolor" "virginica" "virginica")
+                 #:name "species")
+         (series '(5.1 4.9 7.0 6.4 6.3 5.8) #:name "sepal_length")
+         (series '(1.4 1.4 4.7 4.5 6.0 5.1) #:name "petal_length"))))
+
+(~> df
+    lazy
+    (filter (> (col "sepal_length") 5.0))
+    (group-by "species")
+    (agg (~> (col "sepal_length") sum  (alias "total_sepal"))
+         (~> (col "petal_length") mean (alias "avg_petal")))
+    (sort "species")
+    collect)
+```
+
+```text
+shape: (3, 3)
+┌────────────┬─────────────┬───────────┐
+│ species    ┆ total_sepal ┆ avg_petal │
+│ ---        ┆ ---         ┆ ---       │
+│ str        ┆ f64         ┆ f64       │
+╞════════════╪═════════════╪═══════════╡
+│ setosa     ┆ 5.1         ┆ 1.4       │
+│ versicolor ┆ 13.4        ┆ 4.6       │
+│ virginica  ┆ 12.1        ┆ 5.55      │
+└────────────┴─────────────┴───────────┘
+```
+
+You can also start a lazy plan straight from a file with `scan-csv` /
+`scan-parquet`, and read or write eagerly with `read-csv` / `write-csv`,
+`read-parquet` / `write-parquet`, and `read-ndjson` / `write-ndjson`. See
+[`examples/`](examples/) for end-to-end scripts covering joins, string and
+datetime operations, window functions, and more.
+
+## Development
+
+This project uses [Nix](https://nixos.org/) as its primary build
+infrastructure. The Rust compatibility library lives in `rust/`; Nix builds the
+shared library and the Racket package separately, and the Racket package loads
+`libcompat` from `polars/native-libs/`.
+
+### Build with Nix
 
 ```sh
-nix flake check
+nix build              # the default Racket package environment
+nix build .#rust       # just the Rust compatibility library
+nix build .#racket     # the packaged Racket environment
+nix flake check        # the full check set
 ```
 
-## Development Shell
+### Development shell
 
 Enter the pinned toolchain shell:
 
@@ -42,79 +130,59 @@ Enter the pinned toolchain shell:
 nix develop
 ```
 
-On first entry, the shell:
-
-- links the local `rkt-polars` package into `.racket-user/`
-- copies `libcompat` into `polars/native-libs/`
-- runs `raco setup` for the package
-
-Typical commands inside the shell:
+On first entry, the shell links the local `rkt-polars` package into
+`.racket-user/`, copies `libcompat` into `polars/native-libs/`, and runs `raco
+setup`. Typical commands inside the shell:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml
 cd rust && cargo build --release
-cp target/release/libcompat.dylib ../polars/native-libs/
-otool -D ../polars/native-libs/libcompat.dylib
-cd ..
-raco test -x -c polars
+cp target/release/libcompat.dylib ../polars/native-libs/   # macOS
+cd .. && raco test -x -c polars
 ```
 
-On macOS, the `otool -D` line should print `@rpath/libcompat.dylib`.
+On macOS, `otool -D polars/native-libs/libcompat.dylib` should print
+`@rpath/libcompat.dylib`.
 
-## Non-Nix `raco` Fallback
+### Non-Nix `raco` fallback
 
-Populate `polars/native-libs/` from the Nix-built Rust library:
+Populate `polars/native-libs/` from the Nix-built Rust library, then use plain
+Racket commands (no Cargo at install time):
 
 ```sh
 nix run .#copy-native-libs
-```
-
-After that, plain Racket commands work without invoking Cargo during install:
-
-```sh
 raco pkg install --name rkt-polars .
 raco setup --pkgs rkt-polars
 raco test -x -c polars
 ```
 
-## Prebuilt Native Libraries (pkgs.rkt-lang.org)
+### Prebuilt native libraries
 
-The package catalog's build host has no Rust toolchain, so it cannot compile
-`libcompat` at install time. To support it, prebuilt shared objects are
-committed per platform under `polars/native-libs/candidates/`:
+The package catalog's build host has no Rust toolchain, so prebuilt shared
+objects are committed per platform under `polars/native-libs/candidates/`
+(`linux/libcompat.so`, built on glibc 2.17 / manylinux2014, and
+`darwin/libcompat.dylib` for arm64). The `pre-install-collection` hook
+(`polars/private/install-compat.rkt`) selects a library at `raco pkg install`
+time, preferring `RKT_POLARS_COMPAT_LIB_PATH`, then the committed candidate for
+the platform, then an already-staged `polars/native-libs/libcompat.*`.
 
-```
-polars/native-libs/candidates/
-├── linux/libcompat.so       # x86_64, built on glibc 2.17 (manylinux2014)
-└── darwin/libcompat.dylib   # arm64
-```
-
-The linux candidate is built inside the `manylinux2014` container (glibc 2.17)
-so it requires only `GLIBC <= 2.17` and loads on every Linux from the last
-decade — including pkgs.rkt-lang.org's build/test hosts, whose glibc is older
-than 2.27.
-
-The `pre-install-collection` hook (`polars/private/install-compat.rkt`) selects
-a library at `raco pkg install` time, in priority order:
-
-1. `RKT_POLARS_COMPAT_LIB_PATH` — copy from `$VAR/lib` (Nix build / dev shell).
-2. the committed candidate for the current platform (catalog install).
-3. an already-staged `polars/native-libs/libcompat.*`.
-
-To (re)build and stage a candidate with the Rust toolchain — the cargo
-analogue of a cmake build — run, on the matching platform:
+To (re)build and stage a candidate on the matching platform:
 
 ```sh
 scripts/build-so.sh            # auto-detects linux/darwin
 scripts/build-so.sh darwin     # or name the platform explicitly
 ```
 
-To reproduce the catalog install locally (no toolchain, no env override),
-forcing the installer to copy from `candidates/`:
+To reproduce a catalog install locally (no toolchain, no env override):
 
 ```sh
 scripts/test-local.sh
 ```
 
 CI (`.github/workflows/native.yml`) builds both candidates with cargo and runs
-this catalog install on Linux and macOS.
+the catalog install on Linux and macOS.
+
+## License
+
+Licensed under either the [Apache License 2.0](LICENSE-APACHE) or the
+[MIT License](LICENSE-MIT) at your option.
