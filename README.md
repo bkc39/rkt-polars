@@ -2,10 +2,9 @@
 
 # rkt-polars
 
-**Fast, multi-threaded DataFrames for Racket — [Polars](https://pola.rs/) with a prefix-free, threadable API.**
+**Fast, multi-threaded DataFrames for Racket — [Polars](https://pola.rs/)**
 
-[![Native](https://github.com/bkc39/rkt-polars/actions/workflows/native.yml/badge.svg)](https://github.com/bkc39/rkt-polars/actions/workflows/native.yml)
-[![Nix](https://github.com/bkc39/rkt-polars/actions/workflows/nix.yml/badge.svg)](https://github.com/bkc39/rkt-polars/actions/workflows/nix.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/bkc39/rkt-polars/ci.yml?label=build)](https://github.com/bkc39/rkt-polars/actions/workflows/ci.yml)
 [![Docs](https://img.shields.io/badge/docs-racket--lang.org-blue.svg)](https://docs.racket-lang.org/polars)
 [![Package](https://img.shields.io/badge/raco%20pkg-polars-purple.svg)](https://pkgs.racket-lang.org/package/polars)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](#license)
@@ -13,38 +12,20 @@
 </div>
 
 `rkt-polars` provides Racket bindings to [Polars](https://pola.rs/), the
-blazingly fast DataFrame library written in Rust. It wraps the Polars engine
-through a native compatibility layer and exposes it as an idiomatic Racket API.
-
-The Polars engine:
-
-- uses all available cores on your machine,
-- optimizes lazy queries to cut unneeded work and allocations,
-- handles datasets larger than your available RAM,
-- and follows a consistent, schema-aware API.
-
-On top of that engine, `rkt-polars` adds a Racket-native surface:
-
-- **Prefix-free, data-first verbs** that thread cleanly with `~>` — a Polars
-  pipeline reads top-to-bottom, mirroring the Python/Rust method chains.
-- **Eager and lazy execution** — work with a `dataframe` directly, or build a
-  `lazy` query plan and run it with `collect`.
-- **Expressions** over columns (`col`), with the `.str` / `.dt` namespaces,
-  null/NaN handling, cumulative ops, ranking, and `when`/`then`/`otherwise`.
-- **Temporal values as [gregor](https://docs.racket-lang.org/gregor/) dates and
-  datetimes** on the Racket side.
+blazingly fast DataFrame library written in Rust. This package supports both Linux and macOS.
 
 For the full API, see the [reference documentation](https://docs.racket-lang.org/polars)
 and the runnable scripts in [`examples/`](examples/).
 
 ## Install
 
+To install run:
+
 ```sh
 raco pkg install polars
 ```
 
-The package ships prebuilt native libraries for Linux (x86_64) and macOS
-(arm64), so no Rust toolchain is needed to install. Then:
+then
 
 ```racket
 (require polars)
@@ -52,8 +33,7 @@ The package ships prebuilt native libraries for Linux (x86_64) and macOS
 
 ## Usage
 
-A quick taste — build a DataFrame and derive columns with expressions that
-thread with `~>`:
+Here is a brief example:
 
 ```racket
 #lang racket/base
@@ -85,7 +65,6 @@ shape: (4, 4)
 ### Lazy queries
 
 Build a query plan with `lazy`, chain the verbs, and execute it with `collect`.
-The engine optimizes the whole plan before running it:
 
 ```racket
 #lang racket/base

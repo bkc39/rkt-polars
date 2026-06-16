@@ -1,10 +1,7 @@
-on: [push, pull_request]
+# Reusable workflow: invoked by ci.yml so a single CI run (and its badge)
+# aggregates both the native and nix checks.
+on: workflow_call
 name: Nix
-
-# Cancel superseded runs for the same ref so rapid re-pushes don't pile up.
-concurrency:
-  group: nix-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   flake-check:
