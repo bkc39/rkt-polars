@@ -184,5 +184,5 @@ the catalog install on Linux and macOS.
 
 ## License
 
-Licensed under either the Apache License 2.0 or the [MIT License](LICENSE-MIT)
-at your option.
+Licensed under either the [Apache License 2.0](LICENSE-APACHE) or the
+[MIT License](LICENSE-MIT) at your option.
