@@ -20,11 +20,27 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+
+          # crates.io answers 403 to downloads that carry curl's default
+          # User-Agent, which is what nixpkgs' fetchurl sends, so vendoring
+          # from Cargo.lock fails in a fresh CI store.  static.crates.io
+          # serves the identical tarballs (same checksums) at the same
+          # /<crate>/<version>/download path with no User-Agent policy, so
+          # point importCargoLock's fetcher there.
+          importCargoLock = pkgs.rustPlatform.importCargoLock.override {
+            fetchurl = args: pkgs.fetchurl (args // {
+              url = builtins.replaceStrings
+                [ "https://crates.io/api/v1/crates" ]
+                [ "https://static.crates.io/crates" ]
+                args.url;
+            });
+          };
+
           rust = pkgs.rustPlatform.buildRustPackage {
             pname = "rkt-polars-compat";
             inherit version;
             src = pkgs.lib.cleanSource ./rust;
-            cargoLock.lockFile = ./rust/Cargo.lock;
+            cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
 
             doCheck = true;
 
@@ -72,7 +88,8 @@
               mkdir -p "$PLTUSERHOME"
 
               # Resolve and download the runtime deps from info.rkt
-              # (gregor-lib, threading-lib) + their closure (network).  The
+              # (gregor-lib, threading-lib), the threading-doc build-dep (so the
+              # docs can cross-reference `~>`), and their closure (network).  The
               # closure is whatever this Racket distribution does not already
               # provide, so enumerate it dynamically (below) rather than
               # hard-coding a list that drifts between distributions.
@@ -81,7 +98,7 @@
               # Windows, falling back to the system /usr/share/zoneinfo
               # elsewhere -- but the Nix build sandbox has no system zoneinfo,
               # so we must ship the tzdata package's copy.
-              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata threading-lib
+              raco pkg install --batch --auto --no-setup --scope user gregor-lib tzdata threading-lib threading-doc
 
               mapfile -t deps < <(racket -e \
                 '(require pkg/lib)(for ([p (installed-pkg-names #:scope (quote user))]) (displayln p))')
@@ -104,7 +121,7 @@
 
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-mqqeBKrE6QQ5vaimnSPHpZc2MFWfbhr57cuchvDgw2A=";
+            outputHash = "sha256-/qmurgchaaPHSBQZuRz5khrkdgIYN/6W8ZbQxwSSuCA=";
           };
 
           racket = pkgs.stdenv.mkDerivation {
@@ -128,6 +145,12 @@
               # network.  --copy moves them out of the read-only store so they
               # can be compiled.
               raco pkg install --batch --copy --no-docs --scope user ${racket-deps}/*/
+
+              # threading-doc is a build-dep of the manual (it is what the
+              # `~>` cross-reference resolves against).  Render it so the
+              # polars docs can link to it and --check-pkg-deps sees the
+              # dependency as used.
+              raco setup --pkgs threading-doc
 
               mkdir -p ./polars/native-libs
               cp ${rust}/lib/libcompat.* ./polars/native-libs/

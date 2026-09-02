@@ -7,7 +7,7 @@
 (define name "polars")
 
 (define deps '("base" "gregor-lib" "threading-lib"))
-(define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
+(define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"))
 
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
