@@ -20,11 +20,27 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+
+          # crates.io answers 403 to downloads that carry curl's default
+          # User-Agent, which is what nixpkgs' fetchurl sends, so vendoring
+          # from Cargo.lock fails in a fresh CI store.  static.crates.io
+          # serves the identical tarballs (same checksums) at the same
+          # /<crate>/<version>/download path with no User-Agent policy, so
+          # point importCargoLock's fetcher there.
+          importCargoLock = pkgs.rustPlatform.importCargoLock.override {
+            fetchurl = args: pkgs.fetchurl (args // {
+              url = builtins.replaceStrings
+                [ "https://crates.io/api/v1/crates" ]
+                [ "https://static.crates.io/crates" ]
+                args.url;
+            });
+          };
+
           rust = pkgs.rustPlatform.buildRustPackage {
             pname = "rkt-polars-compat";
             inherit version;
             src = pkgs.lib.cleanSource ./rust;
-            cargoLock.lockFile = ./rust/Cargo.lock;
+            cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
 
             doCheck = true;
 
