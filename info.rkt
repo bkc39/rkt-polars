@@ -2,7 +2,7 @@
 
 (define collection 'multi)
 (define deps '("base" "gregor-lib" "threading-lib"))
-(define build-deps '("scribble-lib" "racket-doc" "rackunit-lib"))
+(define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"))
 ;; Documentation lives in the published `polars` collection
 ;; (polars/scribblings/polars.scrbl); this whole-repo package builds it from
 ;; there.  Declaring scribblings here too would document module `polars`

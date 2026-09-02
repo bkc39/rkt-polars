@@ -94,6 +94,73 @@ wide, is
 @racket[mean] promotes to @racket['float64]. Use @racket[series-cast] to change
 a series' dtype explicitly.
 
+@subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
+
+The generic layer is built on monomorphic, dtype-suffixed bindings that operate
+directly on the foreign series. They remain exported. A @racket[series] wrapper
+is accepted anywhere one of them expects a series (the wrapper marshals
+transparently, and satisfies @racket[Series-ptr?]), but what they @emph{return}
+is the raw foreign pointer, not a wrapper — so the results do not print in
+Polars' format and do not answer to @racket[series?]. Prefer @racket[series]
+and the generic operations above; reach for these when you need a specific
+dtype or a specific typed result.
+
+@defproc[(Series-ptr? [v any/c]) boolean?]{
+  Recognises a foreign series pointer. Both raw pointers returned by the
+  low-level constructors and @racket[series] wrappers satisfy it.}
+
+@deftogether[(@defproc[(series-new-i8   [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-i16  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-i32  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-i64  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-u8   [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-u16  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-u32  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-u64  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-f32  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-f64  [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-bool [name string?] [values list?]) Series-ptr?]
+              @defproc[(series-new-str  [name string?] [values list?]) Series-ptr?])]{
+  Build a series of the dtype named by the suffix from a list of values.
+  @racket[polars-null] among the values produces a null entry. Unlike
+  @racket[series], no coercion happens: the integer constructors want exact
+  integers, the float constructors want flonums (an exact @racket[1] is
+  rejected), @racket[series-new-bool] wants booleans and @racket[series-new-str]
+  wants strings. Each constructor has a @tt{/vec} sibling
+  (@racketid[series-new-i32/vec], @racketid[series-new-f64/vec], …) that takes a
+  vector instead of a list.}
+
+@deftogether[(@defproc[(series-sum-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
+              @defproc[(series-min-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
+              @defproc[(series-max-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
+              @defproc[(series-mean-i32 [s Series-ptr?]) (or/c flonum? #f)]
+              @defproc[(series-sum-f64  [s Series-ptr?]) (or/c flonum? #f)]
+              @defproc[(series-min-f64  [s Series-ptr?]) (or/c flonum? #f)]
+              @defproc[(series-max-f64  [s Series-ptr?]) (or/c flonum? #f)]
+              @defproc[(series-mean-f64 [s Series-ptr?]) (or/c flonum? #f)])]{
+  Typed reductions. The suffix names the dtype the series must have
+  (@racket['int32] or @racket['float64]); applied to a series of any other
+  dtype they return @racket[#f] rather than converting, so
+  @racket[(series-sum-i32 (series '(1 2)))] is @racket[#f] because
+  @racket[series] infers @racket['int64] for those elements. They also return
+  @racket[#f] when the reduction is undefined — the min, max or mean of a
+  series whose entries are all null — while the sum of such a series is
+  @racket[0]. The generic @racket[sum], @racket[min], @racket[max] and
+  @racket[mean] dispatch on the dtype for you and are the preferred surface.}
+
+@defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
+  Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical
+  dtype symbol (@racket['int8] through @racket['int64], @racket['uint8] through
+  @racket['uint64], @racket['float32], @racket['float64], @racket['boolean],
+  @racket['string], @racket['binary], @racket['date], @racket['time],
+  @racket['datetime], @racket['duration], @racket['null]) or, for the two
+  temporal dtypes with a time unit, as a list —
+  @racket['(datetime milliseconds)], @racket['(duration nanoseconds)] — where
+  the unit is one of @racket['nanoseconds], @racket['microseconds] or
+  @racket['milliseconds]. Bare @racket['datetime] and @racket['duration]
+  default to microseconds. Raises an error when Polars cannot perform the
+  cast. The fluent @racket[cast] wraps this for the generic layer.}
+
 @section[#:tag "ref-dataframes"]{DataFrames}
 
 A @tech{dataframe} is a collection of equal-length named series. Like a
@@ -181,6 +248,16 @@ generic operations are simply the preferred surface.
   @racket[out]; since a @racket[dataframe] now prints itself, prefer plain
   @racket[display].}
 
+@defproc[(DataFrame-ptr? [v any/c]) boolean?]{
+  Recognises a foreign dataframe pointer. Both raw pointers returned by the
+  low-level operations and @racket[dataframe] wrappers satisfy it.}
+
+@defproc[(dataframe-vstack [top DataFrame-ptr?] [bottom DataFrame-ptr?]) DataFrame-ptr?]{
+  Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
+  have the same columns in the same order, and returns the combined frame
+  (Polars' @tt{vstack}). The fluent @racket[vstack] is the wrapper-returning
+  equivalent.}
+
 @subsection[#:tag "ref-reading-writing"]{Reading & writing}
 
 @deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
@@ -190,6 +267,167 @@ generic operations are simply the preferred surface.
               @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
   Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON.}
+
+@section[#:tag "ref-expressions"]{Expressions}
+
+An @deftech{expression} describes a column computation — a column reference, a
+literal, or an operation over other expressions — without running it. The
+same expression can be reused across the @emph{select}, @emph{with_columns},
+@emph{filter} and @emph{group_by/agg} contexts, exactly as in Polars, and is
+evaluated only when a context runs it against a frame. Expressions are foreign
+values recognised by @racket[Expr-ptr?].
+
+The bindings below are the monomorphic @tt{expr-*} layer. Most of them have a
+generic counterpart in @secref["ref-fluent"] — @racket[expr-gt] underlies
+@racket[>], @racket[expr-sum] underlies the expression arm of @racket[sum],
+@racket[expr-alias] underlies @racket[alias] — and the generic spelling is the
+preferred one; the @tt{expr-*} names are useful when a name would otherwise be
+shadowed, or when you want to be explicit that an expression is being built.
+
+@defproc[(Expr-ptr? [v any/c]) boolean?]{
+  Returns @racket[#t] if @racket[v] is an @tech{expression}.}
+
+@deftogether[(@defproc[(col [name string?]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?]
+              @defproc[(expr-alias [e Expr-ptr?] [name string?]) Expr-ptr?])]{
+  The leaves. @racket[col] refers to the column called @racket[name]
+  (@tt{pl.col}). @racket[lit] lifts a Racket scalar to a literal expression:
+  booleans, exact integers (32-bit when they fit, 64-bit otherwise), other
+  reals (as @racket['float64]) and strings. Every binary @tt{expr-*} operation
+  applies @racket[lit] to a non-expression operand automatically, so it is
+  rarely needed explicitly. @racket[expr-alias] names the column an expression
+  produces, matching @tt{.alias}: @racket[(expr-alias (expr-sum (col "value")) "total")].}
+
+@deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-mul [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-div [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-mod [a any/c] [b any/c]) Expr-ptr?])]{
+  Element-wise arithmetic. At least one operand is normally an expression;
+  the other may be a scalar, which is lifted with @racket[lit], so
+  @racket[(expr-mul (col "value") 2)] reads like @tt{col("value") * 2}. The
+  generic @racket[+], @racket[-], @racket[*] and @racket[/] dispatch to these
+  when given an expression.}
+
+@deftogether[(@defproc[(expr-gt [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-lt [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-ge [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-le [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-eq [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-ne [a any/c] [b any/c]) Expr-ptr?])]{
+  Element-wise comparisons producing a boolean expression; scalars are lifted
+  with @racket[lit]. @racket[(expr-gt (col "value") 15)] is @tt{col("value") > 15}.
+  The generic @racket[>], @racket[<], @racket[>=], @racket[<=], @racket[=] and
+  @racket[!=] dispatch to these when given an expression.}
+
+@deftogether[(@defproc[(expr-and [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-or  [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-xor [a any/c] [b any/c]) Expr-ptr?]
+              @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?])]{
+  Element-wise boolean logic over boolean expressions, for combining
+  predicates: @racket[(expr-and (expr-gt (col "value") 15) (expr-lt (col "cost") 3.0))].
+  The generic @racket[and], @racket[or], @racket[xor] and @racket[not] dispatch
+  to these when given an expression.}
+
+@deftogether[(@defproc[(expr-sum      [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-mean     [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-min      [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-max      [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-median   [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-count    [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-n-unique [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-first    [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-last     [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?]
+              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?])]{
+  Aggregations. Each reduces the column @racket[e] evaluates to — over the
+  whole frame in a @emph{select}, or per group inside @emph{group_by/agg}.
+  @racket[expr-count] counts the non-null entries, as Polars' @tt{.count()}
+  does. @racket[expr-std] and @racket[expr-var] take a @racket[#:ddof]
+  degrees-of-freedom adjustment, defaulting to 1. The generic @racket[sum],
+  @racket[mean], @racket[min], @racket[max], @racket[median], @racket[count],
+  @racket[n-unique], @racket[first], @racket[last], @racket[std] and
+  @racket[var] dispatch to these when given an expression or a column name.}
+
+@subsection[#:tag "ref-expr-contexts"]{Eager expression contexts}
+
+These run expressions against a @tech{dataframe} and return a new frame in one
+step. Each is the eager convenience over the corresponding lazy operation in
+@secref["ref-lazy"]: it converts with @racket[dataframe-lazy], applies the
+operation, and @racket[lazyframe-collect]s. Like the rest of the low-level
+layer they accept a @racket[dataframe] wrapper but return a raw
+@racket[DataFrame-ptr?]; the fluent @racket[select], @racket[with-columns],
+@racket[filter] and @racket[group-by]/@racket[agg] are the wrapper-returning
+equivalents.
+
+@deftogether[(@defproc[(dataframe-select-exprs [df DataFrame-ptr?] [exprs (listof Expr-ptr?)]) DataFrame-ptr?]
+              @defproc[(dataframe-with-columns [df DataFrame-ptr?] [exprs (listof Expr-ptr?)]) DataFrame-ptr?]
+              @defproc[(dataframe-filter-expr  [df DataFrame-ptr?] [predicate Expr-ptr?]) DataFrame-ptr?])]{
+  @racket[dataframe-select-exprs] evaluates @racket[exprs] and returns a frame
+  containing only the resulting columns (@tt{df.select(...)}).
+  @racket[dataframe-with-columns] evaluates them and adds (or replaces) the
+  resulting columns alongside the existing ones (@tt{df.with_columns(...)}).
+  @racket[dataframe-filter-expr] keeps the rows for which the boolean
+  @racket[predicate] holds (@tt{df.filter(...)}).}
+
+@defproc[(dataframe-group-by-agg [df DataFrame-ptr?]
+                                 [keys (listof (or/c string? Expr-ptr?))]
+                                 [aggs (listof Expr-ptr?)])
+         DataFrame-ptr?]{
+  Groups @racket[df] by @racket[keys] — column names, or expressions — and
+  evaluates each aggregation in @racket[aggs] once per group, returning a frame
+  with one row per group (@tt{df.group_by(...).agg(...)}). The row order of the
+  result is not guaranteed.}
+
+@section[#:tag "ref-lazy"]{Lazy frames}
+
+A @deftech{lazyframe} is a query plan: a sequence of operations over a frame
+that Polars optimises as a whole and runs only when asked to collect. The
+low-level surface mirrors the eager @tt{dataframe-*} bindings and, like them,
+returns raw foreign pointers; the fluent @racket[lazy] and @racket[collect]
+are the wrapper-returning equivalents.
+
+@deftogether[(@defproc[(LazyFrame-ptr? [v any/c]) boolean?]
+              @defproc[(lazyframe? [v any/c]) boolean?])]{
+  @racket[LazyFrame-ptr?] recognises a foreign lazyframe pointer, raw or
+  wrapped. @racket[lazyframe?] recognises only the wrapper produced by the
+  fluent @racket[lazy].}
+
+@deftogether[(@defproc[(dataframe-lazy [df DataFrame-ptr?]) LazyFrame-ptr?]
+              @defproc[(lazyframe-collect [lf LazyFrame-ptr?]) DataFrame-ptr?])]{
+  @racket[dataframe-lazy] starts a plan from an in-memory frame
+  (@tt{df.lazy()}); @racket[lazyframe-collect] executes a plan and returns the
+  resulting frame (@tt{lf.collect()}).}
+
+@deftogether[(@defproc[(lazyframe-select       [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
+              @defproc[(lazyframe-with-columns [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
+              @defproc[(lazyframe-filter       [lf LazyFrame-ptr?] [predicate Expr-ptr?]) LazyFrame-ptr?]
+              @defproc[(lazyframe-group-by-agg [lf LazyFrame-ptr?]
+                                               [keys (listof (or/c string? Expr-ptr?))]
+                                               [aggs (listof Expr-ptr?)]) LazyFrame-ptr?])]{
+  The lazy forms of the @secref["ref-expr-contexts"]. Each appends a step to
+  the plan and returns the extended plan; nothing runs until
+  @racket[lazyframe-collect].}
+
+@defproc[(lazyframe-join [left LazyFrame-ptr?]
+                         [right LazyFrame-ptr?]
+                         [#:on on (or/c #f (listof string?)) #f]
+                         [#:left-on left-on (or/c #f (listof string?)) #f]
+                         [#:right-on right-on (or/c #f (listof string?)) #f]
+                         [#:how how (or/c 'inner 'left 'outer 'full 'cross) 'inner])
+         LazyFrame-ptr?]{
+  Joins two plans. Give the key columns either as one list with @racket[#:on],
+  when they have the same names on both sides, or as parallel
+  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
+  join kind; @racket['outer] and @racket['full] are synonyms, and a
+  @racket['cross] join takes no keys. Omitting the keys for any other kind is
+  an error. Collect the result with @racket[lazyframe-collect]:
+
+  @racketblock[
+  (lazyframe-collect
+   (lazyframe-join (dataframe-lazy users) (dataframe-lazy orders)
+                   #:on '("uid") #:how 'inner))
+  ]}
 
 @section[#:tag "ref-fluent"]{Fluent pipelines}
 
@@ -222,6 +460,35 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   @racket[(not (= _a _b))]. These shadow the @racketmodname[racket/base]
   comparisons; see @secref["fluent-shadowing"].}
 
+@deftogether[(@defform[(and expr ...)]
+              @defform[(or expr ...)]
+              @defproc[(not [x any/c]) any/c]
+              @defproc[(xor [a any/c] [b any/c]) any/c])]{
+  Overloaded boolean connectives. When an operand is an expression they build
+  the element-wise expression (@racket[expr-and], @racket[expr-or],
+  @racket[expr-not], @racket[expr-xor]), so
+  @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
+  @racket[filter]. When an operand is a series they compute an eager boolean
+  mask. Otherwise they behave as the @racketmodname[racket/base] forms:
+  @racket[and] and @racket[or] short-circuit and return the deciding value, and
+  @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
+  expression or series operand it evaluates its remaining operands eagerly to
+  combine them. These shadow the @racketmodname[racket/base] bindings; see
+  @secref["fluent-shadowing"].}
+
+@deftogether[(@defproc[(+ [v any/c] ...) any/c]
+              @defproc[(- [v any/c] ...) any/c]
+              @defproc[(* [v any/c] ...) any/c]
+              @defproc[(/ [v any/c] ...) any/c])]{
+  Overloaded arithmetic. When every argument is a number they are exactly the
+  @racketmodname[racket/base] operators. Otherwise they fold left over the
+  arguments: an expression operand yields an expression (via
+  @racket[expr-add], @racket[expr-sub], @racket[expr-mul], @racket[expr-div]),
+  so @racket[(* (col "value") 2)] reads like @tt{col("value") * 2}, and a
+  series operand yields an eagerly computed series. A single non-numeric
+  argument is returned unchanged. These shadow the @racketmodname[racket/base]
+  bindings; see @secref["fluent-shadowing"].}
+
 @defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
   Keeps the rows of @racket[d] matching @racket[predicate], which may be a
   boolean expression — @racket[(filter df (> (col "value") 15))] — or a
@@ -237,6 +504,36 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   boolean applied to all keys, or a per-key list. Applied to a non-dataframe it
   falls back to @racketmodname[racket/base]'s @racket[sort], so
   @racket[(sort '(3 1 2) <)] is @racket['(1 2 3)].}
+
+@deftogether[(@defproc[(select [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
+                       (or/c dataframe? lazyframe?)]
+              @defproc[(with-columns [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
+                       (or/c dataframe? lazyframe?)])]{
+  The @emph{select} and @emph{with_columns} contexts. Each @racket[spec] is a
+  column name, a column index, an expression, or a list of those (which is
+  spliced); names and indices are lifted with @racket[col]. @racket[select]
+  returns a frame holding only the resulting columns; @racket[with-columns]
+  adds them to (or replaces them in) the existing columns. Given a
+  @tech{dataframe} they run eagerly and return a dataframe; given a
+  @tech{lazyframe} they extend the plan and return a lazyframe.}
+
+@defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
+         (or/c Expr-ptr? series?)]{
+  Changes dtype. On an expression (or a column name, lifted with
+  @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
+  it converts eagerly and returns a series. @racket[dtype] takes the same
+  spellings as @racket[series-cast].}
+
+@defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
+  Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
+  have the same columns in the same order (Polars' @tt{vstack}).}
+
+@deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
+              @defproc[(collect [lf lazyframe?]) dataframe?])]{
+  @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
+  @racket[select], @racket[with-columns], @racket[filter] and the other
+  fluent operations extend without running anything — and @racket[collect]
+  executes the plan and returns the resulting dataframe.}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
