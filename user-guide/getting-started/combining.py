@@ -1,61 +1,54 @@
-"""rkt-polars user guide — Combining DataFrames (Python reference).
+"""rkt-polars user guide — Getting started: Combining dataframes (Python reference).
 
-Mirrors https://docs.pola.rs/user-guide/getting-started/ and the Racket file
-combining.rkt in this directory.
+Mirrors https://docs.pola.rs/user-guide/getting-started/#combining-dataframes
+and combining.rkt.
 
 Inside `nix develop`:
     python user-guide/getting-started/combining.py
 """
 
+import datetime as dt
+
 import polars as pl
 
-users = pl.DataFrame(
+df = pl.DataFrame(
     {
-        "uid": [1, 2, 3, 4],
-        "name": ["alice", "bob", "carol", "dan"],
+        "name": ["Alice Archer", "Ben Brown", "Chloe Cooper", "Daniel Donovan"],
+        "birthdate": [
+            dt.date(1997, 1, 10),
+            dt.date(1985, 2, 15),
+            dt.date(1983, 3, 22),
+            dt.date(1981, 4, 30),
+        ],
+        "weight": [57.9, 72.5, 53.6, 83.1],
+        "height": [1.56, 1.77, 1.65, 1.75],
     }
 )
 
-orders = pl.DataFrame(
+# --- joining -------------------------------------------------------------
+df2 = pl.DataFrame(
     {
-        "uid": [1, 1, 2, 3],
-        "amount": [10, 25, 30, 7],
+        "name": ["Ben Brown", "Daniel Donovan", "Alice Archer", "Chloe Cooper"],
+        "parent": [True, False, False, False],
+        "siblings": [1, 2, 3, 4],
     }
 )
 
-print("users:")
-print(users)
-print()
-print("orders:")
-print(orders)
-print()
+print(df.join(df2, on="name", how="left"))
 
-# --- join ---------------------------------------------------------------
-print("inner join(uid).group_by(name).agg(total, n).sort(total desc):")
-print(
-    users.lazy()
-    .join(orders.lazy(), on="uid", how="inner")
-    .group_by("name")
-    .agg(
-        pl.col("amount").sum().alias("total"),
-        pl.col("amount").count().alias("n"),
-    )
-    .sort("total", descending=True)
-    .collect()
-)
-print()
-
-print("left join (keeps unmatched users):")
-print(users.join(orders, on="uid", how="left"))
-print()
-
-# --- concat -------------------------------------------------------------
-more_users = pl.DataFrame(
+# --- concatenating -------------------------------------------------------
+df3 = pl.DataFrame(
     {
-        "uid": [5, 6],
-        "name": ["erin", "frank"],
+        "name": ["Ethan Edwards", "Fiona Foster", "Grace Gibson", "Henry Harris"],
+        "birthdate": [
+            dt.date(1977, 5, 10),
+            dt.date(1975, 6, 23),
+            dt.date(1973, 7, 22),
+            dt.date(1971, 8, 3),
+        ],
+        "weight": [67.9, 72.5, 57.6, 93.1],
+        "height": [1.76, 1.6, 1.66, 1.8],
     }
 )
 
-print("vertical concat (users ++ more-users):")
-print(pl.concat([users, more_users]))
+print(pl.concat([df, df3], how="vertical"))

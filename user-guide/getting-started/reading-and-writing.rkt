@@ -1,50 +1,36 @@
 #lang racket/base
 
-;; rkt-polars user guide — Reading & writing
-;; Mirrors https://docs.pola.rs/user-guide/getting-started/ (the "Reading &
-;; writing" section) and reading_and_writing.py in this directory.
+;; rkt-polars user guide — Getting started: Reading & writing
+;; Mirrors https://docs.pola.rs/user-guide/getting-started/#reading-writing
+;; and reading_and_writing.py.
 ;;
 ;; Inside `nix develop`:
 ;;   racket user-guide/getting-started/reading-and-writing.rkt
 
 (require gregor
-         racket/file
          polars)
 
+;; API gap: `series` cannot build a Date column from gregor dates, so build
+;; datetimes and cast.
 (define df
-  (dataframe-new
-   (list (series '(1 2 3) #:name "integer" #:dtype 'i64)
-         (series (list (datetime 2025 1 1) (datetime 2025 1 2)
-                       (datetime 2025 1 3))
-                 #:name "date")
-         (series '(4.0 5.0 6.0) #:name "float")
-         (series '("a" "b" "c") #:name "string"))))
+  (~> (dataframe
+       (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
+                     #:name "name")
+             (series (list (datetime 1997 1 10) (datetime 1985 2 15)
+                           (datetime 1983 3 22) (datetime 1981 4 30))
+                     #:name "birthdate")
+             (series '(57.9 72.5 53.6 83.1) #:name "weight")
+             (series '(1.56 1.77 1.65 1.75) #:name "height")))
+      (with-columns (cast "birthdate" 'date))))
 
-(displayln "original:")
-(display-dataframe df)
-(newline)
+(displayln df)
 
-(define tmp (find-system-path 'temp-dir))
+(define csv-path (build-path (find-system-path 'temp-dir) "output.csv"))
+(write-csv df csv-path)
 
-;; --- CSV ----------------------------------------------------------------
-(define csv-path (build-path tmp "rkt-polars-guide.csv"))
-(dataframe-write-csv df csv-path)
-(printf "wrote ~a\n" csv-path)
-(displayln "read back from CSV:")
-(display-dataframe (dataframe-read-csv csv-path))
-(newline)
+;; API gap: read-csv has no try_parse_dates; parse the column afterwards.
+(define df-csv
+  (~> (read-csv csv-path)
+      (with-columns (str-to-date "birthdate"))))
 
-;; --- Parquet ------------------------------------------------------------
-(define parquet-path (build-path tmp "rkt-polars-guide.parquet"))
-(dataframe-write-parquet df parquet-path)
-(printf "wrote ~a\n" parquet-path)
-(displayln "read back from Parquet:")
-(display-dataframe (dataframe-read-parquet parquet-path))
-(newline)
-
-;; --- JSON (newline-delimited) ------------------------------------------
-(define jsonl-path (build-path tmp "rkt-polars-guide.jsonl"))
-(dataframe-write-json-lines df jsonl-path)
-(printf "wrote ~a\n" jsonl-path)
-(displayln "read back from JSON lines:")
-(display-dataframe (dataframe-read-json-lines jsonl-path))
+(displayln df-csv)

@@ -1,13 +1,13 @@
-"""rkt-polars user guide — Reading & writing (Python reference).
+"""rkt-polars user guide — Getting started: Reading & writing (Python reference).
 
-Mirrors https://docs.pola.rs/user-guide/getting-started/ and the Racket file
-reading-and-writing.rkt in this directory.
+Mirrors https://docs.pola.rs/user-guide/getting-started/#reading-writing and
+reading-and-writing.rkt.
 
 Inside `nix develop`:
     python user-guide/getting-started/reading_and_writing.py
 """
 
-import datetime
+import datetime as dt
 import tempfile
 from pathlib import Path
 
@@ -15,42 +15,21 @@ import polars as pl
 
 df = pl.DataFrame(
     {
-        "integer": [1, 2, 3],
-        "date": [
-            datetime.datetime(2025, 1, 1),
-            datetime.datetime(2025, 1, 2),
-            datetime.datetime(2025, 1, 3),
+        "name": ["Alice Archer", "Ben Brown", "Chloe Cooper", "Daniel Donovan"],
+        "birthdate": [
+            dt.date(1997, 1, 10),
+            dt.date(1985, 2, 15),
+            dt.date(1983, 3, 22),
+            dt.date(1981, 4, 30),
         ],
-        "float": [4.0, 5.0, 6.0],
-        "string": ["a", "b", "c"],
+        "weight": [57.9, 72.5, 53.6, 83.1],
+        "height": [1.56, 1.77, 1.65, 1.75],
     }
 )
 
-print("original:")
 print(df)
-print()
 
-tmp = Path(tempfile.gettempdir())
-
-# --- CSV ----------------------------------------------------------------
-csv_path = tmp / "rkt-polars-guide.csv"
+csv_path = Path(tempfile.gettempdir()) / "output.csv"
 df.write_csv(csv_path)
-print(f"wrote {csv_path}")
-print("read back from CSV:")
-print(pl.read_csv(csv_path))
-print()
-
-# --- Parquet ------------------------------------------------------------
-parquet_path = tmp / "rkt-polars-guide.parquet"
-df.write_parquet(parquet_path)
-print(f"wrote {parquet_path}")
-print("read back from Parquet:")
-print(pl.read_parquet(parquet_path))
-print()
-
-# --- JSON (newline-delimited) ------------------------------------------
-jsonl_path = tmp / "rkt-polars-guide.jsonl"
-df.write_ndjson(jsonl_path)
-print(f"wrote {jsonl_path}")
-print("read back from JSON lines:")
-print(pl.read_ndjson(jsonl_path))
+df_csv = pl.read_csv(csv_path, try_parse_dates=True)
+print(df_csv)

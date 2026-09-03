@@ -528,6 +528,55 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
   have the same columns in the same order (Polars' @tt{vstack}).}
 
+@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                             [n exact-nonnegative-integer?]) any/c]
+              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                             [n exact-nonnegative-integer?]) any/c]
+              @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                              [offset exact-integer?]
+                              [length exact-nonnegative-integer?]) any/c])]{
+  The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
+  starting at @racket[offset], of the same kind as @racket[x] (Polars'
+  @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
+  and belong inside @racket[select].}
+
+@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
+  Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
+  to @racketmodname[racket/list]'s @racketid[drop].}
+
+@defproc[(join [left (or/c dataframe? lazyframe?)]
+               [right (or/c dataframe? lazyframe?)]
+               [#:on on (or/c (listof string?) #f) #f]
+               [#:left-on left-on (or/c (listof string?) #f) #f]
+               [#:right-on right-on (or/c (listof string?) #f) #f]
+               [#:how how (or/c 'inner 'left 'outer 'cross 'semi 'anti) 'inner])
+         (or/c dataframe? lazyframe?)]{
+  Joins @racket[right] onto @racket[left] on the shared key columns
+  @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
+  (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
+  @tech{lazyframe}.}
+
+@deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
+              @defproc[(read-parquet [path path-string?]) dataframe?]
+              @defproc[(read-ndjson [path path-string?]) dataframe?]
+              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
+  Eager file I/O (@tt{pl.read_csv} / @tt{df.write_csv} and friends). Dates
+  are not parsed on read; see @racket[str-to-date].}
+
+@deftogether[(@defproc[(scan-csv [path path-string?]
+                                 [#:has-header has-header boolean? #t]
+                                 [#:separator separator char? #\,]
+                                 [#:skip-rows skip-rows exact-nonnegative-integer? 0]
+                                 [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
+                       lazyframe?]
+              @defproc[(scan-parquet [path path-string?]
+                                     [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
+                       lazyframe?])]{
+  Start a @tech{lazyframe} plan from a file without reading it
+  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it.}
+
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
   @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
@@ -574,6 +623,60 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   (@tt{identifier already required}). A plain @hash-lang[] @racketmodname[racket/base]
   program is unaffected, because @racketmodname[racket/base] does not export
   these names. See @secref["fluent-shadowing"] for how to take control.}
+
+@deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
+              @defproc[(round [x (or/c Expr-ptr? string? number?)]
+                              [#:decimals decimals exact-nonnegative-integer? 0]) any/c])]{
+  Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
+  (@tt{.round}). Each takes an expression or a bare column-name string (lifted
+  with @racket[col]); @racket[round] on a plain number falls back to numeric
+  rounding. See @secref["fluent-shadowing"].}
+
+@deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
+                                   [#:closed closed (or/c 'both 'left 'right 'none) 'both])
+                       Expr-ptr?]
+              @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
+                       Expr-ptr?])]{
+  Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
+  lifted with @racket[lit], which has no date spelling; cast a string instead:
+  @racket[(cast (lit "1982-12-31") 'date)].}
+
+@deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-day    [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-hour   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-minute [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-second [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
+  Temporal component accessors on a date or datetime column (@tt{.dt.year()}
+  and friends). Also exported, with the same shape: @racketid[dt-iso-year],
+  @racketid[dt-quarter], @racketid[dt-week], @racketid[dt-weekday],
+  @racketid[dt-ordinal-day], @racketid[dt-is-leap-year], @racketid[dt-date],
+  @racketid[dt-time], @racketid[dt-millisecond], @racketid[dt-microsecond],
+  @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
+  @racketid[dt-truncate].}
+
+@deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
+                                    [#:group-index group-index exact-nonnegative-integer? 1])
+                       Expr-ptr?]
+              @defproc[(str-to-date [x (or/c Expr-ptr? string?)]
+                                    [#:format format (or/c string? #f) #f]
+                                    [#:strict strict boolean? #t]
+                                    [#:exact exact boolean? #t]
+                                    [#:cache cache boolean? #t])
+                       Expr-ptr?]
+              @defproc[(str-to-datetime [x (or/c Expr-ptr? string?)]
+                                        [#:format format (or/c string? #f) #f]
+                                        [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
+                                        [#:strict strict boolean? #t]
+                                        [#:exact exact boolean? #t]
+                                        [#:cache cache boolean? #t])
+                       Expr-ptr?])]{
+  @racket[str-extract] returns capture group @racket[#:group-index] of the
+  first regex match (@tt{.str.extract}). @racket[str-to-date] and
+  @racket[str-to-datetime] parse strings with a chrono @tt{strptime}
+  @racket[#:format], inferred when omitted (@tt{.str.to_date},
+  @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
+  on unparseable values.}
 
 @subsection[#:tag "fluent-shadowing"]{Shadowed bindings}
 
