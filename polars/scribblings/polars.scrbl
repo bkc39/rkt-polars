@@ -30,10 +30,9 @@ Temporal values exchanged with Racket use
 @hyperlink["https://docs.racket-lang.org/gregor/"]{gregor} dates and
 datetimes.
 
-This manual has two parts. The @secref["guide"] is a guided, narrative tour
-modelled on the upstream
-@hyperlink["https://docs.pola.rs/user-guide/getting-started/"]{Polars
-getting-started guide}; the @secref["reference"] documents the public API.
+This manual has two parts. The @secref["guide"] follows the upstream
+@hyperlink["https://docs.pola.rs/user-guide/"]{Polars user guide} chapter by
+chapter; the @secref["reference"] documents the public API.
 
 @local-table-of-contents[]
 
