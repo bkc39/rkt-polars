@@ -1,6 +1,9 @@
 <div align="center">
 
-# rkt-polars
+<h1>
+  <img src="docs/assets/rkt-polars-logo.png" alt="" height="76" align="middle">
+  &nbsp;rkt-polars
+</h1>
 
 **Fast, multi-threaded DataFrames for Racket — [Polars](https://pola.rs/)**
 
