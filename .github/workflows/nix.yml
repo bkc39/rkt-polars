@@ -12,13 +12,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@main
+        uses: DeterminateSystems/nix-installer-action@v23
 
       - name: Configure Nix Cache
-        uses: DeterminateSystems/magic-nix-cache-action@main
+        uses: DeterminateSystems/magic-nix-cache-action@v15
 
       - name: Run flake checks
         run: nix flake check --print-build-logs

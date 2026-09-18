@@ -15,6 +15,9 @@
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       version = "0.0.1";
+      # The Racket release this flake targets; nixpkgs supplies the actual
+      # toolchain, and the `racket-version` check asserts it is at least this.
+      minRacketVersion = "9.3";
     in
     {
       packages = forAllSystems (system:
@@ -233,11 +236,35 @@
               runHook postInstall
             '';
           };
+          # The flake pins Racket via nixpkgs rather than a version input, so
+          # make the floor an explicit, CI-enforced fact instead of an accident
+          # of flake.lock: `nix flake check` fails if a lock bump ever moves
+          # Racket below the version rkt-polars targets.
+          racket-version = pkgs.runCommand "rkt-polars-racket-version" {
+            nativeBuildInputs = [ pkgs.racket ];
+          } ''
+            want=${minRacketVersion}
+            banner=$(racket --version)
+            have=$(printf '%s' "$banner" | sed -E 's/^.*v([0-9][0-9.]*).*$/\1/')
+            echo "$banner (parsed: $have, required: >= $want)"
+
+            lowest=$(printf '%s\n%s\n' "$have" "$want" | sort -V | head -1)
+            if [ "$lowest" != "$want" ]; then
+              echo "ERROR: rkt-polars requires Racket >= $want, but nixpkgs pins $have" >&2
+              exit 1
+            fi
+            echo "OK: Racket $have >= $want"
+            touch $out
+          '';
         in
         {
-          inherit rustfmt;
+          inherit rustfmt racket-version;
           inherit (self.packages.${system}) rust racket;
         });
+
+      # `nix fmt` formats the flake itself.
+      formatter = forAllSystems (system:
+        (import nixpkgs { inherit system; }).nixfmt-rfc-style);
 
       devShells = forAllSystems (system:
         let
@@ -250,7 +277,11 @@
               pkgs.racket
               pkgs.rustc
               pkgs.cargo
+              pkgs.rustfmt
+              pkgs.clippy
               pkgs.stdenv.cc
+              # `nix fmt` / the flake's formatter output.
+              pkgs.nixfmt-rfc-style
               # Python with polars, for the side-by-side reference programs
               # under user-guide/ (e.g. python user-guide/getting-started/*.py).
               (pkgs.python3.withPackages (ps: [ ps.polars ]))

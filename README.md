@@ -1,6 +1,8 @@
 <div align="center">
 
-# rkt-polars
+<h1>
+  <img src="docs/assets/rkt-polars-logo.png" alt="" height="93" align="middle">&nbsp;&nbsp;&nbsp;rkt-polars&nbsp;&nbsp;&nbsp;<img src="docs/assets/header-spacer.png" alt="" height="93" align="middle">
+</h1>
 
 **Fast, multi-threaded DataFrames for Racket — [Polars](https://pola.rs/)**
 
@@ -113,13 +115,20 @@ infrastructure. The Rust compatibility library lives in `rust/`; Nix builds the
 shared library and the Racket package separately, and the Racket package loads
 `libcompat` from `polars/native-libs/`.
 
+The pinned toolchain is **Racket 9.3**. `flake.nix` takes Racket from
+`nixpkgs-unstable` rather than a version input, so the `racket-version` check
+asserts the floor explicitly — `nix flake check` fails if a `flake.lock` bump
+ever moves Racket below it. CI additionally runs the catalog install against
+both Racket 9.3 and `stable`, on Linux and macOS.
+
 ### Build with Nix
 
 ```sh
 nix build              # the default Racket package environment
 nix build .#rust       # just the Rust compatibility library
 nix build .#racket     # the packaged Racket environment
-nix flake check        # the full check set
+nix flake check        # the full check set (incl. rustfmt + racket-version)
+nix fmt                # format the flake with nixfmt-rfc-style
 ```
 
 ### Development shell
@@ -136,6 +145,7 @@ setup`. Typical commands inside the shell:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml
+cargo fmt --manifest-path rust/Cargo.toml --all --check    # same check as CI
 cd rust && cargo build --release
 cp target/release/libcompat.dylib ../polars/native-libs/   # macOS
 cd .. && raco test -x -c polars
