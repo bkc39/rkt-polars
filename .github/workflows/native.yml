@@ -22,7 +22,7 @@ jobs:
           - os: macos-latest
             platform: darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # darwin builds natively with cargo; the linux candidate is built inside
       # the manylinux2014 container (glibc 2.17) by build-so.sh, so the host
@@ -61,7 +61,7 @@ jobs:
           echo "OK: libcompat.so glibc floor <= 2.17"
 
       - name: Upload candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libcompat-${{ matrix.platform }}
           path: polars/native-libs/candidates/${{ matrix.platform }}/
@@ -77,33 +77,44 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The actual pkgs.rkt-lang.org catalog-build simulation.
+          # The actual pkgs.rkt-lang.org catalog-build simulation, pinned to
+          # the Racket release rkt-polars targets (flake.nix's
+          # minRacketVersion).
           - os: ubuntu-22.04
             platform: linux
             arch: x64
-            label: ubuntu-22.04 (racket catalog target)
-          # Forward-compat: the 22.04-built .so must also load on newer glibc.
+            racket: "9.3"
+            label: ubuntu-22.04 · Racket 9.3 (racket catalog target)
+          # Forward-compat: the 22.04-built .so must also load on newer glibc,
+          # and on whatever Racket the catalog host moves to next.
           - os: ubuntu-latest
             platform: linux
             arch: x64
-            label: ubuntu-latest (forward-compat)
+            racket: stable
+            label: ubuntu-latest · Racket stable (forward-compat)
           # macos-latest runners are Apple Silicon; the Racket VM arch must
           # match the arm64 dylib, otherwise dlopen fails on a mismatch.
           - os: macos-latest
             platform: darwin
             arch: arm64
-            label: macos-latest (darwin)
+            racket: "9.3"
+            label: macos-latest · Racket 9.3 (darwin)
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            racket: stable
+            label: macos-latest · Racket stable (darwin, forward-compat)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Racket
         uses: Bogdanp/setup-racket@v1.15
         with:
-          version: stable
+          version: ${{ matrix.racket }}
           architecture: ${{ matrix.arch }}
 
       - name: Download candidate
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: libcompat-${{ matrix.platform }}
           path: polars/native-libs/candidates/${{ matrix.platform }}/
@@ -145,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download linux candidate
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: libcompat-linux
           path: cand
