@@ -303,7 +303,8 @@ shadowed, or when you want to be explicit that an expression is being built.
   reals (as @racket['float64]) and strings. Every binary @tt{expr-*} operation
   applies @racket[lit] to a non-expression operand automatically, so it is
   rarely needed explicitly. @racket[expr-alias] names the column an expression
-  produces, matching @tt{.alias}: @racket[(expr-alias (expr-sum (col "value")) "total")].
+  produces, matching @tt{.alias}; the generic spelling is @racket[alias], so
+  prefer @racket[(alias (sum (col "value")) "total")].
 
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
@@ -316,10 +317,11 @@ shadowed, or when you want to be explicit that an expression is being built.
               @defproc[(expr-div [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-mod [a any/c] [b any/c]) Expr-ptr?])]{
   Element-wise arithmetic. At least one operand is normally an expression;
-  the other may be a scalar, which is lifted with @racket[lit], so
-  @racket[(expr-mul (col "value") 2)] reads like @tt{col("value") * 2}. The
-  generic @racket[+], @racket[-], @racket[*] and @racket[/] dispatch to these
-  when given an expression.}
+  the other may be a scalar, which is lifted with @racket[lit]. The generic
+  @racket[+], @racket[-], @racket[*] and @racket[/] dispatch to these when
+  given an expression and are the preferred surface, so write
+  @racket[(* (col "value") 2)] --- which reads like @tt{col("value") * 2} ---
+  rather than calling @racket[expr-mul] directly.}
 
 @deftogether[(@defproc[(expr-gt [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-lt [a any/c] [b any/c]) Expr-ptr?]
@@ -328,18 +330,19 @@ shadowed, or when you want to be explicit that an expression is being built.
               @defproc[(expr-eq [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-ne [a any/c] [b any/c]) Expr-ptr?])]{
   Element-wise comparisons producing a boolean expression; scalars are lifted
-  with @racket[lit]. @racket[(expr-gt (col "value") 15)] is @tt{col("value") > 15}.
-  The generic @racket[>], @racket[<], @racket[>=], @racket[<=], @racket[=] and
-  @racket[!=] dispatch to these when given an expression.}
+  with @racket[lit]. The generic @racket[>], @racket[<], @racket[>=],
+  @racket[<=], @racket[=] and @racket[!=] dispatch to these when given an
+  expression and are the preferred surface: write
+  @racket[(> (col "value") 15)] for @tt{col("value") > 15}.}
 
 @deftogether[(@defproc[(expr-and [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-or  [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-xor [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?])]{
   Element-wise boolean logic over boolean expressions, for combining
-  predicates: @racket[(expr-and (expr-gt (col "value") 15) (expr-lt (col "cost") 3.0))].
-  The generic @racket[and], @racket[or], @racket[xor] and @racket[not] dispatch
-  to these when given an expression.}
+  predicates. The generic @racket[and], @racket[or], @racket[xor] and
+  @racket[not] dispatch to these when given an expression and are the preferred
+  surface: @racket[(and (> (col "value") 15) (< (col "cost") 3.0))].}
 
 @deftogether[(@defproc[(expr-sum      [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-mean     [e Expr-ptr?]) Expr-ptr?]
