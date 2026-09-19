@@ -25,22 +25,22 @@
 (displayln
  (~> df
      (select "name"
-             (alias (dt-year "birthdate") "birth_year")
-             (alias (/ (col "weight") (pow (col "height") 2)) "bmi"))))
+             (~> (col "birthdate") dt-year (alias "birth_year"))
+             (~> (col "weight") (/ (pow (col "height") 2)) (alias "bmi")))))
 
 ;; API gap: no multi-column col("weight", "height") and no name.suffix, so
 ;; each column is spelled out.
 (displayln
  (~> df
      (select "name"
-             (alias (round (* (col "weight") 0.95) #:decimals 2) "weight-5%")
-             (alias (round (* (col "height") 0.95) #:decimals 2) "height-5%"))))
+             (~> (col "weight") (* 0.95) (round #:decimals 2) (alias "weight-5%"))
+             (~> (col "height") (* 0.95) (round #:decimals 2) (alias "height-5%")))))
 
 ;; --- with-columns --------------------------------------------------------
 (displayln
  (~> df
-     (with-columns (alias (dt-year "birthdate") "birth_year")
-                   (alias (/ (col "weight") (pow (col "height") 2)) "bmi"))))
+     (with-columns (~> (col "birthdate") dt-year (alias "birth_year"))
+                   (~> (col "weight") (/ (pow (col "height") 2)) (alias "bmi")))))
 
 ;; --- filter --------------------------------------------------------------
 (displayln
@@ -58,17 +58,18 @@
 ;; --- group-by ------------------------------------------------------------
 ;; `/` on an integer column is integer division, so Python's `// 10 * 10` is
 ;; `(* (/ ... 10) 10)`.  API gaps: no maintain_order, no pl.len().
-(define decade (alias (* (/ (dt-year "birthdate") 10) 10) "decade"))
+(define decade
+  (~> (col "birthdate") dt-year (/ 10) (* 10) (alias "decade")))
 
 (displayln
- (~> df (group-by decade) (agg (alias (count "name") "len"))))
+ (~> df (group-by decade) (agg (~> (col "name") count (alias "len")))))
 
 (displayln
  (~> df
      (group-by decade)
-     (agg (alias (count "name") "sample_size")
-          (alias (round (mean "weight") #:decimals 2) "avg_weight")
-          (alias (max "height") "tallest"))))
+     (agg (~> (col "name") count (alias "sample_size"))
+          (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))
+          (~> (col "height") max (alias "tallest")))))
 
 ;; --- more complex queries ------------------------------------------------
 ;; API gaps: no str.split / list.first (str-extract with a regex instead), no
@@ -80,5 +81,5 @@
      (drop "birthdate")
      (group-by "decade")
      (agg (col "name")
-          (alias (round (mean "weight") #:decimals 2) "avg_weight")
-          (alias (round (mean "height") #:decimals 2) "avg_height"))))
+          (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))
+          (~> (col "height") mean (round #:decimals 2) (alias "avg_height")))))

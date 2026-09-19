@@ -5,12 +5,6 @@
 
 @title[#:tag "getting-started" #:style 'toc]{Getting started}
 
-Mirrors the upstream
-@hyperlink["https://docs.pola.rs/user-guide/getting-started/"]{Getting
-started} page. Every frame below is printed by running the code at
-documentation-build time; the scripts in @tt{user-guide/getting-started/} are
-the same examples as standalone programs.
-
 @see-reference["ref-fluent"]{the definition of every verb used here}
 
 @local-table-of-contents[]
@@ -67,12 +61,12 @@ Expressions such as @racket[(col "weight")] describe a computation; a context
 @examples[#:eval ev #:label #f
 (~> df
     (select "name"
-            (alias (dt-year "birthdate") "birth_year")
-            (alias (/ (col "weight") (pow (col "height") 2)) "bmi")))
+            (~> (col "birthdate") dt-year (alias "birth_year"))
+            (~> (col "weight") (/ (pow (col "height") 2)) (alias "bmi"))))
 (~> df
     (select "name"
-            (alias (round (* (col "weight") 0.95) #:decimals 2) "weight-5%")
-            (alias (round (* (col "height") 0.95) #:decimals 2) "height-5%")))
+            (~> (col "weight") (* 0.95) (round #:decimals 2) (alias "weight-5%"))
+            (~> (col "height") (* 0.95) (round #:decimals 2) (alias "height-5%"))))
 ]
 
 API gaps: no multi-column @tt{col("weight", "height")}; no @tt{name.suffix}.
@@ -81,8 +75,8 @@ API gaps: no multi-column @tt{col("weight", "height")}; no @tt{name.suffix}.
 
 @examples[#:eval ev #:label #f
 (~> df
-    (with-columns (alias (dt-year "birthdate") "birth_year")
-                  (alias (/ (col "weight") (pow (col "height") 2)) "bmi")))
+    (with-columns (~> (col "birthdate") dt-year (alias "birth_year"))
+                  (~> (col "weight") (/ (pow (col "height") 2)) (alias "bmi"))))
 ]
 
 @subsection[#:tag "gs-filter"]{filter}
@@ -105,13 +99,14 @@ with @racket[and].
 @tt{// 10 * 10} is @racket[(* (/ _e 10) 10)].
 
 @examples[#:eval ev #:label #f
-(define decade (alias (* (/ (dt-year "birthdate") 10) 10) "decade"))
-(~> df (group-by decade) (agg (alias (count "name") "len")))
+(define decade
+  (~> (col "birthdate") dt-year (/ 10) (* 10) (alias "decade")))
+(~> df (group-by decade) (agg (~> (col "name") count (alias "len"))))
 (~> df
     (group-by decade)
-    (agg (alias (count "name") "sample_size")
-         (alias (round (mean "weight") #:decimals 2) "avg_weight")
-         (alias (max "height") "tallest")))
+    (agg (~> (col "name") count (alias "sample_size"))
+         (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))
+         (~> (col "height") max (alias "tallest"))))
 ]
 
 API gaps: no @tt{maintain_order}, so row order differs from the Python pair;
@@ -126,8 +121,8 @@ no @tt{pl.len()} (count a column instead).
     (drop "birthdate")
     (group-by "decade")
     (agg (col "name")
-         (alias (round (mean "weight") #:decimals 2) "avg_weight")
-         (alias (round (mean "height") #:decimals 2) "avg_height")))
+         (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))
+         (~> (col "height") mean (round #:decimals 2) (alias "avg_height"))))
 ]
 
 API gaps: no @tt{str.split} / @tt{list.first} (regex @racket[str-extract]

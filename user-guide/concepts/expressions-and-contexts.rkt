@@ -34,18 +34,21 @@
 (displayln
  (~> df
      (select (alias bmi-expr "bmi")
-             (alias (mean bmi-expr) "avg_bmi")
+             (~> bmi-expr mean (alias "avg_bmi"))
              (alias (lit 25) "ideal_max_bmi"))))
 
 (displayln
  (~> df
-     (select (alias (/ (- bmi-expr (mean bmi-expr)) (std bmi-expr)) "deviation"))))
+     (select (~> bmi-expr
+                 (- (mean bmi-expr))
+                 (/ (std bmi-expr))
+                 (alias "deviation")))))
 
 ;; with-columns
 (displayln
  (~> df
      (with-columns (alias bmi-expr "bmi")
-                   (alias (mean bmi-expr) "avg_bmi")
+                   (~> bmi-expr mean (alias "avg_bmi"))
                    (alias (lit 25) "ideal_max_bmi"))))
 
 ;; filter
@@ -61,7 +64,8 @@
 ;; group-by and aggregations
 ;; `/` on an integer column is integer division, so Python's `// 10 * 10` is
 ;; `(* (/ ... 10) 10)`.
-(define decade (alias (* (/ (dt-year "birthdate") 10) 10) "decade"))
+(define decade
+  (~> (col "birthdate") dt-year (/ 10) (* 10) (alias "decade")))
 
 (displayln
  (~> df (group-by decade) (agg (col "name"))))
@@ -76,15 +80,15 @@
 (displayln
  (~> df
      (group-by decade (alias (< (col "height") 1.7) "short?"))
-     (agg (alias (count "name") "len")
-          (alias (max "height") "tallest")
-          (alias (mean "weight") "avg_weight")
-          (alias (mean "height") "avg_height"))))
+     (agg (~> (col "name") count (alias "len"))
+          (~> (col "height") max (alias "tallest"))
+          (~> (col "weight") mean (alias "avg_weight"))
+          (~> (col "height") mean (alias "avg_height")))))
 
 ;; --- expression expansion ------------------------------------------------
 ;; API gap: no dtype selector col(pl.Float64) and no name.suffix, so there is
 ;; no expression that expands over "all float columns"; spell them out.
 (displayln
  (~> df
-     (select (alias (* (col "weight") 1.1) "weight*1.1")
-             (alias (* (col "height") 1.1) "height*1.1"))))
+     (select (~> (col "weight") (* 1.1) (alias "weight*1.1"))
+             (~> (col "height") (* 1.1) (alias "height*1.1")))))

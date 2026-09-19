@@ -27,9 +27,16 @@ Temporal values exchanged with Racket use
 @hyperlink["https://docs.racket-lang.org/gregor/"]{gregor} dates and
 datetimes.
 
-This manual has two parts. The @secref["guide"] follows the upstream
-@hyperlink["https://docs.pola.rs/user-guide/"]{Polars user guide} chapter by
-chapter; the @secref["reference"] documents the public API.
+This manual has two parts: the @secref["guide"] works through the library by
+example, and the @secref["reference"] documents the public API.
+
+@bold{Acknowledgements.} This library and its documentation owe a great deal
+to the @hyperlink["https://pola.rs/"]{Polars} project --- the Rust crate the
+bindings call into, and the user guide and API documentation that shaped this
+manual --- and to the Racket libraries it builds on, in particular
+@hyperlink["https://docs.racket-lang.org/gregor/"]{gregor} for temporal values
+and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
+@racket[~>]. We are grateful for all of them.
 
 @local-table-of-contents[]
 
