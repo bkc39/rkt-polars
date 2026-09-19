@@ -1,8 +1,5 @@
 #lang scribble/manual
-@require[@for-label[polars
-                    @; polars re-exports generic ops (min max sum sort filter comparisons,
-                    @; arithmetic + - * /, logical and/or/not, reverse, when) that shadow racket/base
-                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= = abs round floor sqrt exp log)]]
+@(require "utils.rkt")
 
 @title{Polars: Racket bindings to Polars}
 @author{bkc}
@@ -39,7 +36,7 @@ chapter; the @secref["reference"] documents the public API.
 @include-section["guide.scrbl"]
 @include-section["reference.scrbl"]
 
-@section{Status}
+@section[#:tag "status"]{Status}
 
 This is an early release; the API surface is still evolving. See the
 @hyperlink["https://github.com/bkc39/rkt-polars"]{project repository} for

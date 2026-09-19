@@ -1,9 +1,7 @@
 #lang scribble/manual
-@require[@for-label[polars
-                    (only-in threading ~> ~>>)
-                    @; polars re-exports generic ops (min max sum sort filter comparisons,
-                    @; arithmetic + - * /, logical and/or/not, reverse, when) that shadow racket/base
-                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= = abs round floor sqrt exp log)]]
+@(require "utils.rkt")
+
+@(define ev (make-polars-eval))
 
 @title[#:tag "reference"]{Reference}
 
@@ -33,7 +31,12 @@ an implementation detail and not part of the public series API.)
   @racket['str], @racket['bool]) and canonical symbols (@racket['int32],
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
   @racket[polars-null] for missing values. Exact integers are coerced to
-  flonums when the target dtype is floating point.}
+  flonums when the target dtype is floating point.
+
+  @examples[#:eval ev
+(series '(1 2 3) #:name "ints")
+(series '(1.5 2.5) #:name "floats" #:dtype 'f32)
+(series (list 1 polars-null 3) #:name "with-null")]}
 
 @defproc[(series->string [s series?]) string?]{
   Renders @racket[s] in Polars' series format (a @tt{shape} line, a
@@ -174,7 +177,11 @@ renders it with no separate display call.
 @defproc[(dataframe [columns (listof series?)]) dataframe?]{
   Builds a dataframe from a list of equal-length series. The columns may be
   series wrappers built with @racket[series]; their names become the column
-  names.}
+  names.
+
+  @examples[#:eval ev
+(dataframe (list (series '("a" "b") #:name "k")
+                 (series '(1 2) #:name "v")))]}
 
 @deftogether[(@defproc[(shape [x has-shape?]) (listof exact-nonnegative-integer?)]
               @defproc[(shape/values [x has-shape?]) (values exact-nonnegative-integer? ...)]
@@ -296,7 +303,12 @@ shadowed, or when you want to be explicit that an expression is being built.
   reals (as @racket['float64]) and strings. Every binary @tt{expr-*} operation
   applies @racket[lit] to a non-expression operand automatically, so it is
   rarely needed explicitly. @racket[expr-alias] names the column an expression
-  produces, matching @tt{.alias}: @racket[(expr-alias (expr-sum (col "value")) "total")].}
+  produces, matching @tt{.alias}: @racket[(expr-alias (expr-sum (col "value")) "total")].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "v")))
+    (select (alias (* (col "v") 10) "v10")
+            (alias (lit 0) "zero")))]}
 
 @deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]
@@ -515,18 +527,38 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   returns a frame holding only the resulting columns; @racket[with-columns]
   adds them to (or replaces them in) the existing columns. Given a
   @tech{dataframe} they run eagerly and return a dataframe; given a
-  @tech{lazyframe} they extend the plan and return a lazyframe.}
+  @tech{lazyframe} they extend the plan and return a lazyframe.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "a")
+                     (series '(4 5 6) #:name "b")))
+    (select "a" (alias (+ (col "a") (col "b")) "sum")))
+(~> (dataframe (list (series '(1 2 3) #:name "a")))
+    (with-columns (alias (* (col "a") 2) "double")))]}
 
 @defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
          (or/c Expr-ptr? series?)]{
   Changes dtype. On an expression (or a column name, lifted with
   @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
   it converts eagerly and returns a series. @racket[dtype] takes the same
-  spellings as @racket[series-cast].}
+  spellings as @racket[series-cast]: unlike @racket[series]' @racket[#:dtype],
+  only the canonical names (@racket['float64], @racket['int32],
+  @racket['string], ...) are accepted, not the short ones (@racket['f64],
+  @racket['i32], @racket['str]); given a short name the
+  @exnraise[exn:fail].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "v")))
+    (with-columns (cast "v" 'float64)))
+(eval:error (cast (series '(1 2 3)) 'f64))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
-  have the same columns in the same order (Polars' @tt{vstack}).}
+  have the same columns in the same order (Polars' @tt{vstack}).
+
+  @examples[#:eval ev
+(define top (dataframe (list (series '(1 2) #:name "v"))))
+(vstack top (dataframe (list (series '(3) #:name "v"))))]}
 
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
                              [n exact-nonnegative-integer?]) any/c]
@@ -538,7 +570,12 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
   starting at @racket[offset], of the same kind as @racket[x] (Polars'
   @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
-  and belong inside @racket[select].}
+  and belong inside @racket[select].
+
+  @examples[#:eval ev
+(define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
+(head nums 2)
+(tail nums 2)]}
 
 @defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
   Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
@@ -554,7 +591,15 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   Joins @racket[right] onto @racket[left] on the shared key columns
   @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
   (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}.}
+  @tech{lazyframe}.
+
+  @examples[#:eval ev
+(define left (dataframe (list (series '("a" "b") #:name "k")
+                               (series '(1 2) #:name "v"))))
+(define right (dataframe (list (series '("a" "c") #:name "k")
+                                (series '(10 30) #:name "w"))))
+(join left right #:on '("k") #:how 'left)
+(join left right #:on '("k") #:how 'inner)]}
 
 @deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
               @defproc[(read-parquet [path path-string?]) dataframe?]
@@ -582,7 +627,12 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
   @racket[select], @racket[with-columns], @racket[filter] and the other
   fluent operations extend without running anything — and @racket[collect]
-  executes the plan and returns the resulting dataframe.}
+  executes the plan and returns the resulting dataframe.
+
+  @examples[#:eval ev
+(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
+    (filter (> (col "v") 2))
+    collect)]}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
@@ -592,7 +642,13 @@ thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
   @racket[agg] consumes the handle, computing the aggregation expressions per
   group in a single pass, and returns a dataframe with one row per group. The
   split mirrors @tt{df.group_by("g").agg(...)}; the row order of the result is
-  not guaranteed.}
+  not guaranteed.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '("x" "y" "x") #:name "k")
+                     (series '(1 2 3) #:name "v")))
+    (group-by "k")
+    (agg (alias (sum "v") "total")))]}
 
 @deftogether[(@defproc[(count    [x any/c]) any/c]
               @defproc[(n-unique [x any/c]) any/c]
@@ -707,7 +763,7 @@ Resolve it with the usual @racket[require] sub-forms:
 (require polars (prefix-in list: racket/list))
 ]
 
-@section{Generic interfaces}
+@section[#:tag "ref-generic-interfaces"]{Generic interfaces}
 
 The high-level operations are small, purpose-named
 @racketmodname[racket/generic] interfaces. A wrapper implements the interface
@@ -739,3 +795,5 @@ exports its method(s) and a predicate that recognises values implementing it.
               @defproc[(has-null-count? [v any/c]) boolean?])]{
   The @racket[null-count] capability (method: @racket[null-count]). Implemented
   by series.}
+
+@(close-eval ev)
