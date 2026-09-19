@@ -5,12 +5,384 @@
 
 @title[#:tag "reference"]{Reference}
 
-Alongside the monomorphic, dtype-suffixed bindings (@racket[series-new-i32],
-@racket[series-sum-f64], and friends), @racketmodname[polars] provides a small,
-"rackety" high-level layer: @tech{series} and @tech{dataframe} wrapper values
-reached through a handful of purpose-named generic operations. The generics
-dispatch at runtime on the wrapper's type, or — for the reductions — on the
-series' dtype (read via @racket[dtype]).
+@racketmodname[polars] is written to read as ordinary Racket. The operators
+you already know --- @racket[+], @racket[*], @racket[>], @racket[and],
+@racket[filter], @racket[sort], @racket[first] --- are overloaded to work on
+@tech{series} and @tech{expression}s, dispatching at runtime on what they are
+given and falling back to their @racketmodname[racket/base] behaviour on
+plain values. @secref["ref-fluent"] documents that surface and comes first
+because it is the one to learn.
+
+Underneath sits a monomorphic, dtype-suffixed layer (@racket[series-new-i32],
+@racket[series-sum-f64], @racket[expr-add] and friends). It is documented here
+for completeness --- see @secref["ref-expressions"] and the low-level
+subsections --- but the generic spelling is the preferred one throughout.
+
+@section[#:tag "ref-fluent"]{Operators and pipelines}
+
+This is the surface to write @racketmodname[polars] in. An
+@deftech{expression} describes a column computation without running it, and
+the operators below are the ordinary Racket ones --- @racket[+], @racket[*],
+@racket[>], @racket[and], @racket[filter], @racket[sort] --- overloaded to
+build expressions when an operand is one, while behaving exactly as
+@racketmodname[racket/base] does on plain numbers and lists. Nothing about a
+pipeline needs a Polars-specific spelling.
+
+Every operation takes the frame --- or the expression --- as its first
+argument, so it chains with thread-first @racket[~>] (re-provided from
+@racketmodname[threading], so @racket[(require polars)] is enough):
+
+@racketblock[
+(~> df
+    (filter (> (col "value") 15))
+    (group-by "group")
+    (agg (alias (sum (col "value")) "sum_value")))
+]
+
+@defproc[(Expr-ptr? [v any/c]) boolean?]{
+  Returns @racket[#t] if @racket[v] is an @tech{expression}.}
+
+@deftogether[(@defproc[(col [name string?]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?])]{
+  The leaves every other operation builds on. @racket[col] refers to the
+  column called @racket[name] (@tt{pl.col}). @racket[lit] lifts a Racket
+  scalar to a literal expression: booleans, exact integers (32-bit when they
+  fit, 64-bit otherwise), other reals (as @racket['float64]) and strings.
+  Every operator below lifts a non-expression operand with @racket[lit]
+  automatically, so it is rarely needed explicitly.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "v")))
+    (select (alias (* (col "v") 10) "v10")
+            (alias (lit 0) "zero")))]}
+
+@deftogether[(@defproc[(> [a any/c] [b any/c] ...) any/c]
+              @defproc[(< [a any/c] [b any/c] ...) any/c]
+              @defproc[(>= [a any/c] [b any/c] ...) any/c]
+              @defproc[(<= [a any/c] [b any/c] ...) any/c]
+              @defproc[(= [a any/c] [b any/c] ...) any/c]
+              @defproc[(!= [a any/c] [b any/c] ...) any/c])]{
+  Overloaded comparison operators. If an operand is an expression, they build a
+  comparison @emph{expression} (scalars are lifted automatically), so
+  @racket[(> (col "value") 15)] reads like @tt{col("value") > 15}. If an operand
+  is a series, they build an eager boolean-mask series — element-wise over every
+  numeric dtype, including @racket['int64] — so @racket[(> (ref df #:columns "value") 15)]
+  is a mask. Otherwise they fall back to the numeric @racketmodname[racket/base]
+  operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
+  work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
+  @racket[(not (= _a _b))]. These shadow the @racketmodname[racket/base]
+  comparisons; see @secref["fluent-shadowing"].}
+
+@deftogether[(@defform[(and expr ...)]
+              @defform[(or expr ...)]
+              @defproc[(not [x any/c]) any/c]
+              @defproc[(xor [a any/c] [b any/c]) any/c])]{
+  Overloaded boolean connectives. When an operand is an expression they build
+  the element-wise expression (@racket[expr-and], @racket[expr-or],
+  @racket[expr-not], @racket[expr-xor]), so
+  @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
+  @racket[filter]. When an operand is a series they compute an eager boolean
+  mask. Otherwise they behave as the @racketmodname[racket/base] forms:
+  @racket[and] and @racket[or] short-circuit and return the deciding value, and
+  @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
+  expression or series operand it evaluates its remaining operands eagerly to
+  combine them. These shadow the @racketmodname[racket/base] bindings; see
+  @secref["fluent-shadowing"].}
+
+@deftogether[(@defproc[(+ [v any/c] ...) any/c]
+              @defproc[(- [v any/c] ...) any/c]
+              @defproc[(* [v any/c] ...) any/c]
+              @defproc[(/ [v any/c] ...) any/c])]{
+  Overloaded arithmetic. When every argument is a number they are exactly the
+  @racketmodname[racket/base] operators. Otherwise they fold left over the
+  arguments: an expression operand yields an expression (via
+  @racket[expr-add], @racket[expr-sub], @racket[expr-mul], @racket[expr-div]),
+  so @racket[(* (col "value") 2)] reads like @tt{col("value") * 2}, and a
+  series operand yields an eagerly computed series. A single non-numeric
+  argument is returned unchanged. These shadow the @racketmodname[racket/base]
+  bindings; see @secref["fluent-shadowing"].}
+
+@defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
+  Keeps the rows of @racket[d] matching @racket[predicate], which may be a
+  boolean expression — @racket[(filter df (> (col "value") 15))] — or a
+  precomputed boolean-mask series. Returns a new dataframe. Applied to a
+  non-dataframe it falls back to @racketmodname[racket/base]'s @racket[filter],
+  so @racket[(filter even? '(1 2 3 4))] is @racket['(2 4)].}
+
+@defproc[(sort [d dataframe?]
+               [names (or/c string? (listof string?))]
+               [#:descending descending (or/c boolean? (listof boolean?)) #f])
+         dataframe?]{
+  Sorts @racket[d] by one or more columns. @racket[#:descending] is a single
+  boolean applied to all keys, or a per-key list. Applied to a non-dataframe it
+  falls back to @racketmodname[racket/base]'s @racket[sort], so
+  @racket[(sort '(3 1 2) <)] is @racket['(1 2 3)].}
+
+@deftogether[(@defproc[(select [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
+                       (or/c dataframe? lazyframe?)]
+              @defproc[(with-columns [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
+                       (or/c dataframe? lazyframe?)])]{
+  The @emph{select} and @emph{with_columns} contexts. Each @racket[spec] is a
+  column name, a column index, an expression, or a list of those (which is
+  spliced); names and indices are lifted with @racket[col]. @racket[select]
+  returns a frame holding only the resulting columns; @racket[with-columns]
+  adds them to (or replaces them in) the existing columns. Given a
+  @tech{dataframe} they run eagerly and return a dataframe; given a
+  @tech{lazyframe} they extend the plan and return a lazyframe.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "a")
+                     (series '(4 5 6) #:name "b")))
+    (select "a" (alias (+ (col "a") (col "b")) "sum")))
+(~> (dataframe (list (series '(1 2 3) #:name "a")))
+    (with-columns (alias (* (col "a") 2) "double")))]}
+
+@defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
+         (or/c Expr-ptr? series?)]{
+  Changes dtype. On an expression (or a column name, lifted with
+  @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
+  it converts eagerly and returns a series. @racket[dtype] takes the same
+  spellings as @racket[series-cast]: unlike @racket[series]' @racket[#:dtype],
+  only the canonical names (@racket['float64], @racket['int32],
+  @racket['string], ...) are accepted, not the short ones (@racket['f64],
+  @racket['i32], @racket['str]); given a short name the
+  @exnraise[exn:fail].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(1 2 3) #:name "v")))
+    (with-columns (cast "v" 'float64)))
+(eval:error (cast (series '(1 2 3)) 'f64))]}
+
+@defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
+  Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
+  have the same columns in the same order (Polars' @tt{vstack}).
+
+  @examples[#:eval ev
+(define top (dataframe (list (series '(1 2) #:name "v"))))
+(vstack top (dataframe (list (series '(3) #:name "v"))))]}
+
+@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                             [n exact-nonnegative-integer?]) any/c]
+              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                             [n exact-nonnegative-integer?]) any/c]
+              @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
+                              [offset exact-integer?]
+                              [length exact-nonnegative-integer?]) any/c])]{
+  The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
+  starting at @racket[offset], of the same kind as @racket[x] (Polars'
+  @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
+  and belong inside @racket[select].
+
+  @examples[#:eval ev
+(define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
+(head nums 2)
+(tail nums 2)]}
+
+@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
+  Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
+  to @racketmodname[racket/list]'s @racketid[drop].}
+
+@defproc[(join [left (or/c dataframe? lazyframe?)]
+               [right (or/c dataframe? lazyframe?)]
+               [#:on on (or/c (listof string?) #f) #f]
+               [#:left-on left-on (or/c (listof string?) #f) #f]
+               [#:right-on right-on (or/c (listof string?) #f) #f]
+               [#:how how (or/c 'inner 'left 'outer 'cross 'semi 'anti) 'inner])
+         (or/c dataframe? lazyframe?)]{
+  Joins @racket[right] onto @racket[left] on the shared key columns
+  @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
+  (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
+  @tech{lazyframe}.
+
+  @examples[#:eval ev
+(define left (dataframe (list (series '("a" "b") #:name "k")
+                               (series '(1 2) #:name "v"))))
+(define right (dataframe (list (series '("a" "c") #:name "k")
+                                (series '(10 30) #:name "w"))))
+(join left right #:on '("k") #:how 'left)
+(join left right #:on '("k") #:how 'inner)]}
+
+@deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
+              @defproc[(read-parquet [path path-string?]) dataframe?]
+              @defproc[(read-ndjson [path path-string?]) dataframe?]
+              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
+  Eager file I/O (@tt{pl.read_csv} / @tt{df.write_csv} and friends). Dates
+  are not parsed on read; see @racket[str-to-date].}
+
+@deftogether[(@defproc[(scan-csv [path path-string?]
+                                 [#:has-header has-header boolean? #t]
+                                 [#:separator separator char? #\,]
+                                 [#:skip-rows skip-rows exact-nonnegative-integer? 0]
+                                 [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
+                       lazyframe?]
+              @defproc[(scan-parquet [path path-string?]
+                                     [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
+                       lazyframe?])]{
+  Start a @tech{lazyframe} plan from a file without reading it
+  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it.}
+
+@deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
+              @defproc[(collect [lf lazyframe?]) dataframe?])]{
+  @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
+  @racket[select], @racket[with-columns], @racket[filter] and the other
+  fluent operations extend without running anything — and @racket[collect]
+  executes the plan and returns the resulting dataframe.
+
+  @examples[#:eval ev
+(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
+    (filter (> (col "v") 2))
+    collect)]}
+
+@deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
+              @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
+              @defproc[(grouped? [v any/c]) boolean?])]{
+  @racket[group-by] captures @racket[d] and one or more group keys in a deferred
+  @racket[grouped] handle — no work happens yet — so it threads cleanly.
+  @racket[agg] consumes the handle, computing the aggregation expressions per
+  group in a single pass, and returns a dataframe with one row per group. The
+  split mirrors @tt{df.group_by("g").agg(...)}; the row order of the result is
+  not guaranteed.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '("x" "y" "x") #:name "k")
+                     (series '(1 2 3) #:name "v")))
+    (group-by "k")
+    (agg (alias (sum "v") "total")))]}
+
+@deftogether[(@defproc[(sum [v any/c] ...) any/c]
+              @defproc[(mean [v any/c] ...) any/c]
+              @defproc[(min [v any/c] ...) any/c]
+              @defproc[(max [v any/c] ...) any/c])]{
+  These dispatch on their argument. Applied to a single series, they reduce it
+  (dispatching on its dtype): @racket[min], @racket[max] and @racket[sum]
+  preserve the input dtype, while @racket[mean] always returns a
+  @racket[float64], so the mean of an integer series is a flonum (see
+  @secref["promotion"]). Applied to a single expression or a bare column-name
+  string, they produce the corresponding aggregation expression — so
+  @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
+  used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
+  they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
+  works.}
+
+  @examples[#:eval ev
+(define s (series '(1 2 3 4) #:name "v"))
+(list (sum s) (mean s) (min s) (max s))
+(max 1 2 3)]}
+
+@deftogether[(@defproc[(count    [x any/c]) any/c]
+              @defproc[(n-unique [x any/c]) any/c]
+              @defproc[(median   [x any/c]) any/c]
+              @defproc[(std [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+              @defproc[(var [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+              @defproc[(alias [e any/c] [name string?]) any/c])]{
+  Aggregation-expression builders for use inside @racket[agg], alongside the
+  expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
+  Each accepts an expression or a bare column-name string (lifted with
+  @racket[col]), so @racket[(count "value")] and @racket[(count (col "value"))]
+  are equivalent. @racket[alias] names a result, matching Polars' @tt{.alias}:
+  @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
+  take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.}
+
+@deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
+              @defproc[(last  [x (or/c string? pair? any/c)]) any/c])]{
+  Dual-purpose. On an expression or column-name string they build the
+  first/last-element aggregation (Polars' @tt{.first()} / @tt{.last()}), for use
+  inside @racket[agg]. On a list they are the ordinary list accessors, so
+  @racket[(first '(1 2 3))] is @racket[1] and @racket[(last '(1 2 3))] is
+  @racket[3] — matching @racketmodname[racket/list].
+
+  @bold{Name clash.} @racketmodname[racket/list] also exports @racket[first] and
+  @racket[last] (along with @racket[count] and @racket[group-by], which polars
+  exports too). Requiring both modules @emph{explicitly} —
+  @racket[(require racket/list polars)] — is an error
+  (@tt{identifier already required}). A plain @hash-lang[] @racketmodname[racket/base]
+  program is unaffected, because @racketmodname[racket/base] does not export
+  these names. See @secref["fluent-shadowing"] for how to take control.}
+
+@deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
+              @defproc[(round [x (or/c Expr-ptr? string? number?)]
+                              [#:decimals decimals exact-nonnegative-integer? 0]) any/c])]{
+  Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
+  (@tt{.round}). Each takes an expression or a bare column-name string (lifted
+  with @racket[col]); @racket[round] on a plain number falls back to numeric
+  rounding. See @secref["fluent-shadowing"].}
+
+@deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
+                                   [#:closed closed (or/c 'both 'left 'right 'none) 'both])
+                       Expr-ptr?]
+              @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
+                       Expr-ptr?])]{
+  Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
+  lifted with @racket[lit], which has no date spelling; cast a string instead:
+  @racket[(cast (lit "1982-12-31") 'date)].}
+
+@deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-day    [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-hour   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-minute [x (or/c Expr-ptr? string?)]) Expr-ptr?]
+              @defproc[(dt-second [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
+  Temporal component accessors on a date or datetime column (@tt{.dt.year()}
+  and friends). Also exported, with the same shape: @racketid[dt-iso-year],
+  @racketid[dt-quarter], @racketid[dt-week], @racketid[dt-weekday],
+  @racketid[dt-ordinal-day], @racketid[dt-is-leap-year], @racketid[dt-date],
+  @racketid[dt-time], @racketid[dt-millisecond], @racketid[dt-microsecond],
+  @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
+  @racketid[dt-truncate].}
+
+@deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
+                                    [#:group-index group-index exact-nonnegative-integer? 1])
+                       Expr-ptr?]
+              @defproc[(str-to-date [x (or/c Expr-ptr? string?)]
+                                    [#:format format (or/c string? #f) #f]
+                                    [#:strict strict boolean? #t]
+                                    [#:exact exact boolean? #t]
+                                    [#:cache cache boolean? #t])
+                       Expr-ptr?]
+              @defproc[(str-to-datetime [x (or/c Expr-ptr? string?)]
+                                        [#:format format (or/c string? #f) #f]
+                                        [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
+                                        [#:strict strict boolean? #t]
+                                        [#:exact exact boolean? #t]
+                                        [#:cache cache boolean? #t])
+                       Expr-ptr?])]{
+  @racket[str-extract] returns capture group @racket[#:group-index] of the
+  first regex match (@tt{.str.extract}). @racket[str-to-date] and
+  @racket[str-to-datetime] parse strings with a chrono @tt{strptime}
+  @racket[#:format], inferred when omitted (@tt{.str.to_date},
+  @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
+  on unparseable values.}
+
+@subsection[#:tag "fluent-shadowing"]{Shadowed bindings}
+
+@racket[(require polars)] re-exports a handful of generic operations whose names
+also live in @racketmodname[racket/base] (@racket[min], @racket[max],
+@racket[sort], @racket[filter], @racket[>], @racket[<], @racket[>=],
+@racket[<=], @racket[=]) and in @racketmodname[racket/list] (@racket[first],
+@racket[last], @racket[count], @racket[group-by]). Under
+@hash-lang[] @racketmodname[racket/base] this is seamless — these names are
+either not bound (so polars simply provides them) or bound only by the module
+@emph{language} (which an explicit @racket[require] silently shadows), and the
+polars versions intentionally fall back to the numeric/list behaviour for
+non-frame arguments.
+
+A conflict arises only when another module providing the same name is
+@emph{also} required explicitly — most commonly @racketmodname[racket/list].
+Resolve it with the usual @racket[require] sub-forms:
+
+@racketblock[
+(code:comment "keep polars' first/last/count/group-by, drop racket/list's:")
+(require (except-in racket/list first last count group-by) polars)
+
+(code:comment "keep racket/list's, reach polars' under a prefix:")
+(require racket/list (prefix-in pl: polars))
+(code:comment "then (pl:first (col \"v\")) for the Expr, (first '(1 2 3)) for the list")
+
+(code:comment "keep polars', reach racket/list's under a prefix:")
+(require polars (prefix-in list: racket/list))
+]
 
 @section[#:tag "ref-series"]{Series}
 
@@ -57,21 +429,6 @@ an implementation detail and not part of the public series API.)
   (e.g. @racket['int32], @racket['float64], @racket['(datetime milliseconds #f)]).
   @racket[len] returns the number of elements (and, on a dataframe, the number of
   rows). @racket[null-count] returns the number of null entries.}
-
-@deftogether[(@defproc[(sum [v any/c] ...) any/c]
-              @defproc[(mean [v any/c] ...) any/c]
-              @defproc[(min [v any/c] ...) any/c]
-              @defproc[(max [v any/c] ...) any/c])]{
-  These dispatch on their argument. Applied to a single series, they reduce it
-  (dispatching on its dtype): @racket[min], @racket[max] and @racket[sum]
-  preserve the input dtype, while @racket[mean] always returns a
-  @racket[float64], so the mean of an integer series is a flonum (see
-  @secref["promotion"]). Applied to a single expression or a bare column-name
-  string, they produce the corresponding aggregation expression — so
-  @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
-  used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
-  they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
-  works.}
 
 @deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
@@ -275,43 +632,72 @@ generic operations are simply the preferred surface.
               @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
   Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON.}
 
-@section[#:tag "ref-expressions"]{Expressions}
+@section[#:tag "ref-lazy"]{Lazy frames}
 
-An @deftech{expression} describes a column computation — a column reference, a
-literal, or an operation over other expressions — without running it. The
-same expression can be reused across the @emph{select}, @emph{with_columns},
-@emph{filter} and @emph{group_by/agg} contexts, exactly as in Polars, and is
-evaluated only when a context runs it against a frame. Expressions are foreign
-values recognised by @racket[Expr-ptr?].
+A @deftech{lazyframe} is a query plan: a sequence of operations over a frame
+that Polars optimises as a whole and runs only when asked to collect. The
+low-level surface mirrors the eager @tt{dataframe-*} bindings and, like them,
+returns raw foreign pointers; the fluent @racket[lazy] and @racket[collect]
+are the wrapper-returning equivalents.
 
-The bindings below are the monomorphic @tt{expr-*} layer. Most of them have a
-generic counterpart in @secref["ref-fluent"] — @racket[expr-gt] underlies
-@racket[>], @racket[expr-sum] underlies the expression arm of @racket[sum],
-@racket[expr-alias] underlies @racket[alias] — and the generic spelling is the
-preferred one; the @tt{expr-*} names are useful when a name would otherwise be
-shadowed, or when you want to be explicit that an expression is being built.
+@deftogether[(@defproc[(LazyFrame-ptr? [v any/c]) boolean?]
+              @defproc[(lazyframe? [v any/c]) boolean?])]{
+  @racket[LazyFrame-ptr?] recognises a foreign lazyframe pointer, raw or
+  wrapped. @racket[lazyframe?] recognises only the wrapper produced by the
+  fluent @racket[lazy].}
 
-@defproc[(Expr-ptr? [v any/c]) boolean?]{
-  Returns @racket[#t] if @racket[v] is an @tech{expression}.}
+@deftogether[(@defproc[(dataframe-lazy [df DataFrame-ptr?]) LazyFrame-ptr?]
+              @defproc[(lazyframe-collect [lf LazyFrame-ptr?]) DataFrame-ptr?])]{
+  @racket[dataframe-lazy] starts a plan from an in-memory frame
+  (@tt{df.lazy()}); @racket[lazyframe-collect] executes a plan and returns the
+  resulting frame (@tt{lf.collect()}).}
 
-@deftogether[(@defproc[(col [name string?]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?]
-              @defproc[(expr-alias [e Expr-ptr?] [name string?]) Expr-ptr?])]{
-  The leaves. @racket[col] refers to the column called @racket[name]
-  (@tt{pl.col}). @racket[lit] lifts a Racket scalar to a literal expression:
-  booleans, exact integers (32-bit when they fit, 64-bit otherwise), other
-  reals (as @racket['float64]) and strings. Every binary @tt{expr-*} operation
-  applies @racket[lit] to a non-expression operand automatically, so it is
-  rarely needed explicitly. @racket[expr-alias] names the column an expression
-  produces, matching @tt{.alias}; the generic spelling is @racket[alias], so
-  prefer @racket[(alias (sum (col "value")) "total")].
+@deftogether[(@defproc[(lazyframe-select       [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
+              @defproc[(lazyframe-with-columns [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
+              @defproc[(lazyframe-filter       [lf LazyFrame-ptr?] [predicate Expr-ptr?]) LazyFrame-ptr?]
+              @defproc[(lazyframe-group-by-agg [lf LazyFrame-ptr?]
+                                               [keys (listof (or/c string? Expr-ptr?))]
+                                               [aggs (listof Expr-ptr?)]) LazyFrame-ptr?])]{
+  The lazy forms of the @secref["ref-expr-contexts"]. Each appends a step to
+  the plan and returns the extended plan; nothing runs until
+  @racket[lazyframe-collect].}
 
-  @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "v")))
-    (select (alias (* (col "v") 10) "v10")
-            (alias (lit 0) "zero")))]}
+@defproc[(lazyframe-join [left LazyFrame-ptr?]
+                         [right LazyFrame-ptr?]
+                         [#:on on (or/c #f (listof string?)) #f]
+                         [#:left-on left-on (or/c #f (listof string?)) #f]
+                         [#:right-on right-on (or/c #f (listof string?)) #f]
+                         [#:how how (or/c 'inner 'left 'outer 'full 'cross) 'inner])
+         LazyFrame-ptr?]{
+  Joins two plans. Give the key columns either as one list with @racket[#:on],
+  when they have the same names on both sides, or as parallel
+  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
+  join kind; @racket['outer] and @racket['full] are synonyms, and a
+  @racket['cross] join takes no keys. Omitting the keys for any other kind is
+  an error. Collect the result with @racket[lazyframe-collect]:
 
-@deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
+  @racketblock[
+  (lazyframe-collect
+   (lazyframe-join (dataframe-lazy users) (dataframe-lazy orders)
+                   #:on '("uid") #:how 'inner))
+  ]}
+
+@section[#:tag "ref-expressions"]{Low-level expression API}
+
+The monomorphic @tt{expr-*} layer that the operators in
+@secref["ref-fluent"] are built from. You rarely need these names directly:
+@racket[expr-gt] underlies @racket[>], @racket[expr-add] underlies
+@racket[+], @racket[expr-sum] underlies the expression arm of @racket[sum].
+Reach for them when a generic name is shadowed in your module, or when you
+want to be explicit that an expression --- rather than a number --- is being
+built.
+
+@defproc[(expr-alias [e Expr-ptr?] [name string?]) Expr-ptr?]{
+  Names the column an expression produces, matching @tt{.alias}. The generic
+  spelling is @racket[alias], which is the one to reach for:
+  @racket[(alias (sum (col "value")) "total")].}
+
+@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-mul [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-div [a any/c] [b any/c]) Expr-ptr?]
@@ -393,378 +779,6 @@ equivalents.
   evaluates each aggregation in @racket[aggs] once per group, returning a frame
   with one row per group (@tt{df.group_by(...).agg(...)}). The row order of the
   result is not guaranteed.}
-
-@section[#:tag "ref-lazy"]{Lazy frames}
-
-A @deftech{lazyframe} is a query plan: a sequence of operations over a frame
-that Polars optimises as a whole and runs only when asked to collect. The
-low-level surface mirrors the eager @tt{dataframe-*} bindings and, like them,
-returns raw foreign pointers; the fluent @racket[lazy] and @racket[collect]
-are the wrapper-returning equivalents.
-
-@deftogether[(@defproc[(LazyFrame-ptr? [v any/c]) boolean?]
-              @defproc[(lazyframe? [v any/c]) boolean?])]{
-  @racket[LazyFrame-ptr?] recognises a foreign lazyframe pointer, raw or
-  wrapped. @racket[lazyframe?] recognises only the wrapper produced by the
-  fluent @racket[lazy].}
-
-@deftogether[(@defproc[(dataframe-lazy [df DataFrame-ptr?]) LazyFrame-ptr?]
-              @defproc[(lazyframe-collect [lf LazyFrame-ptr?]) DataFrame-ptr?])]{
-  @racket[dataframe-lazy] starts a plan from an in-memory frame
-  (@tt{df.lazy()}); @racket[lazyframe-collect] executes a plan and returns the
-  resulting frame (@tt{lf.collect()}).}
-
-@deftogether[(@defproc[(lazyframe-select       [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
-              @defproc[(lazyframe-with-columns [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
-              @defproc[(lazyframe-filter       [lf LazyFrame-ptr?] [predicate Expr-ptr?]) LazyFrame-ptr?]
-              @defproc[(lazyframe-group-by-agg [lf LazyFrame-ptr?]
-                                               [keys (listof (or/c string? Expr-ptr?))]
-                                               [aggs (listof Expr-ptr?)]) LazyFrame-ptr?])]{
-  The lazy forms of the @secref["ref-expr-contexts"]. Each appends a step to
-  the plan and returns the extended plan; nothing runs until
-  @racket[lazyframe-collect].}
-
-@defproc[(lazyframe-join [left LazyFrame-ptr?]
-                         [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (listof string?)) #f]
-                         [#:left-on left-on (or/c #f (listof string?)) #f]
-                         [#:right-on right-on (or/c #f (listof string?)) #f]
-                         [#:how how (or/c 'inner 'left 'outer 'full 'cross) 'inner])
-         LazyFrame-ptr?]{
-  Joins two plans. Give the key columns either as one list with @racket[#:on],
-  when they have the same names on both sides, or as parallel
-  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
-  join kind; @racket['outer] and @racket['full] are synonyms, and a
-  @racket['cross] join takes no keys. Omitting the keys for any other kind is
-  an error. Collect the result with @racket[lazyframe-collect]:
-
-  @racketblock[
-  (lazyframe-collect
-   (lazyframe-join (dataframe-lazy users) (dataframe-lazy orders)
-                   #:on '("uid") #:how 'inner))
-  ]}
-
-@section[#:tag "ref-fluent"]{Fluent pipelines}
-
-A data-first layer that mirrors Polars' Python method chaining. Because each
-operation takes the frame as its first argument, a pipeline reads as a
-thread-first @racket[~>] chain (re-provided from @racketmodname[threading], so
-@racket[(require polars)] is enough):
-
-@racketblock[
-(~> df
-    (filter (> (col "value") 15))
-    (group-by "group")
-    (agg (alias (sum (col "value")) "sum_value")))
-]
-
-@deftogether[(@defproc[(> [a any/c] [b any/c] ...) any/c]
-              @defproc[(< [a any/c] [b any/c] ...) any/c]
-              @defproc[(>= [a any/c] [b any/c] ...) any/c]
-              @defproc[(<= [a any/c] [b any/c] ...) any/c]
-              @defproc[(= [a any/c] [b any/c] ...) any/c]
-              @defproc[(!= [a any/c] [b any/c] ...) any/c])]{
-  Overloaded comparison operators. If an operand is an expression, they build a
-  comparison @emph{expression} (scalars are lifted automatically), so
-  @racket[(> (col "value") 15)] reads like @tt{col("value") > 15}. If an operand
-  is a series, they build an eager boolean-mask series — element-wise over every
-  numeric dtype, including @racket['int64] — so @racket[(> (ref df #:columns "value") 15)]
-  is a mask. Otherwise they fall back to the numeric @racketmodname[racket/base]
-  operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
-  work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
-  @racket[(not (= _a _b))]. These shadow the @racketmodname[racket/base]
-  comparisons; see @secref["fluent-shadowing"].}
-
-@deftogether[(@defform[(and expr ...)]
-              @defform[(or expr ...)]
-              @defproc[(not [x any/c]) any/c]
-              @defproc[(xor [a any/c] [b any/c]) any/c])]{
-  Overloaded boolean connectives. When an operand is an expression they build
-  the element-wise expression (@racket[expr-and], @racket[expr-or],
-  @racket[expr-not], @racket[expr-xor]), so
-  @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
-  @racket[filter]. When an operand is a series they compute an eager boolean
-  mask. Otherwise they behave as the @racketmodname[racket/base] forms:
-  @racket[and] and @racket[or] short-circuit and return the deciding value, and
-  @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
-  expression or series operand it evaluates its remaining operands eagerly to
-  combine them. These shadow the @racketmodname[racket/base] bindings; see
-  @secref["fluent-shadowing"].}
-
-@deftogether[(@defproc[(+ [v any/c] ...) any/c]
-              @defproc[(- [v any/c] ...) any/c]
-              @defproc[(* [v any/c] ...) any/c]
-              @defproc[(/ [v any/c] ...) any/c])]{
-  Overloaded arithmetic. When every argument is a number they are exactly the
-  @racketmodname[racket/base] operators. Otherwise they fold left over the
-  arguments: an expression operand yields an expression (via
-  @racket[expr-add], @racket[expr-sub], @racket[expr-mul], @racket[expr-div]),
-  so @racket[(* (col "value") 2)] reads like @tt{col("value") * 2}, and a
-  series operand yields an eagerly computed series. A single non-numeric
-  argument is returned unchanged. These shadow the @racketmodname[racket/base]
-  bindings; see @secref["fluent-shadowing"].}
-
-@defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
-  Keeps the rows of @racket[d] matching @racket[predicate], which may be a
-  boolean expression — @racket[(filter df (> (col "value") 15))] — or a
-  precomputed boolean-mask series. Returns a new dataframe. Applied to a
-  non-dataframe it falls back to @racketmodname[racket/base]'s @racket[filter],
-  so @racket[(filter even? '(1 2 3 4))] is @racket['(2 4)].}
-
-@defproc[(sort [d dataframe?]
-               [names (or/c string? (listof string?))]
-               [#:descending descending (or/c boolean? (listof boolean?)) #f])
-         dataframe?]{
-  Sorts @racket[d] by one or more columns. @racket[#:descending] is a single
-  boolean applied to all keys, or a per-key list. Applied to a non-dataframe it
-  falls back to @racketmodname[racket/base]'s @racket[sort], so
-  @racket[(sort '(3 1 2) <)] is @racket['(1 2 3)].}
-
-@deftogether[(@defproc[(select [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
-                       (or/c dataframe? lazyframe?)]
-              @defproc[(with-columns [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
-                       (or/c dataframe? lazyframe?)])]{
-  The @emph{select} and @emph{with_columns} contexts. Each @racket[spec] is a
-  column name, a column index, an expression, or a list of those (which is
-  spliced); names and indices are lifted with @racket[col]. @racket[select]
-  returns a frame holding only the resulting columns; @racket[with-columns]
-  adds them to (or replaces them in) the existing columns. Given a
-  @tech{dataframe} they run eagerly and return a dataframe; given a
-  @tech{lazyframe} they extend the plan and return a lazyframe.
-
-  @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "a")
-                     (series '(4 5 6) #:name "b")))
-    (select "a" (alias (+ (col "a") (col "b")) "sum")))
-(~> (dataframe (list (series '(1 2 3) #:name "a")))
-    (with-columns (alias (* (col "a") 2) "double")))]}
-
-@defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
-         (or/c Expr-ptr? series?)]{
-  Changes dtype. On an expression (or a column name, lifted with
-  @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
-  it converts eagerly and returns a series. @racket[dtype] takes the same
-  spellings as @racket[series-cast]: unlike @racket[series]' @racket[#:dtype],
-  only the canonical names (@racket['float64], @racket['int32],
-  @racket['string], ...) are accepted, not the short ones (@racket['f64],
-  @racket['i32], @racket['str]); given a short name the
-  @exnraise[exn:fail].
-
-  @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "v")))
-    (with-columns (cast "v" 'float64)))
-(eval:error (cast (series '(1 2 3)) 'f64))]}
-
-@defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
-  Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
-  have the same columns in the same order (Polars' @tt{vstack}).
-
-  @examples[#:eval ev
-(define top (dataframe (list (series '(1 2) #:name "v"))))
-(vstack top (dataframe (list (series '(3) #:name "v"))))]}
-
-@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
-              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
-              @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                              [offset exact-integer?]
-                              [length exact-nonnegative-integer?]) any/c])]{
-  The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
-  starting at @racket[offset], of the same kind as @racket[x] (Polars'
-  @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
-  and belong inside @racket[select].
-
-  @examples[#:eval ev
-(define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
-(head nums 2)
-(tail nums 2)]}
-
-@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
-  Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
-  to @racketmodname[racket/list]'s @racketid[drop].}
-
-@defproc[(join [left (or/c dataframe? lazyframe?)]
-               [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c (listof string?) #f) #f]
-               [#:left-on left-on (or/c (listof string?) #f) #f]
-               [#:right-on right-on (or/c (listof string?) #f) #f]
-               [#:how how (or/c 'inner 'left 'outer 'cross 'semi 'anti) 'inner])
-         (or/c dataframe? lazyframe?)]{
-  Joins @racket[right] onto @racket[left] on the shared key columns
-  @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
-  (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}.
-
-  @examples[#:eval ev
-(define left (dataframe (list (series '("a" "b") #:name "k")
-                               (series '(1 2) #:name "v"))))
-(define right (dataframe (list (series '("a" "c") #:name "k")
-                                (series '(10 30) #:name "w"))))
-(join left right #:on '("k") #:how 'left)
-(join left right #:on '("k") #:how 'inner)]}
-
-@deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
-              @defproc[(read-parquet [path path-string?]) dataframe?]
-              @defproc[(read-ndjson [path path-string?]) dataframe?]
-              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
-  Eager file I/O (@tt{pl.read_csv} / @tt{df.write_csv} and friends). Dates
-  are not parsed on read; see @racket[str-to-date].}
-
-@deftogether[(@defproc[(scan-csv [path path-string?]
-                                 [#:has-header has-header boolean? #t]
-                                 [#:separator separator char? #\,]
-                                 [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                                 [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
-                       lazyframe?]
-              @defproc[(scan-parquet [path path-string?]
-                                     [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
-                       lazyframe?])]{
-  Start a @tech{lazyframe} plan from a file without reading it
-  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it.}
-
-@deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
-              @defproc[(collect [lf lazyframe?]) dataframe?])]{
-  @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
-  @racket[select], @racket[with-columns], @racket[filter] and the other
-  fluent operations extend without running anything — and @racket[collect]
-  executes the plan and returns the resulting dataframe.
-
-  @examples[#:eval ev
-(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
-    (filter (> (col "v") 2))
-    collect)]}
-
-@deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
-              @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
-              @defproc[(grouped? [v any/c]) boolean?])]{
-  @racket[group-by] captures @racket[d] and one or more group keys in a deferred
-  @racket[grouped] handle — no work happens yet — so it threads cleanly.
-  @racket[agg] consumes the handle, computing the aggregation expressions per
-  group in a single pass, and returns a dataframe with one row per group. The
-  split mirrors @tt{df.group_by("g").agg(...)}; the row order of the result is
-  not guaranteed.
-
-  @examples[#:eval ev
-(~> (dataframe (list (series '("x" "y" "x") #:name "k")
-                     (series '(1 2 3) #:name "v")))
-    (group-by "k")
-    (agg (alias (sum "v") "total")))]}
-
-@deftogether[(@defproc[(count    [x any/c]) any/c]
-              @defproc[(n-unique [x any/c]) any/c]
-              @defproc[(median   [x any/c]) any/c]
-              @defproc[(std [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
-              @defproc[(var [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
-              @defproc[(alias [e any/c] [name string?]) any/c])]{
-  Aggregation-expression builders for use inside @racket[agg], alongside the
-  expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
-  Each accepts an expression or a bare column-name string (lifted with
-  @racket[col]), so @racket[(count "value")] and @racket[(count (col "value"))]
-  are equivalent. @racket[alias] names a result, matching Polars' @tt{.alias}:
-  @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
-  take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.}
-
-@deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
-              @defproc[(last  [x (or/c string? pair? any/c)]) any/c])]{
-  Dual-purpose. On an expression or column-name string they build the
-  first/last-element aggregation (Polars' @tt{.first()} / @tt{.last()}), for use
-  inside @racket[agg]. On a list they are the ordinary list accessors, so
-  @racket[(first '(1 2 3))] is @racket[1] and @racket[(last '(1 2 3))] is
-  @racket[3] — matching @racketmodname[racket/list].
-
-  @bold{Name clash.} @racketmodname[racket/list] also exports @racket[first] and
-  @racket[last] (along with @racket[count] and @racket[group-by], which polars
-  exports too). Requiring both modules @emph{explicitly} —
-  @racket[(require racket/list polars)] — is an error
-  (@tt{identifier already required}). A plain @hash-lang[] @racketmodname[racket/base]
-  program is unaffected, because @racketmodname[racket/base] does not export
-  these names. See @secref["fluent-shadowing"] for how to take control.}
-
-@deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
-              @defproc[(round [x (or/c Expr-ptr? string? number?)]
-                              [#:decimals decimals exact-nonnegative-integer? 0]) any/c])]{
-  Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
-  (@tt{.round}). Each takes an expression or a bare column-name string (lifted
-  with @racket[col]); @racket[round] on a plain number falls back to numeric
-  rounding. See @secref["fluent-shadowing"].}
-
-@deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
-                                   [#:closed closed (or/c 'both 'left 'right 'none) 'both])
-                       Expr-ptr?]
-              @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
-                       Expr-ptr?])]{
-  Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
-  lifted with @racket[lit], which has no date spelling; cast a string instead:
-  @racket[(cast (lit "1982-12-31") 'date)].}
-
-@deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-day    [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-hour   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-minute [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-second [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
-  Temporal component accessors on a date or datetime column (@tt{.dt.year()}
-  and friends). Also exported, with the same shape: @racketid[dt-iso-year],
-  @racketid[dt-quarter], @racketid[dt-week], @racketid[dt-weekday],
-  @racketid[dt-ordinal-day], @racketid[dt-is-leap-year], @racketid[dt-date],
-  @racketid[dt-time], @racketid[dt-millisecond], @racketid[dt-microsecond],
-  @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
-  @racketid[dt-truncate].}
-
-@deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
-                                    [#:group-index group-index exact-nonnegative-integer? 1])
-                       Expr-ptr?]
-              @defproc[(str-to-date [x (or/c Expr-ptr? string?)]
-                                    [#:format format (or/c string? #f) #f]
-                                    [#:strict strict boolean? #t]
-                                    [#:exact exact boolean? #t]
-                                    [#:cache cache boolean? #t])
-                       Expr-ptr?]
-              @defproc[(str-to-datetime [x (or/c Expr-ptr? string?)]
-                                        [#:format format (or/c string? #f) #f]
-                                        [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
-                                        [#:strict strict boolean? #t]
-                                        [#:exact exact boolean? #t]
-                                        [#:cache cache boolean? #t])
-                       Expr-ptr?])]{
-  @racket[str-extract] returns capture group @racket[#:group-index] of the
-  first regex match (@tt{.str.extract}). @racket[str-to-date] and
-  @racket[str-to-datetime] parse strings with a chrono @tt{strptime}
-  @racket[#:format], inferred when omitted (@tt{.str.to_date},
-  @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
-  on unparseable values.}
-
-@subsection[#:tag "fluent-shadowing"]{Shadowed bindings}
-
-@racket[(require polars)] re-exports a handful of generic operations whose names
-also live in @racketmodname[racket/base] (@racket[min], @racket[max],
-@racket[sort], @racket[filter], @racket[>], @racket[<], @racket[>=],
-@racket[<=], @racket[=]) and in @racketmodname[racket/list] (@racket[first],
-@racket[last], @racket[count], @racket[group-by]). Under
-@hash-lang[] @racketmodname[racket/base] this is seamless — these names are
-either not bound (so polars simply provides them) or bound only by the module
-@emph{language} (which an explicit @racket[require] silently shadows), and the
-polars versions intentionally fall back to the numeric/list behaviour for
-non-frame arguments.
-
-A conflict arises only when another module providing the same name is
-@emph{also} required explicitly — most commonly @racketmodname[racket/list].
-Resolve it with the usual @racket[require] sub-forms:
-
-@racketblock[
-(code:comment "keep polars' first/last/count/group-by, drop racket/list's:")
-(require (except-in racket/list first last count group-by) polars)
-
-(code:comment "keep racket/list's, reach polars' under a prefix:")
-(require racket/list (prefix-in pl: polars))
-(code:comment "then (pl:first (col \"v\")) for the Expr, (first '(1 2 3)) for the list")
-
-(code:comment "keep polars', reach racket/list's under a prefix:")
-(require polars (prefix-in list: racket/list))
-]
 
 @section[#:tag "ref-generic-interfaces"]{Generic interfaces}
 
