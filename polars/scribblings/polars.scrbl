@@ -1,8 +1,5 @@
 #lang scribble/manual
-@require[@for-label[polars
-                    @; polars re-exports generic ops (min max sum sort filter comparisons,
-                    @; arithmetic + - * /, logical and/or/not, reverse, when) that shadow racket/base
-                    (except-in racket/base min max sort filter reverse and or not when + - * / > < >= <= = abs round floor sqrt exp log)]]
+@(require "utils.rkt")
 
 @title{Polars: Racket bindings to Polars}
 @author{bkc}
@@ -30,17 +27,23 @@ Temporal values exchanged with Racket use
 @hyperlink["https://docs.racket-lang.org/gregor/"]{gregor} dates and
 datetimes.
 
-This manual has two parts. The @secref["guide"] is a guided, narrative tour
-modelled on the upstream
-@hyperlink["https://docs.pola.rs/user-guide/getting-started/"]{Polars
-getting-started guide}; the @secref["reference"] documents the public API.
+This manual has two parts: the @secref["guide"] works through the library by
+example, and the @secref["reference"] documents the public API.
+
+@bold{Acknowledgements.} This library and its documentation owe a great deal
+to the @hyperlink["https://pola.rs/"]{Polars} project --- the Rust crate the
+bindings call into, and the user guide and API documentation that shaped this
+manual --- and to the Racket libraries it builds on, in particular
+@hyperlink["https://docs.racket-lang.org/gregor/"]{gregor} for temporal values
+and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
+@racket[~>]. We are grateful for all of them.
 
 @local-table-of-contents[]
 
 @include-section["guide.scrbl"]
 @include-section["reference.scrbl"]
 
-@section{Status}
+@section[#:tag "status"]{Status}
 
 This is an early release; the API surface is still evolving. See the
 @hyperlink["https://github.com/bkc39/rkt-polars"]{project repository} for

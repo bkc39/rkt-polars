@@ -171,6 +171,7 @@
               runHook preCheck
               export RKT_POLARS_COMPAT_LIB_PATH=${rust}
               raco test -x -c polars
+              raco test user-guide
               runHook postCheck
             '';
 

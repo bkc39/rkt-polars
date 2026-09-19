@@ -1,11 +1,13 @@
 # rkt-polars user guide
 
-A guided tour of the `polars` Racket bindings, modelled section-by-section on
-the upstream [Polars getting-started guide](https://docs.pola.rs/user-guide/getting-started/).
+Runnable companions to the Scribble user guide, modelled chapter by chapter on
+the upstream [Polars user guide](https://docs.pola.rs/user-guide/).
 
 Every topic comes as a matched pair of runnable programs: a Racket version
 (`*.rkt`, using these bindings) and a Python version (`*.py`, using upstream
 `polars`) that produces the equivalent result, so the two read side by side.
+Where the bindings have no spelling for an upstream call, the Racket file says
+so in an `API gap` comment and shows the nearest workaround.
 
 ## Running
 
@@ -16,19 +18,30 @@ with `polars`:
 nix develop
 
 # Racket
-racket user-guide/getting-started/series-and-dataframes.rkt
+racket user-guide/getting-started/expressions-and-contexts.rkt
 
 # Python
-python user-guide/getting-started/series_and_dataframes.py
+python user-guide/getting-started/expressions_and_contexts.py
 ```
+
+`raco test user-guide` runs every Racket script; CI does the same.
 
 ## Contents
 
-`getting-started/`
+`getting-started/` — [upstream](https://docs.pola.rs/user-guide/getting-started/)
 
 | Topic | Racket | Python |
 | --- | --- | --- |
-| Series & DataFrames | `series-and-dataframes.rkt` | `series_and_dataframes.py` |
 | Reading & writing | `reading-and-writing.rkt` | `reading_and_writing.py` |
-| Expressions | `expressions.rkt` | `expressions.py` |
-| Combining DataFrames | `combining.rkt` | `combining.py` |
+| Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
+| Combining dataframes | `combining.rkt` | `combining.py` |
+
+`concepts/` — [upstream](https://docs.pola.rs/user-guide/concepts/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| Data types and structures | `data-types-and-structures.rkt` | `data_types_and_structures.py` |
+| Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
+| Lazy API | `lazy-api.rkt` | `lazy_api.py` |
+
+`data/` holds the small CSV inputs the scripts read.
