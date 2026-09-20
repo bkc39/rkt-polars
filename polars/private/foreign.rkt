@@ -1323,6 +1323,13 @@
   (_fun _DataFrame-ptr -> _void)
   #:wrap (deallocator))
 
+;; How many dataframes the Rust side has actually released. Racket cannot
+;; otherwise observe the native free: a wrapper with no finalizer registered
+;; is collected exactly like one that has it, so only this counter tells the
+;; two apart.
+(define-compat dataframe-drop-count
+  (_fun -> _size))
+
 (define-compat dataframe-make
   (_fun -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
@@ -2252,4 +2259,23 @@
     (build-path (find-system-path 'temp-dir) "rkt-polars-clears-slot.csv"))
   (dataframe-write-csv one-col ok-csv)
   (check-equal? (dataframe-height (dataframe-read-csv ok-csv)) 3)
+
+  ;; The readers hand back a bare `_pointer` and register the finalizer by
+  ;; hand, because `allocator` cannot wrap the NULL a failed read returns.
+  ;; Assert the native frames are actually released: watching the Racket
+  ;; wrapper get collected proves nothing, since it is collected either way.
+  (let* ([wanted 20]
+         [before (dataframe-drop-count)])
+    (for ([_ (in-range wanted)])
+      (void (dataframe-read-csv ok-csv)))
+    ;; Finalizers run on their own thread after a collection, so collect a
+    ;; few times and give them room; assert on a lenient fraction rather than
+    ;; all of them, which would make this flaky for no extra signal.
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1))
+    (define freed (- (dataframe-drop-count) before))
+    (check-true (>= freed (quotient wanted 2))
+                (format "only ~a of ~a read frames were freed by Rust" freed wanted)))
+
   (delete-file ok-csv))

@@ -1,4 +1,19 @@
 use crate::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// How many DataFrames have been released through `dataframe_drop`.
+///
+/// Exposed so a test can assert that frames handed across the boundary are
+/// actually reclaimed.  The readers and `lazyframe_collect` register their
+/// finalizer by hand -- `allocator` cannot wrap the NULL a failure returns --
+/// and a missing registration would leak every frame with nothing observable
+/// on the Racket side to catch it.
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn dataframe_drop_count() -> usize {
+    DROPPED.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub extern "C" fn dataframe_make() -> *mut DataFrame {
@@ -16,6 +31,7 @@ pub extern "C" fn dataframe_empty() -> *mut DataFrame {
 pub extern "C" fn dataframe_drop(df_ptr: *mut DataFrame) {
     if !df_ptr.is_null() {
         unsafe { drop(Box::from_raw(df_ptr)) };
+        DROPPED.fetch_add(1, Ordering::Relaxed);
     }
 }
 

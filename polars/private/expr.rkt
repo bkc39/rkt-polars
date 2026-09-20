@@ -1856,3 +1856,31 @@
   (check-exn exn:fail? (lambda () (expr-rank (col "x") #:method 'wat)))
   (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
   (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))
+
+;; `lazyframe-collect` used to be a bare `-> _DataFrame-ptr` binding with no
+;; allocator at all, so every collected frame leaked.  It now casts and
+;; registers the finalizer by hand (allocator cannot wrap the NULL a failed
+;; query returns), so assert the frames it hands back are reclaimed.
+(module+ test
+  (require rackunit
+           (only-in polars/private/foreign
+                    series-new-i64
+                    dataframe-new
+                    dataframe-drop-count))
+
+  (define reclaim-src
+    (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
+
+  (let* ([wanted 20]
+         [before (dataframe-drop-count)])
+    (for ([_ (in-range wanted)])
+      (void (lazyframe-collect (dataframe-lazy reclaim-src))))
+    ;; Finalizers run on their own thread after a collection; be lenient about
+    ;; how many have landed rather than making this flaky.
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1))
+    (define freed (- (dataframe-drop-count) before))
+    (check-true (>= freed (quotient wanted 2))
+                (format "only ~a of ~a collected frames were freed by Rust"
+                        freed wanted))))
