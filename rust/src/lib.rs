@@ -26,7 +26,10 @@ pub use lazyframe::*;
 pub use series::*;
 pub use types::*;
 
-pub(crate) use ffi::{collect_c_strings, collect_exprs, rust_string_to_ptr};
+pub(crate) use ffi::{
+    clear_last_error, collect_c_strings, collect_exprs, record,
+    rust_string_to_ptr, set_last_error,
+};
 #[cfg(test)]
 pub(crate) use series::ymdhms_to_naive_datetime;
 pub(crate) use series::{name_from_ptr, series_new, valid_slices};

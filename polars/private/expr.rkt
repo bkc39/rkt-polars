@@ -11,6 +11,7 @@
          polars/private/expr-dt
          polars/private/expr-str
          (only-in polars/private/foreign
+                  raise-foreign-error
                   _DataFrame-ptr
                   DataFrame-ptr?
                   _Series-ptr
@@ -123,12 +124,12 @@
     [(path? p) (path->string p)]
     [else (error who "expected path-string?, got ~v" p)]))
 
-(define (require-lazyframe-result who result)
+(define (require-lazyframe-result who result path)
   (if result
       (let ([lf (cast result _pointer _LazyFrame-ptr)])
         (register-finalizer lf lazyframe-drop)
         lf)
-      (error who "operation failed")))
+      (raise-foreign-error who "failed to scan ~a" path)))
 
 (define-compat lazyframe-scan-csv/raw
   (_fun _string -> _pointer)
@@ -175,7 +176,8 @@
     (separator->byte 'lazyframe-scan-csv separator)
     skip-rows
     (if n-rows 1 0)
-    (or n-rows 0))))
+    (or n-rows 0))
+   path))
 
 (define-compat lazyframe-scan-parquet/raw
   (_fun _string -> _pointer)
@@ -193,7 +195,8 @@
    (lazyframe-scan-parquet/options/raw
     (path->string-or-string 'lazyframe-scan-parquet path)
     (if n-rows 1 0)
-    (or n-rows 0))))
+    (or n-rows 0))
+   path))
 
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
@@ -206,9 +209,20 @@
 (define (lazyframe-with-columns lf exprs)
   (lazyframe-with-columns/c lf exprs))
 
-(define-compat lazyframe-collect
-  (_fun _LazyFrame-ptr -> _DataFrame-ptr)
+(define-compat lazyframe-collect/raw
+  (_fun _LazyFrame-ptr -> _pointer)
   #:c-id lazyframe_collect)
+
+;; A failed query used to return #f, which `collect` wrapped into a dataframe
+;; value that then misbehaved far from the cause; a successful one was never
+;; freed.  Raise on failure, and take ownership on success.
+(define (lazyframe-collect lf)
+  (define result (lazyframe-collect/raw lf))
+  (unless result
+    (raise-foreign-error 'lazyframe-collect "failed to collect the query"))
+  (let ([df (cast result _pointer _DataFrame-ptr)])
+    (register-finalizer df dataframe-drop)
+    df))
 
 ;; --- Phase A2: Expr operations ---
 

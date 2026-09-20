@@ -221,7 +221,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
                                      [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
                        lazyframe?])]{
   Start a @tech{lazyframe} plan from a file without reading it
-  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it.}
+  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it.
+
+  A scan only builds a plan: it does not open the file, so a missing or
+  malformed path is not reported here but when the query is collected. See
+  @racket[collect].
+}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
@@ -630,7 +635,24 @@ generic operations are simply the preferred surface.
               @defproc[(dataframe-read-parquet [path path-string?]) dataframe?]
               @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
-  Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON.}
+  Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON.
+
+  On failure these raise an error naming the operation, the path, and the
+  reason the underlying library gave --- the operating system's for a file that
+  cannot be opened or created, Polars' own for input it cannot parse.
+
+  @examples[#:eval ev
+(eval:error (read-csv "/no/such/file.csv"))]}
+
+@defproc[(last-error-message) (or/c string? #f)]{
+  The reason recorded by the most recent failing foreign call on this thread,
+  or @racket[#f] if the last call succeeded.
+
+  The C ABI can only return a status code or a null pointer, so the reason
+  travels out of band: each entry point that can fail clears this slot on the
+  way in and records a message on the way out. The bindings above read it for
+  you, and you should rarely need it --- it is exposed for diagnosing a failure
+  the wrappers do not yet cover.}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 
