@@ -248,7 +248,8 @@ fn a_broken_lazy_pipeline_reports_a_reason() {
 
     let lf = lazyframe_scan_parquet(p.as_ptr());
     if lf.is_null() {
-        let msg = recorded_error().expect("scan failure should record a reason");
+        let msg =
+            recorded_error().expect("scan failure should record a reason");
         assert!(
             msg.contains("parquet scan"),
             "expected the failing component, got {:?}",
@@ -271,5 +272,8 @@ fn a_broken_lazy_pipeline_reports_a_reason() {
 #[test]
 fn collect_of_a_null_lazyframe_reports_a_reason() {
     assert!(lazyframe_collect(ptr::null_mut()).is_null());
-    assert_eq!(recorded_error().as_deref(), Some("collect: lazyframe is null"));
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("collect: lazyframe is null")
+    );
 }
