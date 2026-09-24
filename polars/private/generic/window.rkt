@@ -51,4 +51,5 @@
   (check-exn #rx"^over: contract violation" (lambda () (provided-over 42 "group")))
   (check-exn #rx"^over: contract violation" (lambda () (provided-over (col "value") 'group)))
   (check-exn #rx"^over: contract violation" (lambda () (provided-over (col "value") "group" 7)))
-  (check-exn #rx"^over:" (lambda () (provided-over (col "value")))))
+  (check-exn #rx"^over: contract violation.*at least 2 non-keyword arguments"
+             (lambda () (provided-over (col "value")))))
