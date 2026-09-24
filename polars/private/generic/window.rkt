@@ -7,8 +7,8 @@
 (provide (contract-out
           [over (->* (col-expr/c col-expr/c) #:rest (listof col-expr/c) Expr-ptr?)]))
 
-(define (over e key . keys)
-  (expr-over (->col-expr 'over e) (cons key keys)))
+(define (over e . keys)
+  (expr-over (->col-expr 'over e) keys))
 
 (module+ test
   (require rackunit (only-in threading ~>)
@@ -18,8 +18,6 @@
            polars/private/generic/reductions
            polars/private/generic/reshape
            polars/private/generic/test-fixtures)
-  (define (column d name)
-    (for/list ([i (in-range (height d))]) (ref (ref d #:columns name) i)))
   (define total (~> (col "value") sum (over "group") (alias "group_total")))
   (check-pred Expr-ptr? total)
   (define df (with-columns ops-df total))
@@ -29,12 +27,10 @@
   (check-equal? (column (with-columns ops-df (~> (col "value") max (over "group") (alias "m"))) "m")
                 '(25 25 30 30 18))
   (define agged (~> ops-df (group-by "group") (agg (alias (sum "value") "group_total"))))
-  (for ([g (column df "group")]
-        [t (column df "group_total")])
-    (check-equal? t (for/first ([ag (column agged "group")]
-                                [at (column agged "group_total")]
-                                #:when (string=? ag g))
-                      at)))
+  (define totals (for/hash ([g (column agged "group")] [t (column agged "group_total")])
+                   (values g t)))
+  (check-equal? (column df "group_total")
+                (for/list ([g (column df "group")]) (hash-ref totals g)))
   (check-equal? (column (select ops-df (alias (over "value" "group") "w")) "w")
                 (column ops-df "value"))
   (define gh (dataframe (list (series '("a" "a" "a" "b") #:name "g")

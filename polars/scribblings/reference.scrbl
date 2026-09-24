@@ -252,17 +252,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     (agg (alias (sum "v") "total")))]}
 
 @defproc[(over [e (or/c Expr-ptr? string?)] [key (or/c Expr-ptr? string?)] ...+) Expr-ptr?]{
-  A window function (@tt{Expr.over}). @racket[e] is evaluated separately
-  within each group --- the groups being the distinct values of the
-  @racket[key]s, which are exactly what @racket[group-by] accepts: column
-  names or expressions --- and the result is mapped back onto the rows of
-  each group rather than reduced to one row per group. The column therefore
-  keeps the frame's height and belongs in @racket[with-columns], where
-  @racket[agg] would collapse it. An aggregation such as @racket[(sum "v")]
-  repeats the group total on every row of its group; an expression that
-  does not aggregate comes back row for row. A bare column name for
-  @racket[e] is lifted with @racket[col]. Only Polars' default
-  @tt{group_to_rows} mapping is exposed.
+  A window function (@tt{Expr.over}): @racket[e] is computed within each
+  group of the @racket[key]s — column names or expressions, as
+  @racket[group-by] takes them — and broadcast back onto the group's rows
+  rather than reduced to one row per group, so it belongs in
+  @racket[with-columns] where @racket[agg] would collapse it. Only Polars'
+  default @tt{group_to_rows} mapping is exposed.
 
   @examples[#:eval ev
 (define kv (dataframe (list (series '("x" "y" "x") #:name "k")

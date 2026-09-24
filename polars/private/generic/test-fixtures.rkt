@@ -28,3 +28,6 @@
                    (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
+
+(define (column d name)
+  (for/list ([i (in-range (height d))]) (ref (ref d #:columns name) i)))
