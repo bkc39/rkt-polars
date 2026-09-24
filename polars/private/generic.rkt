@@ -28,7 +28,8 @@
          polars/private/generic/predicates
          polars/private/generic/cumulative
          polars/private/generic/ordering
-         polars/private/generic/describe)
+         polars/private/generic/describe
+         polars/private/generic/meta)
 
 (provide series series? series->string
          dataframe dataframe? lazyframe?
@@ -70,6 +71,7 @@
          dt-timestamp dt-strftime dt-truncate
          rename rename! clone series-clone
          then otherwise else-when
+         meta-output-name meta-root-names meta-eq?
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
                      [p+ +] [p- -] [p* *] [p/ /] [p-when when]
                      [p-abs abs] [p-round round] [p-floor floor]

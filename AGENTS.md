@@ -48,7 +48,8 @@ Imitate the neighbouring module in `polars/private/generic/`. `->col-expr`
 and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
 gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
-in the same change. Tests go in the module's `(module+ test ...)`.
+in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
+in the module's `contract-out` (see `generic/meta.rkt`), never as `unless`+`error`.
 
 ### Adding an FFI entry point
 
@@ -93,7 +94,6 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
-- Expressions print as `#<cpointer>` (#57).
 
 ## Documentation
 

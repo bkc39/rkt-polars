@@ -1,10 +1,28 @@
 use crate::prelude::*;
+use crate::rust_string_to_ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn expr_drop_count() -> usize {
+    DROPPED.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub extern "C" fn expr_drop(e: *mut Expr) {
     if !e.is_null() {
         unsafe { drop(Box::from_raw(e)) };
+        DROPPED.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+#[no_mangle]
+pub extern "C" fn expr_to_string(e: *const Expr) -> *const c_char {
+    if e.is_null() {
+        return ptr::null();
+    }
+    rust_string_to_ptr(format!("{}", unsafe { &*e }))
 }
 
 #[no_mangle]

@@ -112,7 +112,9 @@ An expression is a value; nothing runs until a context receives it.
 bmi-expr
 ]
 
-API gap: an expression prints as an opaque pointer, not as its plan.
+An expression prints as its plan, in the notation Polars itself uses: the
+binding's @racket[/] is Polars' @tt{Divide} operator, shown as @tt{//}, and
+@racket[pow] appears as a method suffix.
 
 @subsection{Contexts}
 

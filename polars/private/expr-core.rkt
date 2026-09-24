@@ -6,7 +6,8 @@
          ffi/unsafe/alloc
          ffi/unsafe/define
          ffi/unsafe/define/conventions
-         racket/runtime-path)
+         racket/runtime-path
+         (only-in polars/private/foreign _rsstring))
 
 (provide define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
@@ -14,6 +15,7 @@
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
+         expr->string
          lit col ->expr)
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
@@ -22,16 +24,30 @@
   (ffi-lib (build-path expr-native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
-(define-cpointer-type _Expr-ptr)
+(struct expr (ptr)
+  #:property prop:cpointer 0
+  #:property prop:custom-write
+  (lambda (e port mode) (write-string (expr->string e) port)))
+
+(define (wrap-expr p) (and p (expr p)))
+
+(define-cpointer-type _Expr-ptr _pointer #f wrap-expr)
 (define-cpointer-type _LazyFrame-ptr)
 
 (define-compat expr-drop
   (_fun _Expr-ptr -> _void)
   #:wrap (deallocator))
 
+(define-compat expr-drop-count
+  (_fun -> _size))
+
 (define-compat lazyframe-drop
   (_fun _LazyFrame-ptr -> _void)
   #:wrap (deallocator))
+
+(define-compat expr->string
+  (_fun _Expr-ptr -> _rsstring)
+  #:c-id expr_to_string)
 
 (define-compat expr-col
   (_fun _string -> _Expr-ptr)
@@ -80,3 +96,29 @@
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
+
+(module+ test
+  (require rackunit
+           (only-in polars/private/expr expr-add expr-mul))
+  (define print-col (col "x"))
+  (check-equal? (expr->string print-col) "col(\"x\")")
+  (check-equal? (format "~a" print-col) "col(\"x\")")
+  (check-equal? (format "~s" print-col) "col(\"x\")")
+  (check-equal? (format "~v" print-col) "col(\"x\")")
+  (check-equal? (expr->string (expr-add (col "a") (col "b")))
+                "[(col(\"a\")) + (col(\"b\"))]")
+  (check-equal? (expr->string (expr-alias (col "a") "b")) "col(\"a\").alias(\"b\")")
+  (check-equal? (expr->string (expr-mul (col "v") 10)) "[(col(\"v\")) * (10)]")
+  (check-equal? (expr->string (lit "hi")) "String(hi)")
+  (check-equal? (expr->string (lit #t)) "true")
+  (check-pred Expr-ptr? print-col)
+  (check-true (cpointer? print-col))
+  (check-pred Expr-ptr? (expr-alias print-col "y"))
+  (check-false (equal? (col "x") (col "x")))
+  (define drop-before (expr-drop-count))
+  (for ([_ (in-range 100)])
+    (void (expr-alias (col "g") "h")))
+  (for ([_ (in-range 10)])
+    (collect-garbage)
+    (sleep 0.01))
+  (check-true (>= (- (expr-drop-count) drop-before) 200)))
