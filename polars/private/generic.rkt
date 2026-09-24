@@ -28,7 +28,8 @@
          polars/private/generic/predicates
          polars/private/generic/cumulative
          polars/private/generic/ordering
-         polars/private/generic/describe)
+         polars/private/generic/describe
+         polars/private/generic/window)
 
 (provide series series? series->string
          dataframe dataframe? lazyframe?
@@ -43,6 +44,7 @@
          gen:has-null-count has-null-count?
          sum mean min max
          count n-unique first last median std var alias
+         over
          > < >= <= = !=
          mod sign ceil log1p pow clip
          filter sort

@@ -9,16 +9,20 @@
 ;; define-expr-unop / define-math-unop generate the two common unary wrapper
 ;; shapes on top of it.
 
-(require polars/private/foreign
+(require (only-in racket/contract/base flat-named-contract or/c)
+         polars/private/foreign
          polars/private/expr)
 
-(provide ->col-expr define-expr-unop define-math-unop)
+(provide ->col-expr col-expr/c define-expr-unop define-math-unop)
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->col-expr who x)
   (cond [(Expr-ptr? x) x]
         [(string? x)   (col x)]
         [else (error who "expected an Expr or column name, got ~v" x)]))
+
+(define col-expr/c
+  (flat-named-contract 'col-expr/c (or/c string? Expr-ptr?)))
 
 ;; unary, non-shadowing (Polars-only): Expr/colname -> Expr.
 (define-syntax-rule (define-expr-unop name who expr-op)

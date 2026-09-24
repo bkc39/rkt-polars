@@ -85,6 +85,15 @@ print(
     )
 )
 
+print(
+    df.with_columns(
+        pl.col("height")
+        .mean()
+        .over((pl.col("birthdate").dt.year() // 10 * 10).alias("decade"))
+        .alias("decade_avg_height")
+    )
+)
+
 # --- expression expansion ------------------------------------------------
 expr = (pl.col(pl.Float64) * 1.1).name.suffix("*1.1")
 print(df.select(expr))
