@@ -6,7 +6,11 @@
          ffi/unsafe/alloc
          ffi/unsafe/define
          ffi/unsafe/define/conventions
-         racket/runtime-path)
+         (only-in racket/contract
+                  [-> ->/c] any/c contract-out non-empty-listof or/c)
+         racket/runtime-path
+         (only-in polars/private/foreign ->compat-dtype _CompatDType)
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
 (provide define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
@@ -14,7 +18,15 @@
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
-         lit col ->expr)
+         lit ->expr
+         (contract-out
+          [col (->/c (or/c string? regexp? dtype-spec?) Expr-ptr?)]
+          [expr-all (->/c Expr-ptr?)]
+          [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
+          [expr-exclude (->/c multi-column-expr?
+                              (non-empty-listof (or/c string? regexp?))
+                              Expr-ptr?)]
+          [multi-column-expr? (->/c any/c boolean?)]))
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
 
@@ -76,7 +88,59 @@
     [(string? v) (expr-lit-str v)]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
-(define (col name) (expr-col name))
+(define (regexp->column-pattern rx)
+  (string-append "^.*(?:" (object-name rx) ").*$"))
+
+(define (->column-pattern v)
+  (if (regexp? v) (regexp->column-pattern v) v))
+
+(define (expr-all)
+  (error 'unimplemented))
+
+(define (expr-dtype-col dtype)
+  (error 'unimplemented))
+
+(define (expr-exclude e names)
+  (error 'unimplemented))
+
+(define (multi-column-expr? v)
+  (error 'unimplemented))
+
+(define (col spec)
+  (cond
+    [(string? spec) (expr-col spec)]
+    [(regexp? spec) (expr-col (regexp->column-pattern spec))]
+    [else (expr-dtype-col spec)]))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
+
+(module+ test
+  (require rackunit)
+  (check-equal? (regexp->column-pattern #rx"^sepal_") "^.*(?:^sepal_).*$")
+  (check-equal? (regexp->column-pattern #px"\\d+") "^.*(?:\\d+).*$")
+  (check-pred Expr-ptr? (expr-all))
+  (check-pred Expr-ptr? (expr-dtype-col 'float64))
+  (check-pred Expr-ptr? (expr-dtype-col 'f64))
+  (check-pred Expr-ptr? (expr-dtype-col '(duration nanoseconds)))
+  (check-pred Expr-ptr? (expr-exclude (expr-all) '("a")))
+  (check-pred Expr-ptr? (expr-exclude (expr-dtype-col 'int32) (list "a" #rx"^b")))
+  (check-pred Expr-ptr? (expr-exclude (expr-col "^a.*$") '("ab")))
+  (check-true (multi-column-expr? (expr-all)))
+  (check-true (multi-column-expr? (expr-dtype-col 'string)))
+  (check-true (multi-column-expr? (col #rx"x")))
+  (check-true (multi-column-expr? (expr-alias (expr-all) "y")))
+  (check-false (multi-column-expr? (expr-col "a")))
+  (check-false (multi-column-expr? (lit 1)))
+  (check-false (multi-column-expr? "a"))
+  (check-exn #rx"^expr-exclude: contract violation\n  expected: multi-column-expr\\?"
+             (lambda () (expr-exclude (expr-col "a") '("b"))))
+  (check-exn #rx"^expr-exclude: contract violation"
+             (lambda () (expr-exclude (expr-all) '())))
+  (check-exn #rx"^expr-dtype-col: contract violation"
+             (lambda () (expr-dtype-col 'list)))
+  (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
+             (lambda () (col 42)))
+  (check-exn #rx"^col: contract violation" (lambda () (col 'list)))
+  (check-exn #rx"^col: contract violation" (lambda () (col #rx#"bytes")))
+  (check-exn #rx"^col: contract violation" (lambda () (col '(datetime weeks)))))

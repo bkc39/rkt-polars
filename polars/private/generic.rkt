@@ -28,7 +28,8 @@
          polars/private/generic/predicates
          polars/private/generic/cumulative
          polars/private/generic/ordering
-         polars/private/generic/describe)
+         polars/private/generic/describe
+         polars/private/generic/selectors)
 
 (provide series series? series->string
          dataframe dataframe? lazyframe?
@@ -70,6 +71,7 @@
          dt-timestamp dt-strftime dt-truncate
          rename rename! clone series-clone
          then otherwise else-when
+         all exclude
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
                      [p+ +] [p- -] [p* *] [p/ /] [p-when when]
                      [p-abs abs] [p-round round] [p-floor floor]

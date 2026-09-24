@@ -42,19 +42,60 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 @defproc[(Expr-ptr? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
-@deftogether[(@defproc[(col [name string?]) Expr-ptr?]
+@deftogether[(@defproc[(col [spec (or/c string? regexp? symbol? pair?)]) Expr-ptr?]
               @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?])]{
-  The leaves every other operation builds on. @racket[col] refers to the
-  column called @racket[name] (@tt{pl.col}). @racket[lit] lifts a Racket
-  scalar to a literal expression: booleans, exact integers (32-bit when they
-  fit, 64-bit otherwise), other reals (as @racket['float64]) and strings.
-  Every operator below lifts a non-expression operand with @racket[lit]
-  automatically, so it is rarely needed explicitly.
+  The leaves every other operation builds on. @racket[col] refers to one
+  column or to several at once. Given a string it is the column of that
+  name (@tt{pl.col("name")}). Given a dtype --- any spelling
+  @racket[series]' @racket[#:dtype] accepts, so @racket['float64] and
+  @racket['f64] alike --- it is every column of that dtype
+  (@tt{pl.col(pl.Float64)}); a bare @racket['datetime] means microseconds,
+  so match a column @racket[series] built from gregor datetimes with
+  @racket['(datetime milliseconds)] or with its @racket[dtype]. Given a
+  regexp it is every column whose name matches, as @racket[regexp-match?]
+  would decide it (@tt{pl.col("^sepal_.*$")}); the pattern text is compiled
+  by Rust's regex crate, so write @racket[#px] for character classes such
+  as @litchar{\d}. A multi-column @racket[col] expands inside any expression
+  to one output per matched column, in the frame's column order, each
+  keeping the matched column's name; a frame with no match yields no
+  columns.
+
+  @racket[lit] lifts a Racket scalar to a literal expression: booleans,
+  exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
+  @racket['float64]) and strings. Every operator below lifts a
+  non-expression operand with @racket[lit] automatically, so it is rarely
+  needed explicitly.
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "v")))
-    (select (alias (* (col "v") 10) "v10")
-            (alias (lit 0) "zero")))]}
+(define people
+  (dataframe (list (series '(1 2 3) #:name "id" #:dtype 'i32)
+                   (series '(57.9 72.5 53.6) #:name "weight")
+                   (series '(1.56 1.77 1.65) #:name "height"))))
+(select people (* (col 'float64) 1.1))
+(select people (col #rx"^he"))
+(select people (alias (* (col "id") 10) "id10")
+               (alias (lit 0) "zero"))]}
+
+@deftogether[(@defproc[(all) Expr-ptr?]
+              @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
+                       Expr-ptr?]
+              @defproc[(multi-column-expr? [v any/c]) boolean?])]{
+  @racket[(all)] is every column (@tt{pl.all()}); inside @racket[agg] it is
+  every column that is not a group key. @racket[exclude] removes columns
+  from a multi-column expression --- @racket[(all)], or a dtype or regexp
+  @racket[col], or any expression built over one --- by name or by regexp
+  (@tt{.exclude}). A name the frame does not have is ignored, and chained
+  @racket[exclude]s accumulate. @racket[multi-column-expr?] recognises the
+  expressions @racket[exclude] accepts: those that expand to one output
+  per matched column. To drop columns from a frame eagerly, @racket[drop]
+  is the direct spelling.
+
+  @examples[#:eval ev
+(select people (all))
+(select people (exclude (all) "id"))
+(select people (~> (col 'float64) (exclude "height") (* 2)))
+(multi-column-expr? (col "id"))
+(eval:error (exclude (col "id") "weight"))]}
 
 @deftogether[(@defproc[(> [a any/c] [b any/c] ...) any/c]
               @defproc[(< [a any/c] [b any/c] ...) any/c]
@@ -696,6 +737,18 @@ built.
   Names the column an expression produces, matching @tt{.alias}. The generic
   spelling is @racket[alias], which is the one to reach for:
   @racket[(alias (sum (col "value")) "total")].}
+
+@deftogether[(@defproc[(expr-all) Expr-ptr?]
+              @defproc[(expr-exclude [e multi-column-expr?]
+                                     [names (non-empty-listof (or/c string? regexp?))])
+                       Expr-ptr?]
+              @defproc[(expr-dtype-col [dtype (or/c symbol? pair?)]) Expr-ptr?])]{
+  The selector leaves under @racket[all], @racket[exclude] and the dtype arm
+  of @racket[col]: @tt{pl.all()}, @tt{.exclude(...)} and
+  @tt{pl.col(pl.Float64)}. @racket[expr-exclude] takes its names as one
+  list where the generic @racket[exclude] is variadic. A regexp
+  @racket[col] needs no entry point of its own: it is @racket[expr-col]
+  with the pattern rendered in Polars' @tt{^...$} form.}
 
 @defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]

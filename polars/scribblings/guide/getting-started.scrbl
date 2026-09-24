@@ -118,7 +118,7 @@ no @tt{pl.len()} (count a column instead).
 (~> df
     (with-columns decade
                   (str-extract "name" "^(\\S+)"))
-    (drop "birthdate")
+    (select (exclude (all) "birthdate"))
     (group-by "decade")
     (agg (col "name")
          (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))
@@ -126,8 +126,7 @@ no @tt{pl.len()} (count a column instead).
 ]
 
 API gaps: no @tt{str.split} / @tt{list.first} (regex @racket[str-extract]
-instead); no @tt{all().exclude} (@racket[drop] instead); no
-@tt{name.prefix}.
+instead); no @tt{name.prefix}.
 
 @section[#:tag "gs-combining"]{Combining dataframes}
 

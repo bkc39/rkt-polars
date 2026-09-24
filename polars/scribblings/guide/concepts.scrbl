@@ -174,14 +174,21 @@ API gaps: no @tt{pl.len()}; no multi-column @tt{col(...)}; no
 
 @subsection{Expression expansion}
 
-API gap: no dtype selectors (@tt{col(pl.Float64)}) and no @tt{name.suffix},
-so an expression cannot expand over "all float columns"; spell them out.
+An expression over a multi-column @racket[col] expands to one expression
+per matched column. @racket[(col 'float64)] is every @racket['float64]
+column (@tt{pl.col(pl.Float64)}), and the outputs keep the matched names.
 
 @examples[#:eval ev #:label #f
-(~> df
-    (select (~> (col "weight") (* 1.1) (alias "weight*1.1"))
-            (~> (col "height") (* 1.1) (alias "height*1.1"))))
+(define expr (* (col 'float64) 1.1))
+(select df expr)
+(define df2
+  (dataframe (list (series '(1 2 3 4) #:name "ints")
+                   (series '("A" "B" "C" "D") #:name "letters"))))
+(select df2 expr)
 ]
+
+API gap: no @tt{name.suffix}, so the expanded columns cannot be renamed
+@tt{weight*1.1} / @tt{height*1.1}; they keep the matched names.
 
 @section[#:tag "concepts-lazy-api"]{Lazy API}
 
