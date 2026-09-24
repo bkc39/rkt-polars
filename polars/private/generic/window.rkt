@@ -8,7 +8,7 @@
           [over (->* (col-expr/c col-expr/c) #:rest (listof col-expr/c) Expr-ptr?)]))
 
 (define (over e key . keys)
-  (error 'unimplemented))
+  (expr-over (->col-expr 'over e) (cons key keys)))
 
 (module+ test
   (require rackunit (only-in threading ~>)
