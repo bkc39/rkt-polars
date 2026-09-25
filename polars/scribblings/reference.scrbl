@@ -56,8 +56,6 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     (select (alias (* (col "v") 10) "v10")
             (alias (lit 0) "zero")))]}
 
-@; --- printing and meta (#57) ---------------------------------------------
-
 @defproc[(expr->string [e Expr-ptr?]) string?]{
   Renders @racket[e] as its plan, in the notation Polars itself uses:
   @tt{col("v")} for a column, @tt{[(a) + (b)]} for a binary operation,
@@ -90,9 +88,8 @@ total
 (meta-eq? total (alias (sum (+ (col "a") (col "b"))) "total"))
 (meta-eq? total (col "a"))
 (meta-root-names "a")
+(eval:error (meta-output-name "*"))
 (eval:error (meta-output-name 5))]}
-
-@; --- end printing and meta ------------------------------------------------
 
 @deftogether[(@defproc[(> [a any/c] [b any/c] ...) any/c]
               @defproc[(< [a any/c] [b any/c] ...) any/c]

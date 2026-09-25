@@ -49,7 +49,8 @@ and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
 gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
 in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
-in the module's `contract-out` (see `generic/meta.rkt`), never as `unless`+`error`.
+in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
+the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
 ### Adding an FFI entry point
 
@@ -79,8 +80,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   stale reason from an unrelated call. Today that is the six IO entry points,
   the `scan_*` family and `lazyframe_collect`; `require-series-result` and
   `require-dataframe-result` still say `"operation failed"` for that reason.
-- `dataframe_drop_count` counts native releases; the reclamation tests assert
-  on it because Racket cannot otherwise observe a native free. Those tests
+- `dataframe_drop_count` and `expr_drop_count` count native releases; the
+  reclamation tests assert on them because Racket cannot otherwise observe a native free. Those tests
   were mutation-checked: removing a `register-finalizer` turns them red.
 
 ## Behavioural facts to know before changing semantics

@@ -7,15 +7,16 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          racket/runtime-path
-         (only-in polars/private/foreign _rsstring))
+         (only-in polars/private/foreign _rsstring)
+         (only-in racket/contract/base contract-out [-> ->/c]))
 
-(provide define-compat
+(provide (contract-out [expr->string (->/c Expr-ptr? string?)])
+         define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
          _LazyFrame-ptr LazyFrame-ptr?
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
-         expr->string
          lit col ->expr)
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
@@ -24,19 +25,25 @@
   (ffi-lib (build-path expr-native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
-(struct expr (ptr)
-  #:property prop:cpointer 0
+(struct expr ([ptr #:mutable])
+  #:property prop:cpointer (lambda (e) (expr-ptr e))
   #:property prop:custom-write
-  (lambda (e port mode) (write-string (expr->string e) port)))
+  (lambda (e port mode)
+    (write-string (if (expr-ptr e) (expr->string e) "#<expr: dropped>") port)))
 
 (define (wrap-expr p) (and p (expr p)))
 
 (define-cpointer-type _Expr-ptr _pointer #f wrap-expr)
 (define-cpointer-type _LazyFrame-ptr)
 
-(define-compat expr-drop
+(define-compat expr-drop/raw
   (_fun _Expr-ptr -> _void)
+  #:c-id expr_drop
   #:wrap (deallocator))
+
+(define (expr-drop e)
+  (expr-drop/raw e)
+  (set-expr-ptr! e #f))
 
 (define-compat expr-drop-count
   (_fun -> _size))
@@ -120,6 +127,11 @@
   (check-true (cpointer? print-col))
   (check-pred Expr-ptr? (expr-alias print-col "y"))
   (check-false (equal? (col "x") (col "x")))
+  (define dropped (col "d"))
+  (expr-drop dropped)
+  (check-equal? (format "~a" dropped) "#<expr: dropped>")
+  (check-exn exn:fail? (lambda () (expr-alias dropped "e")))
+  (check-exn exn:fail? (lambda () (expr-drop dropped)))
   (define drop-before (expr-drop-count))
   (for ([_ (in-range 100)])
     (void (expr-alias (col "g") "h")))

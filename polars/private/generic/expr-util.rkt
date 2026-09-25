@@ -9,10 +9,13 @@
 ;; define-expr-unop / define-math-unop generate the two common unary wrapper
 ;; shapes on top of it.
 
-(require polars/private/foreign
+(require racket/contract/base
+         polars/private/foreign
          polars/private/expr)
 
-(provide ->col-expr define-expr-unop define-math-unop)
+(provide ->col-expr col-expr/c define-expr-unop define-math-unop)
+
+(define col-expr/c (or/c Expr-ptr? string?))
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->col-expr who x)

@@ -3,12 +3,12 @@
 (require racket/contract/base
          (only-in polars/private/expr
                   Expr-ptr? expr-meta-eq? expr-meta-output-name expr-meta-root-names)
-         (only-in polars/private/generic/expr-util ->col-expr))
+         (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
 (provide (contract-out
-          [meta-output-name (-> (or/c Expr-ptr? string?) string?)]
-          [meta-root-names (-> (or/c Expr-ptr? string?) (listof string?))]
-          [meta-eq? (-> (or/c Expr-ptr? string?) (or/c Expr-ptr? string?) boolean?)]))
+          [meta-output-name (-> col-expr/c string?)]
+          [meta-root-names (-> col-expr/c (listof string?))]
+          [meta-eq? (-> col-expr/c col-expr/c boolean?)]))
 
 (define (meta-output-name x)
   (expr-meta-output-name (->col-expr 'meta-output-name x)))
@@ -46,6 +46,7 @@
   (check-false (meta-eq? (col "a") (alias (col "a") "a")))
   (check-false (meta-eq? ab (expr-add (col "b") (col "a"))))
   (check-true (meta-eq? "a" (col "a")))
+  (check-exn #rx"cannot determine the output name of \\*" (lambda () (meta-output-name "*")))
   (check-exn exn:fail:contract:blame? (lambda () (contracted:meta-output-name 5)))
   (check-exn #rx"meta-output-name: contract violation.*expected: \\(or/c Expr-ptr\\? string\\?\\)"
              (lambda () (contracted:meta-output-name 5)))
