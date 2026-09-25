@@ -1,105 +1,88 @@
-# Rebuilding the native `libcompat` candidates
+# The committed `libcompat` candidates
 
-`rkt-polars` calls a Rust shared library (`libcompat`) over the FFI. The build
-host at **pkgs.racket-lang.org has no Rust toolchain**, so it does not compile
-this library — instead it installs a *prebuilt, committed* per-platform binary
-from `polars/native-libs/candidates/<platform>/` (see
-`polars/private/install-compat.rkt`):
+`rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
+host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
+prebuilt binary per platform, and the pre-installer
+(`polars/private/install-compat.rkt`) copies it into place:
 
 | Platform | Committed file | Installed on |
 |----------|----------------|--------------|
-| `darwin` | `candidates/darwin/libcompat.dylib` | macOS users |
-| `linux`  | `candidates/linux/libcompat.so`     | **pkgs.racket-lang.org** + Linux users |
+| `linux`  | `candidates/linux/libcompat.so`     | **pkgs.racket-lang.org** + Linux x86-64 users |
+| `darwin` | `candidates/darwin/libcompat.dylib` | macOS arm64 users |
 
-Because `define-compat` (in `polars/private/{foreign,expr-core}.rkt`) resolves
-each C symbol **at module load**, a stale candidate that is missing a newly
-added symbol makes `raco setup` fail on install — not just at call time. **Any
-PR that adds or changes a `#[no_mangle] pub extern "C"` function in `rust/src`
-must rebuild and re-commit both candidates**, or the catalog build breaks.
+`define-compat` resolves each C symbol **at module load**, so a candidate that
+lacks an export the Racket side binds makes `raco setup` fail for every catalog
+user, not just the call. **A PR that adds or changes a `#[no_mangle] pub extern
+"C"` function in `rust/src` needs both candidates refreshed before it merges.**
+Any other Rust change reaches catalog users only once they are refreshed.
 
-> Example: the `series_quantile` export (added for `describe`) requires both
-> `candidates/darwin/libcompat.dylib` **and** `candidates/linux/libcompat.so`
-> to be rebuilt. macOS can be done on a Mac; Linux must be done on Linux/Docker.
+## What CI checks
 
----
+- **Build libcompat (linux, darwin)** builds both from the pushed commit with
+  `scripts/build-so.sh` and uploads them as the artifacts `libcompat-linux` and
+  `libcompat-darwin`. The Linux build runs in the manylinux2014 container, so
+  the `.so` needs only glibc ≤ 2.17 (the catalog's test host is older than
+  2.27), and the job asserts that floor.
+- **Catalog install** installs those fresh artifacts the way the catalog does,
+  then builds the docs and runs the tests.
+- **Committed candidate (linux, darwin)** does the same with the **committed**
+  binaries (`scripts/test-local.sh`, which first instantiates every module
+  under `polars/private` with `scripts/check-bindings.rkt`). The Linux job also
+  checks both committed files with `scripts/verify-candidates.py`. It is red on
+  a PR that changes an export without refreshing the candidates, and its error
+  says what to run.
 
-## macOS (`darwin`)
+## Refreshing the candidates from CI
 
-On any Mac with the Rust toolchain:
+Once the PR's Build libcompat jobs are green, on a checkout of the PR branch:
 
 ```sh
-scripts/build-so.sh darwin
+scripts/refresh-candidates.sh <PR>            # or: --run <run-id>
+git add polars/native-libs/candidates
+git commit -F ~/rkt-polars-candidates/<run-id>/commit-msg.txt
+git push
 ```
 
-This runs `cargo build --release`, rewrites the dylib install-name to
-`@rpath/libcompat.dylib`, and re-signs it ad-hoc (`codesign -f -s -`). The
-re-sign is required: `install_name_tool` invalidates the linker's signature,
-and on Apple Silicon an unsigned dylib is `Killed: 9` the instant Racket
-`dlopen()`s it. The result is staged to `candidates/darwin/libcompat.dylib`.
+The script re-runs itself inside `nix develop`, then:
 
----
+1. takes the push-event CI run for the PR's head commit (a `pull_request` run
+   builds the merge with `master`, not the head) and refuses unless that
+   commit's `rust/` is the checkout's;
+2. waits for both artifacts and downloads them to
+   `~/rkt-polars-candidates/<run-id>/` (`--dir` to change; the snap `gh`
+   cannot write under a hidden directory such as `~/.claude`);
+3. stops if they already match the committed files: builds of the same Rust
+   source and toolchain are byte-identical;
+4. checks them with `scripts/verify-candidates.py` (an x86-64 ELF needing
+   glibc ≤ 2.17, an arm64 Mach-O with a code signature, the same exports on
+   both) and with `scripts/check-bindings.rkt` (every module under
+   `polars/private` instantiates against this host's candidate, staged in
+   place of the nix-built library);
+5. copies them into `candidates/` and writes the commit message, which lists
+   the exports added and removed.
 
-## Linux (`linux`) — what the Linux agent must do
+After the push, CI's Committed candidate jobs install and test the new files.
 
-The Linux `.so` is what pkgs.racket-lang.org actually installs, and its
-**build host runs an old glibc (< 2.27)**. The `.so` must therefore depend only
-on `GLIBC <= 2.17`. We get that by building inside the **manylinux2014**
-container (glibc 2.17) — building natively against an old glibc, *not* by
-post-processing with `polyfill-glibc` (that corrupts the ELF and segfaults on
-newer glibc).
+## Building by hand
 
-### Steps
+When CI is not available, `scripts/build-so.sh <platform>` builds one
+candidate and stages it in `candidates/<platform>/`:
 
-1. **Get a Linux host (x86_64) with Docker** (a CI runner, a cloud VM, or
-   Docker Desktop). Docker is the only hard requirement; no local Rust needed —
-   the container installs its own toolchain.
+- **linux** needs Docker. It builds inside `quay.io/pypa/manylinux2014_x86_64`
+  against glibc 2.17. Do not post-process a `.so` built against a newer glibc
+  with `polyfill-glibc`: that corrupts the ELF and segfaults on newer glibc.
+- **darwin** needs a Mac with the Rust toolchain. The script rewrites the
+  install name to `@rpath/libcompat.dylib` and re-signs ad hoc:
+  `install_name_tool` invalidates the linker's signature, and Apple Silicon
+  kills an unsigned dylib (`Killed: 9`) the moment Racket `dlopen()`s it.
 
-2. **Clone the branch under review** and run the Linux build target:
+Check the pair with
 
-   ```sh
-   git clone https://github.com/bkc39/rkt-polars.git
-   cd rkt-polars
-   git checkout <this-PR-branch>
-   scripts/build-so.sh linux
-   ```
+```sh
+python3 scripts/verify-candidates.py \
+  polars/native-libs/candidates/linux/libcompat.so \
+  polars/native-libs/candidates/darwin/libcompat.dylib
+```
 
-   `scripts/build-so.sh linux` mounts the repo read-only into
-   `quay.io/pypa/manylinux2014_x86_64`, installs rustup + stable inside, runs
-   `cargo build --release --locked`, and copies the resulting
-   `libcompat.so` out to `polars/native-libs/candidates/linux/`.
-
-3. **Verify the build before committing:**
-
-   ```sh
-   so=polars/native-libs/candidates/linux/libcompat.so
-
-   # (a) the new symbol(s) are present — adjust the grep per PR:
-   nm -D "$so" | grep series_quantile        # must print a 'T series_quantile' line
-
-   # (b) the glibc floor is <= 2.17 (must print nothing ABOVE 2.17):
-   objdump -T "$so" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tail -1
-   # expected: GLIBC_2.17 (or lower)
-   ```
-
-   If (b) shows anything higher than `2.17`, the build escaped the container —
-   do **not** commit it; it will fail to load on the catalog host.
-
-4. **Smoke-test the install path** (optional but recommended) on the same Linux
-   host, against the freshly staged candidate:
-
-   ```sh
-   raco pkg install --auto --link $(pwd)     # runs the pre-installer, copies the candidate
-   raco test polars/                          # should load libcompat and pass
-   ```
-
-5. **Commit and push the rebuilt candidate** onto the PR branch:
-
-   ```sh
-   git add polars/native-libs/candidates/linux/libcompat.so
-   git commit -m "native: rebuild linux libcompat candidate (series_quantile)"
-   git push
-   ```
-
-That's it — once `candidates/linux/libcompat.so` on the branch contains the new
-symbol with a `GLIBC <= 2.17` floor, the catalog build at pkgs.racket-lang.org
-will install and load it successfully.
+and reproduce the catalog install with `scripts/test-local.sh`, in a fresh
+`PLTUSERHOME` as on a CI runner.

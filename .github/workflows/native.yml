@@ -145,6 +145,58 @@ jobs:
       - name: Install from candidate and test
         run: scripts/test-local.sh
 
+  # The catalog installs the binaries committed under
+  # polars/native-libs/candidates/, not this run's build.  Install from those,
+  # so a PR that changes the Rust side without refreshing them is red.
+  committed:
+    name: Committed candidate (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux
+            arch: x64
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Racket
+        uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: "9.3"
+          architecture: ${{ matrix.arch }}
+
+      - name: Install from the committed candidate and test
+        run: scripts/test-local.sh
+
+      # What loading cannot show: the glibc floor, and that the two binaries
+      # export the same symbols.
+      - name: Check both committed binaries
+        if: ${{ !cancelled() && matrix.platform == 'linux' }}
+        run: >-
+          python3 scripts/verify-candidates.py
+          polars/native-libs/candidates/linux/libcompat.so
+          polars/native-libs/candidates/darwin/libcompat.dylib
+
+      - name: Say how to refresh the candidates
+        if: failure()
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          RUN: ${{ github.run_id }}
+        run: |
+          if [ -n "$PR" ]; then arg="$PR"; else arg="--run $RUN"; fi
+          echo "::error title=Committed libcompat candidates::This job installs" \
+            "the binaries committed under polars/native-libs/candidates/, as" \
+            "the package catalog does. If the Catalog install jobs, which use" \
+            "this run's fresh build, pass, those binaries are stale: once the" \
+            "Build libcompat jobs finish, run scripts/refresh-candidates.sh" \
+            "$arg on this branch, then commit and push both candidates" \
+            "(polars/native-libs/BUILDING.md)."
+
   # Faithful reproduction of the deploy floor: actually load the linux
   # candidate under glibc 2.17 (manylinux2014), which is older than
   # pkg-build.racket-lang.org's test host.  The GitHub Actions runner agents

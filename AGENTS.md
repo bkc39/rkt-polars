@@ -13,8 +13,9 @@ not the repo root, and anything the docs need at build time (fixtures, helper
 modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
-docs.racket-lang.org/polars and rebuilds from `master` within about half an
-hour of a merge.
+docs.racket-lang.org/polars. The package build server rebuilds it from
+`master` on its own cycle, roughly daily, not on merge: a merge can take up
+to a day to appear.
 
 ## The three layers
 
@@ -88,17 +89,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   reclamation tests assert on them because Racket cannot otherwise observe a
   native free, and a pairing test checks that an explicit drop releases a
   frame exactly once.
-- **A change to any `#[no_mangle]` export must re-commit both
-  `polars/native-libs/candidates/`.** The catalog installs those committed
-  binaries (it has no Rust toolchain) and `define-compat` resolves every
-  symbol at module load, so a stale candidate breaks `raco setup` on
-  pkgs.racket-lang.org. Take them from the PR's CI run
-  (`gh run download <run> -n libcompat-linux` and `-n libcompat-darwin`; the
-  snap `gh` cannot write under a hidden directory such as `~/.claude`), check
-  the new exports (`nm -D`) and the glibc floor (≤ 2.17), and run the suite
-  with the Linux candidate staged in place of the nix-built library. CI's
-  catalog-install jobs test the fresh artifact, not the committed one, so CI
-  stays green on a stale candidate (#77). See `polars/native-libs/BUILDING.md`.
+- **A change to any `#[no_mangle]` export needs both
+  `polars/native-libs/candidates/` refreshed before it merges.** The catalog
+  installs those committed binaries (it has no Rust toolchain) and
+  `define-compat` resolves every symbol at module load, so a stale candidate
+  breaks `raco setup` on pkgs.racket-lang.org; any other Rust change ships
+  only once they are refreshed. CI's `Committed candidate` jobs install from
+  the committed binaries and are red until then. Once the PR's
+  `Build libcompat` jobs are green, `scripts/refresh-candidates.sh <PR>` on
+  the branch downloads both artifacts from that run, checks them, stages them
+  and prints the commit message. See `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
