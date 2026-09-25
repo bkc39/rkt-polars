@@ -1,4 +1,5 @@
 mod core;
+mod csv;
 mod groupby;
 mod join;
 mod projection;
@@ -7,6 +8,7 @@ mod scan;
 mod sort;
 
 pub use self::core::*;
+pub use self::csv::*;
 pub use self::groupby::*;
 pub use self::join::*;
 pub use self::projection::*;

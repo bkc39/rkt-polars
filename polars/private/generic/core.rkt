@@ -85,7 +85,7 @@
      (let-values ([(rows cols) (dataframe-shape d)])
        (list rows cols)))])
 
-(define dataframe? dataframe-rec?)
+(define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
 
 ;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
@@ -107,7 +107,7 @@
   #:property prop:custom-write
   (lambda (lf port mode) (write-string "#<lazyframe>" port)))
 
-(define lazyframe? lazyframe-rec?)
+(define (lazyframe? v) (lazyframe-rec? v))
 (define (wrap-lazyframe ptr) (lazyframe-rec ptr))
 
 ;; ---------------------------------------------------------------------------

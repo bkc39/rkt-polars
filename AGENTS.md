@@ -83,7 +83,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
-  or it attaches a stale reason from an unrelated call.
+  or it attaches a stale reason from an unrelated call. `call/foreign-error`
+  also respells the Python keyword names in Polars' "You might want to try"
+  hints (`null_values` → `#:null-values`, ...).
 - `dataframe_drop_count` and `expr_drop_count` count native releases; the
   reclamation tests assert on them because Racket cannot otherwise observe a
   native free, and a pairing test checks that an explicit drop releases a
@@ -116,14 +118,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:separator` is not given, a one-column result whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
-  a CSV path literally.
+  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
+  of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
   file is reported at `collect`. Reported at scan instead: a glob that
   matches no file, and, with `#:schema-overrides`, an override naming a
   column the header lacks. That check reads the header because 0.41.3
   applies a full-length override list by position and would silently rename
   the column.
-- IO paths resolve against Racket's `current-directory`, not the process's.
+- IO paths resolve against Racket's `current-directory`, not the process's
+  (`path->complete-string` in `foreign.rkt`). For a globbing reader it
+  escapes `[`, `*` and `?` in the directory part, so only the part the
+  caller wrote is a pattern.
+- Parquet reads add hive (`key=value`) columns only for a directory path,
+  never for a single file or a glob, matching Python (0.41.3's
+  `HiveOptions { enabled: None }`).
 - The separator guard is stricter than Python, whose `read_csv` returns the
   one column; the #86 scoreboard (check C1) requires the error.
 - A `'time` schema override is a contract error: 0.41.3 cannot parse a

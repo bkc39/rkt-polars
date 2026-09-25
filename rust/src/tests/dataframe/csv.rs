@@ -199,7 +199,7 @@ fn infer_schema_length_none_reads_every_row() {
     Csv::default().read_err(&path);
 
     let mut csv = Csv::default();
-    csv.options.has_infer_schema_length = 0;
+    csv.options.has_infer_schema_length = false;
     let df = csv.read(&path);
     assert_eq!(df.column("x").unwrap().dtype(), &DataType::Float64);
 }
@@ -249,7 +249,7 @@ fn ignore_errors_nulls_what_cannot_parse() {
     let path =
         write(dir.path(), "late.csv", int_column_with_late_na().as_bytes());
     let mut csv = Csv::default();
-    csv.options.ignore_errors = 1;
+    csv.options.ignore_errors = true;
     let df = csv.read(&path);
     assert_eq!(df.height(), 151);
     assert_eq!(df.column("delay").unwrap().null_count(), 1);
@@ -274,7 +274,7 @@ fn separator_quote_and_comment_options_apply() {
     assert_eq!(strings(&df, "a"), ["x;y", "z"]);
 
     let literal = write(dir.path(), "literal.txt", b"a;b\n'x';1\nz;2\n");
-    csv.options.has_quote_char = 0;
+    csv.options.has_quote_char = false;
     assert_eq!(strings(&csv.read(&literal), "a"), ["'x'", "z"]);
 }
 
@@ -296,7 +296,7 @@ fn lossy_utf8_replaces_invalid_bytes() {
     Csv::default().read_err(&path);
 
     let mut csv = Csv::default();
-    csv.options.lossy_utf8 = 1;
+    csv.options.lossy_utf8 = true;
     let df = csv.read(&path);
     assert_eq!(strings(&df, "s"), ["ok", "bad\u{fffd}"]);
 }
@@ -314,7 +314,7 @@ fn try_parse_dates_parses_iso_timestamps() {
         csv.read(&path).column("t").unwrap().dtype(),
         &DataType::String
     );
-    csv.options.try_parse_dates = 1;
+    csv.options.try_parse_dates = true;
     let df = csv.read(&path);
     assert_eq!(df.column("d").unwrap().dtype(), &DataType::Date);
     assert_eq!(
@@ -329,7 +329,7 @@ fn skip_rows_and_n_rows_apply_to_the_eager_read() {
     let path = write(dir.path(), "s.csv", b"junk\nx\n1\n2\n3\n");
     let mut csv = Csv::default();
     csv.options.skip_rows = 1;
-    csv.options.has_n_rows = 1;
+    csv.options.has_n_rows = true;
     csv.options.n_rows = 2;
     let df = csv.read(&path);
     assert_eq!(df.get_column_names(), ["x"]);
@@ -379,7 +379,7 @@ fn glob_off_reads_a_bracketed_name_literally() {
     let literal = write(dir.path(), "a[1].csv", b"x\n2\n");
     assert_eq!(read_i64(&Csv::default().read(&literal), "x"), [1]);
     let mut csv = Csv::default();
-    csv.options.glob = 0;
+    csv.options.glob = false;
     assert_eq!(read_i64(&csv.read(&literal), "x"), [2]);
 }
 
@@ -433,7 +433,7 @@ fn separate_files_are_read_in_one_order_with_one_limit() {
         [5, 6, 1, 2, 3, 4]
     );
     let mut csv = Csv::default();
-    csv.options.has_n_rows = 1;
+    csv.options.has_n_rows = true;
     csv.options.n_rows = 3;
     assert_eq!(read_i64(&csv.read(&pattern), "x"), [5, 6, 1]);
 }
@@ -503,6 +503,15 @@ fn a_single_parquet_file_under_a_hive_directory_gains_no_columns() {
     assert!(!out.is_null(), "{:?}", recorded_error());
     let back = unsafe { *Box::from_raw(out) };
     assert_eq!(back.get_column_names(), ["x"]);
+}
+
+#[test]
+fn an_eager_read_of_a_directory_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write(dir.path(), "a.csv", b"x\n1\n");
+    write(dir.path(), "notes.txt", b"x\n99\n");
+    let msg = Csv::default().read_err(dir.path());
+    assert!(msg.contains("is a directory"), "{:?}", msg);
 }
 
 #[test]

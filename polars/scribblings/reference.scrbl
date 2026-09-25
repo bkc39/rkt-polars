@@ -1,11 +1,36 @@
 #lang scribble/manual
 @(require "utils.rkt"
           racket/runtime-path
-          (for-label (only-in racket/string non-empty-string?)))
+          syntax/parse/define
+          (for-syntax racket/base syntax/strip-context))
 
-@(define ev (make-polars-eval))
 @(define-runtime-path data-dir "data")
-@(ev `(current-directory ,(path->string data-dir)))
+@(define ev (make-polars-eval #:directory data-dir))
+
+@(begin-for-syntax
+   (define csv-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:has-header has-header boolean? #t]
+       [#:separator separator (or/c csv-char/c #f) #f]
+       [#:quote-char quote-char (or/c csv-char/c #f) #\"]
+       [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
+       [#:skip-rows skip-rows exact-nonnegative-integer? 0]
+       [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
+       [#:null-values null-values (or/c string? (listof string?) #f) #f]
+       [#:infer-schema-length infer-schema-length (or/c exact-nonnegative-integer? #f) 100]
+       [#:schema-overrides schema-overrides
+                           (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
+                           '()]
+       [#:ignore-errors ignore-errors boolean? #f]
+       [#:try-parse-dates try-parse-dates boolean? #f]
+       [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
+       [#:glob glob boolean? #t]))))
+
+@(define-syntax-parser defcsvproc
+   [(_ (name result) body ...)
+    #:with (argument ...) (replace-context #'name csv-arguments)
+    #'(defproc (name argument ...) result body ...)])
 
 @title[#:tag "reference"]{Reference}
 
@@ -298,40 +323,29 @@ total
 (join left right #:on '("k") #:how 'left)
 (join left right #:on '("k") #:how 'inner)]}
 
-@defproc[(read-csv [path path-string?]
-                   [#:has-header has-header boolean? #t]
-                   [#:separator separator char? #\,]
-                   [#:quote-char quote-char (or/c char? #f) #\"]
-                   [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
-                   [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                   [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
-                   [#:null-values null-values (or/c string? (listof string?) #f) #f]
-                   [#:infer-schema-length infer-schema-length
-                                          (or/c exact-nonnegative-integer? #f) 100]
-                   [#:schema-overrides schema-overrides
-                                       (listof (cons/c string? dtype-spec?)) '()]
-                   [#:ignore-errors ignore-errors boolean? #f]
-                   [#:try-parse-dates try-parse-dates boolean? #f]
-                   [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-                   [#:glob glob boolean? #t])
-         dataframe?]{
+@defcsvproc[(read-csv dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
   a glob pattern (@litchar{*}, @litchar{?}, @litchar{[...]}): every matching
   file is read, in sorted filename order, and the files must share a header;
-  @racket[#:glob #f] takes the path literally. A relative @racket[path] is
-  resolved against @racket[current-directory].
+  @racket[#:glob #f] takes the path literally, and @litchar{[[]} matches a
+  literal @litchar{[} in a pattern. A relative @racket[path] is resolved
+  against @racket[current-directory], whose own name is never read as a
+  pattern. A directory is an error: name its files with a pattern.
 
-  @racket[separator] and @racket[quote-char] are one ASCII character other
-  than newline or return, and @racket[#:quote-char #f] turns quoting off.
+  A @racket[csv-char/c] is one ASCII character other than newline or return.
+  @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
+  differ from it, and @racket[#:quote-char #f] turns quoting off.
   Lines that start with @racket[comment-prefix] are skipped, as are the first
   @racket[skip-rows] lines of each file; @racket[n-rows] caps the rows read.
   A field equal to one of @racket[null-values] reads as null. Column types
   are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
   reads every row, and @racket[0] makes every column a string.
-  @racket[schema-overrides] fixes the named columns' types, in any spelling
-  @racket[series]' @racket[#:dtype] accepts except @racket['time] and a
-  duration, which Polars 0.41.3 cannot parse from CSV; naming a
-  column the file lacks is an error. With @racket[#:ignore-errors #t] a field
+  @racket[schema-overrides] fixes the named columns' types. A
+  @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
+  accepts except @racket['time] and a duration, which Polars 0.41.3 cannot
+  parse from CSV. Each column appears at most once
+  (@racket[distinct-names?]), and naming a column the file lacks is an
+  error. With @racket[#:ignore-errors #t] a field
   that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
   @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
@@ -339,11 +353,11 @@ total
 
   The result is @racket[(collect (scan-csv path ....))] with the same
   keywords, plus one check, stricter than Python's @tt{read_csv}, which
-  returns the one column. When @racket[#:separator] is not given and the
+  returns the one column. When @racket[separator] is @racket[#f] and the
   file reads as one column whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to
   pass --- unless the first row is not a string, or splits into a different
-  number of fields. Passing @racket[#:separator], even @racket[#\,], turns
+  number of fields. Passing a @racket[separator], even @racket[#\,], turns
   the check off.
 
   A failure names the operation, the path and the cause: the operating
@@ -362,29 +376,14 @@ total
     (tail 3))
 (read-csv "parts/*.csv")]}
 
-@defproc[(scan-csv [path path-string?]
-                   [#:has-header has-header boolean? #t]
-                   [#:separator separator char? #\,]
-                   [#:quote-char quote-char (or/c char? #f) #\"]
-                   [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
-                   [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                   [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
-                   [#:null-values null-values (or/c string? (listof string?) #f) #f]
-                   [#:infer-schema-length infer-schema-length
-                                          (or/c exact-nonnegative-integer? #f) 100]
-                   [#:schema-overrides schema-overrides
-                                       (listof (cons/c string? dtype-spec?)) '()]
-                   [#:ignore-errors ignore-errors boolean? #f]
-                   [#:try-parse-dates try-parse-dates boolean? #f]
-                   [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-                   [#:glob glob boolean? #t])
-         lazyframe?]{
+@defcsvproc[(scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
   (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
   runs the plan, and that is where a file that cannot be read is reported.
   Two things are reported here instead: a glob pattern that matches no file,
   and, when @racket[schema-overrides] is given, a column it names that the
-  header lacks, which reads the header. The separator check does not apply.
+  header lacks, which reads the header. The separator check does not apply,
+  and a directory reads every file in it.
 
   @examples[#:eval ev
 (~> (scan-csv "flights.tsv" #:separator #\tab #:null-values "NA")
@@ -399,9 +398,14 @@ total
                                      [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
                        lazyframe?])]{
   Read Parquet eagerly (@tt{pl.read_parquet}), or start a plan from it
-  (@tt{pl.scan_parquet}). @racket[path] may be a glob pattern: the matching
-  files stack in sorted filename order, and one that matches nothing is an
-  error. @racket[read-parquet] is @racket[(collect (scan-parquet path))].
+  (@tt{pl.scan_parquet}). @racket[path] is always a glob pattern: the
+  matching files stack in sorted filename order, and one that matches
+  nothing is an error. A directory reads every file in it and adds its
+  @litchar{key=value} subdirectory names as columns; a single file or a
+  pattern adds none, as in Python. @racket[read-parquet] is
+  @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
+  literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
+  @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
 
   @examples[#:eval ev #:hidden
 (require racket/file)
@@ -846,40 +850,8 @@ generic operations are simply the preferred surface.
   @racket[read-parquet], @racket[dataframe-read-parquet] accepts a glob
   pattern.}
 
-@deftogether[(@defproc[(dataframe-read-csv [path path-string?]
-                                           [#:has-header has-header boolean? #t]
-                                           [#:separator separator char? #\,]
-                                           [#:quote-char quote-char (or/c char? #f) #\"]
-                                           [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
-                                           [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                                           [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
-                                           [#:null-values null-values (or/c string? (listof string?) #f) #f]
-                                           [#:infer-schema-length infer-schema-length
-                                                                  (or/c exact-nonnegative-integer? #f) 100]
-                                           [#:schema-overrides schema-overrides
-                                                               (listof (cons/c string? dtype-spec?)) '()]
-                                           [#:ignore-errors ignore-errors boolean? #f]
-                                           [#:try-parse-dates try-parse-dates boolean? #f]
-                                           [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-                                           [#:glob glob boolean? #t])
-                       DataFrame-ptr?]
-              @defproc[(lazyframe-scan-csv [path path-string?]
-                                           [#:has-header has-header boolean? #t]
-                                           [#:separator separator char? #\,]
-                                           [#:quote-char quote-char (or/c char? #f) #\"]
-                                           [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
-                                           [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                                           [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
-                                           [#:null-values null-values (or/c string? (listof string?) #f) #f]
-                                           [#:infer-schema-length infer-schema-length
-                                                                  (or/c exact-nonnegative-integer? #f) 100]
-                                           [#:schema-overrides schema-overrides
-                                                               (listof (cons/c string? dtype-spec?)) '()]
-                                           [#:ignore-errors ignore-errors boolean? #f]
-                                           [#:try-parse-dates try-parse-dates boolean? #f]
-                                           [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-                                           [#:glob glob boolean? #t])
-                       LazyFrame-ptr?])]{
+@deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
+              @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
   The raw-pointer reader and scan under @racket[read-csv] and
   @racket[scan-csv], with the same keywords and checks.}
 

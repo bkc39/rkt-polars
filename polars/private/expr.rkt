@@ -10,8 +10,10 @@
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
+         (only-in racket/contract/base ->* contract-out or/c)
          (only-in polars/private/foreign
                   call/foreign-error
+                  path->complete-string
                   _DataFrame-ptr
                   _DataFrame-ptr/null
                   DataFrame-ptr?
@@ -114,7 +116,10 @@
          lazyframe-sort lazyframe-unique lazyframe-drop-nulls
          lazyframe-head lazyframe-tail lazyframe-slice
          lazyframe-join
-         lazyframe-scan-parquet
+         (contract-out
+          [lazyframe-scan-parquet (->* (path-string?)
+                                       (#:n-rows (or/c #f exact-nonnegative-integer?))
+                                       LazyFrame-ptr?)])
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
@@ -152,15 +157,6 @@
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define (path->string-or-string who p)
-  (if (path-string? p)
-      (path->string (path->complete-path p))
-      (error who "expected path-string?, got ~v" p)))
-
-(define (check-nonnegative-option who name value)
-  (unless (exact-nonnegative-integer? value)
-    (error who "~a must be an exact nonnegative integer, got ~v" name value)))
-
 (define-compat lazyframe-scan-parquet/raw
   (_fun _string -> _LazyFrame-ptr/null)
   #:c-id lazyframe_scan_parquet
@@ -172,9 +168,7 @@
   #:wrap (allocator lazyframe-drop))
 
 (define (lazyframe-scan-parquet path #:n-rows [n-rows #f])
-  (when n-rows
-    (check-nonnegative-option 'lazyframe-scan-parquet "n-rows" n-rows))
-  (define p (path->string-or-string 'lazyframe-scan-parquet path))
+  (define p (path->complete-string 'lazyframe-scan-parquet path #:glob? #t))
   (call/foreign-error 'lazyframe-scan-parquet
                       (lambda ()
                         (lazyframe-scan-parquet/options/raw p (if n-rows 1 0) (or n-rows 0)))

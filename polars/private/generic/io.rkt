@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require (only-in racket/contract/base -> ->* contract-out flat-named-contract or/c)
+(require (only-in racket/contract/base -> ->* contract-out or/c)
          (only-in polars/private/csv csv-reader/c dataframe-read-csv lazyframe-scan-csv)
          (only-in polars/private/expr lazyframe-scan-parquet)
          (only-in polars/private/foreign
@@ -10,19 +10,16 @@
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe))
 
 (provide (contract-out
-          [read-csv (csv-reader/c dataframe/c)]
-          [scan-csv (csv-reader/c lazyframe/c)]
-          [read-parquet (-> path-string? dataframe/c)]
+          [read-csv (csv-reader/c dataframe?)]
+          [scan-csv (csv-reader/c lazyframe?)]
+          [read-parquet (-> path-string? dataframe?)]
           [scan-parquet (->* (path-string?)
                              (#:n-rows (or/c #f exact-nonnegative-integer?))
-                             lazyframe/c)]
-          [read-ndjson (-> path-string? dataframe/c)]
-          [write-csv (-> dataframe/c path-string? void?)]
-          [write-parquet (-> dataframe/c path-string? void?)]
-          [write-ndjson (-> dataframe/c path-string? void?)]))
-
-(define dataframe/c (flat-named-contract 'dataframe? dataframe?))
-(define lazyframe/c (flat-named-contract 'lazyframe? lazyframe?))
+                             lazyframe?)]
+          [read-ndjson (-> path-string? dataframe?)]
+          [write-csv (-> dataframe? path-string? void?)]
+          [write-parquet (-> dataframe? path-string? void?)]
+          [write-ndjson (-> dataframe? path-string? void?)]))
 
 (define read-csv (compose1 wrap-dataframe dataframe-read-csv))
 (define scan-csv (compose1 wrap-lazyframe lazyframe-scan-csv))
@@ -40,6 +37,7 @@
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list last remove-duplicates)
            (only-in racket/string string-contains?)
+           (only-in threading ~>)
            (only-in gregor datetime)
            (prefix-in contracted: (submod ".."))
            (prefix-in raw: polars/private/csv)
@@ -96,16 +94,20 @@
       (#:schema-overrides . (("a" . (duration microseconds))))
       (#:schema-overrides . (("a" . time)))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
-      (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)))
+      (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)
+))
   (for ([reader (in-list csv-readers)]
         [name '(read-csv scan-csv dataframe-read-csv lazyframe-scan-csv)])
     (define blamed (regexp (format "^~a: contract violation" name)))
     (check-exn blamed (lambda () (reader 'sym)))
-    (for ([kv (in-list bad-keywords)])
+    (for ([kvs (in-list (append (map list bad-keywords)
+                                '(((#:quote-char . #\,))
+                                  ((#:separator . #\;) (#:quote-char . #\;))
+                                  ((#:separator . #\")))))])
       (check-exn (lambda (e) (and (exn:fail:contract:blame? e)
                                   (regexp-match? blamed (exn-message e))))
-                 (lambda () (with-keywords reader missing (list kv)))
-                 (format "~a ~s" name kv))))
+                 (lambda () (with-keywords reader missing kvs))
+                 (format "~a ~s" name kvs))))
   (check-exn #rx"^write-csv: contract violation" (lambda () (contracted:write-csv 5 "x")))
 
   (define flights-na (read-csv flights #:separator #\tab #:null-values "NA"))
@@ -137,6 +139,10 @@
                        (read-csv flights #:separator #\tab #:infer-schema-length 0
                                  #:null-values '())))
   (check-true (frame=? flights-na (read-csv flights #:separator #\tab #:ignore-errors #t)))
+  (check-true (frame=? flights-na (read-csv flights #:separator #\tab #:null-values "NA"
+                                            #:quote-char #f)))
+  (define primed (scratch-file "primed.csv" "a;b" "'x;y';1" "z;2"))
+  (check-equal? (column (read-csv primed #:separator #\; #:quote-char #\') "a") '("x;y" "z"))
 
   (define (dtypes-of df)
     (map (lambda (name) (dtype (ref df #:columns name))) (column-names df)))
@@ -168,12 +174,12 @@
 
   (define ab (scratch-file "ab.csv" "a,b" "1,2"))
   (define absent '(("a" . int64) ("zzz" . float32)))
-  (check-regexp-match
+  (check-exn
    #rx"^dataframe-read-csv: failed to read csv from [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
-   (message-of (lambda () (read-csv ab #:schema-overrides absent))))
-  (check-regexp-match
+   (lambda () (read-csv ab #:schema-overrides absent)))
+  (check-exn
    #rx"^lazyframe-scan-csv: failed to scan [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
-   (message-of (lambda () (scan-csv ab #:schema-overrides absent))))
+   (lambda () (scan-csv ab #:schema-overrides absent)))
 
   (define typed
     (scratch-file
@@ -197,15 +203,14 @@
   (define parsed (read-csv dated #:try-parse-dates #t))
   (check-equal? (dtypes-of parsed) '(date time (datetime microseconds #f)))
   (check-equal? (column parsed "ts") (list (datetime 2013 1 1 5)))
-  (check-equal? (dtype (ref (read-csv flights #:separator #\tab #:null-values "NA"
-                                      #:try-parse-dates #t)
-                            #:columns "time_hour"))
+  (check-equal? (~> (read-csv flights #:separator #\tab #:null-values "NA" #:try-parse-dates #t)
+                    (ref #:columns "time_hour")
+                    dtype)
                 '(datetime microseconds #f))
 
   (define quoted (scratch-file "quoted.csv" "a,b" "\"1,5\",x" "\"2\",y"))
   (check-equal? (column (read-csv quoted) "a") '("1,5" "2"))
-  (check-regexp-match #rx"found more fields than defined"
-                      (message-of (lambda () (read-csv quoted #:quote-char #f))))
+  (check-exn #rx"found more fields than defined" (lambda () (read-csv quoted #:quote-char #f)))
   (define commented (scratch-file "commented.csv" "# note" "a,b" "1,2" "# mid" "3,4"))
   (check-equal? (shape (read-csv commented #:comment-prefix "#")) '(2 2))
   (check-equal? (column (read-csv commented #:comment-prefix "#") "a") '(1 3))
@@ -215,7 +220,7 @@
   (define latin (build-path scratch "latin.csv"))
   (call-with-output-file latin #:exists 'replace
     (lambda (out) (void (write-bytes #"s\ncaf\351\n" out))))
-  (check-regexp-match #rx"invalid utf-8" (message-of (lambda () (read-csv latin))))
+  (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))
   (check-equal? (column (read-csv latin #:encoding 'utf8-lossy) "s")
                 (list (string #\c #\a #\f (integer->char #xFFFD))))
 
@@ -232,10 +237,9 @@
   (check-equal? (ref (ref skipped #:columns "column_1") 0) 2)
 
   (define gone (build-path scratch "gone.csv"))
-  (check-regexp-match #rx"^lazyframe-collect: " (message-of (lambda () (collect (scan-csv gone)))))
-  (check-regexp-match
-   #rx"^lazyframe-scan-csv: failed to scan "
-   (message-of (lambda () (scan-csv gone #:schema-overrides '(("a" . int32))))))
+  (check-exn #rx"^lazyframe-collect: " (lambda () (collect (scan-csv gone))))
+  (check-exn #rx"^lazyframe-scan-csv: failed to scan "
+             (lambda () (scan-csv gone #:schema-overrides '(("a" . int32)))))
 
   (for ([name '("b" "c" "a")] [value '(2 3 1)])
     (scratch-file (format "globbed/~a.csv" name) "x" (number->string value))
@@ -245,9 +249,9 @@
   (define csv-pattern (build-path scratch "globbed" "*.csv"))
   (define parquet-pattern (build-path scratch "globbed" "*.parquet"))
   (check-equal? (column (read-csv csv-pattern) "x") '(1 2 3))
-  (check-equal? (column (collect (scan-csv csv-pattern)) "x") '(1 2 3))
+  (check-equal? (~> csv-pattern scan-csv collect (column "x")) '(1 2 3))
   (check-equal? (column (read-parquet parquet-pattern) "x") '(1 2 3))
-  (check-equal? (column (collect (scan-parquet parquet-pattern)) "x") '(1 2 3))
+  (check-equal? (~> parquet-pattern scan-parquet collect (column "x")) '(1 2 3))
 
   (for ([name '("p0" "p1" "p2")] [rows '(("5" "6") ("1" "2") ("3" "4"))])
     (apply scratch-file (format "ordered/~a.csv" name) "x" rows))
@@ -266,7 +270,7 @@
                      (lambda () (scan-csv nothing))
                      (lambda () (read-parquet nothing))
                      (lambda () (scan-parquet nothing)))])
-    (check-regexp-match #rx": no files match the pattern$" (message-of thunk)))
+    (check-exn #rx": no files match the pattern$" thunk))
 
   (void (scratch-file "literal/a1.csv" "x" "1"))
   (define bracketed (scratch-file "literal/a[1].csv" "x" "2"))
@@ -275,6 +279,38 @@
 
   (parameterize ([current-directory (build-path scratch "literal")])
     (check-equal? (column (read-csv "a1.csv") "x") '(1)))
+
+  (define bracketed-dir (build-path scratch "proj[1]"))
+  (for ([dir (list bracketed-dir (build-path scratch "proj1"))] [value '("7" "1")])
+    (make-directory* dir)
+    (display-lines-to-file (list "x" value) (build-path dir "data.csv") #:exists 'replace)
+    (write-parquet (dataframe (list (series (list (string->number value)) #:name "x")))
+                   (build-path dir "data.parquet")))
+  (parameterize ([current-directory bracketed-dir])
+    (check-equal? (column (read-csv "data.csv") "x") '(7))
+    (check-equal? (column (read-csv "data.csv" #:glob #f) "x") '(7))
+    (check-equal? (column (read-csv "*.csv") "x") '(7))
+    (check-equal? (~> "data.csv" scan-csv collect (column "x")) '(7))
+    (check-equal? (column (read-parquet "data.parquet") "x") '(7))
+    (check-equal? (~> "data.parquet" scan-parquet collect (column "x")) '(7))
+    (write-csv (read-csv "data.csv") "copy.csv")
+    (check-true (file-exists? (build-path bracketed-dir "copy.csv"))))
+
+  (void (scratch-file "dirmix/a.csv" "x" "1")
+        (scratch-file "dirmix/notes.txt" "x" "99"))
+  (check-exn #rx"^dataframe-read-csv: failed to read csv from [^:]*dirmix: cannot open file: it is a directory"
+             (lambda () (read-csv (build-path scratch "dirmix") #:glob #f)))
+
+  (for ([year '(2013 2014)])
+    (define dir (build-path scratch "hive" (format "year=~a" year)))
+    (make-directory* dir)
+    (write-parquet (dataframe (list (series (list year) #:name "x")))
+                   (build-path dir "p.parquet")))
+  (define hive (build-path scratch "hive"))
+  (check-equal? (column-names (read-parquet (build-path hive "year=2013" "p.parquet"))) '("x"))
+  (check-equal? (column-names (read-parquet (build-path hive "*" "p.parquet"))) '("x"))
+  (check-equal? (~> (build-path hive "*" "p.parquet") scan-parquet collect column-names) '("x"))
+  (check-equal? (column-names (read-parquet hive)) '("x" "year"))
 
   (for ([kvs (list '() '((#:null-values . "NA")) '((#:null-values . ("NA" "-")))
                    '((#:infer-schema-length . 0)) '((#:infer-schema-length . #f))
@@ -291,6 +327,7 @@
 
   (define (guard-message path)
     (message-of (lambda () (read-csv path))))
+  (check-exn #rx"reads as one column" (lambda () (read-csv flights #:separator #f)))
   (define flights-guard (guard-message flights))
   (check-regexp-match #rx"^dataframe-read-csv: [^:]*flights.tsv reads as one column" flights-guard)
   (check-regexp-match #rx"splits on #\\\\tab into 19 fields" flights-guard)

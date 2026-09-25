@@ -4,17 +4,19 @@
          ffi/unsafe/alloc
          racket/match
          syntax/parse/define
+         (for-syntax racket/base)
          (only-in racket/contract/base
-                  ->* and/c cons/c contract-out flat-named-contract listof or/c)
+                  ->i and/c cons/c contract-out flat-named-contract listof or/c
+                  unsupplied-arg?)
          (only-in racket/list check-duplicates)
-         (only-in racket/string non-empty-string? string-replace)
+         (only-in racket/string non-empty-string?)
          (only-in polars/private/expr-core
                   _LazyFrame-ptr/null LazyFrame-ptr? define-compat lazyframe-drop)
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _DataFrame-ptr/null DataFrame-ptr?
                   call/foreign-error dataframe-column dataframe-column-name
                   dataframe-drop dataframe-height dataframe-width
-                  path->string-or-string polars-null? series-drop series-dtype
+                  path->complete-string polars-null? series-drop series-dtype
                   series-ref)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
@@ -36,49 +38,88 @@
    'csv-dtype/c
    (lambda (v)
      (and (dtype-spec? v)
-          (not (eq? v 'time))
-          (not (and (pair? v) (eq? (car v) 'duration)))))))
+          (match v
+            ['time #f]
+            [(cons 'duration _) #f]
+            [_ #t])))))
 
-(define schema-overrides/c
-  (flat-named-contract
-   'schema-overrides/c
-   (and/c (listof (cons/c string? csv-dtype/c))
-          (lambda (overrides) (not (check-duplicates (map car overrides)))))))
+(define (distinct-names? overrides)
+  (not (check-duplicates (map car overrides))))
 
-(define null-values/c
-  (flat-named-contract 'null-values/c (or/c #f string? (listof string?))))
-
-(define (csv-reader/c range/c)
-  (->* (path-string?)
-       (#:has-header boolean?
-        #:separator csv-char/c
-        #:quote-char (or/c #f csv-char/c)
-        #:comment-prefix (or/c #f non-empty-string?)
-        #:skip-rows exact-nonnegative-integer?
-        #:n-rows (or/c #f exact-nonnegative-integer?)
-        #:null-values null-values/c
-        #:infer-schema-length (or/c #f exact-nonnegative-integer?)
-        #:schema-overrides schema-overrides/c
-        #:ignore-errors boolean?
-        #:try-parse-dates boolean?
-        #:encoding (or/c 'utf8 'utf8-lossy)
-        #:glob boolean?)
-       range/c))
+(define (quote-differs? separator quote-char)
+  (define (given v default) (if (unsupplied-arg? v) default v))
+  (not (eqv? (or (given separator #f) #\,) (given quote-char #\"))))
 
 (define-cstruct _CompatCsvOptions
-  ([has-header _uint8]
+  ([has-header _stdbool]
    [separator _uint8]
-   [has-quote-char _uint8]
+   [has-quote-char _stdbool]
    [quote-char _uint8]
-   [ignore-errors _uint8]
-   [try-parse-dates _uint8]
-   [lossy-utf8 _uint8]
-   [has-n-rows _uint8]
-   [has-infer-schema-length _uint8]
-   [glob _uint8]
+   [ignore-errors _stdbool]
+   [try-parse-dates _stdbool]
+   [lossy-utf8 _stdbool]
+   [has-n-rows _stdbool]
+   [has-infer-schema-length _stdbool]
+   [glob _stdbool]
    [skip-rows _size]
    [n-rows _size]
    [infer-schema-length _size]))
+
+(struct csv-call (options comment-prefix null-values names dtypes guard?))
+
+(define-syntax-parse-rule
+  (define-csv-options (options:id reader/c:id)
+    ([kw:keyword name:id contract:expr default:expr] ...)
+    #:pre (pre-name:id ...) pre-message:str pre-check:expr
+    body:expr)
+  (begin
+    (define (reader/c range/c)
+      (->i ([path path-string?])
+           ((~@ kw [name contract]) ...)
+           #:pre/name (pre-name ...) pre-message pre-check
+           [result range/c]))
+    (define (options (~@ kw [name default]) ...)
+      body)))
+
+(define-csv-options (csv-options csv-reader/c)
+  ([#:has-header has-header boolean? #t]
+   [#:separator separator (or/c #f csv-char/c) #f]
+   [#:quote-char quote-char (or/c #f csv-char/c) #\"]
+   [#:comment-prefix comment-prefix (or/c #f non-empty-string?) #f]
+   [#:skip-rows skip-rows exact-nonnegative-integer? 0]
+   [#:n-rows n-rows (or/c #f exact-nonnegative-integer?) #f]
+   [#:null-values null-values (or/c #f string? (listof string?)) #f]
+   [#:infer-schema-length infer-schema-length (or/c #f exact-nonnegative-integer?) 100]
+   [#:schema-overrides schema-overrides
+                       (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
+                       '()]
+   [#:ignore-errors ignore-errors boolean? #f]
+   [#:try-parse-dates try-parse-dates boolean? #f]
+   [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
+   [#:glob glob boolean? #t])
+  #:pre (separator quote-char) "quote-char differs from the separator"
+  (quote-differs? separator quote-char)
+  (csv-call (make-CompatCsvOptions has-header
+                                   (char->integer (or separator #\,))
+                                   quote-char
+                                   (if quote-char (char->integer quote-char) 0)
+                                   ignore-errors
+                                   try-parse-dates
+                                   (eq? encoding 'utf8-lossy)
+                                   n-rows
+                                   infer-schema-length
+                                   glob
+                                   skip-rows
+                                   (or n-rows 0)
+                                   (or infer-schema-length 0))
+            comment-prefix
+            (match null-values
+              [#f '()]
+              [(? string? value) (list value)]
+              [(? list? strings) strings])
+            (map car schema-overrides)
+            (map (compose1 ->compat-dtype normalize-dtype cdr) schema-overrides)
+            (and has-header (not separator))))
 
 (define-syntax-parse-rule (define-csv-entry name:id c-id:id result:expr drop:id)
   (define-compat name
@@ -100,93 +141,40 @@
 (define-csv-entry lazyframe-scan-csv/raw lazyframe_scan_csv_with_options
   _LazyFrame-ptr/null lazyframe-drop)
 
-(struct csv-call (path options comment-prefix null-values names dtypes guard?))
+(define (csv-reader who read)
+  (define-values (_ option-keywords) (procedure-keywords csv-options))
+  (procedure-rename
+   (procedure-reduce-keyword-arity
+    (make-keyword-procedure
+     (lambda (keywords arguments path)
+       (read path (keyword-apply csv-options keywords arguments '()))))
+    1 '() option-keywords)
+   who))
 
-(define (flag v) (if v 1 0))
+(define (apply-csv who entry path call)
+  (match-define (csv-call options comment-prefix null-values names dtypes _) call)
+  (entry (path->complete-string who path #:glob? (CompatCsvOptions-glob options))
+         options comment-prefix null-values names dtypes))
 
-(define (csv-call-of path has-header separator quote-char comment-prefix
-                     skip-rows n-rows null-values infer-schema-length
-                     schema-overrides ignore-errors try-parse-dates encoding glob)
-  (csv-call (path->string-or-string path)
-            (make-CompatCsvOptions
-             (flag has-header)
-             (char->integer (or separator #\,))
-             (flag quote-char)
-             (if quote-char (char->integer quote-char) 0)
-             (flag ignore-errors)
-             (flag try-parse-dates)
-             (flag (eq? encoding 'utf8-lossy))
-             (flag n-rows)
-             (flag infer-schema-length)
-             (flag glob)
-             skip-rows
-             (or n-rows 0)
-             (or infer-schema-length 0))
-            comment-prefix
-            (match null-values
-              [#f '()]
-              [(? string? value) (list value)]
-              [(? list? strings) strings])
-            (map car schema-overrides)
-            (map (compose1 ->compat-dtype normalize-dtype cdr) schema-overrides)
-            (and has-header (not separator))))
+(define lazyframe-scan-csv
+  (csv-reader
+   'lazyframe-scan-csv
+   (lambda (path call)
+     (call/foreign-error 'lazyframe-scan-csv
+                         (lambda () (apply-csv 'lazyframe-scan-csv lazyframe-scan-csv/raw path call))
+                         "failed to scan ~a" path))))
 
-(define (apply-csv entry call)
-  (match-define (csv-call path options comment-prefix null-values names dtypes _) call)
-  (entry path options comment-prefix null-values names dtypes))
-
-(define-syntax-parse-rule (define-csv-reader (name:id path:id call:id) body:expr ...+)
-  (define (name path
-                #:has-header [has-header #t]
-                #:separator [separator #f]
-                #:quote-char [quote-char #\"]
-                #:comment-prefix [comment-prefix #f]
-                #:skip-rows [skip-rows 0]
-                #:n-rows [n-rows #f]
-                #:null-values [null-values #f]
-                #:infer-schema-length [infer-schema-length 100]
-                #:schema-overrides [schema-overrides '()]
-                #:ignore-errors [ignore-errors #f]
-                #:try-parse-dates [try-parse-dates #f]
-                #:encoding [encoding 'utf8]
-                #:glob [glob #t])
-    (define call
-      (csv-call-of path has-header separator quote-char comment-prefix
-                   skip-rows n-rows null-values infer-schema-length
-                   schema-overrides ignore-errors try-parse-dates encoding glob))
-    body ...))
-
-(define-csv-reader (lazyframe-scan-csv path call)
-  (call/foreign-error 'lazyframe-scan-csv
-                      (lambda () (apply-csv lazyframe-scan-csv/raw call))
-                      "failed to scan ~a" path))
-
-(define-csv-reader (dataframe-read-csv path call)
-  (define df
-    (with-racket-hints
-      (lambda ()
-        (call/foreign-error 'dataframe-read-csv
-                            (lambda () (apply-csv dataframe-read-csv/raw call))
-                            "failed to read csv from ~a" path))))
-  (when (csv-call-guard? call)
-    (check-separator df path))
-  df)
-
-(define racket-hints
-  '(("`infer_schema_length` (e.g. `infer_schema_length=10000`)"
-     . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
-    ("the `dtypes` argument" . "#:schema-overrides")
-    ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
-    ("to the `null_values` list" . "to #:null-values")))
-
-(define (with-racket-hints thunk)
-  (with-handlers ([exn:fail?
-                   (lambda (e)
-                     (raise (exn:fail (for/fold ([message (exn-message e)])
-                                                ([hint (in-list racket-hints)])
-                                        (string-replace message (car hint) (cdr hint)))
-                                      (exn-continuation-marks e))))])
-    (thunk)))
+(define dataframe-read-csv
+  (csv-reader
+   'dataframe-read-csv
+   (lambda (path call)
+     (define df
+       (call/foreign-error 'dataframe-read-csv
+                           (lambda () (apply-csv 'dataframe-read-csv dataframe-read-csv/raw path call))
+                           "failed to read csv from ~a" path))
+     (when (csv-call-guard? call)
+       (check-separator df path))
+     df)))
 
 (define likely-separators '(#\tab #\; #\|))
 

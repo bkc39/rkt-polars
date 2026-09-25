@@ -33,6 +33,7 @@
          (for-syntax racket/base))
 
 (require (for-label polars
+                    (only-in racket/string non-empty-string?)
                     (only-in threading ~> ~>>)
                     (except-in racket/base
                                min max sort filter reverse and or not when
@@ -40,13 +41,14 @@
 
 (provide (all-from-out scribble/manual)
          (all-from-out scribble/example)
-         (for-label (all-from-out polars threading racket/base))
+         (for-label (all-from-out polars racket/string threading racket/base))
          make-polars-eval
          see-reference
          exnraise)
 
-(define (make-polars-eval)
-  (parameterize ([sandbox-output 'string]
+(define (make-polars-eval #:directory [directory (current-directory)])
+  (parameterize ([current-directory directory]
+                 [sandbox-output 'string]
                  [sandbox-error-output 'string]
                  [sandbox-memory-limit #f]
                  [sandbox-eval-limits #f]

@@ -8,6 +8,8 @@
          gregor
          gregor/period
          racket/match
+         (only-in racket/dict in-dict)
+         (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
          (for-syntax racket/base racket/syntax))
@@ -44,6 +46,18 @@
 (define-compat last-error-message
   (_fun -> _rsstring))
 
+(define racket-spellings
+  '(("`infer_schema_length` (e.g. `infer_schema_length=10000`)"
+     . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
+    ("the `dtypes` argument" . "#:schema-overrides")
+    ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
+    ("to the `null_values` list" . "to #:null-values")))
+
+(define (respell reason)
+  (for/fold ([reason reason])
+            ([(python racket) (in-dict racket-spellings)])
+    (string-replace reason python racket)))
+
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
 (define (call/foreign-error who thunk #:ok? [ok? values] fmt . args)
   (define-values (result reason)
@@ -53,7 +67,7 @@
        (values result (and (not (ok? result)) (last-error-message))))))
   (cond
     [(ok? result) result]
-    [reason (apply error who (string-append fmt ": ~a") (append args (list reason)))]
+    [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
 
 (struct polars-null-sentinel ()
@@ -1435,7 +1449,7 @@
   #:c-id dataframe_write_csv)
 
 (define (dataframe-write-csv df path)
-  (define p (path->string-or-string path))
+  (define p (path->complete-string 'dataframe-write-csv path))
   (void (call/foreign-error 'dataframe-write-csv
                             (lambda () (dataframe-write-csv/raw df p))
                             #:ok? zero?
@@ -1446,7 +1460,7 @@
   #:c-id dataframe_write_parquet)
 
 (define (dataframe-write-parquet df path)
-  (define p (path->string-or-string path))
+  (define p (path->complete-string 'dataframe-write-parquet path))
   (void (call/foreign-error 'dataframe-write-parquet
                             (lambda () (dataframe-write-parquet/raw df p))
                             #:ok? zero?
@@ -1458,7 +1472,7 @@
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-parquet path)
-  (define p (path->string-or-string path))
+  (define p (path->complete-string 'dataframe-read-parquet path #:glob? #t))
   (call/foreign-error 'dataframe-read-parquet
                       (lambda () (dataframe-read-parquet/raw p))
                       "failed to read parquet from ~a" path))
@@ -1468,7 +1482,7 @@
   #:c-id dataframe_write_json_lines)
 
 (define (dataframe-write-json-lines df path)
-  (define p (path->string-or-string path))
+  (define p (path->complete-string 'dataframe-write-json-lines path))
   (void (call/foreign-error 'dataframe-write-json-lines
                             (lambda () (dataframe-write-json-lines/raw df p))
                             #:ok? zero?
@@ -1480,15 +1494,18 @@
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-json-lines path)
-  (define p (path->string-or-string path))
+  (define p (path->complete-string 'dataframe-read-json-lines path))
   (call/foreign-error 'dataframe-read-json-lines
                       (lambda () (dataframe-read-json-lines/raw p))
                       "failed to read json lines from ~a" path))
 
-(define (path->string-or-string p)
-  (if (path-string? p)
-      (path->string (path->complete-path p))
-      (error 'dataframe-csv "expected path-string?, got ~v" p)))
+(define (path->complete-string who p #:glob? [glob? #f])
+  (unless (path-string? p)
+    (raise-argument-error who "path-string?" p))
+  (define base (path->string (current-directory)))
+  (if (relative-path? p)
+      (path->string (build-path (if glob? (regexp-replace* #rx"[][*?]" base "[&]") base) p))
+      (if (path? p) (path->string p) p)))
 
 (define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
   (define-compat name

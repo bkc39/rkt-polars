@@ -33,25 +33,35 @@ fn read_frame(
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 
-fn require_file(path: &str, glob: bool) -> PolarsResult<()> {
-    if glob && path.contains(['*', '?', '[']) {
-        return Ok(());
-    }
-    std::fs::metadata(path)
-        .map(|_| ())
-        .map_err(|err| polars_err!(ComputeError: "cannot open file: {}", err))
+pub(crate) struct PathRules {
+    pub glob: bool,
+    pub directory: bool,
 }
 
-fn collect_frame(
+fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
+    if rules.glob && path.contains(['*', '?', '[']) {
+        return Ok(());
+    }
+    let metadata = std::fs::metadata(path).map_err(
+        |err| polars_err!(ComputeError: "cannot open file: {}", err),
+    )?;
+    polars_ensure!(
+        rules.directory || !metadata.is_dir(),
+        ComputeError: "cannot open file: it is a directory; pass a glob pattern such as dir/*.csv"
+    );
+    Ok(())
+}
+
+pub(crate) fn collect_frame(
     path: *const c_char,
-    glob: bool,
+    rules: PathRules,
     build: impl FnOnce(&str) -> PolarsResult<LazyFrame>,
 ) -> *mut DataFrame {
     clear_last_error();
     decode_path(path)
         .and_then(|path| {
             record(
-                require_file(path, glob)
+                require_path(path, &rules)
                     .and_then(|()| build(path))
                     .and_then(LazyFrame::collect),
             )
@@ -100,31 +110,6 @@ pub extern "C" fn dataframe_write_csv(
 }
 
 #[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub extern "C" fn dataframe_read_csv_with_options(
-    path: *const c_char,
-    options: CompatCsvOptions,
-    comment_prefix: *const c_char,
-    null_values: *const *const c_char,
-    null_values_len: usize,
-    override_names: *const *const c_char,
-    override_dtypes: *const CompatDType,
-    overrides_len: usize,
-) -> *mut DataFrame {
-    let arrays = CsvArrays {
-        comment_prefix,
-        null_values,
-        null_values_len,
-        override_names,
-        override_dtypes,
-        overrides_len,
-    };
-    collect_frame(path, options.glob != 0, |path| {
-        csv_scan(path, &options, &arrays)
-    })
-}
-
-#[no_mangle]
 pub extern "C" fn dataframe_write_parquet(
     df_ptr: *mut DataFrame,
     path: *const c_char,
@@ -138,7 +123,14 @@ pub extern "C" fn dataframe_write_parquet(
 pub extern "C" fn dataframe_read_parquet(
     path: *const c_char,
 ) -> *mut DataFrame {
-    collect_frame(path, true, |path| parquet_scan(path, None))
+    collect_frame(
+        path,
+        PathRules {
+            glob: true,
+            directory: true,
+        },
+        |path| parquet_scan(path, None),
+    )
 }
 
 #[no_mangle]
