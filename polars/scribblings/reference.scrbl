@@ -695,13 +695,22 @@ renders it with no separate display call.
   column and a @racket["value"] column, with rows adapted to the dtype — a
   numeric series gets @racket["count"], @racket["null_count"], @racket["mean"],
   @racket["std"], @racket["min"], @racket["25%"], @racket["50%"], @racket["75%"]
-  and @racket["max"]; a boolean series drops @racket["std"] and the quantiles;
-  other dtypes (string, temporal) keep just @racket["count"], @racket["null_count"],
-  @racket["min"] and @racket["max"]. For a dataframe the result uses Polars'
-  fixed nine-row layout (a @racket["statistic"] column plus one column per input
-  column), leaving a cell @racket[polars-null] where a column has no value for
-  that statistic. Quantiles use nearest interpolation. Dispatches on
-  @racket[series?] / @racket[dataframe?].}
+  and @racket["max"]; a temporal series (date, datetime, time, duration) drops
+  @racket["std"]; a boolean series also drops the quantiles; a string series
+  keeps @racket["count"], @racket["null_count"], @racket["min"] and
+  @racket["max"]; any other dtype just the two counts. For a dataframe the
+  result uses Polars' fixed nine-row layout (a @racket["statistic"] column plus
+  one column per input column), leaving a cell @racket[polars-null] where a
+  column has no value for that statistic.
+
+  Numeric and boolean columns summarise as @racket['float64]; every other
+  column as strings, temporal values written as Python prints them. Quantiles
+  use nearest interpolation. Every statistic of every column comes from one
+  query, so Polars computes the columns in parallel.
+
+  @examples[#:eval ev
+(describe (dataframe (list (series '("b" "a" "c") #:name "s")
+                           (series (list 1.5 polars-null 4.0) #:name "x"))))]}
 
 @subsection{Low-level DataFrame API}
 

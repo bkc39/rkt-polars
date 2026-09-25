@@ -4,8 +4,7 @@
 ;; aggregator spellings (count / n-unique / median / std / var / first / last /
 ;; alias).  Numeric series reduce via the fast typed FFI; non-numeric series
 ;; (string / temporal / boolean) reduce via the expr engine through the single
-;; `series-agg-via-expr` helper — the one home for that computation (describe
-;; reuses min/max/mean rather than duplicating it).
+;; `series-agg-via-expr` helper — the one home for that computation.
 
 (require racket/match
          (prefix-in base: racket/base)
@@ -54,8 +53,7 @@
 
 ;; reduce a series to a scalar via the expr engine — handles every dtype,
 ;; including string/temporal min/max and boolean mean.  Single home for the
-;; expr-based reduction (shared by the non-numeric paths below and, through
-;; them, by describe).
+;; expr-based reduction (shared by the non-numeric paths below).
 (define (series-agg-via-expr expr-op s)
   (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))

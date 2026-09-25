@@ -1424,7 +1424,8 @@
   (_fun _DataFrame-ptr _size -> _rsstring))
 
 (define-compat dataframe-column
-  (_fun _DataFrame-ptr _string -> _Series-ptr))
+  (_fun _DataFrame-ptr _string -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat dataframe->string
   (_fun _DataFrame-ptr -> _rsstring)
