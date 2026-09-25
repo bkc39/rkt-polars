@@ -122,158 +122,144 @@ fn to_string_null_df_returns_null() {
     assert!(dataframe_to_string(ptr::null_mut()).is_null());
 }
 
-// --- failure reporting (#45) ---------------------------------------------
-//
-// Every entry point below clears the error slot on the way in, so each test
-// asserts on a message its own call recorded rather than a leftover.
-
-/// Read back and free the recorded message, or `None` when nothing was
-/// recorded.
-fn recorded_error() -> Option<String> {
-    let p = last_error_message();
-    if p.is_null() {
-        None
-    } else {
-        Some(take_cstring(p))
-    }
-}
-
 #[test]
 fn missing_file_reports_the_os_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
     let p = cstr(dir.path().join("nope.csv").to_str().unwrap());
     assert!(dataframe_read_csv(p.as_ptr()).is_null());
-    let msg = recorded_error().expect("a reason should have been recorded");
-    assert!(
-        msg.contains("cannot open file"),
-        "expected the failing step, got {:?}",
-        msg
-    );
-    assert!(
-        msg.to_lowercase().contains("no such file"),
-        "expected the OS reason, got {:?}",
-        msg
-    );
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.starts_with("cannot open file: "), "{:?}", msg);
+    assert!(msg.to_lowercase().contains("no such file"), "{:?}", msg);
 }
 
 #[test]
 fn unwritable_path_reports_the_os_reason() {
-    let p = cstr("/nonexistent-directory-45/out.parquet");
     let xs = make_i32("x", &[1]);
     let df = make_df(&[xs]);
-    assert_ne!(dataframe_write_parquet(df, p.as_ptr()), 0);
-    let msg = recorded_error().expect("a reason should have been recorded");
-    assert!(
-        msg.contains("cannot create file"),
-        "expected the failing step, got {:?}",
-        msg
-    );
+    let p = cstr("/nonexistent-directory-45/out.parquet");
+    assert_eq!(dataframe_write_parquet(df, p.as_ptr()), 3);
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.starts_with("cannot create file: "), "{:?}", msg);
     dataframe_drop(df);
     series_drop(xs);
 }
 
 #[test]
 fn malformed_input_reports_the_polars_reason() {
-    // A parquet reader pointed at a text file fails inside polars rather than
-    // at open time, so this exercises the reader arm rather than the OS arm.
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("not-really.parquet");
+    let path = dir.path().join("junk.bin");
     std::fs::write(&path, b"this is not parquet").expect("write");
     let p = cstr(path.to_str().unwrap());
     assert!(dataframe_read_parquet(p.as_ptr()).is_null());
-    let msg = recorded_error().expect("a reason should have been recorded");
-    assert!(
-        msg.contains("parquet reader"),
-        "expected the failing component, got {:?}",
-        msg
-    );
-    assert!(
-        msg.len() > "parquet reader: ".len(),
-        "expected polars' own text after the component, got {:?}",
-        msg
-    );
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.contains("PAR1"), "{:?}", msg);
 }
 
 #[test]
 fn null_arguments_say_which_one() {
     let xs = make_i32("x", &[1]);
     let df = make_df(&[xs]);
-
-    assert_eq!(
-        dataframe_write_csv(ptr::null_mut(), cstr("/tmp/x").as_ptr()),
-        1
-    );
+    let p = cstr("/tmp/x");
+    assert_eq!(dataframe_write_csv(ptr::null_mut(), p.as_ptr()), 1);
     assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
-
     assert_eq!(dataframe_write_csv(df, ptr::null()), 1);
     assert_eq!(recorded_error().as_deref(), Some("path is null"));
-
+    assert!(dataframe_read_csv(ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("path is null"));
+    assert!(lazyframe_collect(ptr::null_mut()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("lazyframe is null"));
     dataframe_drop(df);
     series_drop(xs);
 }
 
 #[test]
-fn success_leaves_no_message_behind() {
-    // A failure followed by a success must not leave the old reason readable,
-    // or the next caller would attribute it to the wrong call.
+fn every_entry_point_clears_a_stale_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let missing = cstr(dir.path().join("nope.csv").to_str().unwrap());
-    assert!(dataframe_read_csv(missing.as_ptr()).is_null());
-    assert!(recorded_error().is_some());
-
-    let xs = make_i32("x", &[1, 2]);
+    let at = |name: &str| cstr(dir.path().join(name).to_str().unwrap());
+    let (csv, parquet, ndjson) = (at("f.csv"), at("f.parquet"), at("f.ndjson"));
+    let xs = make_i64("x", &[1, 2, 3]);
     let df = make_df(&[xs]);
-    let out = cstr(dir.path().join("ok.csv").to_str().unwrap());
-    assert_eq!(dataframe_write_csv(df, out.as_ptr()), 0);
-    assert_eq!(
-        recorded_error(),
-        None,
-        "a successful call must clear the slot"
-    );
 
+    let cleared = |label: &str| {
+        assert_eq!(recorded_error(), None, "{} left a stale reason", label);
+        set_last_error("stale");
+    };
+    let frame = |label: &str, out: *mut DataFrame| {
+        assert!(!out.is_null(), "{} failed", label);
+        dataframe_drop(out);
+    };
+    let plan = |label: &str, out: *mut LazyFrame| {
+        assert!(!out.is_null(), "{} failed", label);
+        lazyframe_drop(out);
+    };
+
+    set_last_error("stale");
+    assert_eq!(dataframe_write_csv(df, csv.as_ptr()), 0);
+    cleared("dataframe_write_csv");
+    assert_eq!(dataframe_write_parquet(df, parquet.as_ptr()), 0);
+    cleared("dataframe_write_parquet");
+    assert_eq!(dataframe_write_json_lines(df, ndjson.as_ptr()), 0);
+    cleared("dataframe_write_json_lines");
+    frame("dataframe_read_csv", dataframe_read_csv(csv.as_ptr()));
+    cleared("dataframe_read_csv");
+    frame(
+        "dataframe_read_parquet",
+        dataframe_read_parquet(parquet.as_ptr()),
+    );
+    cleared("dataframe_read_parquet");
+    frame(
+        "dataframe_read_json_lines",
+        dataframe_read_json_lines(ndjson.as_ptr()),
+    );
+    cleared("dataframe_read_json_lines");
+    plan("lazyframe_scan_csv", lazyframe_scan_csv(csv.as_ptr()));
+    cleared("lazyframe_scan_csv");
+    plan(
+        "lazyframe_scan_csv_options",
+        lazyframe_scan_csv_options(csv.as_ptr(), 1, b',', 0, 0, 0),
+    );
+    cleared("lazyframe_scan_csv_options");
+    plan(
+        "lazyframe_scan_parquet",
+        lazyframe_scan_parquet(parquet.as_ptr()),
+    );
+    cleared("lazyframe_scan_parquet");
+    plan(
+        "lazyframe_scan_parquet_options",
+        lazyframe_scan_parquet_options(parquet.as_ptr(), 0, 0),
+    );
+    cleared("lazyframe_scan_parquet_options");
+    let lf = lazyframe_scan_csv(csv.as_ptr());
+    set_last_error("stale");
+    frame("lazyframe_collect", lazyframe_collect(lf));
+    cleared("lazyframe_collect");
+
+    lazyframe_drop(lf);
     dataframe_drop(df);
     series_drop(xs);
 }
 
 #[test]
-fn a_broken_lazy_pipeline_reports_a_reason() {
-    // A lazy scan only builds a plan, so a missing or malformed file may be
-    // accepted here and rejected at collect time instead. Either is fine; what
-    // must hold is that whichever step fails records a reason rather than
-    // handing back a bare null.
+fn a_scan_defers_a_bad_file_to_collect() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("not-really.parquet");
+    let path = dir.path().join("junk.bin");
     std::fs::write(&path, b"this is not parquet").expect("write");
     let p = cstr(path.to_str().unwrap());
 
     let lf = lazyframe_scan_parquet(p.as_ptr());
-    if lf.is_null() {
-        let msg =
-            recorded_error().expect("scan failure should record a reason");
-        assert!(
-            msg.contains("parquet scan"),
-            "expected the failing component, got {:?}",
-            msg
-        );
-        return;
-    }
+    assert!(!lf.is_null(), "the scan itself should only build a plan");
+    assert_eq!(recorded_error(), None);
 
-    let df = lazyframe_collect(lf);
-    assert!(df.is_null(), "collecting a malformed parquet should fail");
-    let msg = recorded_error().expect("collect failure should record a reason");
-    assert!(
-        msg.to_lowercase().contains("parquet"),
-        "expected polars' own text about the bad file, got {:?}",
-        msg
-    );
+    assert!(lazyframe_collect(lf).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.contains("PAR1"), "{:?}", msg);
     lazyframe_drop(lf);
 }
 
 #[test]
-fn collect_of_a_null_lazyframe_reports_a_reason() {
-    assert!(lazyframe_collect(ptr::null_mut()).is_null());
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("collect: lazyframe is null")
-    );
+fn an_invalid_glob_fails_at_scan() {
+    let p = cstr("/tmp/[.csv");
+    assert!(lazyframe_scan_csv(p.as_ptr()).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.to_lowercase().contains("glob"), "{:?}", msg);
 }

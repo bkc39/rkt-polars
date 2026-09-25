@@ -11,8 +11,9 @@
          polars/private/expr-dt
          polars/private/expr-str
          (only-in polars/private/foreign
-                  raise-foreign-error
+                  call/foreign-error
                   _DataFrame-ptr
+                  _DataFrame-ptr/null
                   DataFrame-ptr?
                   _Series-ptr
                   Series-ptr?
@@ -46,6 +47,7 @@
                     make-YMDHMS
                     polars-null
                     dataframe-new
+                    dataframe-drop-count
                     dataframe-write-parquet
                     dataframe-height
                     dataframe-width
@@ -124,20 +126,15 @@
     [(path? p) (path->string p)]
     [else (error who "expected path-string?, got ~v" p)]))
 
-(define (require-lazyframe-result who result path)
-  (if result
-      (let ([lf (cast result _pointer _LazyFrame-ptr)])
-        (register-finalizer lf lazyframe-drop)
-        lf)
-      (raise-foreign-error who "failed to scan ~a" path)))
-
 (define-compat lazyframe-scan-csv/raw
-  (_fun _string -> _pointer)
-  #:c-id lazyframe_scan_csv)
+  (_fun _string -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_csv
+  #:wrap (allocator lazyframe-drop))
 
 (define-compat lazyframe-scan-csv/options/raw
-  (_fun _string _uint8 _uint8 _size _uint8 _size -> _pointer)
-  #:c-id lazyframe_scan_csv_options)
+  (_fun _string _uint8 _uint8 _size _uint8 _size -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_csv_options
+  #:wrap (allocator lazyframe-drop))
 
 (define (separator->byte who separator)
   (cond
@@ -168,35 +165,32 @@
   (check-nonnegative-option 'lazyframe-scan-csv "skip-rows" skip-rows)
   (when n-rows
     (check-nonnegative-option 'lazyframe-scan-csv "n-rows" n-rows))
-  (require-lazyframe-result
-   'lazyframe-scan-csv
-   (lazyframe-scan-csv/options/raw
-    (path->string-or-string 'lazyframe-scan-csv path)
-    (if has-header 1 0)
-    (separator->byte 'lazyframe-scan-csv separator)
-    skip-rows
-    (if n-rows 1 0)
-    (or n-rows 0))
-   path))
+  (define p (path->string-or-string 'lazyframe-scan-csv path))
+  (define sep (separator->byte 'lazyframe-scan-csv separator))
+  (call/foreign-error 'lazyframe-scan-csv
+                      (lambda ()
+                        (lazyframe-scan-csv/options/raw p (if has-header 1 0) sep skip-rows
+                                                        (if n-rows 1 0) (or n-rows 0)))
+                      "failed to scan ~a" path))
 
 (define-compat lazyframe-scan-parquet/raw
-  (_fun _string -> _pointer)
-  #:c-id lazyframe_scan_parquet)
+  (_fun _string -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_parquet
+  #:wrap (allocator lazyframe-drop))
 
 (define-compat lazyframe-scan-parquet/options/raw
-  (_fun _string _uint8 _size -> _pointer)
-  #:c-id lazyframe_scan_parquet_options)
+  (_fun _string _uint8 _size -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_parquet_options
+  #:wrap (allocator lazyframe-drop))
 
 (define (lazyframe-scan-parquet path #:n-rows [n-rows #f])
   (when n-rows
     (check-nonnegative-option 'lazyframe-scan-parquet "n-rows" n-rows))
-  (require-lazyframe-result
-   'lazyframe-scan-parquet
-   (lazyframe-scan-parquet/options/raw
-    (path->string-or-string 'lazyframe-scan-parquet path)
-    (if n-rows 1 0)
-    (or n-rows 0))
-   path))
+  (define p (path->string-or-string 'lazyframe-scan-parquet path))
+  (call/foreign-error 'lazyframe-scan-parquet
+                      (lambda ()
+                        (lazyframe-scan-parquet/options/raw p (if n-rows 1 0) (or n-rows 0)))
+                      "failed to scan ~a" path))
 
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
@@ -210,19 +204,14 @@
   (lazyframe-with-columns/c lf exprs))
 
 (define-compat lazyframe-collect/raw
-  (_fun _LazyFrame-ptr -> _pointer)
-  #:c-id lazyframe_collect)
+  (_fun _LazyFrame-ptr -> _DataFrame-ptr/null)
+  #:c-id lazyframe_collect
+  #:wrap (allocator dataframe-drop))
 
-;; A failed query used to return #f, which `collect` wrapped into a dataframe
-;; value that then misbehaved far from the cause; a successful one was never
-;; freed.  Raise on failure, and take ownership on success.
 (define (lazyframe-collect lf)
-  (define result (lazyframe-collect/raw lf))
-  (unless result
-    (raise-foreign-error 'lazyframe-collect "failed to collect the query"))
-  (let ([df (cast result _pointer _DataFrame-ptr)])
-    (register-finalizer df dataframe-drop)
-    df))
+  (call/foreign-error 'lazyframe-collect
+                      (lambda () (lazyframe-collect/raw lf))
+                      "failed to collect the query"))
 
 ;; --- Phase A2: Expr operations ---
 
@@ -1857,30 +1846,37 @@
   (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
   (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))
 
-;; `lazyframe-collect` used to be a bare `-> _DataFrame-ptr` binding with no
-;; allocator at all, so every collected frame leaked.  It now casts and
-;; registers the finalizer by hand (allocator cannot wrap the NULL a failed
-;; query returns), so assert the frames it hands back are reclaimed.
 (module+ test
-  (require rackunit
-           (only-in polars/private/foreign
-                    series-new-i64
-                    dataframe-new
-                    dataframe-drop-count))
+  (define (settle!)
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1)))
 
-  (define reclaim-src
-    (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
-
+  (define reclaim-src (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
+  (settle!)
   (let* ([wanted 20]
          [before (dataframe-drop-count)])
     (for ([_ (in-range wanted)])
-      (void (lazyframe-collect (dataframe-lazy reclaim-src))))
-    ;; Finalizers run on their own thread after a collection; be lenient about
-    ;; how many have landed rather than making this flaky.
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1))
-    (define freed (- (dataframe-drop-count) before))
-    (check-true (>= freed (quotient wanted 2))
-                (format "only ~a of ~a collected frames were freed by Rust"
-                        freed wanted))))
+      (lazyframe-collect (dataframe-lazy reclaim-src)))
+    ;; finalizers run on their own thread, so assert a lenient fraction
+    (settle!)
+    (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
+
+  (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
+             (lambda ()
+               (lazyframe-collect
+                (lazyframe-select (dataframe-lazy reclaim-src) (list (col "nope"))))))
+
+  (define gone (build-path (find-system-path 'temp-dir) "rkt-polars-no-such-scan.csv"))
+  (when (file-exists? gone)
+    (delete-file gone))
+  (define deferred (lazyframe-scan-csv gone))
+  (check-pred LazyFrame-ptr? deferred)
+  (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
+             (lambda () (lazyframe-collect deferred)))
+
+  (define bad-glob-message
+    (with-handlers ([exn:fail? exn-message])
+      (lazyframe-scan-csv "/tmp/[.csv")))
+  (check-regexp-match #rx"^lazyframe-scan-csv: failed to scan /tmp/\\[\\.csv: .+" bad-glob-message)
+  (check-equal? (length (regexp-match* #rx"\\[\\.csv" bad-glob-message)) 1))

@@ -2,6 +2,7 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
+         ffi/unsafe/atomic
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          gregor
@@ -40,24 +41,20 @@
             (register-finalizer ptr string-drop)
             str)))))
 
-;; The reason the most recent failing foreign call gave, or #f when the Rust
-;; side recorded nothing.  `_rsstring` maps the NULL return to #f and frees the
-;; message for us.
 (define-compat last-error-message
   (_fun -> _rsstring))
 
-;; Raise an error for a foreign call that reported failure, appending the reason
-;; the Rust side recorded for it.
-;;
-;; Every entry point that can fail clears the slot on the way in, so a message
-;; read here belongs to the call that just failed rather than to some earlier
-;; one.  Callers whose Rust counterpart does not yet participate must not use
-;; this -- they would attach a stale message to an unrelated failure.
-(define (raise-foreign-error who fmt . args)
-  (define detail (last-error-message))
-  (if detail
-      (apply error who (string-append fmt ": ~a") (append args (list detail)))
-      (apply error who fmt args)))
+;; only for entry points that call clear_last_error; elsewhere the slot is stale
+(define (call/foreign-error who thunk #:ok? [ok? values] fmt . args)
+  (define-values (result reason)
+    (call-as-atomic
+     (lambda ()
+       (define result (thunk))
+       (values result (and (not (ok? result)) (last-error-message))))))
+  (cond
+    [(ok? result) result]
+    [reason (apply error who (string-append fmt ": ~a") (append args (list reason)))]
+    [else (apply error who fmt args)]))
 
 (struct polars-null-sentinel ()
   #:property prop:custom-write
@@ -1323,10 +1320,6 @@
   (_fun _DataFrame-ptr -> _void)
   #:wrap (deallocator))
 
-;; How many dataframes the Rust side has actually released. Racket cannot
-;; otherwise observe the native free: a wrapper with no finalizer registered
-;; is collected exactly like one that has it, so only this counter tells the
-;; two apart.
 (define-compat dataframe-drop-count
   (_fun -> _size))
 
@@ -1437,76 +1430,71 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
-;; Take ownership of a dataframe a reader returned, or raise with the reason it
-;; failed.
-;;
-;; The raw binding must be declared `-> _pointer` rather than `-> _DataFrame-ptr`
-;; with `#:wrap (allocator ...)`: `allocator` cannot wrap a NULL result, and
-;; raises "argument is not non-null `DataFrame-ptr' pointer" before the caller
-;; ever gets to report what actually went wrong.
-(define (require-read-result who result fmt . args)
-  (if result
-      (let ([df (cast result _pointer _DataFrame-ptr)])
-        (register-finalizer df dataframe-drop)
-        df)
-      (apply raise-foreign-error who fmt args)))
-
 (define-compat dataframe-write-csv/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_csv)
 
 (define (dataframe-write-csv df path)
-  (define rc (dataframe-write-csv/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (raise-foreign-error 'dataframe-write-csv
-                         "failed to write csv to ~a" path)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-csv
+                            (lambda () (dataframe-write-csv/raw df p))
+                            #:ok? zero?
+                            "failed to write csv to ~a" path)))
 
 (define-compat dataframe-read-csv/raw
-  (_fun _string -> _pointer)
-  #:c-id dataframe_read_csv)
+  (_fun _string -> _DataFrame-ptr/null)
+  #:c-id dataframe_read_csv
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-csv path)
-  (require-read-result 'dataframe-read-csv
-                       (dataframe-read-csv/raw (path->string-or-string path))
-                       "failed to read csv from ~a" path))
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-csv
+                      (lambda () (dataframe-read-csv/raw p))
+                      "failed to read csv from ~a" path))
 
 (define-compat dataframe-write-parquet/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_parquet)
 
 (define (dataframe-write-parquet df path)
-  (define rc (dataframe-write-parquet/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (raise-foreign-error 'dataframe-write-parquet
-                         "failed to write parquet to ~a" path)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-parquet
+                            (lambda () (dataframe-write-parquet/raw df p))
+                            #:ok? zero?
+                            "failed to write parquet to ~a" path)))
 
 (define-compat dataframe-read-parquet/raw
-  (_fun _string -> _pointer)
-  #:c-id dataframe_read_parquet)
+  (_fun _string -> _DataFrame-ptr/null)
+  #:c-id dataframe_read_parquet
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-parquet path)
-  (require-read-result 'dataframe-read-parquet
-                       (dataframe-read-parquet/raw (path->string-or-string path))
-                       "failed to read parquet from ~a" path))
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-parquet
+                      (lambda () (dataframe-read-parquet/raw p))
+                      "failed to read parquet from ~a" path))
 
 (define-compat dataframe-write-json-lines/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_json_lines)
 
 (define (dataframe-write-json-lines df path)
-  (define rc (dataframe-write-json-lines/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (raise-foreign-error 'dataframe-write-json-lines
-                         "failed to write json lines to ~a" path)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-json-lines
+                            (lambda () (dataframe-write-json-lines/raw df p))
+                            #:ok? zero?
+                            "failed to write json lines to ~a" path)))
 
 (define-compat dataframe-read-json-lines/raw
-  (_fun _string -> _pointer)
-  #:c-id dataframe_read_json_lines)
+  (_fun _string -> _DataFrame-ptr/null)
+  #:c-id dataframe_read_json_lines
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-json-lines path)
-  (require-read-result 'dataframe-read-json-lines
-                       (dataframe-read-json-lines/raw (path->string-or-string path))
-                       "failed to read json lines from ~a" path))
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-json-lines
+                      (lambda () (dataframe-read-json-lines/raw p))
+                      "failed to read json lines from ~a" path))
 
 (define (path->string-or-string p)
   (cond
@@ -2206,76 +2194,54 @@
            1e-9)
   (delete-file tmp-jsonl))
 
-;; --- IO failures carry the reason (#45) ----------------------------------
-;;
-;; Before, a failed read said only "failed to read csv from <path>" and a
-;; failed write reported a bare "rust error code 3". The reason now travels
-;; across the FFI boundary and is appended to the message.
 (module+ test
-  (define missing-csv
-    (build-path (find-system-path 'temp-dir) "rkt-polars-no-such-file.csv"))
+  (define (settle!)
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1)))
+
+  (define tmp-dir (find-system-path 'temp-dir))
+  (define missing-csv (build-path tmp-dir "rkt-polars-no-such-file.csv"))
   (when (file-exists? missing-csv)
     (delete-file missing-csv))
-
-  ;; The OS reason, not just the path.
-  (check-exn #rx"cannot open file"
-             (lambda () (dataframe-read-csv missing-csv)))
-  (check-exn #rx"[Nn]o such file"
-             (lambda () (dataframe-read-csv missing-csv)))
-  ;; and still says which operation and which path
-  (check-exn #rx"failed to read csv from"
+  (check-exn #rx"^dataframe-read-csv: failed to read csv from .*: cannot open file: [Nn]o such file"
              (lambda () (dataframe-read-csv missing-csv)))
 
-  ;; Writers: the reason replaces the bare numeric code.
-  (define unwritable
-    (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
-  (define one-col
-    (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
-  (check-exn #rx"cannot create file"
+  (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
+  (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
+  (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
              (lambda () (dataframe-write-csv one-col unwritable)))
-  (check-exn #rx"failed to write csv to"
-             (lambda () (dataframe-write-csv one-col unwritable)))
-  (check-exn #rx"cannot create file"
+  (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
              (lambda () (dataframe-write-parquet one-col unwritable)))
-  (check-exn #rx"cannot create file"
+  (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "
              (lambda () (dataframe-write-json-lines one-col unwritable)))
 
-  ;; Polars' own text, for a failure that happens inside the reader rather
-  ;; than at open time.
-  (define not-parquet
-    (build-path (find-system-path 'temp-dir) "rkt-polars-not-parquet.parquet"))
-  (call-with-output-file not-parquet
+  (define junk (build-path tmp-dir "rkt-polars-junk.bin"))
+  (call-with-output-file junk
     (lambda (out) (write-string "this is not parquet" out))
     #:exists 'replace)
-  (check-exn #rx"parquet reader"
-             (lambda () (dataframe-read-parquet not-parquet)))
-  (delete-file not-parquet)
+  (check-exn #rx"^dataframe-read-parquet: failed to read parquet from .*: .*PAR1"
+             (lambda () (dataframe-read-parquet junk)))
+  (delete-file junk)
 
-  ;; A success after a failure must not inherit the old reason: the slot is
-  ;; cleared on the way in, so this round-trip raises nothing at all.
-  (check-exn #rx"cannot open file"
-             (lambda () (dataframe-read-csv missing-csv)))
-  (define ok-csv
-    (build-path (find-system-path 'temp-dir) "rkt-polars-clears-slot.csv"))
+  (check-exn #rx"cannot open file" (lambda () (dataframe-read-csv missing-csv)))
+  (define ok-csv (build-path tmp-dir "rkt-polars-clears-slot.csv"))
   (dataframe-write-csv one-col ok-csv)
   (check-equal? (dataframe-height (dataframe-read-csv ok-csv)) 3)
+  (check-false (last-error-message))
 
-  ;; The readers hand back a bare `_pointer` and register the finalizer by
-  ;; hand, because `allocator` cannot wrap the NULL a failed read returns.
-  ;; Assert the native frames are actually released: watching the Racket
-  ;; wrapper get collected proves nothing, since it is collected either way.
+  (settle!)
+  (let ([before (dataframe-drop-count)])
+    (dataframe-drop (dataframe-read-csv ok-csv))
+    (settle!)
+    (check-equal? (- (dataframe-drop-count) before) 1))
+
   (let* ([wanted 20]
          [before (dataframe-drop-count)])
     (for ([_ (in-range wanted)])
-      (void (dataframe-read-csv ok-csv)))
-    ;; Finalizers run on their own thread after a collection, so collect a
-    ;; few times and give them room; assert on a lenient fraction rather than
-    ;; all of them, which would make this flaky for no extra signal.
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1))
-    (define freed (- (dataframe-drop-count) before))
-    (check-true (>= freed (quotient wanted 2))
-                (format "only ~a of ~a read frames were freed by Rust" freed wanted)))
+      (dataframe-read-csv ok-csv))
+    ;; finalizers run on their own thread, so assert a lenient fraction
+    (settle!)
+    (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
 
   (delete-file ok-csv))
