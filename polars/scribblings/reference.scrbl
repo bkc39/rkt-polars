@@ -100,6 +100,41 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (multi-column-expr? (col "id"))
 (eval:error (exclude (col "id") "weight"))]}
 
+@defproc[(expr->string [e Expr-ptr?]) string?]{
+  Renders @racket[e] as its plan, in the notation Polars itself uses:
+  @tt{col("v")} for a column, @tt{[(a) + (b)]} for a binary operation,
+  @tt{.alias("n")} and @tt{.sum()} as method suffixes. This is also what an
+  expression prints as at the REPL and throughout this manual, so an
+  expression is a value you can read, not an opaque pointer.
+
+  @examples[#:eval ev
+(col "weight")
+(alias (* (col "v") 10) "v10")
+(expr->string (> (col "v") 2))]}
+
+@deftogether[(@defproc[(meta-output-name [e (or/c Expr-ptr? string?)]) string?]
+              @defproc[(meta-root-names [e (or/c Expr-ptr? string?)]) (listof string?)]
+              @defproc[(meta-eq? [a (or/c Expr-ptr? string?)] [b (or/c Expr-ptr? string?)]) boolean?])]{
+  Polars' @tt{.meta} namespace: what an expression will do, read off the plan
+  without running it. @racket[meta-output-name] is the column the expression
+  produces --- the alias if it has one, else its first column, else
+  @racket["literal"]; it raises when that cannot be known without a frame.
+  @racket[meta-root-names] lists the columns the expression reads, in tree
+  order, duplicates included. @racket[meta-eq?] is structural equality of two
+  plans; @racket[equal?] on expressions is identity. A column name is lifted
+  with @racket[col] wherever an expression is expected.
+
+  @examples[#:eval ev
+(define total (alias (sum (+ (col "a") (col "b"))) "total"))
+total
+(meta-output-name total)
+(meta-root-names total)
+(meta-eq? total (alias (sum (+ (col "a") (col "b"))) "total"))
+(meta-eq? total (col "a"))
+(meta-root-names "a")
+(eval:error (meta-output-name "*"))
+(eval:error (meta-output-name 5))]}
+
 @deftogether[(@defproc[(> [a any/c] [b any/c] ...) any/c]
               @defproc[(< [a any/c] [b any/c] ...) any/c]
               @defproc[(>= [a any/c] [b any/c] ...) any/c]
@@ -294,6 +329,20 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
                      (series '(1 2 3) #:name "v")))
     (group-by "k")
     (agg (alias (sum "v") "total")))]}
+
+@defproc[(over [e (or/c Expr-ptr? string?)] [key (or/c Expr-ptr? string?)] ...+) Expr-ptr?]{
+  A window function (@tt{Expr.over}): @racket[e] is computed within each
+  group of the @racket[key]s — column names or expressions, as
+  @racket[group-by] takes them — and broadcast back onto the group's rows
+  rather than reduced to one row per group, so it belongs in
+  @racket[with-columns] where @racket[agg] would collapse it. Only Polars'
+  default @tt{group_to_rows} mapping is exposed.
+
+  @examples[#:eval ev
+(define kv (dataframe (list (series '("x" "y" "x") #:name "k")
+                            (series '(1 2 3) #:name "v"))))
+(~> kv (group-by "k") (agg (alias (sum "v") "total")))
+(~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...) any/c]
@@ -752,6 +801,13 @@ built.
   list where the generic @racket[exclude] is variadic. A regexp
   @racket[col] needs no entry point of its own: it is @racket[expr-col]
   with the pattern rendered in Polars' @tt{^...$} form.}
+
+@deftogether[(@defproc[(expr-meta-output-name [e Expr-ptr?]) string?]
+              @defproc[(expr-meta-root-names [e Expr-ptr?]) (listof string?)]
+              @defproc[(expr-meta-eq? [a Expr-ptr?] [b Expr-ptr?]) boolean?])]{
+  The expression-only forms of @racket[meta-output-name],
+  @racket[meta-root-names] and @racket[meta-eq?], which are the ones to
+  write: they also accept a column name.}
 
 @defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]

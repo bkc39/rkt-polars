@@ -13,7 +13,6 @@
 ;; --- expressions ---------------------------------------------------------
 (define bmi-expr (/ (col "weight") (pow (col "height") 2)))
 
-;; API gap: an expression prints as an opaque pointer, not as its plan.
 (displayln bmi-expr)
 
 ;; --- contexts ------------------------------------------------------------
@@ -84,6 +83,10 @@
           (~> (col "height") max (alias "tallest"))
           (~> (col "weight") mean (alias "avg_weight"))
           (~> (col "height") mean (alias "avg_height")))))
+
+(displayln
+ (~> df
+     (with-columns (~> (col "height") mean (over decade) (alias "decade_avg_height")))))
 
 ;; --- expression expansion ------------------------------------------------
 ;; API gap: no name.suffix, so the expanded columns keep the matched names.

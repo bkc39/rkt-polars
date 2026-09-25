@@ -29,7 +29,9 @@
          polars/private/generic/cumulative
          polars/private/generic/ordering
          polars/private/generic/describe
-         polars/private/generic/selectors)
+         polars/private/generic/selectors
+         polars/private/generic/window
+         polars/private/generic/meta)
 
 (provide series series? series->string
          dataframe dataframe? lazyframe?
@@ -44,6 +46,7 @@
          gen:has-null-count has-null-count?
          sum mean min max
          count n-unique first last median std var alias
+         over
          > < >= <= = !=
          mod sign ceil log1p pow clip
          filter sort
@@ -72,6 +75,7 @@
          rename rename! clone series-clone
          then otherwise else-when
          all exclude
+         meta-output-name meta-root-names meta-eq?
          (rename-out [p-and and] [p-or or] [p-not not] [p-xor xor]
                      [p+ +] [p- -] [p* *] [p/ /] [p-when when]
                      [p-abs abs] [p-round round] [p-floor floor]

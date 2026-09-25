@@ -15,6 +15,7 @@
                   DataFrame-ptr?
                   _Series-ptr
                   Series-ptr?
+                  _rsstring
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   _CompatDType make-CompatDType
@@ -62,6 +63,7 @@
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
+         expr->string
          lit col ->expr ->key-expr
          expr-all expr-exclude expr-dtype-col multi-column-expr? dtype-spec?
          expr-add expr-sub expr-mul expr-div expr-mod
@@ -112,7 +114,35 @@
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         dataframe-sort-exprs)
+         dataframe-sort-exprs
+         expr-meta-output-name expr-meta-root-names expr-meta-eq?)
+
+(define-compat expr-meta-output-name/raw
+  (_fun _Expr-ptr -> _rsstring)
+  #:c-id expr_meta_output_name)
+
+(define (expr-meta-output-name e)
+  (or (expr-meta-output-name/raw e)
+      (error 'expr-meta-output-name
+             "cannot determine the output name of ~a" (expr->string e))))
+
+(define-compat expr-meta-root-names-len
+  (_fun _Expr-ptr -> _size)
+  #:c-id expr_meta_root_names_len)
+
+(define-compat expr-meta-root-name
+  (_fun _Expr-ptr _size -> _rsstring)
+  #:c-id expr_meta_root_name)
+
+(define (expr-meta-root-names e)
+  (for/list ([i (in-range (expr-meta-root-names-len e))])
+    (expr-meta-root-name e i)))
+
+(define-compat expr-meta-eq/raw
+  (_fun _Expr-ptr _Expr-ptr -> _uint8)
+  #:c-id expr_meta_eq)
+
+(define (expr-meta-eq? a b) (= 1 (expr-meta-eq/raw a b)))
 
 (define-compat dataframe-lazy
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)

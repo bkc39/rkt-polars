@@ -9,10 +9,11 @@
          (only-in racket/contract
                   [-> ->/c] any/c contract-out non-empty-listof or/c)
          racket/runtime-path
-         (only-in polars/private/foreign ->compat-dtype _CompatDType)
+         (only-in polars/private/foreign ->compat-dtype _CompatDType _rsstring)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
-(provide define-compat
+(provide (contract-out [expr->string (->/c Expr-ptr? string?)])
+         define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
          _LazyFrame-ptr LazyFrame-ptr?
          expr-drop lazyframe-drop
@@ -35,16 +36,36 @@
   (ffi-lib (build-path expr-native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
-(define-cpointer-type _Expr-ptr)
+(struct expr ([ptr #:mutable])
+  #:property prop:cpointer (lambda (e) (expr-ptr e))
+  #:property prop:custom-write
+  (lambda (e port mode)
+    (write-string (if (expr-ptr e) (expr->string e) "#<expr: dropped>") port)))
+
+(define (wrap-expr p) (and p (expr p)))
+
+(define-cpointer-type _Expr-ptr _pointer #f wrap-expr)
 (define-cpointer-type _LazyFrame-ptr)
 
-(define-compat expr-drop
+(define-compat expr-drop/raw
   (_fun _Expr-ptr -> _void)
+  #:c-id expr_drop
   #:wrap (deallocator))
+
+(define (expr-drop e)
+  (expr-drop/raw e)
+  (set-expr-ptr! e #f))
+
+(define-compat expr-drop-count
+  (_fun -> _size))
 
 (define-compat lazyframe-drop
   (_fun _LazyFrame-ptr -> _void)
   #:wrap (deallocator))
+
+(define-compat expr->string
+  (_fun _Expr-ptr -> _rsstring)
+  #:c-id expr_to_string)
 
 (define-compat expr-col
   (_fun _string -> _Expr-ptr)
@@ -166,3 +187,37 @@
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
   (check-exn #rx"^col: contract violation"
              (lambda () (contracted:col '(datetime microseconds "UTC")))))
+  (require rackunit)
+  (define-compat expr-add
+    (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+    #:wrap (allocator expr-drop))
+  (define-compat expr-mul
+    (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+    #:wrap (allocator expr-drop))
+  (define print-col (col "x"))
+  (check-equal? (expr->string print-col) "col(\"x\")")
+  (check-equal? (format "~a" print-col) "col(\"x\")")
+  (check-equal? (format "~s" print-col) "col(\"x\")")
+  (check-equal? (format "~v" print-col) "col(\"x\")")
+  (check-equal? (expr->string (expr-add (col "a") (col "b")))
+                "[(col(\"a\")) + (col(\"b\"))]")
+  (check-equal? (expr->string (expr-alias (col "a") "b")) "col(\"a\").alias(\"b\")")
+  (check-equal? (expr->string (expr-mul (col "v") (lit 10))) "[(col(\"v\")) * (dyn int: 10)]")
+  (check-equal? (expr->string (lit "hi")) "String(hi)")
+  (check-equal? (expr->string (lit #t)) "true")
+  (check-pred Expr-ptr? print-col)
+  (check-true (cpointer? print-col))
+  (check-pred Expr-ptr? (expr-alias print-col "y"))
+  (check-false (equal? (col "x") (col "x")))
+  (define dropped (col "d"))
+  (expr-drop dropped)
+  (check-equal? (format "~a" dropped) "#<expr: dropped>")
+  (check-exn exn:fail? (lambda () (expr-alias dropped "e")))
+  (check-exn exn:fail? (lambda () (expr-drop dropped)))
+  (define drop-before (expr-drop-count))
+  (for ([_ (in-range 100)])
+    (void (expr-alias (col "g") "h")))
+  (for ([_ (in-range 10)])
+    (collect-garbage)
+    (sleep 0.01))
+  (check-true (>= (- (expr-drop-count) drop-before) 200)))
