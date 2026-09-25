@@ -44,7 +44,9 @@ pub extern "C" fn expr_exclude(
         return ptr::null_mut();
     }
     let out = ee.map_expr(|x| match x {
-        Expr::Selector(s) => Expr::Selector(s.exclude_cols(names.clone())),
+        Expr::Selector(s) => {
+            Expr::Selector(s - by_name(names.clone(), false, true))
+        }
         other => other,
     });
     Box::into_raw(Box::new(out))
