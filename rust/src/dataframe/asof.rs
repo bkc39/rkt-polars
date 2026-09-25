@@ -97,15 +97,16 @@ pub extern "C" fn dataframe_join_asof(
     let left = unsafe { &*left_ptr };
     let right = unsafe { &*right_ptr };
     let left_key = match left.column(left_on_str) {
-        Ok(s) => s,
+        Ok(s) => s.as_materialized_series(),
         Err(_) => return ptr::null_mut(),
     };
     let right_key = match right.column(right_on_str) {
-        Ok(s) => s,
+        Ok(s) => s.as_materialized_series(),
         Err(_) => return ptr::null_mut(),
     };
     match left._join_asof(
-        right, left_key, right_key, strategy, None, None, None, true,
+        right, left_key, right_key, strategy, None, None, None, true, true,
+        true,
     ) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
@@ -161,11 +162,11 @@ pub extern "C" fn dataframe_join_asof_options(
     let left = unsafe { &*left_ptr };
     let right = unsafe { &*right_ptr };
     let left_key = match left.column(left_on_str) {
-        Ok(s) => s,
+        Ok(s) => s.as_materialized_series(),
         Err(_) => return ptr::null_mut(),
     };
     let right_key = match right.column(right_on_str) {
-        Ok(s) => s,
+        Ok(s) => s.as_materialized_series(),
         Err(_) => return ptr::null_mut(),
     };
     let tolerance = match compat_asof_tolerance(
@@ -180,6 +181,7 @@ pub extern "C" fn dataframe_join_asof_options(
     let result = if left_by.is_empty() && right_by.is_empty() {
         left._join_asof(
             right, left_key, right_key, strategy, tolerance, None, None, true,
+            true, true,
         )
     } else {
         left.join_asof_by(
@@ -190,6 +192,8 @@ pub extern "C" fn dataframe_join_asof_options(
             right_by.iter(),
             strategy,
             tolerance,
+            true,
+            true,
         )
     };
     match result {

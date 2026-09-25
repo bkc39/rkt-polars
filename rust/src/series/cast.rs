@@ -52,12 +52,12 @@ pub extern "C" fn series_quantile(
         return CompatOptF64::NONE;
     }
     let interpol = match interpol {
-        0 => QuantileInterpolOptions::Nearest,
-        1 => QuantileInterpolOptions::Linear,
-        2 => QuantileInterpolOptions::Lower,
-        3 => QuantileInterpolOptions::Higher,
-        4 => QuantileInterpolOptions::Midpoint,
-        _ => QuantileInterpolOptions::Nearest,
+        0 => QuantileMethod::Nearest,
+        1 => QuantileMethod::Linear,
+        2 => QuantileMethod::Lower,
+        3 => QuantileMethod::Higher,
+        4 => QuantileMethod::Midpoint,
+        _ => QuantileMethod::Nearest,
     };
     let s = unsafe { &*s_ptr };
     let casted = match s.cast(&DataType::Float64) {

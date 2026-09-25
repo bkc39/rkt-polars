@@ -223,6 +223,7 @@ pub extern "C" fn series_ref_date(
     let s = unsafe { &*s_ptr };
     match s.date() {
         Ok(ca) => ca
+            .physical()
             .get(index)
             .and_then(date_days_to_ymd)
             .map(CompatOptYMD::some)
@@ -241,7 +242,7 @@ pub extern "C" fn series_ref_duration(
     }
     let s = unsafe { &*s_ptr };
     match s.duration() {
-        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
+        Ok(ca) => CompatOptI64::from_option(ca.physical().get(index)),
         Err(_) => CompatOptI64::NONE,
     }
 }
@@ -256,7 +257,7 @@ pub extern "C" fn series_ref_time(
     }
     let s = unsafe { &*s_ptr };
     match s.time() {
-        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
+        Ok(ca) => CompatOptI64::from_option(ca.physical().get(index)),
         Err(_) => CompatOptI64::NONE,
     }
 }
@@ -302,6 +303,7 @@ pub extern "C" fn series_ref_ymdhms(
     let s = unsafe { &*s_ptr };
     match s.datetime() {
         Ok(ca) => ca
+            .physical()
             .get(index)
             .and_then(|value| datetime_value_to_ymdhms(value, &ca.time_unit()))
             .map(CompatOptYMDHMS::some)

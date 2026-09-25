@@ -37,7 +37,7 @@ fn meta_output_name_of_literal_is_literal() {
 
 #[test]
 fn meta_output_name_of_wildcard_returns_null() {
-    let w = Box::into_raw(Box::new(all()));
+    let w = Box::into_raw(Box::new(all().as_expr()));
     assert!(expr_meta_output_name(w).is_null());
     expr_drop(w);
 }

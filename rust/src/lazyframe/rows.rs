@@ -17,7 +17,7 @@ pub extern "C" fn lazyframe_drop_nulls(lf: *mut LazyFrame) -> *mut LazyFrame {
         return ptr::null_mut();
     }
     let lf_ref = unsafe { (*lf).clone() };
-    let subset: Option<Vec<Expr>> = None;
+    let subset: Option<Selector> = None;
     Box::into_raw(Box::new(lf_ref.drop_nulls(subset)))
 }
 

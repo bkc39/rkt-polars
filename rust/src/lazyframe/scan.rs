@@ -13,7 +13,7 @@ fn scan(
 
 #[no_mangle]
 pub extern "C" fn lazyframe_scan_csv(path: *const c_char) -> *mut LazyFrame {
-    scan(path, |path| LazyCsvReader::new(path).finish())
+    scan(path, |path| LazyCsvReader::new(path.into()).finish())
 }
 
 #[no_mangle]
@@ -26,7 +26,7 @@ pub extern "C" fn lazyframe_scan_csv_options(
     n_rows: usize,
 ) -> *mut LazyFrame {
     scan(path, |path| {
-        let reader = LazyCsvReader::new(path)
+        let reader = LazyCsvReader::new(path.into())
             .with_has_header(has_header != 0)
             .with_separator(separator)
             .with_skip_rows(skip_rows);
@@ -44,7 +44,7 @@ pub extern "C" fn lazyframe_scan_parquet(
     path: *const c_char,
 ) -> *mut LazyFrame {
     scan(path, |path| {
-        LazyFrame::scan_parquet(path, Default::default())
+        LazyFrame::scan_parquet(path.into(), Default::default())
     })
 }
 
@@ -59,6 +59,6 @@ pub extern "C" fn lazyframe_scan_parquet_options(
         if has_n_rows != 0 {
             args.n_rows = Some(n_rows);
         }
-        LazyFrame::scan_parquet(path, args)
+        LazyFrame::scan_parquet(path.into(), args)
     })
 }
