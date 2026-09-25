@@ -46,7 +46,7 @@
   (check-equal? (column-names (select people (all))) (column-names people))
   (check-equal? (format "~a" (select people (all))) (format "~a" people))
   (check-pred lazyframe? (select (lazy people) (all)))
-  (check-equal? (format "~a" (collect (select (lazy people) (all))))
+  (check-equal? (format "~a" (~> people lazy (select (all)) collect))
                 (format "~a" people))
 
   (check-equal? (column-names (select ops-df (exclude (all) "group")))
@@ -72,7 +72,7 @@
   (check-equal? (column-names (select people (col 'str))) '("name"))
   (check-equal? (column-names (select people/date (col 'date))) '("birthdate"))
   (check-equal? (column-names (select people (col '(datetime milliseconds)))) '("birthdate"))
-  (check-equal? (column-names (select people (col (dtype (ref people "birthdate")))))
+  (check-equal? (column-names (select people (col (~> people (ref "birthdate") dtype))))
                 '("birthdate"))
   (check-equal? (column-names (select people (col 'datetime))) '())
   (check-equal? (shape (select ints-only (col 'float64))) '(0 0))
@@ -89,6 +89,8 @@
   (check-equal? (column-names (select iris (col #px"^[sp]e.*_length$")))
                 '("sepal_length" "petal_length"))
   (check-equal? (column-names (select iris (col #rx"zzz"))) '())
+  (check-equal? (column-names (select iris (col "^sepal_.*$")))
+                '("sepal_length" "sepal_width"))
 
   (let ([out (select iris (p* (col #rx"^sepal_") 2))])
     (check-equal? (column-names out) '("sepal_length" "sepal_width"))
@@ -96,7 +98,7 @@
   (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn exn:fail? (lambda () (select people (alias (p* (col 'float64) 2) "x"))))
+  (check-exn exn:fail? (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
   (check-exn #rx"look-around" (lambda () (select iris (col #px"(?=a)"))))
   (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
@@ -105,8 +107,8 @@
 
   (define odd-names
     '("d" "q1" "aa" "a" "a{2}" "w_x" "back\\slash" "br[ack]et" "amp&and" "tilde~x"
-      "Sepal" "٣" "été" "two words" "nb sp" "line\nbreak" "+-" "p]q"
-      ",./" "x-y"))
+      "Sepal" "\u0663" "\u00e9t\u00e9" "two words" "nb\u00A0sp" "line\nbreak" "+-" "p]q"
+      ",./" "x-y" "b\\.c" "e\\]f"))
   (define odd (dataframe (for/list ([name (in-list odd-names)]) (series '(0) #:name name))))
   (define (racket-matches rx)
     (for/list ([name (in-list odd-names)] #:when (regexp-match? rx name)) name))
@@ -114,9 +116,12 @@
                            #rx"[\\d]" #rx"[]a]" #rx"[&~]" #rx"[[:alpha:]]" #rx"[+-/]"
                            #rx"." #rx"^line.break$" #rx"(?i:sepal)" #rx"^q[0-9]$"
                            #rx"(?m:^break)" #rx"(?m:line.break)" #rx"(?s:line.break)"
+                           #rx"(?-s:line.break)" #rx"(?i-m:SEPAL)" #rx"[\\]]"
                            #px"\\d" #px"\\D" #px"\\w" #px"\\s" #px"\\S" #px"a{2}" #px"^a{,1}$"
                            #px"[[:digit:]]" #px"[\\d&]" #px"[^\\w]" #px"\\p{Ll}" #px"\\p{^Ll}"
-                           #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]"))])
+                           #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]" #px"\\P{^Lu}"
+                           #px"\\p{L&}" #px"c{1,}?" #px"[\\S]" #px"\\\\\\." #px"[\\]]"
+                           #px"[\\.-z]"))])
     (define matched (racket-matches rx))
     (check-equal? (column-names (select odd (col rx))) matched (format "col ~s" rx))
     (check-equal? (column-names (select odd (exclude (all) rx)))

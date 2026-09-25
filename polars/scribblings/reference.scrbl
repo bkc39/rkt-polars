@@ -46,23 +46,27 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
               @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
-  column or to several at once. Given a string it is the column of that
-  name (@tt{pl.col("name")}). Given a dtype --- @racket[dtype-spec?] is
-  any spelling @racket[series]' @racket[#:dtype] accepts, so
-  @racket['float64] and @racket['f64] alike --- it is every column of that dtype
-  (@tt{pl.col(pl.Float64)}); a bare @racket['datetime] means microseconds,
-  so match a column @racket[series] built from gregor datetimes with
-  @racket['(datetime milliseconds)] or with its @racket[dtype]. Given a
-  regexp it is every column whose name matches (@tt{pl.col("^sepal_.*$")}):
-  an unanchored search that keeps the regexp's Racket meaning, so
-  @racket[(col rx)] selects exactly the names @racket[(regexp-match? rx name)]
-  accepts, in @litchar{#rx} and @litchar{#px} syntax alike. Polars compiles
-  the pattern with Rust's regex crate, which has no lookaround or
-  backreferences; a regexp using them is rejected at @racket[collect]. A
-  multi-column @racket[col] expands inside any expression
-  to one output per matched column, in the frame's column order, each
-  keeping the matched column's name; a frame with no match yields no
-  columns.
+  column or to several at once, by the shape of @racket[spec]:
+
+  @itemlist[
+    @item{A string is the column of that name (@tt{pl.col("name")}).}
+    @item{A dtype is every column of that dtype (@tt{pl.col(pl.Float64)}).
+      @racket[dtype-spec?] is any spelling @racket[series]'
+      @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
+      alike. A bare @racket['datetime] means microseconds, so match a
+      column @racket[series] built from gregor datetimes with
+      @racket['(datetime milliseconds)] or with its @racket[dtype].}
+    @item{A regexp is every column whose name matches
+      (@tt{pl.col("^sepal_.*$")}), keeping the regexp's Racket meaning:
+      @racket[(col rx)] selects exactly the names
+      @racket[(regexp-match? rx name)] accepts, in @litchar{#rx} and
+      @litchar{#px} syntax alike. Polars compiles the pattern with Rust's
+      regex crate, which has no lookaround or backreferences; a regexp
+      using them is rejected at @racket[collect].}]
+
+  A multi-column @racket[col] expands inside any expression to one output
+  per matched column, in the frame's column order, each keeping the
+  matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
   exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
@@ -78,7 +82,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (select people (* (col 'float64) 1.1))
 (select people (col #rx"^he"))
 (select people (col #px"^\\w+t$"))
-(select people (alias (* (col "id") 10) "id10")
+(select people (~> (col "id") (* 10) (alias "id10"))
                (alias (lit 0) "zero"))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
