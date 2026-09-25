@@ -89,9 +89,11 @@
      (with-columns (~> (col "height") mean (over decade) (alias "decade_avg_height")))))
 
 ;; --- expression expansion ------------------------------------------------
-;; API gap: no dtype selector col(pl.Float64) and no name.suffix, so there is
-;; no expression that expands over "all float columns"; spell them out.
-(displayln
- (~> df
-     (select (~> (col "weight") (* 1.1) (alias "weight*1.1"))
-             (~> (col "height") (* 1.1) (alias "height*1.1")))))
+;; API gap: no name.suffix, so the expanded columns keep the matched names.
+(define expr (* (col 'float64) 1.1))
+(displayln (select df expr))
+
+(define df2
+  (dataframe (list (series '(1 2 3 4) #:name "ints")
+                   (series '("A" "B" "C" "D") #:name "letters"))))
+(displayln (select df2 expr))

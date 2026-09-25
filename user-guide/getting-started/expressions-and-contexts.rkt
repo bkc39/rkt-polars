@@ -73,12 +73,12 @@
 
 ;; --- more complex queries ------------------------------------------------
 ;; API gaps: no str.split / list.first (str-extract with a regex instead), no
-;; all().exclude (drop instead), no name.prefix (alias each column).
+;; name.prefix (alias each column).
 (displayln
  (~> df
      (with-columns decade
                    (str-extract "name" "^(\\S+)"))
-     (drop "birthdate")
+     (select (exclude (all) "birthdate"))
      (group-by "decade")
      (agg (col "name")
           (~> (col "weight") mean (round #:decimals 2) (alias "avg_weight"))

@@ -9,7 +9,8 @@
          polars/private/series)
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
-         numeric-dtypes numeric-dtype?)
+         numeric-dtypes numeric-dtype?
+         dtype-spec?)
 
 ;; Accept both the short constructor spellings (i32, f64, str, bool) and the
 ;; canonical symbols returned by series-dtype (int32, float64, string,
@@ -31,11 +32,20 @@
         'time 'time
         'datetime 'datetime))
 
+(define (dtype-spec? v)
+  (match v
+    [(? symbol?) (hash-has-key? dtype-aliases v)]
+    [(list* (or 'datetime 'duration)
+            (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
+            (or '() (list #f)))
+     #t]
+    [_ #f]))
+
 (define (normalize-dtype dt)
   (cond
-    [(and (symbol? dt) (hash-ref dtype-aliases dt #f)) => values]
-    [(and (pair? dt) (memq (car dt) '(datetime duration))) dt]
-    [else (error 'series "unsupported dtype ~v" dt)]))
+    [(not (dtype-spec? dt)) (error 'series "unsupported dtype ~v" dt)]
+    [(symbol? dt) (hash-ref dtype-aliases dt)]
+    [else dt]))
 
 (define (infer-dtype elements)
   (define vals

@@ -222,6 +222,10 @@
   (check-equal? (series-dtype (series '(#t #f))) 'boolean)
   (check-equal? (series-dtype (series (list (datetime 2024 1 1)))) '(datetime milliseconds #f))
   (check-equal? (series-dtype (series (vector 1 2 3) #:dtype 'f64)) 'float64)
+  (check-exn #rx"series: unsupported dtype '\\(datetime weeks\\)"
+             (lambda () (series '(1) #:dtype '(datetime weeks))))
+  (check-exn #rx"series: unsupported dtype '\\(datetime microseconds \"UTC\"\\)"
+             (lambda () (series '(1) #:dtype '(datetime microseconds "UTC"))))
   (check-equal? (series-name (series '(1 2 3) #:name "xs")) "xs")
   (check-equal? (series-dtype (series (list (expt 2 40)))) 'int64)
 

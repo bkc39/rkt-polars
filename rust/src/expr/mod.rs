@@ -12,6 +12,7 @@ mod meta;
 mod null_nan;
 mod predicates;
 mod selection;
+mod selectors;
 mod shift;
 mod string;
 
@@ -27,5 +28,6 @@ pub use self::meta::*;
 pub use self::null_nan::*;
 pub use self::predicates::*;
 pub use self::selection::*;
+pub use self::selectors::*;
 pub use self::shift::*;
 pub use self::string::*;

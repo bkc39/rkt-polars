@@ -65,13 +65,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `_LazyFrame-ptr` takes `#:wrap (allocator <type>-drop)`, which registers
   the release.
 - **A binding that can return NULL is declared `-> _X-ptr/null` with
-  `#:wrap (allocator <type>-drop)`.** `allocator` skips a `#f` result, so the
-  wrapper sees `#f` and raises. The non-null `_X-ptr` type itself raises a
-  useless `argument is not non-null` error on NULL, before any reason can be
-  reported. Never `cast` + `register-finalizer` by hand: that breaks the
-  pairing with the `deallocator`-wrapped `<type>-drop`, so an explicit drop
-  frees twice (#47). `require-series-result` and `require-dataframe-result`
-  are the remaining hand-written copies (#72).
+  `#:wrap (allocator <type>-drop)`** (`expr-exclude`, `expr-dtype-col`).
+  `allocator` skips a `#f` result, so the wrapper sees `#f` and raises. The
+  non-null `_X-ptr` type itself raises a useless `argument is not non-null`
+  error on NULL, before any reason can be reported. Never `cast` +
+  `register-finalizer` by hand: that breaks the pairing with the
+  `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
+  (#47). `require-series-result` and `require-dataframe-result` are the
+  remaining hand-written copies (#72).
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
@@ -110,6 +111,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
+- A regexp given to `col` / `exclude` keeps its Racket meaning:
+  `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
+  Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
+  the selection against `regexp-match?`. It never emits the crate's `(?i`,
+  whose Unicode folding differs from Racket's; it expands case-insensitive
+  literals and ranges itself. `\p{...}` classes follow each side's Unicode
+  tables, and Racket misjudges some classes above U+00FF (#85), so the
+  oracle's names stay out of both. Lookaround, backreferences, atomic groups
+  and conditionals, which the crate lacks, fail at `collect`.
 
 ## Documentation
 

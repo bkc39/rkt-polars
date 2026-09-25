@@ -6,9 +6,12 @@
          ffi/unsafe/alloc
          ffi/unsafe/define
          ffi/unsafe/define/conventions
+         (only-in racket/contract
+                  [-> ->/c] any/c contract-out non-empty-listof or/c)
          racket/runtime-path
-         (only-in polars/private/foreign _rsstring)
-         (only-in racket/contract/base contract-out [-> ->/c]))
+         polars/private/column-pattern
+         (only-in polars/private/foreign ->compat-dtype _CompatDType _rsstring)
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
@@ -17,7 +20,16 @@
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
-         lit col ->expr)
+         lit ->expr
+         dtype-spec?
+         (contract-out
+          [col (->/c (or/c string? regexp? dtype-spec?) Expr-ptr?)]
+          [expr-all (->/c Expr-ptr?)]
+          [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
+          [expr-exclude (->/c multi-column-expr?
+                              (non-empty-listof (or/c string? regexp?))
+                              Expr-ptr?)]
+          [multi-column-expr? (->/c any/c boolean?)]))
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
 
@@ -99,10 +111,75 @@
     [(string? v) (expr-lit-str v)]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
-(define (col name) (expr-col name))
+(define-compat expr-all
+  (_fun -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-multi-column/raw
+  (_fun _Expr-ptr -> _uint8)
+  #:c-id expr_multi_column)
+
+(define (multi-column-expr? v)
+  (and (Expr-ptr? v) (= 1 (expr-multi-column/raw v))))
+
+(define-compat expr-exclude/raw
+  (_fun _Expr-ptr
+        (names : (_list i _string))
+        (_size = (length names))
+        -> _Expr-ptr/null)
+  #:c-id expr_exclude
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-dtype-col/raw
+  (_fun _CompatDType -> _Expr-ptr/null)
+  #:c-id expr_dtype_col
+  #:wrap (allocator expr-drop))
+
+(define (expr-exclude e names)
+  (or (expr-exclude/raw e (map ->column-pattern names))
+      (error 'expr-exclude "operation failed")))
+
+(define (expr-dtype-col dtype)
+  (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
+      (error 'expr-dtype-col "operation failed")))
+
+(define (col spec)
+  (if (dtype-spec? spec)
+      (expr-dtype-col spec)
+      (expr-col (->column-pattern spec))))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
+
+(module+ test
+  (require rackunit (prefix-in contracted: (submod "..")))
+  (check-pred Expr-ptr? (expr-all))
+  (check-pred Expr-ptr? (expr-dtype-col 'float64))
+  (check-pred Expr-ptr? (expr-dtype-col 'f64))
+  (check-pred Expr-ptr? (expr-dtype-col '(duration nanoseconds)))
+  (check-pred Expr-ptr? (expr-exclude (expr-all) '("a")))
+  (check-pred Expr-ptr? (expr-exclude (expr-dtype-col 'int32) (list "a" #rx"^b")))
+  (check-pred Expr-ptr? (expr-exclude (expr-col "^a.*$") '("ab")))
+  (check-true (multi-column-expr? (expr-all)))
+  (check-true (multi-column-expr? (expr-dtype-col 'string)))
+  (check-true (multi-column-expr? (col #rx"x")))
+  (check-true (multi-column-expr? (expr-alias (expr-all) "y")))
+  (check-false (multi-column-expr? (expr-col "a")))
+  (check-false (multi-column-expr? (lit 1)))
+  (check-false (multi-column-expr? "a"))
+  (check-exn #rx"^expr-exclude: contract violation\n  expected: multi-column-expr\\?"
+             (lambda () (contracted:expr-exclude (expr-col "a") '("b"))))
+  (check-exn #rx"^expr-exclude: contract violation"
+             (lambda () (contracted:expr-exclude (expr-all) '())))
+  (check-exn #rx"^expr-dtype-col: contract violation"
+             (lambda () (contracted:expr-dtype-col 'list)))
+  (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
+             (lambda () (contracted:col 42)))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
+  (check-exn #rx"^col: contract violation"
+             (lambda () (contracted:col '(datetime microseconds "UTC")))))
 
 (module+ test
   (require rackunit)

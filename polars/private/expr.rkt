@@ -68,6 +68,7 @@
          expr-alias
          expr->string
          lit col ->expr ->key-expr
+         expr-all expr-exclude expr-dtype-col multi-column-expr? dtype-spec?
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
          expr-and expr-or expr-xor
