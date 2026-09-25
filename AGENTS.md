@@ -114,7 +114,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
-  the selection against `regexp-match?`. Lookaround and backreferences, which
+  the selection against `regexp-match?`. It never emits the crate's `(?i`,
+  whose Unicode folding differs from Racket's; it expands case-insensitive
+  literals and ranges itself. `\p{...}` classes follow each side's Unicode
+  tables. Lookaround, backreferences, atomic groups and conditionals, which
   the crate lacks, fail at `collect`.
 
 ## Documentation

@@ -98,7 +98,8 @@
   (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn exn:fail? (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
+  (check-exn #rx"the name 'x' is duplicate"
+             (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
   (check-exn #rx"look-around" (lambda () (select iris (col #px"(?=a)"))))
   (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
@@ -108,7 +109,10 @@
   (define odd-names
     '("d" "q1" "aa" "a" "a{2}" "w_x" "back\\slash" "br[ack]et" "amp&and" "tilde~x"
       "Sepal" "\u0663" "\u00e9t\u00e9" "two words" "nb\u00A0sp" "line\nbreak" "+-" "p]q"
-      ",./" "x-y" "b\\.c" "e\\]f"))
+      ",./" "x-y" "b\\.c" "e\\]f"
+      "T_\u212A" "\u017F" "\u03C2" "\u03C3" "\u03A3" "\u00DF" "\u1E9E" "\u0130" "\u0131"
+      "i" "I" "ABC" "\u02B0" "tab\there" "v\vt" "del\177" "bell\a"
+      "pa" "!" ":"))
   (define odd (dataframe (for/list ([name (in-list odd-names)]) (series '(0) #:name name))))
   (define (racket-matches rx)
     (for/list ([name (in-list odd-names)] #:when (regexp-match? rx name)) name))
@@ -121,7 +125,15 @@
                            #px"[[:digit:]]" #px"[\\d&]" #px"[^\\w]" #px"\\p{Ll}" #px"\\p{^Ll}"
                            #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]" #px"\\P{^Lu}"
                            #px"\\p{L&}" #px"c{1,}?" #px"[\\S]" #px"\\\\\\." #px"[\\]]"
-                           #px"[\\.-z]"))])
+                           #px"[\\.-z]"
+                           #rx"(?i:k)" #rx"(?i:s)" #rx"(?i:\u03C3)" #rx"(?i:\u00DF)"
+                           #rx"(?i:\u0130)" #rx"(?i:\u0131)" #rx"(?i:i)" #rx"(?i:[^k])"
+                           #rx"(?i:[a-z])" #rx"(?i:a(?-i:B))" #rx"(?i:ab)c" #px"(?i:\\w)"
+                           #px"(?i:\\W)" #px"(?i:[[:upper:]])" #px"(?i:\\p{Lu})"
+                           #px"(?i:[[:lower:]])" #px"[[:space:]]" #px"[[:print:]]"
+                           #px"[^[:print:]]" #px"[[:cntrl:]]" #px"[[:graph:]]" #px"[[:blank:]]"
+                           #px"[[:punct:][a]" #px"\\p{Cs}" #px"\\P{Cs}" #px"\\p{.}"
+                           #px"^a{}$" (regexp "x|\0?") (regexp "a\\")))])
     (define matched (racket-matches rx))
     (check-equal? (column-names (select odd (col rx))) matched (format "col ~s" rx))
     (check-equal? (column-names (select odd (exclude (all) rx)))

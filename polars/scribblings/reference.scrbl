@@ -49,7 +49,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   column or to several at once, by the shape of @racket[spec]:
 
   @itemlist[
-    @item{A string is the column of that name (@tt{pl.col("name")}).}
+    @item{A string is the column of that name (@tt{pl.col("name")}). A
+      string of the form @tt{^...$} is a Polars regex, in the syntax of
+      Rust's regex crate, as in Python.}
     @item{A dtype is every column of that dtype (@tt{pl.col(pl.Float64)}).
       @racket[dtype-spec?] is any spelling @racket[series]'
       @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
@@ -60,9 +62,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       (@tt{pl.col("^sepal_.*$")}), keeping the regexp's Racket meaning:
       @racket[(col rx)] selects exactly the names
       @racket[(regexp-match? rx name)] accepts, in @litchar{#rx} and
-      @litchar{#px} syntax alike. Polars compiles the pattern with Rust's
-      regex crate, which has no lookaround or backreferences; a regexp
-      using them is rejected at @racket[collect].}]
+      @litchar{#px} syntax alike. The one exception is a
+      @litchar{\p{...}} property class: Racket and Polars' regex crate
+      each use their own version of the Unicode tables. The crate has no
+      lookaround, backreferences, atomic groups or conditionals; a
+      regexp using them is rejected at @racket[collect].}]
 
   A multi-column @racket[col] expands inside any expression to one output
   per matched column, in the frame's column order, each keeping the
@@ -93,8 +97,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   every column that is not a group key. @racket[exclude] removes columns
   from a multi-column expression --- @racket[(all)], or a dtype or regexp
   @racket[col], or any expression built over one --- by name or by regexp
-  (@tt{.exclude}). A name the frame does not have is ignored, and chained
-  @racket[exclude]s accumulate. @racket[multi-column-expr?] recognises the
+  (@tt{.exclude}), each read as @racket[col] reads it, so a name of the
+  form @tt{^...$} is a Polars regex. A name the frame does not have is
+  ignored, and chained @racket[exclude]s accumulate. @racket[multi-column-expr?] recognises the
   expressions @racket[exclude] accepts: those that expand to one output
   per matched column. To drop columns from a frame eagerly, @racket[drop]
   is the direct spelling.

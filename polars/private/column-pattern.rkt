@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/bool
+         racket/list
          racket/match
          racket/string)
 
@@ -11,79 +12,147 @@
       (string-append "^(?s).*(?:" (regexp->rust v) ").*$")
       v))
 
+(define posix-classes
+  (hash "alpha" "a-zA-Z" "upper" "A-Z" "lower" "a-z" "digit" "0-9" "xdigit" "0-9a-fA-F"
+        "alnum" "a-zA-Z0-9" "word" "a-zA-Z0-9_" "blank" " \\t" "space" " \\t\\n\\f\\r"
+        "graph" "!-~" "print" "\\t -~" "cntrl" "\\x00-\\x1F" "ascii" "\\x00-\\x7F"))
+(define posix-class (string-append "\\[:(?:" (string-join (hash-keys posix-classes) "|") "):\\]"))
+
 (define rx-token #px"\\\\.|\\[\\^?\\]?[^]]*\\]|\\(\\?[-ims]+:|.")
 (define px-token
   (pregexp (string-append "\\\\[pP]\\{[^}]*\\}|\\\\."
-                          "|\\[\\^?\\]?(?:\\[:[a-z]+:\\]|\\\\.|[^]])*\\]"
+                          "|\\[\\^?\\]?(?:" posix-class "|\\\\.|[^]])*\\]"
                           "|\\(\\?[-ims]+:|\\{[0-9]*,?[0-9]*\\}|.")))
-(define px-class-item #px"\\[:[a-z]+:\\]|\\\\.|.")
+(define px-class-item (pregexp (string-append posix-class "|\\\\.|.")))
 
 (define ascii-classes (hash "d" "0-9" "w" "a-zA-Z0-9_" "s" " \\t\\n\\f\\r"))
 (define outside-specials "\\.+*?()|[]{}^$#&-~")
 (define class-specials "\\[]^-&~")
 
 (define (escape c specials)
-  (if (string-contains? specials c) (string-append "\\" c) c))
+  (cond [(string=? c (string #\nul)) "\\x00"]
+        [(string-contains? specials c) (string-append "\\" c)]
+        [else c]))
+
+(define (case-variants c)
+  (define ch (string-ref c 0))
+  (remove-duplicates
+   (map string (list ch (char-upcase ch) (char-downcase ch) (char-foldcase ch)))))
 
 (define (regexp->rust rx)
   (define px? (pregexp? rx))
-  (string-append*
-   (for/list ([token (in-list (regexp-match* (if px? px-token rx-token) (object-name rx)))])
-     (match token
-       [(regexp #px"^\\\\([pP])\\{(\\^?)([^}]*)\\}$" (list _ p caret name)) (property p caret name)]
-       [(regexp #rx"^\\\\(.)$" (list _ c)) (translate-escape c px? #f)]
-       [(regexp #rx"^\\[") (char-class token px?)]
-       [(regexp #rx"^\\(\\?([-ims]+):$" (list _ flags)) (mode-group flags)]
-       [(regexp #rx"^{,(.*)$" (list _ rest)) (string-append "{0," rest)]
-       [(or "{" "}" "]") (string-append "\\" token)]
-       [_ token]))))
+  (let loop ([tokens (regexp-match* (if px? px-token rx-token) (object-name rx))]
+             [folds '(#f)]
+             [out '()])
+    (match tokens
+      ['() (string-append* (reverse out))]
+      [(cons (regexp #rx"^\\(\\?([-ims]+):$" (list _ flags)) rest)
+       (define-values (text fold?) (mode-group flags (car folds)))
+       (loop rest (cons fold? folds) (cons text out))]
+      [(cons "(" rest) (loop rest (cons (car folds) folds) (cons "(" out))]
+      [(cons ")" rest) (loop rest (cdr folds) (cons ")" out))]
+      [(cons token rest) (loop rest folds (cons (translate-token token px? (car folds)) out))])))
 
-(define (translate-escape c px? in-class?)
+(define (translate-token token px? fold?)
+  (match token
+    [(regexp #px"^\\\\([pP])\\{(\\^?)([^}]*)\\}$" (list _ p caret name)) (property p caret name)]
+    [(regexp #rx"^\\\\(.)$" (list _ c)) (translate-escape c px? fold?)]
+    ["\\" "\\x00"]
+    [(regexp #rx"^\\[") (char-class token px? fold?)]
+    ["{}" "{0}"]
+    [(regexp #rx"^{,(.*)$" (list _ rest)) (string-append "{0," rest)]
+    [(regexp #rx"^{.") token]
+    [(or "." "^" "$" "|" "*" "+" "?") token]
+    [_ (literal token fold?)]))
+
+(define (literal c fold?)
+  (match (if fold? (case-variants c) (list c))
+    [(list only) (escape only outside-specials)]
+    [variants (string-append "[" (class-chars variants) "]")]))
+
+(define (class-chars chars)
+  (string-append* (for/list ([c (in-list chars)]) (escape c class-specials))))
+
+(define (translate-escape c px? fold?)
   (match c
-    [_ #:when (not px?) (if (regexp-match? #px"^(?:\\p{L}|\\p{N})$" c) c (escape c outside-specials))]
-    [(or "d" "w" "s")
-     (define cls (hash-ref ascii-classes c))
-     (if in-class? cls (string-append "[" cls "]"))]
+    [_ #:when (not px?) (literal c fold?)]
+    [(or "d" "w" "s") (string-append "[" (hash-ref ascii-classes c) "]")]
     [(or "D" "W" "S") (string-append "[^" (hash-ref ascii-classes (string-downcase c)) "]")]
     [(or "b" "B") (string-append "(?-u:\\" c ")")]
     [(regexp #rx"^[0-9]$") (string-append "\\" c)]
-    [_ (escape c (if in-class? class-specials outside-specials))]))
+    [_ (literal c fold?)]))
 
 (define (property p caret name)
-  (string-append (if (xor (string=? p "P") (string=? caret "^")) "\\P{" "\\p{")
-                 (case name [("L&") "LC"] [(".") "Any"] [else name])
-                 "}"))
+  (define negated? (xor (string=? p "P") (string=? caret "^")))
+  (match name
+    ["L&" (string-append (if negated? "[^" "[") "\\p{Ll}\\p{Lu}\\p{Lt}\\p{Lm}]")]
+    [(or "Cs" ".") (if negated? "(?s:.)" "[a&&b]")]
+    [_ (string-append (if negated? "\\P{" "\\p{") name "}")]))
 
-(define (char-class token px?)
+(define (char-class token px? fold?)
   (match-define (list _ negated body) (regexp-match #rx"^\\[(\\^?)(.*)\\]$" token))
-  (define items (if px? (regexp-match* px-class-item body) (regexp-match* #rx"." body)))
-  (string-append "[" negated (string-append* (class-items items px?)) "]"))
+  (define items (regexp-match* (if px? px-class-item #rx".") body))
+  (string-append "[" negated (string-append* (class-items items px? fold?)) "]"))
 
-(define (class-items items px?)
-  (define (single? item)
-    (or (= (string-length item) 1)
-        (and px? (regexp-match? #px"^\\\\[^[:alnum:]]$" item))))
+(define (class-items items px? fold?)
+  (define (single item)
+    (match item
+      [(regexp #rx"^.$") item]
+      [(regexp #px"^\\\\([^[:alnum:]])$" (list _ c)) #:when px? c]
+      [_ #f]))
   (match items
     ['() '()]
-    [(list* lo "-" hi rest)
-     #:when (and (single? lo) (single? hi))
-     (list* (class-item lo px?) "-" (class-item hi px?) (class-items rest px?))]
-    [(cons item rest) (cons (class-item item px?) (class-items rest px?))]))
+    [(list* (app single (? string? lo)) "-" (app single (? string? hi)) rest)
+     (cons (class-range lo hi fold?) (class-items rest px? fold?))]
+    [(cons item rest) (cons (class-item item px? fold?) (class-items rest px? fold?))]))
 
-(define (class-item item px?)
+(define (class-item item px? fold?)
   (match item
-    [(regexp #rx"^\\[:") item]
-    [(regexp #rx"^\\\\(.)$" (list _ c)) #:when px? (translate-escape c #t #t)]
-    [_ (escape item class-specials)]))
+    [(regexp #rx"^\\[:([a-z]+):\\]$" (list _ name)) (hash-ref posix-classes name)]
+    [(regexp #rx"^\\\\(.)$" (list _ c))
+     #:when px?
+     (match c
+       [(or "d" "w" "s") (hash-ref ascii-classes c)]
+       [(or "D" "W" "S") (string-append "[^" (hash-ref ascii-classes (string-downcase c)) "]")]
+       [_ (class-chars (if fold? (case-variants c) (list c)))])]
+    [_ (class-chars (if fold? (case-variants item) (list item)))]))
 
-(define (mode-group flags)
+(define (class-range lo hi fold?)
+  (define lo-i (char->integer (string-ref lo 0)))
+  (define hi-i (char->integer (string-ref hi 0)))
+  (define folded
+    (if fold?
+        (sort (remove-duplicates
+               (for*/list ([i (in-range lo-i (add1 hi-i))]
+                           #:unless (<= #xD800 i #xDFFF)
+                           [v (in-list (case-variants (string (integer->char i))))]
+                           [j (in-value (char->integer (string-ref v 0)))]
+                           #:unless (<= lo-i j hi-i))
+                 j))
+              <)
+        '()))
+  (string-append (escape lo class-specials) "-" (escape hi class-specials)
+                 (string-append* (map run->class (runs folded)))))
+
+(define (runs codes)
+  (match codes
+    ['() '()]
+    [(cons code rest)
+     (match (runs rest)
+       [(cons (cons (== (add1 code)) hi) more) (cons (cons code hi) more)]
+       [later (cons (cons code code) later)])]))
+
+(define (run->class run)
+  (match-define (cons lo hi) run)
+  (define (ch i) (escape (string (integer->char i)) class-specials))
+  (if (= lo hi) (ch lo) (string-append (ch lo) "-" (ch hi))))
+
+(define (mode-group flags fold?)
   (define-values (fold multi)
-    (for/fold ([fold #f] [multi #f]) ([flag (in-list (regexp-match* #rx"-?[ims]" flags))])
+    (for/fold ([fold fold?] [multi #f]) ([flag (in-list (regexp-match* #rx"-?[ims]" flags))])
       (match flag
-        ["i" (values 'on multi)]
-        ["-i" (values 'off multi)]
+        ["i" (values #t multi)]
+        ["-i" (values #f multi)]
         [(or "m" "-s") (values fold 'on)]
         [(or "s" "-m") (values fold 'off)])))
-  (define on (string-append (if (eq? fold 'on) "i" "") (case multi [(on) "m"] [(off) "s"] [else ""])))
-  (define off (string-append (if (eq? fold 'off) "i" "") (case multi [(on) "s"] [(off) "m"] [else ""])))
-  (string-append "(?" on (if (string=? off "") "" (string-append "-" off)) ":"))
+  (values (case multi [(on) "(?m-s:"] [(off) "(?s-m:"] [else "(?:"]) fold))
