@@ -117,26 +117,28 @@
   (define odd (dataframe (for/list ([name (in-list odd-names)]) (series '(0) #:name name))))
   (define (racket-matches rx)
     (for/list ([name (in-list odd-names)] #:when (regexp-match? rx name)) name))
-  (for ([rx (in-list (list #rx"\\d" #rx"\\w" #rx"a{2}" #rx"(a)\\1" #rx"\\." #rx"p]"
-                           #rx"[\\d]" #rx"[]a]" #rx"[&~]" #rx"[[:alpha:]]" #rx"[+-/]"
-                           #rx"." #rx"^line.break$" #rx"(?i:sepal)" #rx"^q[0-9]$"
-                           #rx"(?m:^break)" #rx"(?m:line.break)" #rx"(?s:line.break)"
-                           #rx"(?-s:line.break)" #rx"(?i-m:SEPAL)" #rx"[\\]]"
-                           #px"\\d" #px"\\D" #px"\\w" #px"\\s" #px"\\S" #px"a{2}" #px"^a{,1}$"
-                           #px"[[:digit:]]" #px"[\\d&]" #px"[^\\w]" #px"\\p{Ll}" #px"\\p{^Ll}"
-                           #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]" #px"\\P{^Lu}"
-                           #px"\\p{L&}" #px"c{1,}?" #px"[\\S]" #px"\\\\\\." #px"[\\]]"
-                           #px"[\\.-z]"
-                           #rx"(?i:k)" #rx"(?i:s)" #rx"(?i:\u03C3)" #rx"(?i:\u00DF)"
-                           #rx"(?i:\u0130)" #rx"(?i:\u0131)" #rx"(?i:i)" #rx"(?i:[^k])"
-                           #rx"(?i:[a-z])" #rx"(?i:a(?-i:B))" #rx"(?i:ab)c" #px"(?i:\\w)"
-                           #px"(?i:\\W)" #px"(?i:[[:upper:]])" #px"(?i:\\p{Lu})"
-                           #px"(?i:[[:lower:]])" #px"[[:space:]]" #px"[[:print:]]"
-                           #px"[^[:print:]]" #px"[[:cntrl:]]" #px"[[:graph:]]" #px"[[:blank:]]"
-                           #px"[[:punct:][a]" #px"\\p{Cs}" #px"\\P{Cs}" #px"\\p{.}"
-                           #px"^a{}$" (regexp "x|\0?") (regexp "a\\")
-                           #rx"(?i:\\k)" #px"(?i:\\\u00E9)" #rx"(?i:\\a\\b)"
-                           #px"\\p{C}" #px"\\P{C}" #px"\\p{^C}"))])
+  (define odd-patterns
+    (list #rx"\\d" #rx"\\w" #rx"a{2}" #rx"(a)\\1" #rx"\\." #rx"p]"
+          #rx"[\\d]" #rx"[]a]" #rx"[&~]" #rx"[[:alpha:]]" #rx"[+-/]"
+          #rx"." #rx"^line.break$" #rx"(?i:sepal)" #rx"^q[0-9]$"
+          #rx"(?m:^break)" #rx"(?m:line.break)" #rx"(?s:line.break)"
+          #rx"(?-s:line.break)" #rx"(?i-m:SEPAL)" #rx"[\\]]"
+          #px"\\d" #px"\\D" #px"\\w" #px"\\s" #px"\\S" #px"a{2}" #px"^a{,1}$"
+          #px"[[:digit:]]" #px"[\\d&]" #px"[^\\w]" #px"\\p{Ll}" #px"\\p{^Ll}"
+          #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]" #px"\\P{^Lu}"
+          #px"\\p{L&}" #px"c{1,}?" #px"[\\S]" #px"\\\\\\." #px"[\\]]"
+          #px"[\\.-z]"
+          #rx"(?i:k)" #rx"(?i:s)" #rx"(?i:\u03C3)" #rx"(?i:\u00DF)"
+          #rx"(?i:\u0130)" #rx"(?i:\u0131)" #rx"(?i:i)" #rx"(?i:[^k])"
+          #rx"(?i:[a-z])" #rx"(?i:a(?-i:B))" #rx"(?i:ab)c" #px"(?i:\\w)"
+          #px"(?i:\\W)" #px"(?i:[[:upper:]])" #px"(?i:\\p{Lu})"
+          #px"(?i:[[:lower:]])" #px"[[:space:]]" #px"[[:print:]]"
+          #px"[^[:print:]]" #px"[[:cntrl:]]" #px"[[:graph:]]" #px"[[:blank:]]"
+          #px"[[:punct:][a]" #px"\\p{Cs}" #px"\\P{Cs}" #px"\\p{.}"
+          #px"^a{}$" (regexp "x|\0?") (regexp "a\\")
+          #rx"(?i:\\k)" #px"(?i:\\\u00E9)" #rx"(?i:\\a\\b)"
+          #px"\\p{C}" #px"\\P{C}" #px"\\p{^C}"))
+  (for ([rx (in-list odd-patterns)])
     (define matched (racket-matches rx))
     (check-equal? (column-names (select odd (col rx))) matched (format "col ~s" rx))
     (check-equal? (column-names (select odd (exclude (all) rx)))
