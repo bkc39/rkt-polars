@@ -14,8 +14,7 @@ modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
 docs.racket-lang.org/polars. The package build server rebuilds it from
-`master` on its own cycle, roughly daily, not on merge: a merge can take up
-to a day to appear.
+`master` on its own cycle, roughly daily, not on each merge.
 
 ## The three layers
 
@@ -93,12 +92,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/native-libs/candidates/` refreshed before it merges.** The catalog
   installs those committed binaries (it has no Rust toolchain) and
   `define-compat` resolves every symbol at module load, so a stale candidate
-  breaks `raco setup` on pkgs.racket-lang.org; any other Rust change ships
-  only once they are refreshed. CI's `Committed candidate` jobs install from
-  the committed binaries and are red until then. Once the PR's
-  `Build libcompat` jobs are green, `scripts/refresh-candidates.sh <PR>` on
-  the branch downloads both artifacts from that run, checks them, stages them
-  and prints the commit message. See `polars/native-libs/BUILDING.md`.
+  breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
+  jobs go red on it. Refresh with `scripts/refresh-candidates.sh <PR>` on the
+  branch; any other Rust change also reaches catalog users only through a
+  refresh. See `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 

@@ -29,12 +29,13 @@ Any other Rust change reaches catalog users only once they are refreshed.
   binaries (`scripts/test-local.sh`, which first instantiates every module
   under `polars/private` with `scripts/check-bindings.rkt`). The Linux job also
   checks both committed files with `scripts/verify-candidates.py`. It is red on
-  a PR that changes an export without refreshing the candidates, and its error
-  says what to run.
+  a PR that adds an export, or whose tests need its new Rust behaviour, without
+  refreshing the candidates, and its error says what to run. It cannot see a
+  Rust change that no test exercises.
 
 ## Refreshing the candidates from CI
 
-Once the PR's Build libcompat jobs are green, on a checkout of the PR branch:
+On a checkout of the PR branch:
 
 ```sh
 scripts/refresh-candidates.sh <PR>            # or: --run <run-id>
@@ -48,9 +49,8 @@ The script re-runs itself inside `nix develop`, then:
 1. takes the push-event CI run for the PR's head commit (a `pull_request` run
    builds the merge with `master`, not the head) and refuses unless that
    commit's `rust/` is the checkout's;
-2. waits for both artifacts and downloads them to
-   `~/rkt-polars-candidates/<run-id>/` (`--dir` to change; the snap `gh`
-   cannot write under a hidden directory such as `~/.claude`);
+2. waits for the run's Build libcompat jobs and downloads both artifacts to
+   `~/rkt-polars-candidates/<run-id>/` (`--dir` to change);
 3. stops if they already match the committed files: builds of the same Rust
    source and toolchain are byte-identical;
 4. checks them with `scripts/verify-candidates.py` (an x86-64 ELF needing
@@ -60,8 +60,6 @@ The script re-runs itself inside `nix develop`, then:
    place of the nix-built library);
 5. copies them into `candidates/` and writes the commit message, which lists
    the exports added and removed.
-
-After the push, CI's Committed candidate jobs install and test the new files.
 
 ## Building by hand
 

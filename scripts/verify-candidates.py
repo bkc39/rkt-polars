@@ -10,6 +10,7 @@ first bullet lists the exports added and removed.  Exits 1 on a failure.
 The binaries are parsed directly, so no binutils or LLVM tools are needed.
 """
 import argparse
+import pathlib
 import re
 import struct
 import sys
@@ -30,7 +31,7 @@ def cstr(data, offset):
 
 
 def elf(path):
-    data = open(path, "rb").read()
+    data = pathlib.Path(path).read_bytes()
     if data[:4] != b"\x7fELF" or data[4:6] != b"\x02\x01":
         raise ValueError(f"{path}: not a 64-bit little-endian ELF")
     machine = struct.unpack_from("<H", data, 18)[0]
@@ -62,7 +63,7 @@ def elf(path):
 
 
 def macho(path):
-    data = open(path, "rb").read()
+    data = pathlib.Path(path).read_bytes()
     magic, cputype, _, _, ncmds, _, _, _ = struct.unpack_from("<IiiIIIII", data, 0)
     if magic != 0xFEEDFACF:
         raise ValueError(f"{path}: not a thin 64-bit Mach-O")
@@ -100,7 +101,10 @@ def main():
     parser.add_argument("--against", metavar="OLD_LINUX_SO")
     args = parser.parse_args()
 
-    linux, darwin = elf(args.linux), macho(args.darwin)
+    try:
+        linux, darwin = elf(args.linux), macho(args.darwin)
+    except ValueError as e:
+        sys.exit(f"verify-candidates: {e}")
     errors = []
     if linux["machine"] != EM_X86_64:
         errors.append(f"linux: e_machine {linux['machine']}, not x86-64")
@@ -125,11 +129,15 @@ def main():
     exports = f"Exports: {len(linux['exports'])} on both platforms"
     if args.against:
         before = elf(args.against)["exports"]
-        added, removed = linux["exports"] - before, before - linux["exports"]
-        changes = [f"added {listing(added)}" if added else "",
-                   f"removed {listing(removed)}" if removed else ""]
-        exports += (f" ({len(before)} before): " + "; ".join(c for c in changes if c)
-                    if added or removed else ", unchanged")
+        changes = []
+        if added := linux["exports"] - before:
+            changes.append(f"added {listing(added)}")
+        if removed := before - linux["exports"]:
+            changes.append(f"removed {listing(removed)}")
+        if changes:
+            exports += f" ({len(before)} before): " + "; ".join(changes)
+        else:
+            exports += ", unchanged"
     print(bullet(exports + "."))
     print(bullet(f"linux: x86-64 ELF, glibc floor GLIBC_{floor or 'none'} (<= 2.17)."))
     print(bullet(f"darwin: arm64 Mach-O, minos {darwin['minos'] or '?'}, "

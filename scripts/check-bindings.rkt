@@ -1,13 +1,9 @@
 #lang racket/base
 
-;; Instantiates every module under the installed polars collection's private/
-;; against the libcompat staged in its native-libs/.  define-compat resolves
-;; each C symbol at instantiation, so this fails on any symbol the library
-;; does not export, including symbols bound through macros.
-
 (require (only-in file/sha1 bytes->hex-string)
          (only-in racket/list filter-map remove-duplicates)
-         (only-in racket/path find-relative-path path-only)
+         (only-in racket/match match)
+         (only-in racket/path find-relative-path path-has-extension? path-only)
          (only-in threading ~>))
 
 (struct failure (module message symbol))
@@ -16,19 +12,20 @@
 
 (define lib
   (build-path polars-dir "native-libs"
-              (bytes->path (bytes-append #"libcompat" (system-type 'so-suffix)))))
+              (path-add-extension "libcompat" (system-type 'so-suffix))))
 
 (define modules
   (sort (for/list ([f (in-directory (build-path polars-dir "private"))]
-                   #:when (regexp-match? #rx"[.]rkt$" f))
+                   #:when (path-has-extension? f #".rkt"))
           f)
         path<?))
 
 (define (missing-symbol message)
-  (define m
-    (regexp-match #rx"could not find export from foreign library\n  name: ([^\n]+)"
-                  message))
-  (and m (cadr m)))
+  (match message
+    [(regexp #rx"could not find export from foreign library\n  name: ([^\n]+)"
+             (list _ name))
+     name]
+    [_ #f]))
 
 ;; One namespace per module: once an instantiation fails, a module requiring
 ;; the failed one reports an uninitialized variable instead of the cause.
@@ -41,7 +38,7 @@
       #f)))
 
 (define (relative path)
-  (find-relative-path (simplify-path (build-path polars-dir 'up)) path))
+  (~> (build-path polars-dir 'up) simplify-path (find-relative-path path)))
 
 (module+ main
   (printf "libcompat: ~a (sha256 ~a)\n"

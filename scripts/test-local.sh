@@ -32,7 +32,8 @@ echo ">> instantiating every module against the staged libcompat"
 racket "$ROOT/scripts/check-bindings.rkt"
 
 echo ">> building docs + checking declared deps (as the package server does)"
-raco setup --check-pkg-deps --pkgs polars
+# --no-docs above skipped threading-doc too; the manual's `~>` links need it.
+raco setup --check-pkg-deps --pkgs polars threading-doc
 
 echo ">> running tests"
 raco test -x -c polars

@@ -145,9 +145,8 @@ jobs:
       - name: Install from candidate and test
         run: scripts/test-local.sh
 
-  # The catalog installs the binaries committed under
-  # polars/native-libs/candidates/, not this run's build.  Install from those,
-  # so a PR that changes the Rust side without refreshing them is red.
+  # The catalog install again, from the committed candidates instead of this
+  # run's build: that is what the catalog ships (polars/native-libs/BUILDING.md).
   committed:
     name: Committed candidate (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
@@ -189,13 +188,10 @@ jobs:
           RUN: ${{ github.run_id }}
         run: |
           if [ -n "$PR" ]; then arg="$PR"; else arg="--run $RUN"; fi
-          echo "::error title=Committed libcompat candidates::This job installs" \
-            "the binaries committed under polars/native-libs/candidates/, as" \
-            "the package catalog does. If the Catalog install jobs, which use" \
-            "this run's fresh build, pass, those binaries are stale: once the" \
-            "Build libcompat jobs finish, run scripts/refresh-candidates.sh" \
-            "$arg on this branch, then commit and push both candidates" \
-            "(polars/native-libs/BUILDING.md)."
+          echo "::error title=Committed libcompat candidates::If the Catalog" \
+            "install jobs pass, the committed candidates are stale: run" \
+            "scripts/refresh-candidates.sh $arg on this branch, then commit" \
+            "and push (polars/native-libs/BUILDING.md)."
 
   # Faithful reproduction of the deploy floor: actually load the linux
   # candidate under glibc 2.17 (manylinux2014), which is older than
