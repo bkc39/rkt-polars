@@ -1,6 +1,7 @@
 mod access;
 mod cast;
 mod constructors;
+mod copy;
 mod core;
 mod ops;
 mod reductions;
@@ -12,6 +13,7 @@ pub(crate) use self::constructors::name_from_ptr;
 #[cfg(test)]
 pub(crate) use self::constructors::ymdhms_to_naive_datetime;
 pub use self::constructors::*;
+pub use self::copy::*;
 pub use self::core::*;
 pub(crate) use self::core::{series_new, valid_slices};
 pub use self::ops::*;

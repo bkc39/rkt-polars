@@ -33,6 +33,7 @@
          (for-syntax racket/base))
 
 (require (for-label polars
+                    ffi/vector
                     (only-in threading ~> ~>>)
                     (except-in racket/base
                                min max sort filter reverse and or not when
@@ -40,7 +41,7 @@
 
 (provide (all-from-out scribble/manual)
          (all-from-out scribble/example)
-         (for-label (all-from-out polars threading racket/base))
+         (for-label (all-from-out polars ffi/vector threading racket/base))
          make-polars-eval
          see-reference
          exnraise)

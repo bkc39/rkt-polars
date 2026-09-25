@@ -17,6 +17,7 @@
 ;; (all-from-out drops rename-out names that collide with the module language).
 
 (require polars/private/generic/core
+         polars/private/generic/convert
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators
@@ -39,6 +40,8 @@
          len shape shape/values dtype null-count
          width height column-name column-names
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
+         series->list series->vector series->f64vector in-series
+         dataframe->columns dataframe->f64vector
          gen:has-ref has-ref?
          gen:sized sized?
          gen:has-shape has-shape?

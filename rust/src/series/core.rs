@@ -1,5 +1,13 @@
 use crate::prelude::*;
 use crate::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn series_drop_count() -> usize {
+    DROPPED.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub extern "C" fn series_make() -> *mut Series {
@@ -17,6 +25,7 @@ pub extern "C" fn series_empty() -> *mut Series {
 pub extern "C" fn series_drop(s_ptr: *mut Series) {
     if !s_ptr.is_null() {
         unsafe { drop(Box::from_raw(s_ptr)) };
+        DROPPED.fetch_add(1, Ordering::Relaxed);
     }
 }
 

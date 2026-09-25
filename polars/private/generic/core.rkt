@@ -9,6 +9,7 @@
 
 (require racket/generic
          (only-in ffi/unsafe prop:cpointer)
+         (only-in polars/private/bulk in-series)
          polars/private/foreign
          polars/private/generic/dtype
          polars/private/generic/printing)
@@ -51,6 +52,7 @@
   #:property prop:custom-write
   (lambda (s port mode)
     (write-string (series->string s) port))
+  #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
      (series-ref* s key columns rows))]
@@ -196,7 +198,7 @@
 (module+ test
   ;; fixtures are inline here: core can't require test-fixtures (which requires
   ;; core) without a compile-time cycle.
-  (require rackunit racket/file (only-in gregor datetime))
+  (require rackunit racket/file (only-in gregor datetime) (only-in racket/sequence sequence->list))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -244,6 +246,12 @@
   (check-equal? (call-with-values (lambda () (shape/values floats)) list) '(4))
   (check-equal? (dtype ints) 'int32)
   (check-equal? (null-count withnull) 1)
+
+  (check-true (sequence? withnull))
+  (check-equal? (for/list ([x withnull]) x) (list 10 polars-null 30))
+  (for ([_ (in-range 2)])
+    (check-equal? (sequence->list withnull) (list 10 polars-null 30)))
+  (check-false (sequence? frame))
 
   ;; dataframe wrapper + shape / len / width / height / column metadata
   (check-pred dataframe? frame)

@@ -2,6 +2,7 @@ use super::test_util;
 use super::*;
 
 mod constructor_smoke;
+mod copy;
 mod ctors;
 mod dtype_tag;
 mod opt_ctors;
