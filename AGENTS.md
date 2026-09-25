@@ -62,25 +62,39 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A binding declared `-> _Series-ptr` / `_DataFrame-ptr` / `_Expr-ptr` /
   `_LazyFrame-ptr` takes `#:wrap (allocator <type>-drop)`, which registers
   the release.
-- **`allocator` cannot wrap a NULL result.** Any entry point that can return
-  NULL on failure is declared `-> _pointer`, checked for `#f`, and only then
-  `cast` and given `register-finalizer` (`require-read-result`,
-  `require-lazyframe-result`, `require-dataframe-result`). Declaring such a
-  binding `-> _X-ptr` with `allocator` raises a confusing
-  `argument is not non-null` contract error before any real reason can be
-  reported (#47).
+- **A binding that can return NULL is declared `-> _X-ptr/null` with
+  `#:wrap (allocator <type>-drop)`.** `allocator` skips a `#f` result, so the
+  wrapper sees `#f` and raises. The non-null `_X-ptr` type itself raises a
+  useless `argument is not non-null` error on NULL, before any reason can be
+  reported. Never `cast` + `register-finalizer` by hand: that breaks the
+  pairing with the `deallocator`-wrapped `<type>-drop`, so an explicit drop
+  frees twice (#47). `require-series-result` and `require-dataframe-result`
+  are the remaining hand-written copies (#72).
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry and records a message on failure;
-  Racket appends it with `raise-foreign-error`. Only use `raise-foreign-error`
-  in a wrapper whose Rust counterpart participates — otherwise it attaches a
-  stale reason from an unrelated call. Today that is the six IO entry points,
-  the `scan_*` family and `lazyframe_collect`; `require-series-result` and
-  `require-dataframe-result` still say `"operation failed"` for that reason.
+  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`
+  and `scan` helpers do it) and records the **cause alone**; the Racket
+  wrapper names the operation and the path. Racket reads it with
+  `call/foreign-error`, which makes the call and reads the reason inside one
+  `call-as-atomic`: the slot is per OS thread and every Racket thread in a
+  place shares one. Only wrap an entry point whose Rust side participates —
+  today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
+  or it attaches a stale reason from an unrelated call.
 - `dataframe_drop_count` counts native releases; the reclamation tests assert
-  on it because Racket cannot otherwise observe a native free. Those tests
-  were mutation-checked: removing a `register-finalizer` turns them red.
+  on it because Racket cannot otherwise observe a native free, and a pairing
+  test checks that an explicit drop releases a frame exactly once.
+- **A change to any `#[no_mangle]` export must re-commit both
+  `polars/native-libs/candidates/`.** The catalog installs those committed
+  binaries (it has no Rust toolchain) and `define-compat` resolves every
+  symbol at module load, so a stale candidate breaks `raco setup` on
+  pkgs.racket-lang.org. Take them from the PR's CI run
+  (`gh run download <run> -n libcompat-linux` and `-n libcompat-darwin`; the
+  snap `gh` cannot write under a hidden directory such as `~/.claude`), check
+  the new exports (`nm -D`) and the glibc floor (≤ 2.17), and run the suite
+  with the Linux candidate staged in place of the nix-built library. CI's
+  catalog-install jobs test the fresh artifact, not the committed one, so CI
+  stays green on a stale candidate (#77). See `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
