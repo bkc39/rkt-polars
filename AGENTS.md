@@ -21,10 +21,10 @@ hour of a merge.
 1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
    lazyframes), `bulk.rkt` (whole-column copies into Racket-allocated
-   buffers, behind `series->list` and its siblings). `define-compat` binds a C symbol; the Racket name is the
-   symbol with `_` → `-`, or an explicit `#:c-id`. Bindings whose Racket name
-   carries a `/raw` or `/c` suffix are wrapped by a checking function of the
-   plain name.
+   buffers, behind `series->list` and its siblings). `define-compat` binds a
+   C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
+   `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
+   wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str-to-date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -90,10 +90,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   otherwise observe a native free, and a pairing test checks that an explicit
   drop releases a frame exactly once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated (`ffi/vector` vectors, byte strings), which the GC may
-  move: those bindings are never `#:blocking?`. Each length argument is
-  computed from its own vector inside the `_fun`, Rust checks it, and a
-  refused copy writes nothing.
+  Racket allocated (`ffi/vector` vectors, byte strings, `malloc`), some of
+  which the GC may move: those bindings are never `#:blocking?`. Every
+  destination travels with its length, Rust checks the rows it writes against
+  it, and a refused copy writes nothing.
 - **A change to any `#[no_mangle]` export must re-commit both
   `polars/native-libs/candidates/`.** The catalog installs those committed
   binaries (it has no Rust toolchain) and `define-compat` resolves every
@@ -118,8 +118,8 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
 - `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
-  datetimes to whole seconds; the conversions raise on an unsupported dtype
-  even when every entry is null.
+  datetimes to whole seconds (#100); the conversions raise on an unsupported
+  dtype, `binary` included (#99), even when every entry is null.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks

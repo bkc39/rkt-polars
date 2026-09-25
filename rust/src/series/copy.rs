@@ -53,7 +53,7 @@ unsafe fn copy_physical<T: PolarsNumericType>(
 }
 
 macro_rules! series_copy_physical {
-    ($name:ident, $native:ty, $as_chunked:ident) => {
+    ($name:ident, $native:ident) => {
         #[no_mangle]
         pub extern "C" fn $name(
             s_ptr: *const Series,
@@ -68,7 +68,7 @@ macro_rules! series_copy_physical {
                 return COPY_BAD_ARGUMENTS;
             };
             let physical = s.to_physical_repr();
-            if physical.$as_chunked().is_err() {
+            if physical.$native().is_err() {
                 return COPY_WRONG_DTYPE;
             }
             let Some(rows) = row_range(&physical, start, count) else {
@@ -77,7 +77,7 @@ macro_rules! series_copy_physical {
             if !room_for(count, dst as *const u8, dst_len, valid, valid_len) {
                 return COPY_BAD_ARGUMENTS;
             }
-            match rows.$as_chunked() {
+            match rows.$native() {
                 Ok(ca) if count > 0 => unsafe { copy_physical(ca, dst, valid) },
                 _ => 0,
             }
@@ -85,16 +85,16 @@ macro_rules! series_copy_physical {
     };
 }
 
-series_copy_physical!(series_copy_i8, i8, i8);
-series_copy_physical!(series_copy_i16, i16, i16);
-series_copy_physical!(series_copy_i32, i32, i32);
-series_copy_physical!(series_copy_i64, i64, i64);
-series_copy_physical!(series_copy_u8, u8, u8);
-series_copy_physical!(series_copy_u16, u16, u16);
-series_copy_physical!(series_copy_u32, u32, u32);
-series_copy_physical!(series_copy_u64, u64, u64);
-series_copy_physical!(series_copy_f32, f32, f32);
-series_copy_physical!(series_copy_f64, f64, f64);
+series_copy_physical!(series_copy_i8, i8);
+series_copy_physical!(series_copy_i16, i16);
+series_copy_physical!(series_copy_i32, i32);
+series_copy_physical!(series_copy_i64, i64);
+series_copy_physical!(series_copy_u8, u8);
+series_copy_physical!(series_copy_u16, u16);
+series_copy_physical!(series_copy_u32, u32);
+series_copy_physical!(series_copy_u64, u64);
+series_copy_physical!(series_copy_f32, f32);
+series_copy_physical!(series_copy_f64, f64);
 
 #[no_mangle]
 pub extern "C" fn series_copy_bool(
@@ -311,15 +311,16 @@ pub extern "C" fn series_copy_as_f64(
         return COPY_WRONG_DTYPE;
     }
     let n = s.len();
-    let last = n
-        .checked_sub(1)
-        .map(|rows| rows.checked_mul(stride)?.checked_add(offset));
-    let fits = match last {
-        None => true,
-        Some(Some(last)) => !dst.is_null() && last < dst_len,
-        Some(None) => false,
-    };
-    if stride == 0 || !fits {
+    if stride == 0 {
+        return COPY_BAD_ARGUMENTS;
+    }
+    if n == 0 {
+        return 0;
+    }
+    let last = (n - 1)
+        .checked_mul(stride)
+        .and_then(|span| span.checked_add(offset));
+    if dst.is_null() || !matches!(last, Some(last) if last < dst_len) {
         return COPY_BAD_ARGUMENTS;
     }
     let out = Strided {

@@ -559,9 +559,10 @@ an implementation detail and not part of the public series API.)
 
 @subsection[#:tag "ref-series-convert"]{Converting to Racket values}
 
-These copy a whole column out of Polars in a fixed number of foreign calls:
-Racket allocates the destination, Rust fills it, and nothing crosses the
-boundary to be freed later. Each element comes out as @racket[ref] returns it:
+These copy a whole column out of Polars a block of rows at a time, with a
+couple of foreign calls per block rather than one per element: Racket
+allocates the destination, Rust fills it, and nothing crosses the boundary to
+be freed later. Each element comes out as @racket[ref] returns it:
 
 @tabular[#:style 'boxed #:sep @hspace[2]
  (list (list @bold{dtype} @bold{element})
@@ -602,6 +603,10 @@ null.
   flonum, as @tt{Series.to_numpy()} gives @tt{nan}; with @racket['error] a null
   raises @racket[exn:fail:contract] naming its row. Any other dtype raises
   @racket[exn:fail:contract] naming the dtype.
+
+  The result is ordinary garbage-collected memory, which Racket CS may move:
+  pass it to a foreign call that is not @racket[#:blocking?], and do not let
+  foreign code keep the pointer past the call.
 
   @examples[#:eval ev #:label #f
 (define xs (series (list 1 polars-null 3) #:name "x"))
@@ -782,8 +787,10 @@ renders it with no separate display call.
   column.
 
   @examples[#:eval ev #:label #f
-(dataframe->columns (dataframe (list (series '("a" "b") #:name "k")
-                                     (series (list 1 polars-null) #:name "v"))))]}
+(define kv (dataframe (list (series '("a" "b") #:name "k")
+                            (series (list 1 polars-null) #:name "v"))))
+(dataframe->columns kv)
+(dataframe->columns kv #:columns '("v") #:null 0)]}
 
 @defproc[(dataframe->f64vector [d dataframe?]
                                [#:columns columns (listof string?) (column-names d)]
@@ -798,7 +805,9 @@ renders it with no separate display call.
   @racket[series->f64vector]. Every column's dtype is checked before anything is
   copied, and a column that is not numeric raises naming the column and its
   dtype. With @racket['error], a null raises naming the first column in
-  @racket[columns] that has one, and that column's first null row.
+  @racket[columns] that has one, and that column's first null row. As with
+  @racket[series->f64vector], the buffer may move: hand it only to a foreign
+  call that is not @racket[#:blocking?].
 
   @examples[#:eval ev #:label #f
 (define xy (dataframe (list (series (list 1 2 polars-null) #:name "a")

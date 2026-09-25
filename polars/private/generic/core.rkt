@@ -52,7 +52,7 @@
   #:property prop:custom-write
   (lambda (s port mode)
     (write-string (series->string s) port))
-  #:property prop:sequence (lambda (s) (in-series s))
+  #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
      (series-ref* s key columns rows))]
@@ -249,7 +249,8 @@
 
   (check-true (sequence? withnull))
   (check-equal? (for/list ([x withnull]) x) (list 10 polars-null 30))
-  (check-equal? (sequence->list withnull) (sequence->list withnull))
+  (for ([_ (in-range 2)])
+    (check-equal? (sequence->list withnull) (list 10 polars-null 30)))
   (check-false (sequence? frame))
 
   ;; dataframe wrapper + shape / len / width / height / column metadata

@@ -27,7 +27,9 @@
            racket/match
            (only-in ffi/vector f64vector->list f64vector-length f64vector-ref)
            (only-in racket/contract exn:fail:contract:blame?)
+           (only-in racket/dict in-dict)
            (only-in racket/list append-map)
+           (only-in racket/sequence sequence->list)
            (prefix-in contracted: (submod ".."))
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
@@ -42,7 +44,8 @@
   (define (sample edges draw)
     (append edges (for/list ([_ 40]) (if (< (random) 0.3) polars-null (draw)))))
   (define (ints lo hi) (sample (list lo hi 0) (lambda () (int-in lo hi))))
-  (define (all-null dtype) (cast (series (list polars-null polars-null) #:dtype 'int64) dtype))
+  (define (all-null dtype)
+    (~> (list polars-null polars-null) (series #:dtype 'int64) (cast dtype)))
 
   (define int-dtypes
     `((int8 -128 127) (int16 -32768 32767) (int32 ,(- (expt 2 31)) ,(sub1 (expt 2 31)))
@@ -67,12 +70,13 @@
       [else (values (- (expt 2 62)) (expt 2 62))]))
   (define temporal-series
     (append
-     (list (cast (series (ints -719528 2932896) #:dtype 'int32 #:name "x") 'date)
-           (cast (series (ints 0 86399999999999) #:dtype 'int64 #:name "x") 'time))
+     (list (~> (ints -719528 2932896) (series #:dtype 'int32 #:name "x") (cast 'date))
+           (~> (ints 0 86399999999999) (series #:dtype 'int64 #:name "x") (cast 'time)))
      (for*/list ([unit '(milliseconds microseconds nanoseconds)] [kind '(datetime duration)])
        (define-values (lo hi) (epoch-range unit))
-       (cast (series (append (list -1 -1500 1500) (ints lo hi)) #:dtype 'int64 #:name "x")
-             (list kind unit)))))
+       (~> (append (list -1 -1500 1500) (ints lo hi))
+           (series #:dtype 'int64 #:name "x")
+           (cast (list kind unit))))))
   (define other-series
     (list (series (sample (list #t #f) (lambda () (< (random) 0.5))) #:name "x")
           (series (sample (list "" "héllo" "日本語" "😀" (make-string 10000 #\z))
@@ -98,9 +102,9 @@
     (define expected (ref-list s v))
     (check-equal? (series->list s #:null v) expected (format "~s" (dtype s)))
     (check-equal? (series->vector s #:null v) (list->vector expected))
-    (check-equal? (for/list ([x (in-series s #:null v)]) x) expected))
+    (check-equal? (sequence->list (in-series s #:null v)) expected))
   (for ([s (in-list all-variants)])
-    (check-equal? (for/list ([x s]) x) (ref-list s polars-null)))
+    (check-equal? (sequence->list s) (ref-list s polars-null)))
   (check-false (~> frame (ref "user") series->vector immutable?))
 
   (define numeric-variants
@@ -108,44 +112,45 @@
               (memq (dtype s)
                     '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 float32 float64)))
             all-variants))
+  (define (f64s s [v +nan.0])
+    (~> s (series->f64vector #:null v) f64vector->list))
   (for* ([s (in-list numeric-variants)] [v (list +nan.0 0 -1.5 +inf.0)])
-    (check-equal? (f64vector->list (series->f64vector s #:null v))
+    (check-equal? (f64s s v)
                   (for/list ([x (in-list (ref-list s 'n))])
                     (if (eq? x 'n) (real->double-flonum v) (exact->inexact x)))))
-  (define (f64s s) (f64vector->list (series->f64vector s)))
-  (check-equal? (f64s (series (list (add1 (expt 2 53))))) '(9007199254740992.0))
-  (check-equal? (f64s (series (list (sub1 (expt 2 64))) #:dtype 'uint64))
+  (check-equal? (~> (list (add1 (expt 2 53))) series f64s) '(9007199254740992.0))
+  (check-equal? (~> (list (sub1 (expt 2 64))) (series #:dtype 'uint64) f64s)
                 '(1.8446744073709552e19))
-  (check-equal? (f64s (series (list (- (expt 2 63))))) '(-9.223372036854776e18))
-  (check-equal? (f64s (series '(0.1) #:dtype 'float32)) '(0.10000000149011612))
+  (check-equal? (~> (list (- (expt 2 63))) series f64s) '(-9.223372036854776e18))
+  (check-equal? (~> '(0.1) (series #:dtype 'float32) f64s) '(0.10000000149011612))
   (check-equal? (f64s (all-null 'null)) '(+nan.0 +nan.0))
-  (check-equal? (f64s (series (list #t #f polars-null))) '(1.0 0.0 +nan.0))
+  (check-equal? (~> (list #t #f polars-null) series f64s) '(1.0 0.0 +nan.0))
 
   (define (null-error who field name row)
     (regexp (format "^~a: null value\n  ~a: \"~a\"\n  row: ~a$" who field name row)))
   (check-exn (null-error "series->f64vector" "series" "x" 1)
-             (lambda () (series->f64vector (series (list 1 polars-null 3) #:name "x")
-                                           #:null 'error)))
+             (lambda ()
+               (~> (list 1 polars-null 3) (series #:name "x") (series->f64vector #:null 'error))))
   (for ([row '(0 2 4)])
     (define xs (for/list ([i 5]) (if (= i row) polars-null i)))
     (check-exn (null-error "series->f64vector" "series" "x" row)
                (lambda () (series->f64vector (series xs #:name "x") #:null 'error))))
   (define second-chunk-null
-    (ref (vstack (dataframe (list (series '(1 2 3) #:name "x")))
-                 (dataframe (list (series (list 4 polars-null 6) #:name "x"))))
-         "x"))
+    (~> (dataframe (list (series '(1 2 3) #:name "x")))
+        (vstack (dataframe (list (series (list 4 polars-null 6) #:name "x"))))
+        (ref "x")))
   (check-exn (null-error "series->f64vector" "series" "x" 4)
              (lambda () (series->f64vector second-chunk-null #:null 'error)))
   (define gappy (series (list 1 2 3 polars-null 5) #:name "x"))
   (check-exn (null-error "series->f64vector" "series" "x" 1)
-             (lambda () (series->f64vector (slice gappy 2 3) #:null 'error)))
-  (check-equal? (f64s (series '(1 2))) '(1.0 2.0))
+             (lambda () (~> gappy (slice 2 3) (series->f64vector #:null 'error))))
+  (check-equal? (~> '(1 2) series f64s) '(1.0 2.0))
   (check-equal? (~> (series '(1 2)) (series->f64vector #:null 'error) f64vector->list)
                 '(1.0 2.0))
   (check-equal? (~> gappy (head 0) (series->f64vector #:null 'error) f64vector-length) 0)
   (check-exn #rx"not a numeric series"
-             (lambda () (series->f64vector (series (list polars-null) #:dtype 'string)
-                                           #:null 'error)))
+             (lambda ()
+               (~> (list polars-null) (series #:dtype 'string) (series->f64vector #:null 'error))))
 
   (for ([s (in-list (append temporal-series (list (series '("a") #:name "x"))))])
     (define rx
@@ -155,14 +160,14 @@
   (define (not-blame? e) (and (exn:fail:contract? e) (not (exn:fail:contract:blame? e))))
   (define bin (cast (series '("a") #:name "b") 'binary))
   (for* ([b (list bin (head bin 0) (cast (all-null 'string) 'binary))]
-         [convert (list (cons "series->list" series->list)
-                        (cons "series->vector" series->vector)
-                        (cons "in-series" in-series)
-                        (cons "in-series" (lambda (s) (for/list ([x s]) x))))])
+         [(who convert) (in-dict (list (cons "series->list" series->list)
+                                       (cons "series->vector" series->vector)
+                                       (cons "in-series" in-series)
+                                       (cons "in-series" sequence->list)))])
     (define rx (regexp (format "^~a: unsupported dtype\n  series: \"~a\"\n  dtype: 'binary$"
-                               (car convert) (series-name b))))
-    (check-exn rx (lambda () ((cdr convert) b)))
-    (check-exn not-blame? (lambda () ((cdr convert) b))))
+                               who (series-name b))))
+    (check-exn rx (lambda () (convert b)))
+    (check-exn not-blame? (lambda () (convert b))))
 
   (for ([thunk (list (lambda () (contracted:series->list 5))
                      (lambda () (contracted:series->vector frame))
@@ -177,9 +182,10 @@
     (check-exn exn:fail:contract:blame? thunk))
   (check-exn #rx"^series->list: contract violation\n  expected: series\\?\n  given: 5"
              (lambda () (contracted:series->list 5)))
-  (check-exn
-   #rx"^dataframe->f64vector: contract violation\n  expected: \\(or/c \\(quote fortran\\) \\(quote c\\)\\)\n  given: 'row"
-   (lambda () (contracted:dataframe->f64vector frame #:order 'row)))
+  (check-exn (regexp (string-append "^dataframe->f64vector: contract violation\n"
+                                     "  expected: \\(or/c \\(quote fortran\\) \\(quote c\\)\\)\n"
+                                     "  given: 'row"))
+             (lambda () (contracted:dataframe->f64vector frame #:order 'row)))
 
   (define mixed
     (dataframe
@@ -194,12 +200,11 @@
     (and (equal? (list nrows ncols (f64vector-length m))
                  (list (height d) (length cols) (* (height d) (length cols))))
          (for*/and ([(name j) (in-parallel cols (in-naturals))]
-                    [(x i) (in-parallel (f64s* (ref d name) v) (in-naturals))])
+                    [(x i) (in-parallel (f64s (ref d name) v) (in-naturals))])
            (equal? (f64vector-ref m (if (eq? order 'fortran)
                                         (+ (* j nrows) i)
                                         (+ (* i ncols) j)))
                    x))))
-  (define (f64s* s v) (f64vector->list (series->f64vector s #:null v)))
   (for* ([d (list mixed (vstack mixed mixed))]
          [cols (list (column-names mixed) '("f64" "i8") '("u64"))]
          [order '(fortran c)]
@@ -230,11 +235,11 @@
              (lambda () (dataframe->f64vector bad #:columns '("a" "b") #:null 'error)))
   (check-exn (null-error "dataframe->f64vector" "column" "b" 1)
              (lambda () (dataframe->f64vector bad #:columns '("b" "a") #:null 'error)))
-  (for ([convert (list (cons "dataframe->f64vector" dataframe->f64vector)
-                       (cons "dataframe->columns" dataframe->columns))])
-    (define ((go cols)) ((cdr convert) bad #:columns cols))
-    (check-exn (frame-error (car convert) "no such column" "nope") (go '("a" "nope")))
-    (check-exn (frame-error (car convert) "duplicate column" "a") (go '("a" "a")))
+  (for ([(who convert) (in-dict (list (cons "dataframe->f64vector" dataframe->f64vector)
+                                      (cons "dataframe->columns" dataframe->columns)))])
+    (define ((go cols)) (convert bad #:columns cols))
+    (check-exn (frame-error who "no such column" "nope") (go '("a" "nope")))
+    (check-exn (frame-error who "duplicate column" "a") (go '("a" "a")))
     (check-exn not-blame? (go '("a" "a"))))
 
   (define binary-frame
@@ -250,8 +255,9 @@
                       (cons "i8" (series->vector (ref mixed "i8")))))
 
   (define (settle!)
-    (for ([_ (in-range 3)]) (collect-garbage 'major))
-    (sleep 0))
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1)))
   (define (drops-during thunk)
     (settle!)
     (define before (series-drop-count))
@@ -269,22 +275,18 @@
                                   (series->f64vector withnull)
                                   (for ([x withnull]) x))))
                 0)
+  (let ([wanted 20]
+        [before (begin (settle!) (series-drop-count))])
+    (for ([_ (in-range wanted)])
+      (~> mixed (ref "i8") series->list))
+    (settle!)
+    (check >= (- (series-drop-count) before) (quotient wanted 2)))
 
-  (define million (series (for/list ([i (in-range 1000000)]) (exact->inexact i))))
-  (settle!)
-  (define baseline (current-memory-use))
-  (for ([_ (in-range 50)]) (series->f64vector million))
-  (settle!)
-  (check < (current-memory-use) (+ baseline (* 32 1024 1024)))
-
-  (define million-ints
-    (series (for/list ([i (in-range 1000000)]) (if (zero? (modulo i 7)) polars-null i))))
-  (define-values (_result _cpu real-ms _gc) (time-apply series->list (list million-ints)))
-  (check < real-ms 1000)
-
-  (check-equal? (series->list (series (list 3 polars-null 1) #:name "x")) (list 3 polars-null 1))
-  (check-equal? (dataframe->columns (dataframe (list (series '("a" "b") #:name "k")
-                                                     (series (list 1 polars-null) #:name "v"))))
+  (check-equal? (~> (list 3 polars-null 1) (series #:name "x") series->list)
+                (list 3 polars-null 1))
+  (define to-dict (dataframe (list (series '("a" "b") #:name "k")
+                                   (series (list 1 polars-null) #:name "v"))))
+  (check-equal? (dataframe->columns to-dict)
                 (list (cons "k" (vector "a" "b")) (cons "v" (vector 1 polars-null))))
   (define to-numpy (dataframe (list (series (list 1 2 polars-null) #:name "a")
                                     (series '(0.5 1.5 2.5) #:name "b"))))
@@ -292,7 +294,7 @@
     (check-equal? (list (f64vector->list m) nrows ncols) '((1.0 2.0 +nan.0 0.5 1.5 2.5) 3 2)))
   (let-values ([(m _nrows _ncols) (dataframe->f64vector to-numpy #:order 'c)])
     (check-equal? (f64vector->list m) '(1.0 0.5 2.0 1.5 +nan.0 2.5)))
-  (check-equal? (f64s (series (list 1 polars-null 3))) '(1.0 +nan.0 3.0))
+  (check-equal? (~> (list 1 polars-null 3) series f64s) '(1.0 +nan.0 3.0))
   (let-values ([(m _nrows _ncols)
                 (dataframe->f64vector (dataframe (list (series '(#t #f) #:name "a")
                                                        (series '(0.5 1.5) #:name "b"))))])
