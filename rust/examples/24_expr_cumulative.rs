@@ -20,7 +20,7 @@ fn main() -> PolarsResult<()> {
             col("x")
                 .shift_and_fill(lit(1), lit(0))
                 .alias("shift1_fill0"),
-            col("x").diff(1, NullBehavior::Ignore).alias("diff1"),
+            col("x").diff(lit(1), NullBehavior::Ignore).alias("diff1"),
         ])
         .collect()?;
     println!("cumulative shape={:?}", out.shape());

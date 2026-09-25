@@ -1,8 +1,8 @@
 use polars::prelude::*;
 
 fn main() -> PolarsResult<()> {
-    let ints = Series::new("x", [Some(1i32), Some(2), None, Some(4)]);
-    let floats = Series::new("f", [3.0f64, 7.5, 11.0]);
+    let ints = Series::new("x".into(), [Some(1i32), Some(2), None, Some(4)]);
+    let floats = Series::new("f".into(), [3.0f64, 7.5, 11.0]);
 
     let shifted = (ints.i32()? + 5).into_series();
     let scaled = (ints.i32()? * 3).into_series();

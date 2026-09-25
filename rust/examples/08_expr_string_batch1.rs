@@ -13,7 +13,7 @@ fn main() -> PolarsResult<()> {
         writeln!(file, "delta,4")?;
     }
 
-    let out = LazyCsvReader::new(&csv_path)
+    let out = LazyCsvReader::new(PlRefPath::try_from_path(&csv_path)?)
         .finish()?
         .with_columns([
             col("name").str().to_lowercase().alias("lower_name"),

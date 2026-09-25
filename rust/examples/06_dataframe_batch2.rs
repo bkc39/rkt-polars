@@ -14,10 +14,11 @@ fn main() -> PolarsResult<()> {
         &calibrations,
         ["time"],
         ["time"],
-        JoinArgs::new(JoinType::AsOf(AsOfOptions {
+        JoinArgs::new(JoinType::AsOf(Box::new(AsOfOptions {
             strategy: AsofStrategy::Backward,
             ..Default::default()
-        })),
+        }))),
+        None,
     )?;
 
     let sales = df![
@@ -25,16 +26,26 @@ fn main() -> PolarsResult<()> {
         "quarter" => ["q1", "q2", "q1", "q2"],
         "sales" => [10i32, 20, 30, 40]
     ]?;
-    let pivoted = polars::lazy::frame::pivot::pivot_stable(
-        &sales,
-        ["quarter"],
-        Some(["store"]),
-        Some(["sales"]),
-        true,
-        Some(col("").sum()),
+    let quarters = sales.select(["quarter"])?.unique_stable(
+        None,
+        UniqueKeepStrategy::First,
         None,
     )?;
-    let unpivoted = pivoted.unpivot(["q1", "q2"], ["store"])?;
+    let pivoted = sales
+        .clone()
+        .lazy()
+        .pivot(
+            cols(["quarter"]),
+            Arc::new(quarters),
+            cols(["store"]),
+            cols(["sales"]),
+            element().sum(),
+            true,
+            "_".into(),
+            Default::default(),
+        )
+        .collect()?;
+    let unpivoted = pivoted.unpivot(Some(["q1", "q2"]), ["store"])?;
 
     println!("asof shape={:?}", asof.shape());
     println!("pivot columns={:?}", pivoted.get_column_names());

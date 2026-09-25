@@ -5,12 +5,12 @@ fn main() -> PolarsResult<()> {
         "x" => [1i32, 2, 2, 3, 5, 5, 8],
     ]?;
 
-    let allowed = Series::new("allowed", &[2i32, 3, 8]);
+    let allowed = Series::new("allowed".into(), &[2i32, 3, 8]);
 
     let out = df
         .lazy()
         .with_columns([
-            col("x").is_in(lit(allowed)).alias("in_allowed"),
+            col("x").is_in(lit(allowed), false).alias("in_allowed"),
             col("x")
                 .is_between(lit(2), lit(5), ClosedInterval::Both)
                 .alias("in_2_5_both"),
