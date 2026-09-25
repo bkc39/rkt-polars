@@ -1423,9 +1423,14 @@
 (define-compat dataframe-column-name
   (_fun _DataFrame-ptr _size -> _rsstring))
 
-(define-compat dataframe-column
-  (_fun _DataFrame-ptr _string -> _Series-ptr)
+(define-compat dataframe-column/raw
+  (_fun _DataFrame-ptr _string -> _Series-ptr/null)
+  #:c-id dataframe_column
   #:wrap (allocator series-drop))
+
+(define (dataframe-column df name)
+  (or (dataframe-column/raw df name)
+      (error 'dataframe-column "no column named ~s" name)))
 
 (define-compat dataframe->string
   (_fun _DataFrame-ptr -> _rsstring)
@@ -1889,6 +1894,8 @@
   (check-equal? (series-dtype score-col) 'int32)
   (check-equal? (series-len score-col) 4)
   (check-equal? (series-sum-i32 score-col) 94)
+  (check-exn #rx"^dataframe-column: no column named \"points\"$"
+             (lambda () (dataframe-column example-df "points")))
 
   ;; column-names helper
   (check-equal? (dataframe-column-names example-df)

@@ -1,9 +1,5 @@
 #lang racket/base
 
-;; The wrapper core: the series / dataframe wrapper structs, their capability
-;; generics (ref / len / shape / dtype / null-count), the smart constructors,
-;; the dataframe accessors, and ref dispatch.
-
 (require racket/generic
          (only-in ffi/unsafe prop:cpointer)
          polars/private/foreign

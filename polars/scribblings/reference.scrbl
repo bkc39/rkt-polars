@@ -703,10 +703,14 @@ renders it with no separate display call.
   one column per input column), leaving a cell @racket[polars-null] where a
   column has no value for that statistic.
 
-  Numeric and boolean columns summarise as @racket['float64]; every other
-  column as strings, temporal values written as Python prints them. Quantiles
-  use nearest interpolation. Every statistic of every column comes from one
-  query, so Polars computes the columns in parallel.
+  Numeric, boolean, null and nested columns summarise as @racket['float64],
+  every other column as strings; temporal values are written as Python prints
+  them. Quantiles use nearest interpolation. Every statistic of every column
+  comes from one query, so Polars computes the columns in parallel.
+
+  API gaps: a time-zone-aware datetime is written as its UTC clock time with no
+  offset, where Python writes the local time and the offset; a binary column
+  gets no @racket["min"] or @racket["max"].
 
   @examples[#:eval ev
 (describe (dataframe (list (series '("b" "a" "c") #:name "s")
