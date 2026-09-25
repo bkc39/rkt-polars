@@ -44,4 +44,13 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
 | Lazy API | `lazy-api.rkt` | `lazy_api.py` |
 
-`data/` holds the small CSV inputs the scripts read.
+`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
+[multiple files](https://docs.pola.rs/user-guide/io/multiple/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| CSV, with the reading options | `csv.rkt` | `csv.py` |
+| Multiple files | `multiple.rkt` | `multiple.py` |
+
+`data/` holds the small CSV inputs the scripts read; the `io/` scripts read
+the fixtures under `polars/scribblings/data/`, which the manual uses too.

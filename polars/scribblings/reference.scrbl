@@ -364,17 +364,66 @@ total
   system's for a file that cannot be opened, Polars' own for input it cannot
   parse.
 
+  The examples read @filepath{flights.tsv}, 102 rows of the nycflights13 data
+  with @litchar{NA} for a missing value. Without @racket[#:separator] the
+  separator check stops the read; with it, the first @litchar{NA} fails to
+  parse, and @racket[#:null-values] fixes that:
+
   @examples[#:eval ev
 (eval:error (read-csv "flights.tsv"))
 (eval:error (read-csv "flights.tsv" #:separator #\tab))
 (define flights (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
 (shape flights)
 (null-count (ref flights #:columns "dep_delay"))
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values '("NA" ""))
+    (ref #:columns "arr_delay")
+    null-count)]
+
+  Types. @racket[#:ignore-errors] turns what does not parse into nulls;
+  @racket[#:infer-schema-length] widens or narrows the rows types are
+  inferred from; @racket[#:schema-overrides] and @racket[#:try-parse-dates]
+  set them outright. An override for a column the file lacks is an error:
+
+  @examples[#:eval ev #:label #f
+(~> (read-csv "flights.tsv" #:separator #\tab #:ignore-errors #t)
+    (ref #:columns "dep_delay")
+    null-count)
+(~> (read-csv "flights.tsv" #:separator #\tab #:infer-schema-length #f)
+    (ref #:columns "dep_delay")
+    dtype)
+(~> (read-csv "flights.tsv" #:separator #\tab #:infer-schema-length 0)
+    (ref #:columns "year")
+    dtype)
 (~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
-              #:try-parse-dates #t #:schema-overrides '(("dep_delay" . f64)))
-    (select "dep_delay" "time_hour")
+              #:try-parse-dates #t
+              #:schema-overrides '(("dep_delay" . f64) ("flight" . int32)))
+    (select "dep_delay" "flight" "time_hour")
     (tail 3))
-(read-csv "parts/*.csv")]}
+(eval:error (read-csv "flights.tsv" #:separator #\tab
+                      #:schema-overrides '(("dep_dealy" . f64))))]
+
+  Layout. @filepath{notes.csv} has a comment line, @litchar{;} between fields
+  and @litchar{'} around a field that holds one; @filepath{latin1.csv} is not
+  UTF-8:
+
+  @examples[#:eval ev #:label #f
+(read-csv "notes.csv" #:separator #\; #:comment-prefix "#" #:quote-char #\')
+(eval:error (read-csv "notes.csv" #:separator #\; #:comment-prefix "#"))
+(read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1)
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA" #:n-rows 2)
+    (select "carrier" "flight" "dep_delay"))
+(eval:error (read-csv "latin1.csv"))
+(read-csv "latin1.csv" #:encoding 'utf8-lossy)]
+
+  Files. A pattern reads every match, in filename order; one that matches
+  nothing, a literal path with @racket[#:glob #f], and a directory are
+  errors:
+
+  @examples[#:eval ev #:label #f
+(read-csv "parts/*.csv")
+(eval:error (read-csv "parts/*.tsv"))
+(eval:error (read-csv "parts/part-?.csv" #:glob #f))
+(eval:error (read-csv "parts"))]}
 
 @defcsvproc[(scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
@@ -390,8 +439,13 @@ total
     (filter (> (col "dep_delay") 30))
     (select "carrier" "dep_delay")
     collect)
+(~> (scan-csv "parts/*.csv") (group-by "origin") (agg (sum "dep_delay")) collect)
+(shape (collect (scan-csv "flights.tsv")))
 (define plan (scan-csv "/no/such/file.csv"))
-(eval:error (collect plan))]}
+(eval:error (collect plan))
+(eval:error (scan-csv "parts/*.tsv"))
+(eval:error (scan-csv "flights.tsv" #:separator #\tab
+                      #:schema-overrides '(("dep_dealy" . f64))))]}
 
 @deftogether[(@defproc[(read-parquet [path path-string?]) dataframe?]
               @defproc[(scan-parquet [path path-string?]
@@ -415,7 +469,8 @@ total
   (write-parquet (read-csv (format "parts/part-~a.csv" i))
                  (build-path parquet-dir (format "part-~a.parquet" i))))]
   @examples[#:eval ev
-(read-parquet (build-path parquet-dir "*.parquet"))]}
+(read-parquet (build-path parquet-dir "*.parquet"))
+(collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))]}
 
 @deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
               @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
@@ -854,7 +909,11 @@ generic operations are simply the preferred surface.
 @deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
               @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
   The raw-pointer reader and scan under @racket[read-csv] and
-  @racket[scan-csv], with the same keywords and checks.}
+  @racket[scan-csv], with the same keywords and checks.
+
+  @examples[#:eval ev
+(dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
+(dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 
