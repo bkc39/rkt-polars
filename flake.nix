@@ -189,7 +189,7 @@
             text = ''
               DEST="$(pwd)/polars/native-libs"
               mkdir -p "$DEST"
-              cp -v ${rust}/lib/libcompat.* "$DEST/"
+              cp -vf ${rust}/lib/libcompat.* "$DEST/"
               echo "Native libraries copied to $DEST"
               ls -la "$DEST"
             '';
