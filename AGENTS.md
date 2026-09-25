@@ -117,8 +117,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   the selection against `regexp-match?`. It never emits the crate's `(?i`,
   whose Unicode folding differs from Racket's; it expands case-insensitive
   literals and ranges itself. `\p{...}` classes follow each side's Unicode
-  tables. Lookaround, backreferences, atomic groups and conditionals, which
-  the crate lacks, fail at `collect`.
+  tables, and Racket misjudges some classes above U+00FF (#85), so the
+  oracle's names stay out of both. Lookaround, backreferences, atomic groups
+  and conditionals, which the crate lacks, fail at `collect`.
 
 ## Documentation
 

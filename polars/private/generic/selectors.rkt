@@ -112,7 +112,8 @@
       ",./" "x-y" "b\\.c" "e\\]f"
       "T_\u212A" "\u017F" "\u03C2" "\u03C3" "\u03A3" "\u00DF" "\u1E9E" "\u0130" "\u0131"
       "i" "I" "ABC" "\u02B0" "tab\there" "v\vt" "del\177" "bell\a"
-      "pa" "!" ":"))
+      "pa" "!" ":" "k" "K" "\u00C9" "AB" "temp_\u00B0C" "\u00A9 owner"
+      "pua_\uE000"))
   (define odd (dataframe (for/list ([name (in-list odd-names)]) (series '(0) #:name name))))
   (define (racket-matches rx)
     (for/list ([name (in-list odd-names)] #:when (regexp-match? rx name)) name))
@@ -133,7 +134,9 @@
                            #px"(?i:[[:lower:]])" #px"[[:space:]]" #px"[[:print:]]"
                            #px"[^[:print:]]" #px"[[:cntrl:]]" #px"[[:graph:]]" #px"[[:blank:]]"
                            #px"[[:punct:][a]" #px"\\p{Cs}" #px"\\P{Cs}" #px"\\p{.}"
-                           #px"^a{}$" (regexp "x|\0?") (regexp "a\\")))])
+                           #px"^a{}$" (regexp "x|\0?") (regexp "a\\")
+                           #rx"(?i:\\k)" #px"(?i:\\\u00E9)" #rx"(?i:\\a\\b)"
+                           #px"\\p{C}" #px"\\P{C}" #px"\\p{^C}"))])
     (define matched (racket-matches rx))
     (check-equal? (column-names (select odd (col rx))) matched (format "col ~s" rx))
     (check-equal? (column-names (select odd (exclude (all) rx)))

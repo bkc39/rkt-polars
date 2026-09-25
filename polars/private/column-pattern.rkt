@@ -3,6 +3,7 @@
 (require racket/bool
          racket/list
          racket/match
+         racket/promise
          racket/string)
 
 (provide ->column-pattern)
@@ -34,6 +35,14 @@
         [(string-contains? specials c) (string-append "\\" c)]
         [else c]))
 
+(define cased-codes
+  (delay
+    (for/vector ([i (in-range #x110000)]
+                 #:unless (<= #xD800 i #xDFFF)
+                 #:unless (let ([ch (integer->char i)])
+                            (char=? ch (char-upcase ch) (char-downcase ch) (char-foldcase ch))))
+      i)))
+
 (define (case-variants c)
   (define ch (string-ref c 0))
   (remove-duplicates
@@ -56,7 +65,7 @@
 (define (translate-token token px? fold?)
   (match token
     [(regexp #px"^\\\\([pP])\\{(\\^?)([^}]*)\\}$" (list _ p caret name)) (property p caret name)]
-    [(regexp #rx"^\\\\(.)$" (list _ c)) (translate-escape c px? fold?)]
+    [(regexp #rx"^\\\\(.)$" (list _ c)) (translate-escape c px?)]
     ["\\" "\\x00"]
     [(regexp #rx"^\\[") (char-class token px? fold?)]
     ["{}" "{0}"]
@@ -73,19 +82,20 @@
 (define (class-chars chars)
   (string-append* (for/list ([c (in-list chars)]) (escape c class-specials))))
 
-(define (translate-escape c px? fold?)
+(define (translate-escape c px?)
   (match c
-    [_ #:when (not px?) (literal c fold?)]
+    [_ #:when (not px?) (literal c #f)]
     [(or "d" "w" "s") (string-append "[" (hash-ref ascii-classes c) "]")]
     [(or "D" "W" "S") (string-append "[^" (hash-ref ascii-classes (string-downcase c)) "]")]
     [(or "b" "B") (string-append "(?-u:\\" c ")")]
     [(regexp #rx"^[0-9]$") (string-append "\\" c)]
-    [_ (literal c fold?)]))
+    [_ (literal c #f)]))
 
 (define (property p caret name)
   (define negated? (xor (string=? p "P") (string=? caret "^")))
   (match name
     ["L&" (string-append (if negated? "[^" "[") "\\p{Ll}\\p{Lu}\\p{Lt}\\p{Lm}]")]
+    ["C" (string-append (if negated? "[^" "[") "\\p{Cc}\\p{Cf}\\p{Cn}\\p{So}]")]
     [(or "Cs" ".") (if negated? "(?s:.)" "[a&&b]")]
     [_ (string-append (if negated? "\\P{" "\\p{") name "}")]))
 
@@ -123,8 +133,8 @@
   (define folded
     (if fold?
         (sort (remove-duplicates
-               (for*/list ([i (in-range lo-i (add1 hi-i))]
-                           #:unless (<= #xD800 i #xDFFF)
+               (for*/list ([i (in-vector (force cased-codes))]
+                           #:when (<= lo-i i hi-i)
                            [v (in-list (case-variants (string (integer->char i))))]
                            [j (in-value (char->integer (string-ref v 0)))]
                            #:unless (<= lo-i j hi-i))

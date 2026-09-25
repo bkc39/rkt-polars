@@ -62,9 +62,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       (@tt{pl.col("^sepal_.*$")}), keeping the regexp's Racket meaning:
       @racket[(col rx)] selects exactly the names
       @racket[(regexp-match? rx name)] accepts, in @litchar{#rx} and
-      @litchar{#px} syntax alike. The one exception is a
-      @litchar{\p{...}} property class: Racket and Polars' regex crate
-      each use their own version of the Unicode tables. The crate has no
+      @litchar{#px} syntax alike. There are two exceptions. A
+      @litchar{\p{...}} property class follows each side's own version of
+      the Unicode tables. And Racket's own matcher misjudges some classes
+      containing characters above U+00FF (#85); there the selection follows
+      the class as written. The crate has no
       lookaround, backreferences, atomic groups or conditionals; a
       regexp using them is rejected at @racket[collect].}]
 
