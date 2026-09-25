@@ -62,13 +62,15 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A binding declared `-> _Series-ptr` / `_DataFrame-ptr` / `_Expr-ptr` /
   `_LazyFrame-ptr` takes `#:wrap (allocator <type>-drop)`, which registers
   the release.
-- **`allocator` cannot wrap a NULL result.** Any entry point that can return
-  NULL on failure is declared `-> _pointer`, checked for `#f`, and only then
-  `cast` and given `register-finalizer` (`require-read-result`,
-  `require-lazyframe-result`, `require-dataframe-result`). Declaring such a
-  binding `-> _X-ptr` with `allocator` raises a confusing
-  `argument is not non-null` contract error before any real reason can be
-  reported (#47).
+- **A NULL result never goes through a non-null pointer type.** An entry
+  point that can return NULL on failure is declared either `-> _X-ptr/null`
+  with `#:wrap (allocator <type>-drop)` (`allocator` skips a `#f` result, so
+  the wrapper checks for `#f` and raises; `expr-exclude`, `expr-dtype-col`)
+  or `-> _pointer`, checked for `#f`, then `cast` and given
+  `register-finalizer` (`require-read-result`, `require-lazyframe-result`,
+  `require-dataframe-result`). Declaring such a binding `-> _X-ptr` with
+  `allocator` raises a confusing `argument is not non-null` contract error
+  before any real reason can be reported (#47).
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail

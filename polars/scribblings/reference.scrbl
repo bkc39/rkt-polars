@@ -42,20 +42,23 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 @defproc[(Expr-ptr? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
-@deftogether[(@defproc[(col [spec (or/c string? regexp? symbol? pair?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?])]{
+@deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?]
+              @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
   column or to several at once. Given a string it is the column of that
-  name (@tt{pl.col("name")}). Given a dtype --- any spelling
-  @racket[series]' @racket[#:dtype] accepts, so @racket['float64] and
-  @racket['f64] alike --- it is every column of that dtype
+  name (@tt{pl.col("name")}). Given a dtype --- @racket[dtype-spec?] is
+  any spelling @racket[series]' @racket[#:dtype] accepts, so
+  @racket['float64] and @racket['f64] alike --- it is every column of that dtype
   (@tt{pl.col(pl.Float64)}); a bare @racket['datetime] means microseconds,
   so match a column @racket[series] built from gregor datetimes with
   @racket['(datetime milliseconds)] or with its @racket[dtype]. Given a
-  regexp it is every column whose name matches, as @racket[regexp-match?]
-  would decide it (@tt{pl.col("^sepal_.*$")}); the pattern text is compiled
-  by Rust's regex crate, so write @litchar{#px} for character classes such
-  as @litchar{\d}. A multi-column @racket[col] expands inside any expression
+  regexp it is every column whose name matches (@tt{pl.col("^sepal_.*$")}):
+  an unanchored search, as @racket[regexp-match?] performs, but in the
+  syntax of Rust's regex crate, which compiles the pattern text --- so
+  write @litchar{#px} for classes such as @litchar{\d}, and expect
+  lookaround and backreferences to be rejected at @racket[collect]. A
+  multi-column @racket[col] expands inside any expression
   to one output per matched column, in the frame's column order, each
   keeping the matched column's name; a frame with no match yields no
   columns.
@@ -742,7 +745,7 @@ built.
               @defproc[(expr-exclude [e multi-column-expr?]
                                      [names (non-empty-listof (or/c string? regexp?))])
                        Expr-ptr?]
-              @defproc[(expr-dtype-col [dtype (or/c symbol? pair?)]) Expr-ptr?])]{
+              @defproc[(expr-dtype-col [dtype dtype-spec?]) Expr-ptr?])]{
   The selector leaves under @racket[all], @racket[exclude] and the dtype arm
   of @racket[col]: @tt{pl.all()}, @tt{.exclude(...)} and
   @tt{pl.col(pl.Float64)}. @racket[expr-exclude] takes its names as one

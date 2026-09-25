@@ -63,7 +63,7 @@
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          lit col ->expr ->key-expr
-         expr-all expr-exclude expr-dtype-col multi-column-expr?
+         expr-all expr-exclude expr-dtype-col multi-column-expr? dtype-spec?
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
          expr-and expr-or expr-xor

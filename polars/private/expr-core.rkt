@@ -19,6 +19,7 @@
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          lit ->expr
+         dtype-spec?
          (contract-out
           [col (->/c (or/c string? regexp? dtype-spec?) Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
@@ -88,11 +89,10 @@
     [(string? v) (expr-lit-str v)]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
-(define (regexp->column-pattern rx)
-  (string-append "^.*(?:" (object-name rx) ").*$"))
-
 (define (->column-pattern v)
-  (if (regexp? v) (regexp->column-pattern v) v))
+  (if (regexp? v)
+      (string-append "^.*(?:" (object-name v) ").*$")
+      v))
 
 (define-compat expr-all
   (_fun -> _Expr-ptr)
@@ -109,41 +109,36 @@
   (_fun _Expr-ptr
         (names : (_list i _string))
         (_size = (length names))
-        -> _pointer)
-  #:c-id expr_exclude)
+        -> _Expr-ptr/null)
+  #:c-id expr_exclude
+  #:wrap (allocator expr-drop))
 
 (define-compat expr-dtype-col/raw
-  (_fun _CompatDType -> _pointer)
-  #:c-id expr_dtype_col)
-
-(define (require-expr-result who result)
-  (if result
-      (let ([e (cast result _pointer _Expr-ptr)])
-        (register-finalizer e expr-drop)
-        e)
-      (error who "operation failed")))
+  (_fun _CompatDType -> _Expr-ptr/null)
+  #:c-id expr_dtype_col
+  #:wrap (allocator expr-drop))
 
 (define (expr-exclude e names)
-  (require-expr-result 'expr-exclude
-                       (expr-exclude/raw e (map ->column-pattern names))))
+  (or (expr-exclude/raw e (map ->column-pattern names))
+      (error 'expr-exclude "operation failed")))
 
 (define (expr-dtype-col dtype)
-  (require-expr-result 'expr-dtype-col
-                       (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))))
+  (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
+      (error 'expr-dtype-col "operation failed")))
 
 (define (col spec)
-  (cond
-    [(string? spec) (expr-col spec)]
-    [(regexp? spec) (expr-col (regexp->column-pattern spec))]
-    [else (expr-dtype-col spec)]))
+  (if (dtype-spec? spec)
+      (expr-dtype-col spec)
+      (expr-col (->column-pattern spec))))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
 
 (module+ test
   (require rackunit (prefix-in contracted: (submod "..")))
-  (check-equal? (regexp->column-pattern #rx"^sepal_") "^.*(?:^sepal_).*$")
-  (check-equal? (regexp->column-pattern #px"\\d+") "^.*(?:\\d+).*$")
+  (check-equal? (->column-pattern #rx"^sepal_") "^.*(?:^sepal_).*$")
+  (check-equal? (->column-pattern #px"\\d+") "^.*(?:\\d+).*$")
+  (check-equal? (->column-pattern "^a$") "^a$")
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))
@@ -168,4 +163,6 @@
              (lambda () (contracted:col 42)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
-  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks)))))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
+  (check-exn #rx"^col: contract violation"
+             (lambda () (contracted:col '(datetime microseconds "UTC")))))

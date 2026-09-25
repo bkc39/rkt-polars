@@ -10,7 +10,6 @@ fn dtype(tag: CompatDTypeTag) -> CompatDType {
     }
 }
 
-/// x: i32, y: f64, sepal_length: f64, species: str.
 fn make_frame() -> (*mut DataFrame, Vec<*mut Series>) {
     let cols = vec![
         make_i32("x", &[1, 2]),
@@ -29,7 +28,6 @@ fn drop_frame(df: *mut DataFrame, cols: Vec<*mut Series>) {
     }
 }
 
-/// Column names after `select(exprs)`; None when collect fails.
 fn select_names(
     df: *mut DataFrame,
     exprs: &[*mut Expr],

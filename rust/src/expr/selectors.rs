@@ -6,14 +6,13 @@ fn is_regex_projection(name: &str) -> bool {
 }
 
 /// Polars strips an `Exclude` node only while expanding a wildcard, dtype,
-/// columns or regex leaf; one left over panics at plan conversion, so
+/// columns, multi-index or regex leaf (`find_flags` in polars-plan's
+/// expr_expansion.rs); one left over panics at plan conversion, so
 /// `expr_exclude` refuses any other input.
 fn is_multi_column(e: &Expr) -> bool {
     e.into_iter().any(|x| match x {
-        Expr::Wildcard
-        | Expr::DtypeColumn(_)
-        | Expr::Columns(_)
-        | Expr::IndexColumn(_) => true,
+        Expr::Wildcard | Expr::DtypeColumn(_) | Expr::Columns(_) => true,
+        Expr::IndexColumn(idx) => idx.len() > 1,
         Expr::Column(name) => is_regex_projection(name),
         _ => false,
     })

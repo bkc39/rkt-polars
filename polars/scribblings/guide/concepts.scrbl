@@ -169,7 +169,7 @@ Group keys may be expressions. A bare @racket[(col "name")] inside
          (~> (col "height") mean (alias "avg_height"))))
 ]
 
-API gaps: no @tt{pl.len()}; no multi-column @tt{col(...)}; no
+API gaps: no @tt{pl.len()}; no multi-name @tt{col("weight", "height")}; no
 @tt{name.prefix}.
 
 @subsection{Expression expansion}

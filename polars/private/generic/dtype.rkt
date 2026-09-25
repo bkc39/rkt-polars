@@ -32,20 +32,20 @@
         'time 'time
         'datetime 'datetime))
 
+(define (dtype-spec? v)
+  (match v
+    [(? symbol?) (hash-has-key? dtype-aliases v)]
+    [(list* (or 'datetime 'duration)
+            (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
+            (or '() (list #f)))
+     #t]
+    [_ #f]))
+
 (define (normalize-dtype dt)
   (cond
-    [(and (symbol? dt) (hash-ref dtype-aliases dt #f)) => values]
-    [(and (pair? dt) (memq (car dt) '(datetime duration))) dt]
-    [else (error 'series "unsupported dtype ~v" dt)]))
-
-(define (dtype-spec? v)
-  (or (and (symbol? v) (hash-has-key? dtype-aliases v))
-      (match v
-        [(list (or 'datetime 'duration)
-               (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
-               _ ...)
-         #t]
-        [_ #f])))
+    [(not (dtype-spec? dt)) (error 'series "unsupported dtype ~v" dt)]
+    [(symbol? dt) (hash-ref dtype-aliases dt)]
+    [else dt]))
 
 (define (infer-dtype elements)
   (define vals

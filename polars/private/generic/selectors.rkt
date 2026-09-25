@@ -9,8 +9,7 @@
                         #:rest (listof (or/c string? regexp?))
                         Expr-ptr?)]))
 
-(define (all)
-  (expr-all))
+(define all expr-all)
 
 (define (exclude e name . names)
   (expr-exclude e (cons name names)))
@@ -100,6 +99,8 @@
   (check-exn exn:fail? (lambda () (select people (alias (p* (col 'float64) 2) "x"))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
   (check-exn exn:fail? (lambda () (select iris (col #px"(?=a)"))))
+  (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
+  (check-exn exn:fail? (lambda () (select iris (exclude (all) #px"(?=a)"))))
 
   (check-exn #rx"^exclude: contract violation\n  expected: multi-column-expr\\?\n  given: 5"
              (lambda () (contracted:exclude 5 "a")))
