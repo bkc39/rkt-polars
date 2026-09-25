@@ -13,8 +13,8 @@ not the repo root, and anything the docs need at build time (fixtures, helper
 modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
-docs.racket-lang.org/polars and rebuilds from `master` within about half an
-hour of a merge.
+docs.racket-lang.org/polars. The package build server rebuilds it from
+`master` on its own cycle, roughly daily, not on each merge.
 
 ## The three layers
 
@@ -95,17 +95,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `dataframe_read_csv_with_options`), so a stale library fails at load, when
   `define-compat` cannot resolve the symbol, instead of misreading its
   arguments.
-- **A change to any `#[no_mangle]` export must re-commit both
-  `polars/native-libs/candidates/`.** The catalog installs those committed
-  binaries (it has no Rust toolchain) and `define-compat` resolves every
-  symbol at module load, so a stale candidate breaks `raco setup` on
-  pkgs.racket-lang.org. Take them from the PR's CI run
-  (`gh run download <run> -n libcompat-linux` and `-n libcompat-darwin`; the
-  snap `gh` cannot write under a hidden directory such as `~/.claude`), check
-  the new exports (`nm -D`) and the glibc floor (≤ 2.17), and run the suite
-  with the Linux candidate staged in place of the nix-built library. CI's
-  catalog-install jobs test the fresh artifact, not the committed one, so CI
-  stays green on a stale candidate (#77). See `polars/native-libs/BUILDING.md`.
+- **A change to any `#[no_mangle]` export needs both
+  `polars/native-libs/candidates/` refreshed before it merges.** The catalog
+  installs those committed binaries (it has no Rust toolchain) and
+  `define-compat` resolves every symbol at module load, so a stale candidate
+  breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
+  jobs go red on it. Refresh with `scripts/refresh-candidates.sh <PR>` on the
+  branch; any other Rust change also reaches catalog users only through a
+  refresh. See `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
