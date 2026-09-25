@@ -98,9 +98,30 @@
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
   (check-exn exn:fail? (lambda () (select people (alias (p* (col 'float64) 2) "x"))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
-  (check-exn exn:fail? (lambda () (select iris (col #px"(?=a)"))))
+  (check-exn #rx"look-around" (lambda () (select iris (col #px"(?=a)"))))
   (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
-  (check-exn exn:fail? (lambda () (select iris (exclude (all) #px"(?=a)"))))
+  (check-exn #rx"look-around" (lambda () (select iris (exclude (all) #px"(?=a)"))))
+  (check-exn #rx"backreferences" (lambda () (select iris (col #px"(a)\\1"))))
+
+  (define odd-names
+    '("d" "q1" "aa" "a" "a{2}" "w_x" "back\\slash" "br[ack]et" "amp&and" "tilde~x"
+      "Sepal" "٣" "été" "two words" "nb sp" "line\nbreak" "+-" "p]q"
+      ",./" "x-y"))
+  (define odd (dataframe (for/list ([name (in-list odd-names)]) (series '(0) #:name name))))
+  (define (racket-matches rx)
+    (for/list ([name (in-list odd-names)] #:when (regexp-match? rx name)) name))
+  (for ([rx (in-list (list #rx"\\d" #rx"\\w" #rx"a{2}" #rx"(a)\\1" #rx"\\." #rx"p]"
+                           #rx"[\\d]" #rx"[]a]" #rx"[&~]" #rx"[[:alpha:]]" #rx"[+-/]"
+                           #rx"." #rx"^line.break$" #rx"(?i:sepal)" #rx"^q[0-9]$"
+                           #rx"(?m:^break)" #rx"(?m:line.break)" #rx"(?s:line.break)"
+                           #px"\\d" #px"\\D" #px"\\w" #px"\\s" #px"\\S" #px"a{2}" #px"^a{,1}$"
+                           #px"[[:digit:]]" #px"[\\d&]" #px"[^\\w]" #px"\\p{Ll}" #px"\\p{^Ll}"
+                           #px"\\bw" #px"e\\B" #px"^.*$" #px"[+-/]"))])
+    (define matched (racket-matches rx))
+    (check-equal? (column-names (select odd (col rx))) matched (format "col ~s" rx))
+    (check-equal? (column-names (select odd (exclude (all) rx)))
+                  (for/list ([name (in-list odd-names)] #:unless (member name matched)) name)
+                  (format "exclude ~s" rx)))
 
   (check-exn #rx"^exclude: contract violation\n  expected: multi-column-expr\\?\n  given: 5"
              (lambda () (contracted:exclude 5 "a")))

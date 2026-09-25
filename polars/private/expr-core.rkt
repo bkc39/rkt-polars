@@ -9,6 +9,7 @@
          (only-in racket/contract
                   [-> ->/c] any/c contract-out non-empty-listof or/c)
          racket/runtime-path
+         polars/private/column-pattern
          (only-in polars/private/foreign ->compat-dtype _CompatDType _rsstring)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
@@ -110,11 +111,6 @@
     [(string? v) (expr-lit-str v)]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
-(define (->column-pattern v)
-  (if (regexp? v)
-      (string-append "^.*(?:" (object-name v) ").*$")
-      v))
-
 (define-compat expr-all
   (_fun -> _Expr-ptr)
   #:wrap (allocator expr-drop))
@@ -157,9 +153,6 @@
 
 (module+ test
   (require rackunit (prefix-in contracted: (submod "..")))
-  (check-equal? (->column-pattern #rx"^sepal_") "^.*(?:^sepal_).*$")
-  (check-equal? (->column-pattern #px"\\d+") "^.*(?:\\d+).*$")
-  (check-equal? (->column-pattern "^a$") "^a$")
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))

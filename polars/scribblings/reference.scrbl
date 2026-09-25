@@ -54,10 +54,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   so match a column @racket[series] built from gregor datetimes with
   @racket['(datetime milliseconds)] or with its @racket[dtype]. Given a
   regexp it is every column whose name matches (@tt{pl.col("^sepal_.*$")}):
-  an unanchored search, as @racket[regexp-match?] performs, but in the
-  syntax of Rust's regex crate, which compiles the pattern text --- so
-  write @litchar{#px} for classes such as @litchar{\d}, and expect
-  lookaround and backreferences to be rejected at @racket[collect]. A
+  an unanchored search that keeps the regexp's Racket meaning, so
+  @racket[(col rx)] selects exactly the names @racket[(regexp-match? rx name)]
+  accepts, in @litchar{#rx} and @litchar{#px} syntax alike. Polars compiles
+  the pattern with Rust's regex crate, which has no lookaround or
+  backreferences; a regexp using them is rejected at @racket[collect]. A
   multi-column @racket[col] expands inside any expression
   to one output per matched column, in the frame's column order, each
   keeping the matched column's name; a frame with no match yields no
@@ -76,6 +77,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
                    (series '(1.56 1.77 1.65) #:name "height"))))
 (select people (* (col 'float64) 1.1))
 (select people (col #rx"^he"))
+(select people (col #px"^\\w+t$"))
 (select people (alias (* (col "id") 10) "id10")
                (alias (lit 0) "zero"))]}
 

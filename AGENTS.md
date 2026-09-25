@@ -111,6 +111,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
+- A regexp given to `col` / `exclude` keeps its Racket meaning:
+  `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
+  Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
+  the selection against `regexp-match?`. Lookaround and backreferences, which
+  the crate lacks, fail at `collect`.
 
 ## Documentation
 
