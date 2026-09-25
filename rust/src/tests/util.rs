@@ -18,6 +18,13 @@ pub(super) fn take_cstring(p: *const c_char) -> String {
     s
 }
 
+/// The reason the last participating call recorded, freed; `None` if it
+/// recorded none.
+pub(super) fn recorded_error() -> Option<String> {
+    let p = last_error_message();
+    (!p.is_null()).then(|| take_cstring(p))
+}
+
 pub(super) fn make_i32(name: &str, values: &[i32]) -> *mut Series {
     let n = cstr(name);
     let s = series_new_i32(n.as_ptr(), values.as_ptr(), values.len());
