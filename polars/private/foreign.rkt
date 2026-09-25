@@ -263,6 +263,9 @@
   (_fun _Series-ptr -> _void)
   #:wrap (deallocator))
 
+(define-compat series-drop-count
+  (_fun -> _size))
+
 (define-compat series-empty
   (_fun -> _Series-ptr)
   #:wrap (allocator series-drop))

@@ -536,7 +536,9 @@ an implementation detail and not part of the public series API.)
               @defproc[(polars-null? [v any/c]) boolean?])]{
   @racket[polars-null] is the sentinel marking a missing value: pass it among the
   elements given to @racket[series] to produce nulls, and it is what @racket[ref]
-  returns for a null entry. @racket[polars-null?] tests for it.}
+  returns for a null entry, and what the conversions in
+  @secref["ref-series-convert"] return by default. @racket[polars-null?] tests
+  for it.}
 
 @deftogether[(@defproc[(dtype [s has-dtype?]) (or/c symbol? pair?)]
               @defproc[(len [x sized?]) exact-nonnegative-integer?]
@@ -554,6 +556,69 @@ an implementation detail and not part of the public series API.)
   @racket[void] as is conventional for @litchar{!} mutators; @racket[rename]
   returns a renamed copy and leaves the original untouched. @racket[clone] (and
   its series-specific alias @racket[series-clone]) returns an independent copy.}
+
+@subsection[#:tag "ref-series-convert"]{Converting to Racket values}
+
+These copy a whole column out of Polars in a fixed number of foreign calls:
+Racket allocates the destination, Rust fills it, and nothing crosses the
+boundary to be freed later. Each element comes out as @racket[ref] returns it:
+
+@tabular[#:style 'boxed #:sep @hspace[2]
+ (list (list @bold{dtype} @bold{element})
+       (list "integer dtypes" @racket[exact-integer?])
+       (list @elem{@racket['float32], @racket['float64]} @racket[flonum?])
+       (list @racket['boolean] @racket[boolean?])
+       (list @racket['string] @racket[string?])
+       (list @racket['date] @elem{a gregor @tt{date}})
+       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, floored to the second})
+       (list @racket['(duration unit)] @elem{a gregor @tt{period} in that unit})
+       (list @racket['time] @elem{a gregor @tt{time}})
+       (list @racket['null] "the null value"))]
+
+A null entry becomes the @racket[#:null] value. A series of any other dtype
+raises @racket[exn:fail:contract] naming the dtype, even when every entry is
+null.
+
+@examples[#:eval ev #:hidden (require ffi/vector)]
+
+@deftogether[(@defproc[(series->list [s series?] [#:null null-value any/c polars-null]) list?]
+              @defproc[(series->vector [s series?] [#:null null-value any/c polars-null])
+                       vector?])]{
+  Returns the elements of @racket[s] in order, as a fresh list or a fresh
+  mutable vector, with @racket[null-value] in place of each null entry. Mirrors
+  Polars' @tt{Series.to_list()}, with @racket[polars-null] for @tt{None}.
+
+  @examples[#:eval ev #:label #f
+(define s (series (list 3 polars-null 1) #:name "x"))
+(series->list s)
+(series->vector s #:null 0)]}
+
+@defproc[(series->f64vector [s series?] [#:null null-value (or/c real? 'error) +nan.0])
+         f64vector?]{
+  Copies a numeric series into a fresh @racket[f64vector], the
+  @racketmodname[ffi/vector] type that foreign code takes. Integers become the
+  nearest flonum, as @racket[exact->inexact] gives, and booleans become
+  @racket[1.0] and @racket[0.0]. A null entry becomes @racket[null-value] as a
+  flonum, as @tt{Series.to_numpy()} gives @tt{nan}; with @racket['error] a null
+  raises @racket[exn:fail:contract] naming its row. Any other dtype raises
+  @racket[exn:fail:contract] naming the dtype.
+
+  @examples[#:eval ev #:label #f
+(define xs (series (list 1 polars-null 3) #:name "x"))
+(f64vector->list (series->f64vector xs))
+(f64vector->list (series->f64vector xs #:null 0))
+(eval:error (series->f64vector xs #:null 'error))
+(eval:error (series->f64vector (series '("a") #:name "s")))]}
+
+@defproc[(in-series [s series?] [#:null null-value any/c polars-null]) sequence?]{
+  Returns a sequence of the elements of @racket[s], converted as by
+  @racket[series->list] but a block of rows at a time, so a loop that stops
+  early converts little more than it reads. A series is itself a sequence:
+  @racket[(for ([x s]) ....)] iterates as @racket[(in-series s)] does.
+
+  @examples[#:eval ev #:label #f
+(for/sum ([x (in-series xs #:null 0)]) x)
+(for/list ([x (series '("a" "b"))]) (string-upcase x))]}
 
 @subsection[#:tag "promotion"]{dtype promotion}
 
@@ -687,7 +752,8 @@ renders it with no separate display call.
   as a series, and a @emph{list} of selectors returns a column-projected
   dataframe. It is data-first, so it threads. @racket[#:rows] is reserved for
   row slicing and currently raises an error. Provided by the @racket[gen:has-ref]
-  interface.}
+  interface. For a whole column, @racket[series->list] and its siblings convert
+  in one pass where a @racket[ref] loop makes one foreign call per element.}
 
 @defproc[(describe [x (or/c series? dataframe?)]) dataframe?]{
   Mirrors Polars' @tt{.describe()}: returns a summary-statistics @tech{dataframe}
@@ -702,6 +768,47 @@ renders it with no separate display call.
   column), leaving a cell @racket[polars-null] where a column has no value for
   that statistic. Quantiles use nearest interpolation. Dispatches on
   @racket[series?] / @racket[dataframe?].}
+
+@subsection[#:tag "ref-dataframe-convert"]{Converting to Racket values}
+
+@defproc[(dataframe->columns [d dataframe?]
+                             [#:columns columns (listof string?) (column-names d)]
+                             [#:null null-value any/c polars-null])
+         (listof (cons/c string? vector?))]{
+  Returns each selected column, in the order of @racket[columns], paired with
+  @racket[(series->vector column #:null null-value)]. Mirrors Polars'
+  @tt{DataFrame.to_dict(as_series=False)}. An unknown or repeated name, or a
+  column of an unsupported dtype, raises @racket[exn:fail:contract] naming the
+  column.
+
+  @examples[#:eval ev #:label #f
+(dataframe->columns (dataframe (list (series '("a" "b") #:name "k")
+                                     (series (list 1 polars-null) #:name "v"))))]}
+
+@defproc[(dataframe->f64vector [d dataframe?]
+                               [#:columns columns (listof string?) (column-names d)]
+                               [#:order order (or/c 'fortran 'c) 'fortran]
+                               [#:null null-value (or/c real? 'error) +nan.0])
+         (values f64vector? exact-nonnegative-integer? exact-nonnegative-integer?)]{
+  Copies the selected columns into one fresh @racket[f64vector] and returns it
+  with its row and column counts, mirroring Polars' @tt{DataFrame.to_numpy()}.
+  With @racket['fortran] (column-major, the default) row @racket[i] of column
+  @racket[j] is at index @racket[(+ (* j nrows) i)]; with @racket['c]
+  (row-major) it is at @racket[(+ (* i ncols) j)]. Each column converts as by
+  @racket[series->f64vector]. Every column's dtype is checked before anything is
+  copied, and a column that is not numeric raises naming the column and its
+  dtype. With @racket['error], a null raises naming the first column in
+  @racket[columns] that has one, and that column's first null row.
+
+  @examples[#:eval ev #:label #f
+(define xy (dataframe (list (series (list 1 2 polars-null) #:name "a")
+                            (series '(0.5 1.5 2.5) #:name "b"))))
+(define-values (m nrows ncols) (dataframe->f64vector xy))
+(list nrows ncols)
+(f64vector->list m)
+(define-values (m/c _r _c) (dataframe->f64vector xy #:order 'c))
+(f64vector->list m/c)
+(eval:error (dataframe->f64vector xy #:null 'error))]}
 
 @subsection{Low-level DataFrame API}
 
