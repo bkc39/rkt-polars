@@ -44,4 +44,11 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
 | Lazy API | `lazy-api.rkt` | `lazy_api.py` |
 
+`expressions/` — [upstream](https://docs.pola.rs/user-guide/expressions/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| Expression expansion | `expression-expansion.rkt` | `expression_expansion.py` |
+| Window functions | `window-functions.rkt` | `window_functions.py` |
+
 `data/` holds the small CSV inputs the scripts read.

@@ -17,6 +17,10 @@
   (compile       "raco make polars/main.rkt")
   (test          "raco test -x -c polars")
   (guide         "raco test user-guide")
+  ;; Every examples/*.rkt, each in its own process; an example is red if it
+  ;; raises, exits non-zero or writes to stderr.  The flake's Racket check
+  ;; runs the same command.
+  (examples      "raco test -e -Q --empty-stdin -j 8 examples")
   ;; CI's rustfmt check; `nix build .#racket` does not run it.
   (fmt           "cargo fmt --manifest-path rust/Cargo.toml --all --check")
   ;; A fresh dev shell has no threading docs, and without them the manual's
@@ -27,4 +31,4 @@
   ;; The CI-equivalent: cargo tests, the Racket build with docs, rustfmt, and
   ;; the Racket version floor.
   (check         "nix flake check"))
- (push-gates (compile test fmt)))
+ (push-gates (compile test examples fmt)))
