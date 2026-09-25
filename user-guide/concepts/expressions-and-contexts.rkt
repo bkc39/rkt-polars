@@ -84,6 +84,10 @@
           (~> (col "weight") mean (alias "avg_weight"))
           (~> (col "height") mean (alias "avg_height")))))
 
+(displayln
+ (~> df
+     (with-columns (~> (col "height") mean (over decade) (alias "decade_avg_height")))))
+
 ;; --- expression expansion ------------------------------------------------
 ;; API gap: no dtype selector col(pl.Float64) and no name.suffix, so there is
 ;; no expression that expands over "all float columns"; spell them out.

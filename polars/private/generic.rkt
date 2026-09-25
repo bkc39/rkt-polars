@@ -29,6 +29,7 @@
          polars/private/generic/cumulative
          polars/private/generic/ordering
          polars/private/generic/describe
+         polars/private/generic/window
          polars/private/generic/meta)
 
 (provide series series? series->string
@@ -44,6 +45,7 @@
          gen:has-null-count has-null-count?
          sum mean min max
          count n-unique first last median std var alias
+         over
          > < >= <= = !=
          mod sign ceil log1p pow clip
          filter sort
