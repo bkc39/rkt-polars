@@ -187,6 +187,8 @@
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
   (check-exn #rx"^col: contract violation"
              (lambda () (contracted:col '(datetime microseconds "UTC")))))
+
+(module+ test
   (require rackunit)
   (define-compat expr-add
     (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
