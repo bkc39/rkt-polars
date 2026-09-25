@@ -34,8 +34,8 @@ datetime columns; cast to get a date column.
 df
 ]
 
-Round-trip through CSV with @racket[write-csv] and @racket[read-csv]. Dates
-come back as strings; parse them with @racket[str-to-date].
+Round-trip through CSV with @racket[write-csv] and @racket[read-csv];
+@racket[#:try-parse-dates] reads the dates back as dates.
 
 @examples[#:eval ev #:hidden
 (define csv-path (build-path (find-system-path 'temp-dir) "polars-guide.csv"))
@@ -43,12 +43,10 @@ come back as strings; parse them with @racket[str-to-date].
 
 @examples[#:eval ev #:label #f
 (write-csv df csv-path)
-(~> (read-csv csv-path)
-    (with-columns (str-to-date "birthdate")))
+(read-csv csv-path #:try-parse-dates #t)
 ]
 
-API gaps: no date dtype from gregor @tt{date} values; no
-@tt{try_parse_dates} on @racket[read-csv].
+API gap: no date dtype from gregor @tt{date} values.
 
 @section[#:tag "gs-expressions-contexts"]{Expressions and contexts}
 

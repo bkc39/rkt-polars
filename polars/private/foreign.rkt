@@ -1441,17 +1441,6 @@
                             #:ok? zero?
                             "failed to write csv to ~a" path)))
 
-(define-compat dataframe-read-csv/raw
-  (_fun _string -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_csv
-  #:wrap (allocator dataframe-drop))
-
-(define (dataframe-read-csv path)
-  (define p (path->string-or-string path))
-  (call/foreign-error 'dataframe-read-csv
-                      (lambda () (dataframe-read-csv/raw p))
-                      "failed to read csv from ~a" path))
-
 (define-compat dataframe-write-parquet/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_parquet)
@@ -1497,10 +1486,9 @@
                       "failed to read json lines from ~a" path))
 
 (define (path->string-or-string p)
-  (cond
-    [(string? p) p]
-    [(path? p) (path->string p)]
-    [else (error 'dataframe-csv "expected path-string?, got ~v" p)]))
+  (if (path-string? p)
+      (path->string (path->complete-path p))
+      (error 'dataframe-csv "expected path-string?, got ~v" p)))
 
 (define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
   (define-compat name
@@ -2016,18 +2004,12 @@
            (series-new-str "y" '("a" "b" "a" "c" "b" "a")))))
   (check-equal? (dataframe-height (dataframe-unique dup-df)) 3)
 
-  ;; drop-nulls: round-trip a CSV with empty cells.
-  (define np-csv (build-path (find-system-path 'temp-dir) "rkt-polars-dn.csv"))
-  (with-output-to-file np-csv #:exists 'replace
-    (lambda ()
-      (displayln "name,score")
-      (displayln "a,10")
-      (displayln "b,")
-      (displayln "c,30")))
-  (define np-df (dataframe-read-csv np-csv))
+  (define np-df
+    (dataframe-new
+     (list (series-new-str "name" '("a" "b" "c"))
+           (series-new-i64 "score" (list 10 polars-null 30)))))
   (check-equal? (dataframe-height np-df) 3)
   (check-equal? (dataframe-height (dataframe-drop-nulls np-df)) 2)
-  (delete-file np-csv)
 
   ;; --- Joins + vstack ---
   (define users-df
@@ -2140,30 +2122,12 @@
                 '("store" "variable" "value"))
   (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
 
-  ;; --- Example 4: CSV roundtrip ---
+  ;; --- Parquet and JSON Lines roundtrip ---
   (define csv-df
     (dataframe-new
      (list (series-new-str "city" '("Boston" "New York" "Chicago"))
            (series-new-f64 "population_millions" '(0.65 8.8 2.7))
            (series-new-i32 "founded" '(1630 1624 1837)))))
-  (define tmp-csv
-    (build-path (find-system-path 'temp-dir) "rkt-polars-test.csv"))
-  (dataframe-write-csv csv-df tmp-csv)
-  (define round (dataframe-read-csv tmp-csv))
-  (define-values (rr rc) (dataframe-shape round))
-  (check-equal? rr 3)
-  (check-equal? rc 3)
-  (check-equal? (dataframe-column-name round 0) "city")
-  (check-equal? (dataframe-column-name round 1) "population_millions")
-  (check-equal? (dataframe-column-name round 2) "founded")
-  (check-equal? (series-dtype (dataframe-column round "founded")) 'int64)
-  (check-equal? (series-dtype (dataframe-column round "population_millions")) 'float64)
-  (check-= (series-sum-f64 (dataframe-column round "population_millions"))
-           12.15
-           1e-9)
-  (delete-file tmp-csv)
-
-  ;; --- Parquet and JSON Lines roundtrip ---
   (define tmp-parquet
     (build-path (find-system-path 'temp-dir) "rkt-polars-test.parquet"))
   (dataframe-write-parquet csv-df tmp-parquet)
@@ -2195,18 +2159,7 @@
   (delete-file tmp-jsonl))
 
 (module+ test
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
-
   (define tmp-dir (find-system-path 'temp-dir))
-  (define missing-csv (build-path tmp-dir "rkt-polars-no-such-file.csv"))
-  (when (file-exists? missing-csv)
-    (delete-file missing-csv))
-  (check-exn #rx"^dataframe-read-csv: failed to read csv from .*: cannot open file: [Nn]o such file"
-             (lambda () (dataframe-read-csv missing-csv)))
-
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
   (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
@@ -2223,25 +2176,5 @@
   (check-exn #rx"^dataframe-read-parquet: failed to read parquet from .*: .*PAR1"
              (lambda () (dataframe-read-parquet junk)))
   (delete-file junk)
-
-  (check-exn #rx"cannot open file" (lambda () (dataframe-read-csv missing-csv)))
-  (define ok-csv (build-path tmp-dir "rkt-polars-clears-slot.csv"))
-  (dataframe-write-csv one-col ok-csv)
-  (check-equal? (dataframe-height (dataframe-read-csv ok-csv)) 3)
-  (check-false (last-error-message))
-
-  (settle!)
-  (let ([before (dataframe-drop-count)])
-    (dataframe-drop (dataframe-read-csv ok-csv))
-    (settle!)
-    (check-equal? (- (dataframe-drop-count) before) 1))
-
-  (let* ([wanted 20]
-         [before (dataframe-drop-count)])
-    (for ([_ (in-range wanted)])
-      (dataframe-read-csv ok-csv))
-    ;; finalizers run on their own thread, so assert a lenient fraction
-    (settle!)
-    (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
-
-  (delete-file ok-csv))
+  (check-exn #rx"^dataframe-read-parquet: failed to read parquet from [^:]*: cannot open file: [Nn]o such file"
+             (lambda () (dataframe-read-parquet (build-path tmp-dir "rkt-polars-no-such.parquet")))))
