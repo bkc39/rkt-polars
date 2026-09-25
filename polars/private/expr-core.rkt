@@ -15,7 +15,7 @@
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
-         _LazyFrame-ptr LazyFrame-ptr?
+         _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
          expr-drop lazyframe-drop
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
