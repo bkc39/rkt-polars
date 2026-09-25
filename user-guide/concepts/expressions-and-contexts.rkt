@@ -13,7 +13,6 @@
 ;; --- expressions ---------------------------------------------------------
 (define bmi-expr (/ (col "weight") (pow (col "height") 2)))
 
-;; API gap: an expression prints as an opaque pointer, not as its plan.
 (displayln bmi-expr)
 
 ;; --- contexts ------------------------------------------------------------

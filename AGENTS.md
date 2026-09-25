@@ -48,7 +48,9 @@ Imitate the neighbouring module in `polars/private/generic/`. `->col-expr`
 and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
 gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
-in the same change. Tests go in the module's `(module+ test ...)`.
+in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
+in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
+the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
 ### Adding an FFI entry point
 
@@ -81,9 +83,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
   or it attaches a stale reason from an unrelated call.
-- `dataframe_drop_count` counts native releases; the reclamation tests assert
-  on it because Racket cannot otherwise observe a native free, and a pairing
-  test checks that an explicit drop releases a frame exactly once.
+- `dataframe_drop_count` and `expr_drop_count` count native releases; the
+  reclamation tests assert on them because Racket cannot otherwise observe a
+  native free, and a pairing test checks that an explicit drop releases a
+  frame exactly once.
 - **A change to any `#[no_mangle]` export must re-commit both
   `polars/native-libs/candidates/`.** The catalog installs those committed
   binaries (it has no Rust toolchain) and `define-compat` resolves every
@@ -107,7 +110,6 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
-- Expressions print as `#<cpointer>` (#57).
 
 ## Documentation
 
