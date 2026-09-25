@@ -21,7 +21,8 @@
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
 (provide (all-from-out polars/private/expr)
-         (all-from-out polars/private/foreign)
+         (except-out (all-from-out polars/private/foreign)
+                     call/foreign-error dataframe-drop-count last-error-message)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>

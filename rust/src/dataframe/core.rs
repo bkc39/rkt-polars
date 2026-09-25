@@ -1,4 +1,12 @@
 use crate::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn dataframe_drop_count() -> usize {
+    DROPPED.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub extern "C" fn dataframe_make() -> *mut DataFrame {
@@ -16,6 +24,7 @@ pub extern "C" fn dataframe_empty() -> *mut DataFrame {
 pub extern "C" fn dataframe_drop(df_ptr: *mut DataFrame) {
     if !df_ptr.is_null() {
         unsafe { drop(Box::from_raw(df_ptr)) };
+        DROPPED.fetch_add(1, Ordering::Relaxed);
     }
 }
 

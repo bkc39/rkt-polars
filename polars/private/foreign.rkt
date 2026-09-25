@@ -2,6 +2,7 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
+         ffi/unsafe/atomic
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          gregor
@@ -39,6 +40,21 @@
           (let ([str (cast ptr _pointer _string)])
             (register-finalizer ptr string-drop)
             str)))))
+
+(define-compat last-error-message
+  (_fun -> _rsstring))
+
+;; only for entry points that call clear_last_error; elsewhere the slot is stale
+(define (call/foreign-error who thunk #:ok? [ok? values] fmt . args)
+  (define-values (result reason)
+    (call-as-atomic
+     (lambda ()
+       (define result (thunk))
+       (values result (and (not (ok? result)) (last-error-message))))))
+  (cond
+    [(ok? result) result]
+    [reason (apply error who (string-append fmt ": ~a") (append args (list reason)))]
+    [else (apply error who fmt args)]))
 
 (struct polars-null-sentinel ()
   #:property prop:custom-write
@@ -1304,6 +1320,9 @@
   (_fun _DataFrame-ptr -> _void)
   #:wrap (deallocator))
 
+(define-compat dataframe-drop-count
+  (_fun -> _size))
+
 (define-compat dataframe-make
   (_fun -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
@@ -1416,66 +1435,66 @@
   #:c-id dataframe_write_csv)
 
 (define (dataframe-write-csv df path)
-  (define rc (dataframe-write-csv/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (error 'dataframe-write-csv
-           "failed to write csv to ~a (rust error code ~a)"
-           path rc)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-csv
+                            (lambda () (dataframe-write-csv/raw df p))
+                            #:ok? zero?
+                            "failed to write csv to ~a" path)))
 
 (define-compat dataframe-read-csv/raw
-  (_fun _string -> _DataFrame-ptr)
+  (_fun _string -> _DataFrame-ptr/null)
   #:c-id dataframe_read_csv
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-csv path)
-  (define df (dataframe-read-csv/raw (path->string-or-string path)))
-  (unless df
-    (error 'dataframe-read-csv "failed to read csv from ~a" path))
-  df)
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-csv
+                      (lambda () (dataframe-read-csv/raw p))
+                      "failed to read csv from ~a" path))
 
 (define-compat dataframe-write-parquet/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_parquet)
 
 (define (dataframe-write-parquet df path)
-  (define rc (dataframe-write-parquet/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (error 'dataframe-write-parquet
-           "failed to write parquet to ~a (rust error code ~a)"
-           path rc)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-parquet
+                            (lambda () (dataframe-write-parquet/raw df p))
+                            #:ok? zero?
+                            "failed to write parquet to ~a" path)))
 
 (define-compat dataframe-read-parquet/raw
-  (_fun _string -> _DataFrame-ptr)
+  (_fun _string -> _DataFrame-ptr/null)
   #:c-id dataframe_read_parquet
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-parquet path)
-  (define df (dataframe-read-parquet/raw (path->string-or-string path)))
-  (unless df
-    (error 'dataframe-read-parquet "failed to read parquet from ~a" path))
-  df)
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-parquet
+                      (lambda () (dataframe-read-parquet/raw p))
+                      "failed to read parquet from ~a" path))
 
 (define-compat dataframe-write-json-lines/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_json_lines)
 
 (define (dataframe-write-json-lines df path)
-  (define rc (dataframe-write-json-lines/raw df (path->string-or-string path)))
-  (unless (zero? rc)
-    (error 'dataframe-write-json-lines
-           "failed to write json lines to ~a (rust error code ~a)"
-           path rc)))
+  (define p (path->string-or-string path))
+  (void (call/foreign-error 'dataframe-write-json-lines
+                            (lambda () (dataframe-write-json-lines/raw df p))
+                            #:ok? zero?
+                            "failed to write json lines to ~a" path)))
 
 (define-compat dataframe-read-json-lines/raw
-  (_fun _string -> _DataFrame-ptr)
+  (_fun _string -> _DataFrame-ptr/null)
   #:c-id dataframe_read_json_lines
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-read-json-lines path)
-  (define df (dataframe-read-json-lines/raw (path->string-or-string path)))
-  (unless df
-    (error 'dataframe-read-json-lines "failed to read json lines from ~a" path))
-  df)
+  (define p (path->string-or-string path))
+  (call/foreign-error 'dataframe-read-json-lines
+                      (lambda () (dataframe-read-json-lines/raw p))
+                      "failed to read json lines from ~a" path))
 
 (define (path->string-or-string p)
   (cond
@@ -2174,3 +2193,55 @@
            12.15
            1e-9)
   (delete-file tmp-jsonl))
+
+(module+ test
+  (define (settle!)
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1)))
+
+  (define tmp-dir (find-system-path 'temp-dir))
+  (define missing-csv (build-path tmp-dir "rkt-polars-no-such-file.csv"))
+  (when (file-exists? missing-csv)
+    (delete-file missing-csv))
+  (check-exn #rx"^dataframe-read-csv: failed to read csv from .*: cannot open file: [Nn]o such file"
+             (lambda () (dataframe-read-csv missing-csv)))
+
+  (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
+  (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
+  (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
+             (lambda () (dataframe-write-csv one-col unwritable)))
+  (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
+             (lambda () (dataframe-write-parquet one-col unwritable)))
+  (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "
+             (lambda () (dataframe-write-json-lines one-col unwritable)))
+
+  (define junk (build-path tmp-dir "rkt-polars-junk.bin"))
+  (call-with-output-file junk
+    (lambda (out) (write-string "this is not parquet" out))
+    #:exists 'replace)
+  (check-exn #rx"^dataframe-read-parquet: failed to read parquet from .*: .*PAR1"
+             (lambda () (dataframe-read-parquet junk)))
+  (delete-file junk)
+
+  (check-exn #rx"cannot open file" (lambda () (dataframe-read-csv missing-csv)))
+  (define ok-csv (build-path tmp-dir "rkt-polars-clears-slot.csv"))
+  (dataframe-write-csv one-col ok-csv)
+  (check-equal? (dataframe-height (dataframe-read-csv ok-csv)) 3)
+  (check-false (last-error-message))
+
+  (settle!)
+  (let ([before (dataframe-drop-count)])
+    (dataframe-drop (dataframe-read-csv ok-csv))
+    (settle!)
+    (check-equal? (- (dataframe-drop-count) before) 1))
+
+  (let* ([wanted 20]
+         [before (dataframe-drop-count)])
+    (for ([_ (in-range wanted)])
+      (dataframe-read-csv ok-csv))
+    ;; finalizers run on their own thread, so assert a lenient fraction
+    (settle!)
+    (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
+
+  (delete-file ok-csv))
