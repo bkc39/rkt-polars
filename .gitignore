@@ -32,3 +32,4 @@ planet-cache/
 
 # nycflights benchmark data, fetched by bench/run.sh
 /bench/data/
+__pycache__/

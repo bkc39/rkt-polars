@@ -8,10 +8,11 @@
 ;;   racket bench/perf.rkt            ; inside `nix develop`, once the data is fetched
 
 (require racket/runtime-path
+         (only-in racket/file file->string)
          (only-in racket/format ~a ~r)
          (only-in racket/future processor-count)
-         (only-in racket/match match match-define match-lambda)
-         (only-in racket/port port->string with-output-to-string)
+         (only-in racket/match match match-define)
+         (only-in racket/port with-output-to-string)
          (only-in racket/string string-join string-split)
          (only-in racket/system system*)
          polars
@@ -24,96 +25,70 @@
   '("year" "month" "day" "dep_time" "sched_dep_time" "dep_delay" "arr_time"
     "sched_arr_time" "arr_delay" "flight" "air_time" "distance" "hour" "minute"))
 
-(define (timed thunk)
-  (lambda () (values thunk #f)))
+(struct operation (key label run note))
 
-(define (reader who proc path options [finish values])
-  (lambda ()
-    (define gap (keyword-gap who proc (map car options)))
-    (if gap
-        (values #f gap)
-        (values (lambda () (finish (keyword-call proc options path))) #f))))
-
-(define (sort-top5 df)
-  (lambda ()
-    (if (keyword-gap 'sort sort '(#:nulls-last))
-        (values (lambda () (~> df (sort "dep_delay" #:descending #t) (head 5)))
-                "nulls first: sort has no #:nulls-last")
-        (values (lambda () (~> df (sort "dep_delay" #:descending #t #:nulls-last #t) (head 5)))
-                #f))))
-
-(define (column->list df)
-  (lambda ()
-    (define series->list (polars-export 'series->list))
-    (if series->list
-        (values (lambda () (series->list (ref df #:columns "dep_delay"))) #f)
-        (values (lambda ()
-                  (define delays (ref df #:columns "dep_delay"))
-                  (for/list ([i (in-range (len delays))]) (ref delays i)))
-                "ref per element: polars has no series->list"))))
-
-(define (f64-matrix df)
-  (lambda ()
-    (define dataframe->f64vector (polars-export 'dataframe->f64vector))
-    (if dataframe->f64vector
-        (values (lambda () (dataframe->f64vector (select df numeric-columns) #:null +nan.0)) #f)
-        (values #f "polars has no dataframe->f64vector"))))
+(define (op key label run #:note [note #f])
+  (operation key label run note))
 
 (define (operations df source)
-  (define tsv (data-file source "tsv"))
-  (define csv (data-file source "csv"))
-  (define tab (reader-options source #:tab? #t))
-  (define comma (reader-options source #:tab? #f))
+  (define series->list (polars-export 'series->list (lambda () #f)))
   (list
-   (list "load-tsv" "load TSV" (reader 'read-csv read-csv tsv tab))
-   (list "load-csv" "load CSV" (reader 'read-csv read-csv csv comma))
-   (list "scan-collect" "lazy scan + collect" (reader 'scan-csv scan-csv tsv tab collect))
-   (list "select" "select"
-         (timed (lambda () (select df "distance" "dep_delay" "dest"))))
-   (list "distinct" "distinct"
-         (timed (lambda () (~> df (select "dest") unique))))
-   (list "group-by" "group-by count + mean"
-         (timed (lambda ()
-                  (~> df
-                      (group-by "dest")
-                      (agg (alias (count "dest") "n") (alias (mean "dep_delay") "mean_delay"))))))
-   (list "filter" "filter"
-         (timed (lambda () (filter df (> (col "dep_delay") 60)))))
-   (list "sort-top5" "sort + top 5" (sort-top5 df))
-   (list "describe" "describe" (timed (lambda () (describe df))))
-   (list "column-list" "column -> list" (column->list df))
-   (list "f64-matrix" "dataframe -> f64 matrix" (f64-matrix df))))
+   (op "load-tsv" "load TSV" (lambda () (read-frame source "tsv")))
+   (op "load-csv" "load CSV" (lambda () (read-frame source "csv")))
+   (op "scan-collect" "lazy scan + collect" (lambda () (scan-frame source)))
+   (op "select" "select" (lambda () (select df "distance" "dep_delay" "dest")))
+   (op "distinct" "distinct" (lambda () (~> df (select "dest") unique)))
+   (op "group-by" "group-by count + mean"
+       (lambda ()
+         (~> df
+             (group-by "dest")
+             (agg (alias (count "dest") "n") (alias (mean "dep_delay") "mean_delay")))))
+   (op "filter" "filter" (lambda () (filter df (> (col "dep_delay") 60))))
+   (op "sort-top5" "sort + top 5"
+       (lambda ()
+         (require-keywords 'sort sort '(#:nulls-last))
+         (~> df (sort "dep_delay" #:descending #t #:nulls-last #t) (head 5))))
+   (op "describe" "describe" (lambda () (describe df)))
+   (if series->list
+       (op "column-list" "column -> list"
+           (lambda () (series->list (ref df #:columns "dep_delay"))))
+       (op "column-list" "column -> list"
+           (lambda () (series-values (ref df #:columns "dep_delay")))
+           #:note "ref per element: polars has no series->list"))
+   (op "f64-matrix" "dataframe -> f64 matrix"
+       (lambda ()
+         ((polars-export 'dataframe->f64vector) (select df numeric-columns) #:null +nan.0)))))
 
-(define (measure make)
-  (with-handlers ([exn:fail? (lambda (e) (cons #f (first-line e)))])
-    (define-values (thunk note) (make))
-    (cons (and thunk (median-ms thunk)) note)))
+(struct timing (ms note))
+
+(define (measure o)
+  (with-handlers ([exn:fail? (lambda (e) (timing #f (first-line e)))])
+    (timing (median-ms (operation-run o)) (operation-note o))))
 
 (define (python-timings source)
   (define python (find-executable-path "python3"))
-  (define out
+  (define lines
     (if python
-        (with-output-to-string (lambda () (system* python perf.py (symbol->string source))))
-        ""))
-  (for/fold ([timings (hash)]) ([line (in-list (string-split out "\n"))])
+        (~> (with-output-to-string (lambda () (system* python perf.py (symbol->string source))))
+            (string-split "\n"))
+        '()))
+  (for/fold ([version "?"] [timings (hash)]) ([line (in-list lines)])
     (match (string-split line "\t" #:trim? #f)
-      [(list key "n/a" reason) (hash-set timings key (cons #f reason))]
-      [(list key value) (hash-set timings key (cons (string->number value) value))]
-      [_ timings])))
+      [(list "version" v) (values v timings)]
+      [(list key "n/a" reason) (values version (hash-set timings key (timing #f reason)))]
+      [(list key ms) (values version (hash-set timings key (timing (string->number ms) ms)))]
+      [_ (values version timings)])))
 
 (define (crate-version)
-  (match (regexp-match #px"name = \"polars\"\nversion = \"([^\"]+)\""
-                       (call-with-input-file cargo-lock port->string))
-    [(list _ v) v]
-    [#f "?"]))
+  (match (file->string cargo-lock)
+    [(pregexp #px"name = \"polars\"\nversion = \"([^\"]+)\"" (list _ v)) v]
+    [_ "?"]))
 
 (define (load-average)
-  (if (file-exists? "/proc/loadavg")
-      (match (call-with-input-file "/proc/loadavg" port->string)
-        [(pregexp #px"^(\\S+) (\\S+)" (list _ one-minute five-minutes))
-         (format ", load average ~a / ~a (1 / 5 min)" one-minute five-minutes)]
-        [_ ""])
-      ""))
+  (match (and (file-exists? "/proc/loadavg") (file->string "/proc/loadavg"))
+    [(pregexp #px"^(\\S+) (\\S+)" (list _ one-minute five-minutes))
+     (format ", load average ~a / ~a (1 / 5 min)" one-minute five-minutes)]
+    [_ ""]))
 
 (define (cell v width)
   (~a v #:min-width width #:align 'right))
@@ -130,16 +105,16 @@
           (if (null? notes) "" (string-append "   " (string-join notes "; ")))))
 
 (module+ main
+  (ensure-data)
   (match-define (loaded frame source reason) (load-frame))
   (unless frame
-    (error 'perf "no frame loads: ~a" reason))
+    (raise-user-error 'perf "no frame loads: ~a" reason))
   (define ops (operations frame source))
-  (define rkt (map (match-lambda [(list _ _ make) (measure make)]) ops))
-  (define py (python-timings source))
-  (printf "nycflights perf in ms, median of 5 runs after a warm-up: rkt-polars (polars crate ~a, Racket ~a) vs Python polars ~a; ~a cpus~a\n"
-          (crate-version)
-          (version)
-          (cdr (hash-ref py "version" (cons #f "?")))
+  (define rkt (map measure ops))
+  (define-values (py-version py) (python-timings source))
+  (printf "nycflights perf in ms, median of 5 runs after a warm-up: ~a vs ~a; ~a cpus~a\n"
+          (format "rkt-polars (polars crate ~a, Racket ~a)" (crate-version) (version))
+          (format "Python polars ~a" py-version)
           (processor-count)
           (load-average))
   (printf "inputs: ~a\n"
@@ -148,18 +123,16 @@
               (format "the NA-stripped copies; the original file does not load: ~a" reason)))
   (row "op" "rkt ms" "py ms" "rkt/py" '())
   (define within
-    (for/list ([op (in-list ops)] [measured (in-list rkt)])
-      (match-define (list key label _) op)
-      (match-define (cons rkt-ms rkt-note) measured)
-      (match-define (cons py-ms py-note) (hash-ref py key (cons #f "perf.py printed nothing")))
+    (for/list ([o (in-list ops)] [measured (in-list rkt)])
+      (match-define (timing rkt-ms rkt-note) measured)
+      (match-define (timing py-ms py-note)
+        (hash-ref py (operation-key o) (timing #f "perf.py printed nothing")))
       (define ratio (and rkt-ms py-ms (/ rkt-ms py-ms)))
-      (row label
+      (row (operation-label o)
            (ms->string rkt-ms)
            (ms->string py-ms)
            (if ratio (string-append (~r ratio #:precision '(= 2)) "×") "-")
            (append (if rkt-note (list rkt-note) '())
-                   (if py-ms '() (list (string-append "py: " py-note)))))
+                   (if py-ms '() (list (format "py: ~a" py-note)))))
       (and ratio (<= ratio 1.2))))
-  (printf "ratio <= 1.2×: ~a of ~a ops\n"
-          (for/sum ([ok? (in-list within)]) (if ok? 1 0))
-          (length within)))
+  (printf "ratio <= 1.2×: ~a of ~a ops\n" (length (filter values within)) (length within)))

@@ -3,66 +3,85 @@
 (require racket/runtime-path
          (only-in racket/format ~a)
          (only-in racket/list filter-not)
+         (only-in racket/match match* match-define)
          (only-in racket/string string-join)
-         (only-in polars read-csv))
+         (only-in polars collect len read-csv ref scan-csv ~>))
 
 (provide data-file
+         ensure-data
          first-line
-         keyword-call
-         keyword-gap
          load-frame
          (struct-out loaded)
          median-ms
          polars-export
-         reader-options)
+         read-frame
+         require-keywords
+         scan-frame
+         series-values)
 
 (define-runtime-path data-dir "data")
 
 (define (data-file source extension)
-  (path->string
-   (build-path data-dir
-               (format "nycflights~a.~a" (if (eq? source 'nona) "-nona" "") extension))))
+  (~> (format "nycflights~a.~a" (if (eq? source 'nona) "-nona" "") extension)
+      (build-path data-dir _)
+      path->string))
 
-(define (reader-options source #:tab? tab?)
-  (append (if tab? (list (cons '#:separator #\tab)) '())
-          (if (eq? source 'original) (list (cons '#:null-values "NA")) '())))
+(define (ensure-data)
+  (for* ([source (in-list '(original nona))]
+         [extension (in-list '("tsv" "csv"))])
+    (define file (data-file source extension))
+    (unless (file-exists? file)
+      (raise-user-error 'bench "~a is missing; `nix run .#bench` fetches and derives the data" file))))
 
-(define (keyword-gap who proc keywords)
+(define (require-keywords who proc keywords)
   (define-values (_required accepted) (procedure-keywords proc))
   (define missing
     (if accepted (filter-not (lambda (k) (memq k accepted)) keywords) '()))
-  (and (pair? missing)
-       (format "~a has no ~a" who (string-join (map ~a missing) ", "))))
+  (unless (null? missing)
+    (error (format "~a has no ~a" who (string-join (map ~a missing) ", ")))))
 
-(define (keyword-call proc options . positional)
-  (define sorted (sort options keyword<? #:key car))
-  (keyword-apply proc (map car sorted) (map cdr sorted) positional))
+(define (polars-export name [missing (lambda () (error (format "polars has no ~a" name)))])
+  (dynamic-require 'polars name missing))
 
-(define (polars-export name)
-  (dynamic-require 'polars name (lambda () #f)))
+(define (reader-keywords source tab?)
+  (append (if tab? '(#:separator) '())
+          (if (eq? source 'original) '(#:null-values) '())))
 
-(define (first-line e)
-  (define line (car (regexp-match #rx"^[^\n]*" (exn-message e))))
-  (if (> (string-length line) 160) (string-append (substring line 0 157) "...") line))
+(define (read-frame source extension)
+  (define path (data-file source extension))
+  (define tab? (equal? extension "tsv"))
+  (require-keywords 'read-csv read-csv (reader-keywords source tab?))
+  (match* (source tab?)
+    [('original #t) (read-csv path #:separator #\tab #:null-values "NA")]
+    [('original #f) (read-csv path #:null-values "NA")]
+    [('nona #t) (read-csv path #:separator #\tab)]
+    [('nona #f) (read-csv path)]))
+
+(define (scan-frame source)
+  (define path (data-file source "tsv"))
+  (require-keywords 'scan-csv scan-csv (reader-keywords source #t))
+  (collect (if (eq? source 'original)
+               (scan-csv path #:separator #\tab #:null-values "NA")
+               (scan-csv path #:separator #\tab))))
 
 (struct loaded (frame source reason))
 
-(define (try-read reader)
-  (with-handlers ([exn:fail? (lambda (e) (cons #f (first-line e)))])
-    (cons (reader) #f)))
-
 (define (load-frame)
-  (define options (reader-options 'original #:tab? #t))
-  (define original
-    (cond
-      [(keyword-gap 'read-csv read-csv (map car options)) => (lambda (gap) (cons #f gap))]
-      [else (try-read (lambda () (keyword-call read-csv options (data-file 'original "tsv"))))]))
-  (define copy
-    (if (car original) original (try-read (lambda () (read-csv (data-file 'nona "csv"))))))
-  (cond
-    [(car original) (loaded (car original) 'original #f)]
-    [(car copy) (loaded (car copy) 'nona (cdr original))]
-    [else (loaded #f 'nona (format "~a; the NA-stripped copy: ~a" (cdr original) (cdr copy)))]))
+  (with-handlers ([exn:fail? (lambda (e) (load-copy (first-line e)))])
+    (loaded (read-frame 'original "tsv") 'original #f)))
+
+(define (load-copy reason)
+  (with-handlers ([exn:fail?
+                   (lambda (e)
+                     (loaded #f 'nona (format "~a; the NA-stripped copy: ~a" reason (first-line e))))])
+    (loaded (read-frame 'nona "csv") 'nona reason)))
+
+(define (first-line e)
+  (match-define (list line) (regexp-match #rx"^[^\n]*" (exn-message e)))
+  (~a line #:max-width 160 #:limit-marker "..."))
+
+(define (series-values s)
+  (for/list ([i (in-range (len s))]) (ref s i)))
 
 (define (median-ms thunk #:runs [runs 5])
   (thunk)

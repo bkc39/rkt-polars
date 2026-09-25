@@ -30,8 +30,9 @@ def median_ms(fn, runs=5):
     for _ in range(runs):
         gc.collect()
         start = time.perf_counter()
-        fn()
+        result = fn()
         times.append((time.perf_counter() - start) * 1000)
+        del result
     return statistics.median(times)
 
 

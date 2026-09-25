@@ -7,31 +7,18 @@
 ;;   nix run .#bench                  ; fetches the data, then runs this and perf.rkt
 ;;   racket bench/blog-test.rkt       ; inside `nix develop`, once the data is fetched
 
-(require (only-in gregor date)
+(require (only-in gregor [date gregor-date])
          (only-in racket/format ~a ~r)
-         (only-in racket/list index-of)
-         (only-in racket/match match match-define)
+         (only-in racket/match match match-define match-lambda)
          polars
          "harness.rkt")
 
-(struct failure (reason))
-
 (define (fail! fmt . args)
-  (raise (failure (apply format fmt args))))
+  (error (apply format fmt args)))
 
 (define (expect what got want [same? equal?])
   (unless (same? got want)
     (fail! "~a: got ~a, expected ~a" what got want)))
-
-(define (need-keywords who proc keywords)
-  (define gap (keyword-gap who proc keywords))
-  (when gap (fail! "~a" gap)))
-
-(define (need-export name)
-  (or (polars-export name) (fail! "polars has no ~a" name)))
-
-(define (series-values s)
-  (for/list ([i (in-range (len s))]) (ref s i)))
 
 (define (column-values frame name)
   (series-values (ref frame #:columns name)))
@@ -45,11 +32,10 @@
 (define (close? got want)
   (and (real? got) (<= (abs (- got want)) (* 1e-12 (abs want)))))
 
-(define (datetime-dtype? dt)
-  (match dt [(or 'datetime (cons 'datetime _)) #t] [_ #f]))
-
-(define (categorical-dtype? dt)
-  (match dt [(or 'categorical (cons 'categorical _)) #t] [_ #f]))
+(define (dtype-kind? kind dt)
+  (match dt
+    [(cons head _) (eq? head kind)]
+    [_ (eq? dt kind)]))
 
 (define integer-dtypes '(int8 int16 int32 int64 uint8 uint16 uint32 uint64))
 
@@ -93,7 +79,7 @@
   "IAH, ATL, LAX rows, non-null count and mean")
 
 (define (t5-to-racket df)
-  (define series->list (need-export 'series->list))
+  (define series->list (polars-export 'series->list))
   (define (delays)
     (~> df (ref #:columns "dep_delay") drop-nulls series->list))
   (define xs (delays))
@@ -102,14 +88,14 @@
   (define ms (median-ms delays #:runs 3))
   (unless (< ms 100)
     (fail! "~a ms; the target is tens of milliseconds" (~r ms #:precision 0)))
-  (format "328521 values in ~a ms" (~r ms #:precision 1)))
+  (format "328521 values in ~a ms" (~r ms #:precision '(= 1))))
 
 (define (t6-filter df)
   (expect "rows" (~> df (filter (> (col "dep_delay") 60)) height) 26581)
   "26581 rows")
 
 (define (t7-top-delays df)
-  (need-keywords 'sort sort '(#:nulls-last))
+  (require-keywords 'sort sort '(#:nulls-last))
   (expect "top 5"
           (~> df
               (sort "dep_delay" #:descending #t #:nulls-last #t)
@@ -119,44 +105,44 @@
   "1301 1137 1126 1014 1005")
 
 (define (c1-separator)
-  (define result
+  (define attempt
     (with-handlers ([exn:fail? values])
       (read-csv (data-file 'original "tsv"))))
-  (when (dataframe? result)
-    (fail! "read-csv returned a ~a × ~a frame" (height result) (width result)))
-  (format "raises: ~a" (first-line result)))
+  (when (dataframe? attempt)
+    (fail! "read-csv returned a ~a × ~a frame" (height attempt) (width attempt)))
+  (unless (regexp-match? #rx"(?i:separator)" (exn-message attempt))
+    (fail! "read-csv raises without naming the separator: ~a" (first-line attempt)))
+  (format "raises: ~a" (first-line attempt)))
 
-(define categorical-columns '(("carrier" . UA) ("dest" . IAH) ("origin" . EWR)))
+(define categorical-columns '(("carrier" UA) ("dest" IAH) ("origin" EWR)))
 
 (define (c2-categorical df)
   (define cast-frame
-    (with-columns df (map (lambda (entry) (cast (car entry) 'categorical)) categorical-columns)))
+    (with-columns df (map (match-lambda [(list name _) (cast name 'categorical)])
+                          categorical-columns)))
   (for ([entry (in-list categorical-columns)])
-    (match-define (cons name first-value) entry)
+    (match-define (list name first-value) entry)
     (define s (ref cast-frame #:columns name))
-    (unless (categorical-dtype? (dtype s))
+    (unless (dtype-kind? 'categorical (dtype s))
       (fail! "~a is ~a after the cast" name (dtype s)))
     (expect (format "~a row 0" name) (ref s 0) first-value))
   "carrier, dest, origin categorical; row 0 reads back as 'UA, 'IAH, 'EWR")
 
 (define (c3-dates)
-  (define parse-dates
-    (or (findf (lambda (k) (not (keyword-gap 'read-csv read-csv (list k))))
-               '(#:try-parse-dates #:try-parse-dates?))
-        (fail! "read-csv has no #:try-parse-dates")))
-  (define options (cons (cons parse-dates #t) (reader-options 'original #:tab? #t)))
-  (need-keywords 'read-csv read-csv (map car options))
-  (define df (keyword-call read-csv options (data-file 'original "tsv")))
+  (require-keywords 'read-csv read-csv '(#:separator #:null-values #:try-parse-dates))
+  (define df
+    (read-csv (data-file 'original "tsv")
+              #:separator #\tab #:null-values "NA" #:try-parse-dates #t))
   (define time-hour (dtype (ref df #:columns "time_hour")))
-  (unless (datetime-dtype? time-hour)
+  (unless (dtype-kind? 'datetime time-hour)
     (fail! "time_hour loads as ~a, not a datetime" time-hour))
   (define days
     (~> df (group-by "year" "month" "day") (agg (alias (min "time_hour") "time_hour"))))
   (define dates
-    (for/list ([y (in-list (column-values days "year"))]
-               [m (in-list (column-values days "month"))]
-               [d (in-list (column-values days "day"))])
-      (date y m d)))
+    (map gregor-date
+         (column-values days "year")
+         (column-values days "month")
+         (column-values days "day")))
   (expect "calendar days" (length dates) 365)
   (define ymd (series dates #:name "ymd"))
   (expect "dtype of a series of gregor dates" (dtype ymd) 'date)
@@ -173,9 +159,8 @@
 
 (define (c4-describe df)
   (define summary (describe df))
-  (define statistics (column-values summary "statistic"))
   (define (stat column name)
-    (~> summary (ref #:columns column) (ref (index-of statistics name))))
+    (~> summary (filter (= (col "statistic") name)) (cell column)))
   (define (as-number v)
     (if (string? v) (string->number v) v))
   (for ([row (in-list c4-expected)])
@@ -201,26 +186,27 @@
         (check 'C3 "dates" 63 #f c3-dates)
         (check 'C4 "describe" 79 #t c4-describe)))
 
+(struct result (pass? text))
+
 (define (outcome thunk)
-  (with-handlers ([failure? (lambda (f) (list #f (failure-reason f)))]
-                  [exn:fail? (lambda (e) (list #f (first-line e)))])
-    (list #t (thunk))))
+  (with-handlers ([exn:fail? (lambda (e) (result #f (first-line e)))])
+    (result #t (thunk))))
 
 (define (run-check c data)
   (match-define (loaded frame source reason) data)
   (define body (check-body c))
   (cond
     [(not (check-on-frame? c)) (outcome body)]
-    [(not frame) (list #f (format "the file does not load: ~a" reason))]
+    [(not frame) (result #f (format "no frame loads: ~a" reason))]
     [(eq? source 'original) (outcome (lambda () (body frame)))]
     [else
-     (match-define (list pass? text) (outcome (lambda () (body frame))))
-     (list #f (format "~a; on the NA-stripped copy: ~a"
-                      (if (eq? (check-id c) 'T1) reason "the original file does not load (T1)")
-                      (if pass? (format "PASS (~a)" text) text)))]))
+     (match-define (result pass? text) (outcome (lambda () (body frame))))
+     (result #f (format "~a; on the NA-stripped copy: ~a"
+                        (if (eq? (check-id c) 'T1) reason "the original file does not load (T1)")
+                        (if pass? (format "PASS (~a)" text) text)))]))
 
-(define (report c result)
-  (match-define (list pass? text) result)
+(define (report c r)
+  (match-define (result pass? text) r)
   (printf "~a  ~a  ~a  ~a~a\n"
           (if pass? "PASS" "FAIL")
           (check-id c)
@@ -230,10 +216,11 @@
   pass?)
 
 (module+ main
+  (ensure-data)
   (define data (load-frame))
   (printf "nycflights scoreboard: https://aliquote.org/post/racket-data-frames/ on ~a\n"
           (data-file 'original "tsv"))
-  (define passed
-    (for/sum ([c (in-list checks)])
-      (if (report c (run-check c data)) 1 0)))
-  (printf "~a of ~a PASS\n" passed (length checks)))
+  (define passes
+    (for/list ([c (in-list checks)])
+      (report c (run-check c data))))
+  (printf "~a of ~a PASS\n" (length (filter values passes)) (length checks)))
