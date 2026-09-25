@@ -169,6 +169,15 @@ Group keys may be expressions. A bare @racket[(col "name")] inside
          (~> (col "height") mean (alias "avg_height"))))
 ]
 
+An aggregation followed by @racket[over] is computed per group but broadcast
+back to every row of the group, so it goes in @racket[with-columns] rather
+than @racket[agg]; the keys are whatever @racket[group-by] takes.
+
+@examples[#:eval ev #:label #f
+(~> df
+    (with-columns (~> (col "height") mean (over decade) (alias "decade_avg_height"))))
+]
+
 API gaps: no @tt{pl.len()}; no multi-column @tt{col(...)}; no
 @tt{name.prefix}.
 
