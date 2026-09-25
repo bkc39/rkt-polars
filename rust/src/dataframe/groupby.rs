@@ -42,3 +42,4 @@ group_by_agg!(dataframe_group_by_mean, mean);
 group_by_agg!(dataframe_group_by_min, min);
 group_by_agg!(dataframe_group_by_max, max);
 group_by_agg!(dataframe_group_by_count, count);
+group_by_agg!(dataframe_group_by_median, median);

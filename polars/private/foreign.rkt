@@ -1635,6 +1635,7 @@
 (define-group-by-agg dataframe-group-by-min/c   dataframe_group_by_min)
 (define-group-by-agg dataframe-group-by-max/c   dataframe_group_by_max)
 (define-group-by-agg dataframe-group-by-count/c dataframe_group_by_count)
+(define-group-by-agg dataframe-group-by-median/c dataframe_group_by_median)
 
 (define (dataframe-group-by-sum df #:by by #:agg agg)
   (dataframe-group-by-sum/c df by agg))
