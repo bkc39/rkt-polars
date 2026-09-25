@@ -402,7 +402,8 @@ total
   matching files stack in sorted filename order, and one that matches
   nothing is an error. A directory reads every file in it and adds its
   @litchar{key=value} subdirectory names as columns; a single file or a
-  pattern adds none, as in Python. @racket[read-parquet] is
+  pattern adds none, as in Python, and neither does a directory whose own
+  path holds @litchar{[}, @litchar{*} or @litchar{?} (Polars 0.41.3). @racket[read-parquet] is
   @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
   literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
   @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).

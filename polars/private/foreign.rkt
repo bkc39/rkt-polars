@@ -1499,13 +1499,17 @@
                       (lambda () (dataframe-read-json-lines/raw p))
                       "failed to read json lines from ~a" path))
 
+(define (glob-pattern? p)
+  (regexp-match? #rx"[*?[]" (if (path? p) (path->string p) p)))
+
 (define (path->complete-string who p #:glob? [glob? #f])
   (unless (path-string? p)
     (raise-argument-error who "path-string?" p))
-  (define base (path->string (current-directory)))
-  (if (relative-path? p)
-      (path->string (build-path (if glob? (regexp-replace* #rx"[][*?]" base "[&]") base) p))
-      (if (path? p) (path->string p) p)))
+  (define full (path->string (path->complete-path p)))
+  (if (and glob? (relative-path? p) (not (directory-exists? full)))
+      (path->string
+       (build-path (regexp-replace* #rx"[][*?]" (path->string (current-directory)) "[&]") p))
+      full))
 
 (define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
   (define-compat name

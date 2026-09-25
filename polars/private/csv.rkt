@@ -15,7 +15,7 @@
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _DataFrame-ptr/null DataFrame-ptr?
                   call/foreign-error dataframe-column dataframe-column-name
-                  dataframe-drop dataframe-height dataframe-width
+                  dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
                   series-ref)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
@@ -97,7 +97,7 @@
    [#:try-parse-dates try-parse-dates boolean? #f]
    [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
    [#:glob glob boolean? #t])
-  #:pre (separator quote-char) "quote-char differs from the separator"
+  #:pre (separator quote-char) "quote-char must differ from the separator (#\\, when not given)"
   (quote-differs? separator quote-char)
   (csv-call (make-CompatCsvOptions has-header
                                    (char->integer (or separator #\,))
@@ -153,7 +153,9 @@
 
 (define (apply-csv who entry path call)
   (match-define (csv-call options comment-prefix null-values names dtypes _) call)
-  (entry (path->complete-string who path #:glob? (CompatCsvOptions-glob options))
+  (define glob? (and (CompatCsvOptions-glob options) (glob-pattern? path)))
+  (set-CompatCsvOptions-glob! options glob?)
+  (entry (path->complete-string who path #:glob? glob?)
          options comment-prefix null-values names dtypes))
 
 (define lazyframe-scan-csv
