@@ -1,8 +1,10 @@
+mod csv;
 mod dtype;
 mod optionals;
 mod shape;
 mod temporal;
 
+pub use self::csv::CompatCsvOptions;
 #[cfg(test)]
 pub(crate) use self::dtype::compat_time_unit_from_polars;
 pub(crate) use self::dtype::{

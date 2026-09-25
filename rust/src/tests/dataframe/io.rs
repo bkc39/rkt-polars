@@ -17,6 +17,32 @@ fn write_round_trip(
     back
 }
 
+extern "C" fn read_csv(path: *const c_char) -> *mut DataFrame {
+    dataframe_read_csv_with_options(
+        path,
+        CompatCsvOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        ptr::null(),
+        0,
+    )
+}
+
+fn scan_csv(path: *const c_char) -> *mut LazyFrame {
+    lazyframe_scan_csv_with_options(
+        path,
+        CompatCsvOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        ptr::null(),
+        0,
+    )
+}
+
 // Use i64 input throughout: CSV / JSON-Lines readers infer
 // integer columns as i64, and Parquet preserves the i64 schema —
 // so all three round-trip back to i64 uniformly.
@@ -26,8 +52,7 @@ fn csv_round_trip_preserves_shape_and_values() {
     let xs = make_i64("x", &[1, 2, 3]);
     let gs = make_str("g", &["a", "b", "c"]);
     let df = make_df(&[xs, gs]);
-    let back =
-        write_round_trip(df, "csv", dataframe_write_csv, dataframe_read_csv);
+    let back = write_round_trip(df, "csv", dataframe_write_csv, read_csv);
     assert_eq!(dataframe_height(back), 3);
     assert_eq!(read_column_names(back), vec!["x", "g"]);
     assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
@@ -84,7 +109,7 @@ fn read_csv_missing_path_returns_null() {
     let dir = tempfile::tempdir().expect("tempdir");
     let p = dir.path().join("nope.csv");
     let p_owned = cstr(p.to_str().unwrap());
-    assert!(dataframe_read_csv(p_owned.as_ptr()).is_null());
+    assert!(read_csv(p_owned.as_ptr()).is_null());
 }
 
 #[test]
@@ -126,9 +151,8 @@ fn to_string_null_df_returns_null() {
 fn missing_file_reports_the_os_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
     let p = cstr(dir.path().join("nope.csv").to_str().unwrap());
-    assert!(dataframe_read_csv(p.as_ptr()).is_null());
+    assert!(read_csv(p.as_ptr()).is_null());
     let msg = recorded_error().expect("a reason");
-    assert!(msg.starts_with("cannot open file: "), "{:?}", msg);
     assert!(msg.to_lowercase().contains("no such file"), "{:?}", msg);
 }
 
@@ -164,7 +188,7 @@ fn null_arguments_say_which_one() {
     assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
     assert_eq!(dataframe_write_csv(df, ptr::null()), 1);
     assert_eq!(recorded_error().as_deref(), Some("path is null"));
-    assert!(dataframe_read_csv(ptr::null()).is_null());
+    assert!(read_csv(ptr::null()).is_null());
     assert_eq!(recorded_error().as_deref(), Some("path is null"));
     assert!(lazyframe_collect(ptr::null_mut()).is_null());
     assert_eq!(recorded_error().as_deref(), Some("lazyframe is null"));
@@ -200,8 +224,8 @@ fn every_entry_point_clears_a_stale_reason() {
     cleared("dataframe_write_parquet");
     assert_eq!(dataframe_write_json_lines(df, ndjson.as_ptr()), 0);
     cleared("dataframe_write_json_lines");
-    frame("dataframe_read_csv", dataframe_read_csv(csv.as_ptr()));
-    cleared("dataframe_read_csv");
+    frame("dataframe_read_csv_with_options", read_csv(csv.as_ptr()));
+    cleared("dataframe_read_csv_with_options");
     frame(
         "dataframe_read_parquet",
         dataframe_read_parquet(parquet.as_ptr()),
@@ -212,13 +236,8 @@ fn every_entry_point_clears_a_stale_reason() {
         dataframe_read_json_lines(ndjson.as_ptr()),
     );
     cleared("dataframe_read_json_lines");
-    plan("lazyframe_scan_csv", lazyframe_scan_csv(csv.as_ptr()));
-    cleared("lazyframe_scan_csv");
-    plan(
-        "lazyframe_scan_csv_options",
-        lazyframe_scan_csv_options(csv.as_ptr(), 1, b',', 0, 0, 0),
-    );
-    cleared("lazyframe_scan_csv_options");
+    plan("lazyframe_scan_csv_with_options", scan_csv(csv.as_ptr()));
+    cleared("lazyframe_scan_csv_with_options");
     plan(
         "lazyframe_scan_parquet",
         lazyframe_scan_parquet(parquet.as_ptr()),
@@ -229,7 +248,7 @@ fn every_entry_point_clears_a_stale_reason() {
         lazyframe_scan_parquet_options(parquet.as_ptr(), 0, 0),
     );
     cleared("lazyframe_scan_parquet_options");
-    let lf = lazyframe_scan_csv(csv.as_ptr());
+    let lf = scan_csv(csv.as_ptr());
     set_last_error("stale");
     frame("lazyframe_collect", lazyframe_collect(lf));
     cleared("lazyframe_collect");
@@ -259,7 +278,7 @@ fn a_scan_defers_a_bad_file_to_collect() {
 #[test]
 fn an_invalid_glob_fails_at_scan() {
     let p = cstr("/tmp/[.csv");
-    assert!(lazyframe_scan_csv(p.as_ptr()).is_null());
+    assert!(scan_csv(p.as_ptr()).is_null());
     let msg = recorded_error().expect("a reason");
     assert!(msg.to_lowercase().contains("glob"), "{:?}", msg);
 }

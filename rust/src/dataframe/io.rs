@@ -33,6 +33,32 @@ fn read_frame(
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 
+fn require_file(path: &str, glob: bool) -> PolarsResult<()> {
+    if glob && path.contains(['*', '?', '[']) {
+        return Ok(());
+    }
+    std::fs::metadata(path)
+        .map(|_| ())
+        .map_err(|err| polars_err!(ComputeError: "cannot open file: {}", err))
+}
+
+fn collect_frame(
+    path: *const c_char,
+    glob: bool,
+    build: impl FnOnce(&str) -> PolarsResult<LazyFrame>,
+) -> *mut DataFrame {
+    clear_last_error();
+    decode_path(path)
+        .and_then(|path| {
+            record(
+                require_file(path, glob)
+                    .and_then(|()| build(path))
+                    .and_then(LazyFrame::collect),
+            )
+        })
+        .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
+}
+
 fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
@@ -74,12 +100,27 @@ pub extern "C" fn dataframe_write_csv(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_read_csv(path: *const c_char) -> *mut DataFrame {
-    read_frame(path, |file| {
-        CsvReadOptions::default()
-            .with_has_header(true)
-            .into_reader_with_file_handle(file)
-            .finish()
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn dataframe_read_csv_with_options(
+    path: *const c_char,
+    options: CompatCsvOptions,
+    comment_prefix: *const c_char,
+    null_values: *const *const c_char,
+    null_values_len: usize,
+    override_names: *const *const c_char,
+    override_dtypes: *const CompatDType,
+    overrides_len: usize,
+) -> *mut DataFrame {
+    let arrays = CsvArrays {
+        comment_prefix,
+        null_values,
+        null_values_len,
+        override_names,
+        override_dtypes,
+        overrides_len,
+    };
+    collect_frame(path, options.glob != 0, |path| {
+        csv_scan(path, &options, &arrays)
     })
 }
 
@@ -97,7 +138,7 @@ pub extern "C" fn dataframe_write_parquet(
 pub extern "C" fn dataframe_read_parquet(
     path: *const c_char,
 ) -> *mut DataFrame {
-    read_frame(path, |file| ParquetReader::new(file).finish())
+    collect_frame(path, true, |path| parquet_scan(path, None))
 }
 
 #[no_mangle]
