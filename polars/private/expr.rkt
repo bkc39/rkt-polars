@@ -121,7 +121,9 @@
   #:c-id expr_meta_output_name)
 
 (define (expr-meta-output-name e)
-  (error 'unimplemented))
+  (or (expr-meta-output-name/raw e)
+      (error 'expr-meta-output-name
+             "cannot determine the output name of ~a" (expr->string e))))
 
 (define-compat expr-meta-root-names-len
   (_fun _Expr-ptr -> _size)
@@ -132,14 +134,14 @@
   #:c-id expr_meta_root_name)
 
 (define (expr-meta-root-names e)
-  (error 'unimplemented))
+  (for/list ([i (in-range (expr-meta-root-names-len e))])
+    (expr-meta-root-name e i)))
 
 (define-compat expr-meta-eq/raw
   (_fun _Expr-ptr _Expr-ptr -> _uint8)
   #:c-id expr_meta_eq)
 
-(define (expr-meta-eq? a b)
-  (error 'unimplemented))
+(define (expr-meta-eq? a b) (= 1 (expr-meta-eq/raw a b)))
 
 (define-compat dataframe-lazy
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)

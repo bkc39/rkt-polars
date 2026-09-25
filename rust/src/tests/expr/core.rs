@@ -36,7 +36,10 @@ fn to_string_int_literal_prints_value() {
     let v = column("v");
     let ten = expr_lit_i32(10);
     let scaled = expr_mul(v, ten);
-    assert_eq!(take_cstring(expr_to_string(scaled)), "[(col(\"v\")) * (10)]");
+    assert_eq!(
+        take_cstring(expr_to_string(scaled)),
+        "[(col(\"v\")) * (dyn int: 10)]"
+    );
     expr_drop(scaled);
     expr_drop(ten);
     expr_drop(v);

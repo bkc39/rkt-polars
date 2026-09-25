@@ -11,16 +11,17 @@
           [meta-eq? (-> (or/c Expr-ptr? string?) (or/c Expr-ptr? string?) boolean?)]))
 
 (define (meta-output-name x)
-  (error 'unimplemented))
+  (expr-meta-output-name (->col-expr 'meta-output-name x)))
 
 (define (meta-root-names x)
-  (error 'unimplemented))
+  (expr-meta-root-names (->col-expr 'meta-root-names x)))
 
 (define (meta-eq? a b)
-  (error 'unimplemented))
+  (expr-meta-eq? (->col-expr 'meta-eq? a) (->col-expr 'meta-eq? b)))
 
 (module+ test
   (require rackunit
+           (only-in racket/contract exn:fail:contract:blame?)
            (only-in threading ~>)
            (only-in polars/private/expr col expr-add lit)
            (only-in polars/private/generic/reductions alias sum)

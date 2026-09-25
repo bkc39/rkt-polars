@@ -98,8 +98,13 @@
   (if (Expr-ptr? v) v (lit v)))
 
 (module+ test
-  (require rackunit
-           (only-in polars/private/expr expr-add expr-mul))
+  (require rackunit)
+  (define-compat expr-add
+    (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+    #:wrap (allocator expr-drop))
+  (define-compat expr-mul
+    (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+    #:wrap (allocator expr-drop))
   (define print-col (col "x"))
   (check-equal? (expr->string print-col) "col(\"x\")")
   (check-equal? (format "~a" print-col) "col(\"x\")")
@@ -108,7 +113,7 @@
   (check-equal? (expr->string (expr-add (col "a") (col "b")))
                 "[(col(\"a\")) + (col(\"b\"))]")
   (check-equal? (expr->string (expr-alias (col "a") "b")) "col(\"a\").alias(\"b\")")
-  (check-equal? (expr->string (expr-mul (col "v") 10)) "[(col(\"v\")) * (10)]")
+  (check-equal? (expr->string (expr-mul (col "v") (lit 10))) "[(col(\"v\")) * (dyn int: 10)]")
   (check-equal? (expr->string (lit "hi")) "String(hi)")
   (check-equal? (expr->string (lit #t)) "true")
   (check-pred Expr-ptr? print-col)
