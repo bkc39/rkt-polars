@@ -44,4 +44,12 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
 | Lazy API | `lazy-api.rkt` | `lazy_api.py` |
 
+`interop/` — upstream [Arrow producer/consumer](https://docs.pola.rs/user-guide/misc/arrow/) and [Visualization](https://docs.pola.rs/user-guide/misc/visualization/), through `to_list` / `to_dict` / `to_numpy`
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| Series to Racket values, iterating, columns | `racket-values.rkt` | `racket_values.py` |
+| Numeric buffers (`to_numpy`; the Python side needs numpy) | `numeric-buffers.rkt` | `numeric_buffers.py` |
+| Data for a plot | `visualization.rkt` | `visualization.py` |
+
 `data/` holds the small CSV inputs the scripts read.

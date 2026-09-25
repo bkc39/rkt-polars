@@ -578,9 +578,20 @@ be freed later. Each element comes out as @racket[ref] returns it:
 
 A null entry becomes the @racket[#:null] value. A series of any other dtype
 raises @racket[exn:fail:contract] naming the dtype, even when every entry is
-null.
+null. The @secref["interop"]
+chapter of the guide walks through all of them.
 
 @examples[#:eval ev #:hidden (require ffi/vector)]
+
+@examples[#:eval ev #:label #f
+(series->list (series (list 1.5 polars-null)))
+(series->list (series (list "a" polars-null "")))
+(series->list (series (list #t #f polars-null)))
+(series->list (series (list (datetime 2024 1 2 3 4 5) polars-null)))
+(series->list (cast (series '(19724) #:dtype 'i32) 'date))
+(series->list (cast (series '(11045000000000) #:dtype 'i64) 'time))
+(series->list (cast (series '(1500) #:dtype 'i64) '(duration milliseconds)))
+(eval:error (series->list (cast (series '("a") #:name "b") 'binary)))]
 
 @deftogether[(@defproc[(series->list [s series?] [#:null null-value any/c polars-null]) list?]
               @defproc[(series->vector [s series?] [#:null null-value any/c polars-null])
@@ -592,6 +603,8 @@ null.
   @examples[#:eval ev #:label #f
 (define s (series (list 3 polars-null 1) #:name "x"))
 (series->list s)
+(series->list s #:null 'missing)
+(series->vector s)
 (series->vector s #:null 0)]}
 
 @defproc[(series->f64vector [s series?] [#:null null-value (or/c real? 'error) +nan.0])
@@ -612,6 +625,8 @@ null.
 (define xs (series (list 1 polars-null 3) #:name "x"))
 (f64vector->list (series->f64vector xs))
 (f64vector->list (series->f64vector xs #:null 0))
+(f64vector->list (series->f64vector (series (list #t #f))))
+(f64vector->list (series->f64vector (series '(1 2)) #:null 'error))
 (eval:error (series->f64vector xs #:null 'error))
 (eval:error (series->f64vector (series '("a") #:name "s")))]}
 
@@ -622,8 +637,12 @@ null.
   @racket[(for ([x s]) ....)] iterates as @racket[(in-series s)] does.
 
   @examples[#:eval ev #:label #f
+(for/list ([x (in-series xs)]) x)
 (for/sum ([x (in-series xs #:null 0)]) x)
-(for/list ([x (series '("a" "b"))]) (string-upcase x))]}
+(for/list ([x (series '("a" "b"))]) (string-upcase x))
+(for/first ([x (in-series (series (build-list 100000 values)))]
+            #:when (> x 41))
+  x)]}
 
 @subsection[#:tag "promotion"]{dtype promotion}
 
@@ -790,7 +809,9 @@ renders it with no separate display call.
 (define kv (dataframe (list (series '("a" "b") #:name "k")
                             (series (list 1 polars-null) #:name "v"))))
 (dataframe->columns kv)
-(dataframe->columns kv #:columns '("v") #:null 0)]}
+(dataframe->columns kv #:columns '("v" "k") #:null 0)
+(eval:error (dataframe->columns kv #:columns '("k" "k")))
+(eval:error (dataframe->columns kv #:columns '("nope")))]}
 
 @defproc[(dataframe->f64vector [d dataframe?]
                                [#:columns columns (listof string?) (column-names d)]
@@ -815,9 +836,16 @@ renders it with no separate display call.
 (define-values (m nrows ncols) (dataframe->f64vector xy))
 (list nrows ncols)
 (f64vector->list m)
-(define-values (m/c _r _c) (dataframe->f64vector xy #:order 'c))
+(define-values (m/f rows/f cols/f) (dataframe->f64vector xy #:order 'fortran))
+(equal? (f64vector->list m/f) (f64vector->list m))
+(define-values (m/c rows/c cols/c) (dataframe->f64vector xy #:order 'c))
 (f64vector->list m/c)
-(eval:error (dataframe->f64vector xy #:null 'error))]}
+(define-values (b rows/b cols/b) (dataframe->f64vector xy #:columns '("b") #:null 'error))
+(f64vector->list b)
+(define-values (z rows/z cols/z) (dataframe->f64vector xy #:null 0))
+(f64vector->list z)
+(eval:error (dataframe->f64vector xy #:null 'error))
+(eval:error (dataframe->f64vector (dataframe (list (series '("p") #:name "s")))))]}
 
 @subsection{Low-level DataFrame API}
 
@@ -1069,5 +1097,19 @@ exports its method(s) and a predicate that recognises values implementing it.
               @defproc[(has-null-count? [v any/c]) boolean?])]{
   The @racket[null-count] capability (method: @racket[null-count]). Implemented
   by series.}
+
+A series is also a Racket sequence (through @racket[prop:sequence]): a
+@racket[for] clause, @racket[sequence?] and the @racketmodname[racket/sequence]
+operations see its elements, converted a block of rows at a time as by
+@racket[in-series], with @racket[polars-null] for a null entry. A dataframe is
+not a sequence; iterate over @racket[(ref d name)] or use
+@racket[dataframe->columns].
+
+@examples[#:eval ev #:label #f
+(define ages (series (list 34 polars-null 51) #:name "age"))
+(sequence? ages)
+(for/list ([age ages]) age)
+(for/sum ([age ages] #:unless (polars-null? age)) age)
+(sequence? (dataframe (list ages)))]
 
 @(close-eval ev)
