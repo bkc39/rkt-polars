@@ -790,6 +790,11 @@ built.
   spelling is @racket[alias], which is the one to reach for:
   @racket[(alias (sum (col "value")) "total")].}
 
+@defproc[(expr-col [name string?]) Expr-ptr?]{
+  The column reference @racket[col] is built on: @racket[name] is taken
+  literally, except that a name of the form @tt{^...$} is a regex
+  projection, which is how the regexp arm of @racket[col] is spelled.}
+
 @deftogether[(@defproc[(expr-all) Expr-ptr?]
               @defproc[(expr-exclude [e multi-column-expr?]
                                      [names (non-empty-listof (or/c string? regexp?))])
