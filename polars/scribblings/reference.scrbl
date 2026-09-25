@@ -54,7 +54,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @racket['(datetime milliseconds)] or with its @racket[dtype]. Given a
   regexp it is every column whose name matches, as @racket[regexp-match?]
   would decide it (@tt{pl.col("^sepal_.*$")}); the pattern text is compiled
-  by Rust's regex crate, so write @racket[#px] for character classes such
+  by Rust's regex crate, so write @litchar{#px} for character classes such
   as @litchar{\d}. A multi-column @racket[col] expands inside any expression
   to one output per matched column, in the frame's column order, each
   keeping the matched column's name; a frame with no match yields no

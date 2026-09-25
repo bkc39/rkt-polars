@@ -94,17 +94,42 @@
 (define (->column-pattern v)
   (if (regexp? v) (regexp->column-pattern v) v))
 
-(define (expr-all)
-  (error 'unimplemented))
+(define-compat expr-all
+  (_fun -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
 
-(define (expr-dtype-col dtype)
-  (error 'unimplemented))
-
-(define (expr-exclude e names)
-  (error 'unimplemented))
+(define-compat expr-multi-column/raw
+  (_fun _Expr-ptr -> _uint8)
+  #:c-id expr_multi_column)
 
 (define (multi-column-expr? v)
-  (error 'unimplemented))
+  (and (Expr-ptr? v) (= 1 (expr-multi-column/raw v))))
+
+(define-compat expr-exclude/raw
+  (_fun _Expr-ptr
+        (names : (_list i _string))
+        (_size = (length names))
+        -> _pointer)
+  #:c-id expr_exclude)
+
+(define-compat expr-dtype-col/raw
+  (_fun _CompatDType -> _pointer)
+  #:c-id expr_dtype_col)
+
+(define (require-expr-result who result)
+  (if result
+      (let ([e (cast result _pointer _Expr-ptr)])
+        (register-finalizer e expr-drop)
+        e)
+      (error who "operation failed")))
+
+(define (expr-exclude e names)
+  (require-expr-result 'expr-exclude
+                       (expr-exclude/raw e (map ->column-pattern names))))
+
+(define (expr-dtype-col dtype)
+  (require-expr-result 'expr-dtype-col
+                       (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))))
 
 (define (col spec)
   (cond
@@ -116,7 +141,7 @@
   (if (Expr-ptr? v) v (lit v)))
 
 (module+ test
-  (require rackunit)
+  (require rackunit (prefix-in contracted: (submod "..")))
   (check-equal? (regexp->column-pattern #rx"^sepal_") "^.*(?:^sepal_).*$")
   (check-equal? (regexp->column-pattern #px"\\d+") "^.*(?:\\d+).*$")
   (check-pred Expr-ptr? (expr-all))
@@ -134,13 +159,13 @@
   (check-false (multi-column-expr? (lit 1)))
   (check-false (multi-column-expr? "a"))
   (check-exn #rx"^expr-exclude: contract violation\n  expected: multi-column-expr\\?"
-             (lambda () (expr-exclude (expr-col "a") '("b"))))
+             (lambda () (contracted:expr-exclude (expr-col "a") '("b"))))
   (check-exn #rx"^expr-exclude: contract violation"
-             (lambda () (expr-exclude (expr-all) '())))
+             (lambda () (contracted:expr-exclude (expr-all) '())))
   (check-exn #rx"^expr-dtype-col: contract violation"
-             (lambda () (expr-dtype-col 'list)))
+             (lambda () (contracted:expr-dtype-col 'list)))
   (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
-             (lambda () (col 42)))
-  (check-exn #rx"^col: contract violation" (lambda () (col 'list)))
-  (check-exn #rx"^col: contract violation" (lambda () (col #rx#"bytes")))
-  (check-exn #rx"^col: contract violation" (lambda () (col '(datetime weeks)))))
+             (lambda () (contracted:col 42)))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks)))))

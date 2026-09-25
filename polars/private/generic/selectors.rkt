@@ -10,15 +10,16 @@
                         Expr-ptr?)]))
 
 (define (all)
-  (error 'unimplemented))
+  (expr-all))
 
 (define (exclude e name . names)
-  (error 'unimplemented))
+  (expr-exclude e (cons name names)))
 
 (module+ test
   (require rackunit
            (only-in gregor datetime)
            (only-in threading ~>)
+           (prefix-in contracted: (submod ".."))
            polars/private/generic/core
            polars/private/generic/operators
            polars/private/generic/reductions
@@ -90,24 +91,24 @@
                 '("sepal_length" "petal_length"))
   (check-equal? (column-names (select iris (col #rx"zzz"))) '())
 
-  (let ([out (select iris (* (col #rx"^sepal_") 2))])
+  (let ([out (select iris (p* (col #rx"^sepal_") 2))])
     (check-equal? (column-names out) '("sepal_length" "sepal_width"))
     (check-equal? (ref (ref out "sepal_length") 0) 10.2))
-  (let ([out (select people (* (col 'float64) 1.1))])
+  (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn exn:fail? (lambda () (select people (alias (* (col 'float64) 2) "x"))))
+  (check-exn exn:fail? (lambda () (select people (alias (p* (col 'float64) 2) "x"))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
   (check-exn exn:fail? (lambda () (select iris (col #px"(?=a)"))))
 
   (check-exn #rx"^exclude: contract violation\n  expected: multi-column-expr\\?\n  given: 5"
-             (lambda () (exclude 5 "a")))
+             (lambda () (contracted:exclude 5 "a")))
   (check-exn #rx"^exclude: contract violation\n  expected: multi-column-expr\\?"
-             (lambda () (exclude (col "value") "cost")))
+             (lambda () (contracted:exclude (col "value") "cost")))
   (check-exn #rx"^exclude: contract violation\n  expected: multi-column-expr\\?"
-             (lambda () (exclude (sum "value") "cost")))
+             (lambda () (contracted:exclude (sum "value") "cost")))
   (check-exn #rx"^exclude: contract violation\n  expected: \\(or/c string\\? regexp\\?\\)\n  given: 'a"
-             (lambda () (exclude (all) 'a)))
-  (check-exn exn:fail:contract:arity? (lambda () (exclude (all))))
-  (check-exn exn:fail:contract:arity? (lambda () (all 1)))
+             (lambda () (contracted:exclude (all) 'a)))
+  (check-exn exn:fail:contract:arity? (lambda () (contracted:exclude (all))))
+  (check-exn exn:fail:contract:arity? (lambda () (contracted:all 1)))
   (check-exn #rx"^col: contract violation" (lambda () (col 'nope))))
