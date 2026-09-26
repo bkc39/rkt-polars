@@ -124,6 +124,8 @@
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list cartesian-product make-list range remove-duplicates take)
            (only-in racket/math nan?)
+           (only-in syntax/parse/define define-syntax-parse-rule)
+           (for-syntax (only-in syntax/parse expr))
            (prefix-in contracted: (submod ".."))
            (only-in polars/private/generic/cumulative diff shift)
            (only-in polars/private/generic/window over)
@@ -354,7 +356,7 @@
   (check-equal? (~> v64 sort series-cells) '(7 10 18 25 30))
   (check-equal? (~> v64 (sort #:descending #t) series-cells) '(30 25 18 10 7))
 
-  (define-syntax-rule (check-blame rx call)
+  (define-syntax-parse-rule (check-blame rx:expr call:expr)
     (check-exn (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
                (lambda () call)))
   (define lengths-rx "the length of #:nulls-last \\(1\\) does not match the number of sort keys \\(2\\)")

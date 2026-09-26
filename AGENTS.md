@@ -82,8 +82,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
-  today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
-  or it attaches a stale reason from an unrelated call.
+  today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
+  `dataframe_sort_with_options` and `series_sort_with_options` — or it
+  attaches a stale reason from an unrelated call.
+- **A polars panic becomes the failure reason, not an abort.** A panic that
+  unwinds out of an `extern "C"` function aborts the Racket process, and crate
+  0.41.3 panics on some inputs where later versions return an error (#108).
+  An entry point that runs polars on caller data wraps that work in
+  `guard_panic` (`rust/src/ffi/errors.rs`), which records
+  `polars panicked: <cause>` as the reason and returns NULL. Today
+  `lazyframe_collect`, `dataframe_sort_with_options` and
+  `series_sort_with_options` do.
 - `dataframe_drop_count` and `expr_drop_count` count native releases; the
   reclamation tests assert on them because Racket cannot otherwise observe a
   native free, and a pairing test checks that an explicit drop releases a
