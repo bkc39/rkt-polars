@@ -355,20 +355,35 @@ fn filter_non_bool_mask_returns_null() {
     series_drop(gs);
 }
 
+fn sort_frame(
+    df: *mut DataFrame,
+    keys: &[&str],
+    descending: &[u8],
+    nulls_last: &[u8],
+    maintain_order: u8,
+) -> *mut DataFrame {
+    let owned: Vec<CString> = keys.iter().map(|k| cstr(k)).collect();
+    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
+    dataframe_sort_with_options(
+        df,
+        ptrs.as_ptr(),
+        descending.as_ptr(),
+        nulls_last.as_ptr(),
+        ptrs.len(),
+        maintain_order,
+    )
+}
+
 #[test]
 fn sort_ascending_and_descending() {
     let (df, xs, gs) = make_xg(&[3, 1, 2], &["a", "b", "c"]);
-    let by = cstr("x");
-    let by_arr: [*const c_char; 1] = [by.as_ptr()];
 
-    let asc = dataframe_sort(df, by_arr.as_ptr(), ptr::null(), by_arr.len());
+    let asc = sort_frame(df, &["x"], &[0], &[0], 0);
     assert!(!asc.is_null());
     assert_eq!(read_i32_col(asc, "x"), vec![1, 2, 3]);
     dataframe_drop(asc);
 
-    let desc_flag: [u8; 1] = [1];
-    let desc =
-        dataframe_sort(df, by_arr.as_ptr(), desc_flag.as_ptr(), by_arr.len());
+    let desc = sort_frame(df, &["x"], &[1], &[0], 0);
     assert!(!desc.is_null());
     assert_eq!(read_i32_col(desc, "x"), vec![3, 2, 1]);
     dataframe_drop(desc);
@@ -380,18 +395,10 @@ fn sort_ascending_and_descending() {
 
 #[test]
 fn sort_two_keys_with_descending_flags() {
-    // Sort by g ascending, then x descending: groups of g come
-    // out in 'a','b' order; within each group x is reversed.
-    let g_a = cstr("g");
-    let x_n = cstr("x");
-    let by_arr: [*const c_char; 2] = [g_a.as_ptr(), x_n.as_ptr()];
-    let desc_flags: [u8; 2] = [0, 1];
-
     let (df, xs, gs) = make_xg(&[1, 2, 3, 4], &["b", "a", "b", "a"]);
-    let out =
-        dataframe_sort(df, by_arr.as_ptr(), desc_flags.as_ptr(), by_arr.len());
+    let out = sort_frame(df, &["g", "x"], &[0, 1], &[0, 0], 0);
     assert!(!out.is_null());
-    // After sort: g = a a b b, x = 4 2 3 1.
+    assert_eq!(read_str_col(out, "g"), vec!["a", "a", "b", "b"]);
     assert_eq!(read_i32_col(out, "x"), vec![4, 2, 3, 1]);
     dataframe_drop(out);
     dataframe_drop(df);
@@ -400,16 +407,134 @@ fn sort_two_keys_with_descending_flags() {
 }
 
 #[test]
+fn sort_places_nulls_by_flag() {
+    let xs = make_opt_i32("x", &[Some(2), None, Some(3), None, Some(1)]);
+    let df = make_df(&[xs]);
+    let cases: [(u8, u8, [Option<i32>; 5]); 4] = [
+        (0, 0, [None, None, Some(1), Some(2), Some(3)]),
+        (0, 1, [Some(1), Some(2), Some(3), None, None]),
+        (1, 0, [None, None, Some(3), Some(2), Some(1)]),
+        (1, 1, [Some(3), Some(2), Some(1), None, None]),
+    ];
+    for (descending, nulls_last, expected) in cases {
+        let out = sort_frame(df, &["x"], &[descending], &[nulls_last], 0);
+        assert!(!out.is_null());
+        assert_eq!(read_opt_i32_col(out, "x"), expected.to_vec());
+        dataframe_drop(out);
+    }
+    dataframe_drop(df);
+    series_drop(xs);
+}
+
+#[test]
+fn sort_of_a_width_one_frame_handles_booleans_and_sorted_columns() {
+    let b = make_opt_bool("b", &[Some(true), None, Some(false)]);
+    let bools = make_df(&[b]);
+    let out = sort_frame(bools, &["b"], &[0], &[1], 0);
+    assert!(!out.is_null(), "{:?}", recorded_error());
+    assert_eq!(
+        read_opt_bool_col(out, "b"),
+        vec![Some(false), Some(true), None]
+    );
+    dataframe_drop(out);
+
+    let x = make_opt_i32("x", &[Some(3), None, Some(1), None, Some(2)]);
+    let xs = make_df(&[x]);
+    let once = sort_frame(xs, &["x"], &[0], &[0], 0);
+    let twice = sort_frame(once, &["x"], &[0], &[1], 0);
+    assert!(!twice.is_null(), "{:?}", recorded_error());
+    assert_eq!(
+        read_opt_i32_col(twice, "x"),
+        vec![Some(1), Some(2), Some(3), None, None]
+    );
+    for p in [twice, once, xs, bools] {
+        dataframe_drop(p);
+    }
+    series_drop(x);
+    series_drop(b);
+}
+
+#[test]
+fn sort_places_nulls_per_key() {
+    let a = make_opt_i32("a", &[Some(1), None, Some(1), None]);
+    let b = make_opt_i32("b", &[None, Some(2), Some(3), None]);
+    let df = make_df(&[a, b]);
+    let out = sort_frame(df, &["a", "b"], &[0, 0], &[1, 0], 0);
+    assert!(!out.is_null());
+    assert_eq!(
+        read_opt_i32_col(out, "a"),
+        vec![Some(1), Some(1), None, None]
+    );
+    assert_eq!(
+        read_opt_i32_col(out, "b"),
+        vec![None, Some(3), None, Some(2)]
+    );
+    dataframe_drop(out);
+    dataframe_drop(df);
+    series_drop(a);
+    series_drop(b);
+}
+
+#[test]
+fn sort_maintain_order_keeps_ties_in_input_order() {
+    let ids: Vec<i32> = (0..10_000).collect();
+    let k1: Vec<i32> = ids.iter().map(|i| (i * 7919) % 3).collect();
+    let k2: Vec<i32> = ids.iter().map(|i| (i * 104_729) % 2).collect();
+    let s1 = make_i32("k1", &k1);
+    let s2 = make_i32("k2", &k2);
+    let sid = make_i32("id", &ids);
+    let df = make_df(&[s1, s2, sid]);
+    let out = sort_frame(df, &["k1", "k2"], &[1, 0], &[0, 0], 1);
+    assert!(!out.is_null());
+    let rows: Vec<(i32, i32, i32)> = read_i32_col(out, "k1")
+        .into_iter()
+        .zip(read_i32_col(out, "k2"))
+        .zip(read_i32_col(out, "id"))
+        .map(|((a, b), id)| (a, b, id))
+        .collect();
+    for w in rows.windows(2) {
+        let ((a0, b0, id0), (a1, b1, id1)) = (w[0], w[1]);
+        assert!(
+            a0 > a1 || (a0 == a1 && (b0 < b1 || (b0 == b1 && id0 < id1))),
+            "{:?}",
+            w
+        );
+    }
+    dataframe_drop(out);
+    dataframe_drop(df);
+    series_drop(s1);
+    series_drop(s2);
+    series_drop(sid);
+}
+
+#[test]
+fn sort_missing_column_records_the_reason() {
+    let (df, xs, gs) = make_xg(&[1], &["a"]);
+    assert!(sort_frame(df, &["nope"], &[0], &[0], 0).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(msg.contains("nope"), "{:?}", msg);
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+}
+
+#[test]
+fn sort_without_keys_records_the_reason() {
+    let (df, xs, gs) = make_xg(&[1], &["a"]);
+    assert!(sort_frame(df, &[], &[], &[], 0).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("sort needs at least one key")
+    );
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+}
+
+#[test]
 fn sort_null_df_returns_null() {
-    let by = cstr("x");
-    let by_arr: [*const c_char; 1] = [by.as_ptr()];
-    assert!(dataframe_sort(
-        ptr::null_mut(),
-        by_arr.as_ptr(),
-        ptr::null(),
-        by_arr.len()
-    )
-    .is_null());
+    assert!(sort_frame(ptr::null_mut(), &["x"], &[0], &[0], 0).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
 }
 
 // --- unique / drop_nulls -----------------------------------------

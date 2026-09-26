@@ -152,6 +152,66 @@ pub(super) fn read_i32_col(df: *mut DataFrame, name: &str) -> Vec<i32> {
     out
 }
 
+pub(super) fn make_opt_bool(
+    name: &str,
+    values: &[Option<bool>],
+) -> *mut Series {
+    let data: Vec<u8> =
+        values.iter().map(|o| o.unwrap_or(false) as u8).collect();
+    let valid: Vec<u8> = values.iter().map(|o| o.is_some() as u8).collect();
+    let n = cstr(name);
+    let s = series_new_opt_bool(
+        n.as_ptr(),
+        data.as_ptr(),
+        valid.as_ptr(),
+        data.len(),
+    );
+    assert!(!s.is_null());
+    s
+}
+
+pub(super) fn opt_bools(s: *mut Series) -> Vec<Option<bool>> {
+    (0..series_len(s))
+        .map(|i| {
+            let v = series_ref_bool(s, i);
+            (v.valid == 1).then_some(v.value != 0)
+        })
+        .collect()
+}
+
+pub(super) fn opt_i32s(s: *mut Series) -> Vec<Option<i32>> {
+    (0..series_len(s))
+        .map(|i| {
+            let v = series_ref_i32(s, i);
+            (v.valid == 1).then_some(v.value)
+        })
+        .collect()
+}
+
+pub(super) fn read_opt_bool_col(
+    df: *mut DataFrame,
+    name: &str,
+) -> Vec<Option<bool>> {
+    let n = cstr(name);
+    let s = dataframe_column(df, n.as_ptr());
+    assert!(!s.is_null(), "dataframe_column({:?}) returned null", name);
+    let out = opt_bools(s);
+    series_drop(s);
+    out
+}
+
+pub(super) fn read_opt_i32_col(
+    df: *mut DataFrame,
+    name: &str,
+) -> Vec<Option<i32>> {
+    let n = cstr(name);
+    let s = dataframe_column(df, n.as_ptr());
+    assert!(!s.is_null(), "dataframe_column({:?}) returned null", name);
+    let out = opt_i32s(s);
+    series_drop(s);
+    out
+}
+
 pub(super) fn make_opt_f64(name: &str, values: &[Option<f64>]) -> *mut Series {
     let data: Vec<f64> = values.iter().map(|o| o.unwrap_or(0.0)).collect();
     let valid: Vec<u8> = values
