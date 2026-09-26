@@ -166,7 +166,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
   is red if it raises, exits non-zero or writes to stderr. The flake's
-  Racket check runs the same command, so a broken example fails CI.
+  Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
 

@@ -19,7 +19,7 @@
   (guide         "raco test user-guide")
   ;; Every examples/*.rkt, each in its own process; an example is red if it
   ;; raises, exits non-zero or writes to stderr.  The flake's Racket check
-  ;; runs the same command.
+  ;; runs it too, with -j 4.
   (examples      "raco test -e -Q --empty-stdin -j 8 examples")
   ;; CI's rustfmt check; `nix build .#racket` does not run it.
   (fmt           "cargo fmt --manifest-path rust/Cargo.toml --all --check")
