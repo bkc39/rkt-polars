@@ -54,12 +54,18 @@ the shape; the older modules predate it and still rely on `->col-expr`'s `error`
 
 ### Macros
 
-`define-syntax-parse-rule` (or `syntax-parse`), never `define-syntax-rule`,
-with a syntax class on each pattern variable (`name:id`, `op:expr`). Require
-the whole of `syntax/parse/define`: it also provides the syntax classes, and
-with only an `only-in` of `define-syntax-parse-rule` an annotation fails with
-"not defined as syntax class". The `no-syntax-rule` gate rejects any
-`define-syntax-rule`; the `resyntax` gate's suite rewrites the ones it can.
+`define-syntax-parse-rule`, or `define-syntax-parser` for several clauses;
+never `define-syntax-rule` or `syntax-rules`. Put a syntax class on each
+pattern variable (`name:id`, `op:expr`). Require the whole of
+`syntax/parse/define`: it also provides the syntax classes, and with only an
+`only-in` of `define-syntax-parse-rule` an annotation fails with "not defined
+as syntax class" (a `define-syntax-parser` clause also needs `(for-syntax
+racket/base)` for `#'`). `define-syntax-parse-rule` leaves each expansion at
+the template's source location, where `define-syntax-rule` moved it to the
+use site; a macro whose location shows (a rackunit helper, a template that
+is a `lambda`) is a `define-syntax-parser` clause returning
+`(syntax/loc this-syntax ...)`. The `no-syntax-rule` gate rejects both old
+forms; the `resyntax` gate's suite rewrites the ones it can.
 
 ### Adding an FFI entry point
 
@@ -147,8 +153,9 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 - **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
   Racket build with tests and docs, `cargo fmt --check`, the Racket version
-  floor, no `define-syntax-rule`). `nix build .#racket` runs only the second
-  and is not enough. CI's Resyntax job is the one check it does not cover.
+  floor, `no-syntax-rule`). `nix build .#racket` runs only the second and is
+  not enough. It does not cover CI's Lint job (`raco test lint` and the
+  Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh

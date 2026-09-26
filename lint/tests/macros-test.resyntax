@@ -46,6 +46,16 @@ test: "a dotted rest pattern without an ellipsis is rewritten"
 ------------------------------
 
 
+test: "a vector pattern is rewritten"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (from-vector #(a b ...)) (list a b ...))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (from-vector #(a b ...)) (list a b ...))
+------------------------------
+
+
 test: "a define-syntax-rule in an internal-definition context is rewritten"
 ------------------------------
 (require syntax/parse/define)
@@ -153,4 +163,61 @@ no-change-test: "a macro that names itself is left alone"
 ------------------------------
 (require syntax/parse/define)
 (define-syntax-rule (who-am-i) 'who-am-i)
+------------------------------
+
+
+no-change-test: "a renamed ellipsis before a dotted tail is left alone"
+------------------------------
+(require syntax/parse/define (rename-in racket/base [... dots]))
+(define-syntax-rule (split (x y) dots . rest) '((x dots) rest))
+------------------------------
+
+
+no-change-test: "a macro whose pattern names the macro is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (tag x tag) 'x)
+------------------------------
+
+
+no-change-test: "a keyword template is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (kw) #:k)
+------------------------------
+
+
+no-change-test: "a template whose outermost form is a lambda is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (const v) (lambda _ v))
+------------------------------
+
+
+no-change-test: "a template whose outermost form is a rackunit check is left alone"
+------------------------------
+(require rackunit syntax/parse/define)
+(define-syntax-rule (check-double e v) (check-equal? (* 2 e) v))
+------------------------------
+
+
+no-change-test: "a single-clause syntax-rules macro with a colon variable is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax label
+  (syntax-rules ()
+    [(_ a:b) 'a:b]))
+------------------------------
+
+
+no-change-test: "syntax-rules with literals or several clauses is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax switch
+  (syntax-rules (on)
+    [(_ on) 1]))
+(define-syntax either
+  (syntax-rules ()
+    [(_) #f]
+    [(_ e) e]))
 ------------------------------

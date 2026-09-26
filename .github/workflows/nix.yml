@@ -41,7 +41,6 @@ jobs:
         if: ${{ !cancelled() }}
         uses: DeterminateSystems/magic-nix-cache-action@v15
 
-      # The dev shell installs the pinned Resyntax; the suite is lint/.
       - name: Resyntax suite tests
         if: ${{ !cancelled() }}
         run: nix develop --command raco test lint

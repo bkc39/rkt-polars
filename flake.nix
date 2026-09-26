@@ -57,10 +57,8 @@
         fi
       '';
 
-      # Resyntax for the project's suite (lint/, run by
-      # scripts/resyntax-lint.sh), at a pinned commit so that a new upstream
-      # rule cannot turn an unrelated PR red.  Dev shell only: `nix run
-      # .#bench` does not need it.
+      # Resyntax is pinned so that a new upstream rule cannot turn an unrelated
+      # PR red; its dependencies come from the catalog.
       resyntaxSource = "https://github.com/jackfirth/resyntax.git#40f3497321f8590eb6a0b7c7984a9116323b7ebf";
       lintSetup = pkgs: ''
         lint_id=$(printf '%s' "${resyntaxSource}" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-16)
@@ -71,7 +69,8 @@
           # install skips an older pin that is already present; update moves it.
           if raco pkg install --batch --auto --no-docs --scope user --skip-installed \
                "${resyntaxSource}" \
-            && raco pkg update --batch --auto --no-docs --scope user "${resyntaxSource}"; then
+            && raco pkg update --batch --auto --update-deps --no-docs --scope user \
+                 "${resyntaxSource}"; then
             touch "$lint_stamp"
           else
             echo "Resyntax setup FAILED — stamp not written; will retry next shell entry." >&2
@@ -343,7 +342,6 @@
             echo "OK: Racket $have >= $want"
             touch $out
           '';
-          # The no-syntax-rule gate, so that `nix flake check` covers it.
           no-syntax-rule = pkgs.runCommand "rkt-polars-no-syntax-rule" {
             src = pkgs.lib.cleanSource ./.;
           } ''

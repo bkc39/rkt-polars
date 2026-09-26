@@ -1,8 +1,7 @@
 #lang info
 
-;; The project's Resyntax suite, module path `lint`.  It needs Resyntax, which
-;; the dev shell installs and the rkt-polars build does not have, so setup
-;; never compiles this collection; scripts/resyntax-lint.sh and `raco test
-;; lint` load it in the dev shell.
+;; The rkt-polars build has no Resyntax, so nothing may compile this tree:
+;; `raco setup --check-pkg-deps` reads any lint/compiled/ as rkt-polars
+;; depending on Resyntax.  Resyntax and `raco test lint` load it from source.
 (define compile-omit-paths 'all)
 (define test-include-paths '(#rx"[.]resyntax$"))
