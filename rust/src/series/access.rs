@@ -13,10 +13,10 @@ pub extern "C" fn series_ref_is_null(s_ptr: *mut Series, index: usize) -> i32 {
     if s.null_count() == 0 {
         return 0;
     }
-    if s.is_null().get(index).unwrap_or(false) {
-        1
-    } else {
-        0
+    match s.get(index) {
+        Ok(AnyValue::Null) => 1,
+        Ok(_) => 0,
+        Err(_) => -1,
     }
 }
 
