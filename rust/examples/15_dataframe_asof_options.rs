@@ -13,11 +13,12 @@ fn main() -> PolarsResult<()> {
         &calibrations,
         ["time"],
         ["time"],
-        JoinArgs::new(JoinType::AsOf(AsOfOptions {
+        JoinArgs::new(JoinType::AsOf(Box::new(AsOfOptions {
             strategy: AsofStrategy::Backward,
-            tolerance: Some(AnyValue::Int32(0)),
+            tolerance: Some(Scalar::from(0i32)),
             ..Default::default()
-        })),
+        }))),
+        None,
     )?;
 
     let grouped_observations = df![
@@ -38,6 +39,8 @@ fn main() -> PolarsResult<()> {
         ["sensor"],
         AsofStrategy::Backward,
         None,
+        true,
+        true,
     )?;
 
     println!(

@@ -85,8 +85,8 @@ API gaps: no multi-column @tt{col("weight", "height")}; no @tt{name.suffix}.
 (~> df (filter (< (dt-year "birthdate") 1990)))
 (~> df
     (filter (and (is-between "birthdate"
-                             (cast (lit "1982-12-31") 'date)
-                             (cast (lit "1996-01-01") 'date))
+                             (str-to-date (lit "1982-12-31"))
+                             (str-to-date (lit "1996-01-01")))
                  (> (col "height") 1.7))))
 ]
 

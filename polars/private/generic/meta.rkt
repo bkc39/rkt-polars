@@ -46,7 +46,8 @@
   (check-false (meta-eq? (col "a") (alias (col "a") "a")))
   (check-false (meta-eq? ab (expr-add (col "b") (col "a"))))
   (check-true (meta-eq? "a" (col "a")))
-  (check-exn #rx"cannot determine the output name of \\*" (lambda () (meta-output-name "*")))
+  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of "
+             (lambda () (meta-output-name "*")))
   (check-exn exn:fail:contract:blame? (lambda () (contracted:meta-output-name 5)))
   (check-exn #rx"meta-output-name: contract violation.*expected: col-expr/c"
              (lambda () (contracted:meta-output-name 5)))

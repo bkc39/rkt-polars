@@ -257,9 +257,12 @@ fn a_scan_defers_a_bad_file_to_collect() {
 }
 
 #[test]
-fn an_invalid_glob_fails_at_scan() {
+fn an_invalid_glob_fails_at_collect() {
     let p = cstr("/tmp/[.csv");
-    assert!(lazyframe_scan_csv(p.as_ptr()).is_null());
+    let lf = lazyframe_scan_csv(p.as_ptr());
+    assert!(!lf.is_null(), "the scan itself should only build a plan");
+    assert!(lazyframe_collect(lf).is_null());
     let msg = recorded_error().expect("a reason");
     assert!(msg.to_lowercase().contains("glob"), "{:?}", msg);
+    lazyframe_drop(lf);
 }
