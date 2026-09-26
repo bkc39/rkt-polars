@@ -22,16 +22,7 @@
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
-          [dataframe-sort
-           (rename-contract
-            (->i ([df DataFrame-ptr?] [names (non-empty-listof string?)])
-                 (#:descending [descending sort-flags/c]
-                  #:nulls-last [nulls-last sort-flags/c]
-                  #:maintain-order [maintain-order boolean?])
-                 #:pre/desc (names descending nulls-last)
-                 (sort-flags-mismatch names descending nulls-last)
-                 [result DataFrame-ptr?])
-            'dataframe-sort/c)]))
+          [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]))
 
 (define-runtime-path native-libs-dir "../native-libs")
 
@@ -1637,6 +1628,17 @@
         (format "the length of ~a (~a) does not match the number of sort keys (~a)"
                 keyword (length flags) n))
       #t))
+
+(define (frame-sort/c frame? name)
+  (rename-contract
+   (->i ([frame frame?] [names (non-empty-listof string?)])
+        (#:descending [descending sort-flags/c]
+         #:nulls-last [nulls-last sort-flags/c]
+         #:maintain-order [maintain-order boolean?])
+        #:pre/desc (names descending nulls-last)
+        (sort-flags-mismatch names descending nulls-last)
+        [result frame?])
+   name))
 
 ;; the raw bindings read one flag per key, so a list of any other length never reaches them
 (define (sort-flags who keyword flags keys)

@@ -7,8 +7,7 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in racket/contract/base
-                  ->* ->i contract-out non-empty-listof or/c rename-contract)
+         (only-in racket/contract/base ->* contract-out)
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
@@ -22,7 +21,7 @@
                   _rsstring
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
-                  sort-flags sort-flags/c sort-flags-mismatch
+                  frame-sort/c sort-flags
                   _CompatDType make-CompatDType
                   compat-dtype-tag/boolean
                   compat-dtype-tag/uint8 compat-dtype-tag/uint16
@@ -123,30 +122,9 @@
          expr-meta-output-name expr-meta-root-names expr-meta-eq?
          (contract-out
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
-          [expr-sort-by
-           (rename-contract
-            (->i ([e Expr-ptr?]
-                  #:by [by (or/c string? Expr-ptr? (non-empty-listof (or/c string? Expr-ptr?)))])
-                 (#:descending [descending sort-flags/c]
-                  #:nulls-last [nulls-last sort-flags/c]
-                  #:maintain-order [maintain-order boolean?])
-                 #:pre/desc (by descending nulls-last)
-                 (sort-flags-mismatch by descending nulls-last)
-                 [result Expr-ptr?])
-            'expr-sort-by/c)]
+          [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]
           [lazyframe-sort (frame-sort/c LazyFrame-ptr? 'lazyframe-sort/c)]
           [dataframe-sort-exprs (frame-sort/c DataFrame-ptr? 'dataframe-sort-exprs/c)]))
-
-(define (frame-sort/c frame? name)
-  (rename-contract
-   (->i ([frame frame?] [names (non-empty-listof string?)])
-        (#:descending [descending sort-flags/c]
-         #:nulls-last [nulls-last sort-flags/c]
-         #:maintain-order [maintain-order boolean?])
-        #:pre/desc (names descending nulls-last)
-        (sort-flags-mismatch names descending nulls-last)
-        [result frame?])
-   name))
 
 (define-compat expr-meta-output-name/raw
   (_fun _Expr-ptr -> _rsstring)
@@ -847,11 +825,6 @@
    (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
 
 ;; --- Phase A6: more LazyFrame ops (sort / unique / drop_nulls) ---
-;;
-;; Mirror the eager dataframe-{sort,unique,drop-nulls} surface so a fluent
-;; lazy pipeline (filter → group-by-agg → sort) doesn't need to .collect()
-;; mid-stream.  `lazyframe-sort` accepts the same #:descending shapes as
-;; the eager `dataframe-sort` (a single bool, or a per-column list).
 
 (define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
@@ -1947,18 +1920,19 @@
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
-  (define (sort-blame? who)
-    (lambda (e)
-      (and (exn:fail:contract:blame? e)
-           (regexp-match? (pregexp (format "^~a: contract violation" who)) (exn-message e)))))
+  (define (sort-blame? rx)
+    (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e)))))
   (define sort-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "g" '(2 1))
                                                        (series-new-i64 "h" '(1 2))))))
-  (check-exn (sort-blame? "expr-sort-by")
+  (check-exn (sort-blame? #rx"^expr-sort-by: contract violation")
              (lambda () (contracted:expr-sort-by (col "g") #:by '("g" "h") #:nulls-last '(#t))))
-  (check-exn (sort-blame? "expr-sort-by") (lambda () (contracted:expr-sort-by (col "g") #:by '())))
-  (check-exn (sort-blame? "expr-sort") (lambda () (contracted:expr-sort (col "g") #:nulls-last 'yes)))
-  (check-exn (sort-blame? "lazyframe-sort") (lambda () (contracted:lazyframe-sort sort-lf '())))
-  (check-exn (sort-blame? "dataframe-sort-exprs")
+  (check-exn (sort-blame? #rx"^expr-sort-by: contract violation")
+             (lambda () (contracted:expr-sort-by (col "g") #:by '())))
+  (check-exn (sort-blame? #rx"^expr-sort: contract violation")
+             (lambda () (contracted:expr-sort (col "g") #:nulls-last 'yes)))
+  (check-exn (sort-blame? #rx"^lazyframe-sort: contract violation")
+             (lambda () (contracted:lazyframe-sort sort-lf '())))
+  (check-exn (sort-blame? #rx"^dataframe-sort-exprs: contract violation")
              (lambda () (contracted:dataframe-sort-exprs
                          (lazyframe-collect sort-lf) '("g") #:descending '(#t #t))))
   (check-equal? (series-ref (dataframe-column (contracted:dataframe-sort-exprs
@@ -1968,11 +1942,10 @@
                             0)
                 2)
 
+  (settle!)
   (define sort-drops-before (expr-drop-count))
   (for ([_ (in-range 100)])
-    (void (contracted:expr-sort (col "g") #:nulls-last #t))
-    (void (contracted:expr-sort-by (col "g") #:by "h" #:nulls-last #t #:maintain-order #t)))
-  (for ([_ (in-range 10)])
-    (collect-garbage)
-    (sleep 0.01))
-  (check-true (>= (- (expr-drop-count) sort-drops-before) 250)))
+    (contracted:expr-sort (col "g") #:nulls-last #t)
+    (contracted:expr-sort-by (col "g") #:by "h" #:nulls-last #t #:maintain-order #t))
+  (settle!)
+  (check >= (- (expr-drop-count) sort-drops-before) 250))

@@ -996,9 +996,8 @@ built.
                                      [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
                                      [#:maintain-order maintain-order boolean? #f])
                        Expr-ptr?])]{
-  The expression-only forms of @racket[sort] on an expression and of
-  @racket[sort-by], which are the ones to write: they also accept a column
-  name.}
+  The expression-only forms under @racket[sort] on an expression and
+  @racket[sort-by]. Write those instead: they also accept a column name.}
 
 @subsection[#:tag "ref-expr-contexts"]{Eager expression contexts}
 

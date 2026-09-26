@@ -1,9 +1,5 @@
 #lang racket/base
 
-;; Data-first frame/series operations that thread with ~>: filter, the
-;; reshaping verbs (head/tail/slice/reverse/unique/drop-nulls), dataframe column
-;; ops (select/drop/with-column), the group-by/agg handle, and clone/rename.
-
 (require racket/match
          (prefix-in base: racket/base)
          (except-in racket/list drop)
@@ -192,9 +188,6 @@
       (wrap-dataframe (dataframe-group-by-agg frame keys agg-exprs))))
 
 ;; --- lazy: a DataFrame's deferred query plan, and back ----------------------
-;; (~> df lazy (filter ...) (group-by ...) (agg ...) (sort ...) collect) mirrors
-;; df.lazy().filter(...)...collect().  filter / group-by+agg above
-;; dispatch on lazyframe? to build the plan instead of running eagerly.
 (define (lazy d)
   (guard-dataframe 'lazy d)
   (wrap-lazyframe (dataframe-lazy d)))

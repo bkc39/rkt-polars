@@ -7,13 +7,14 @@
                   unsupplied-arg?)
          (only-in polars/private/expr
                   Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort)
+         (only-in polars/private/expr-core sort-by/c)
          (only-in polars/private/foreign
                   dataframe-sort series-sort sort-flags-mismatch sort-flags/c)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? series? wrap-dataframe wrap-lazyframe wrap-series)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
-(provide (contract-out [sort sort/c] [sort-by sort-by/c])
+(provide (contract-out [sort sort/c] [sort-by (sort-by/c col-expr/c 'sort-by/c)])
          rank gather)
 
 (define (sort-frame? x) (or (dataframe? x) (lazyframe? x)))
@@ -25,8 +26,6 @@
                        (or/c dataframe? lazyframe? series? Expr-ptr? string? list?)))
 (define sort-keys/c
   (flat-named-contract 'sort-keys/c (or/c string? (non-empty-listof string?))))
-(define sort-by-keys/c
-  (flat-named-contract 'sort-by-keys/c (or/c col-expr/c (non-empty-listof col-expr/c))))
 (define frame-only/c (flat-named-contract 'frame-only/c none/c))
 (define list-only/c (flat-named-contract 'list-only/c none/c))
 (define frame-or-list-only/c (flat-named-contract 'frame-or-list-only/c none/c))
@@ -63,17 +62,6 @@
                           [else Expr-ptr?])])
    'sort/c))
 
-(define sort-by/c
-  (rename-contract
-   (->i ([x col-expr/c] #:by [by sort-by-keys/c])
-        (#:descending [descending sort-flags/c]
-         #:nulls-last [nulls-last sort-flags/c]
-         #:maintain-order [maintain-order boolean?])
-        #:pre/desc (by descending nulls-last)
-        (sort-flags-mismatch by descending nulls-last)
-        [result Expr-ptr?])
-   'sort-by/c))
-
 (define (sort x [by the-unsupplied-arg]
               #:descending [descending #f]
               #:nulls-last [nulls-last #f]
@@ -91,10 +79,7 @@
                       #:maintain-order maintain-order))]
     [(series? x)
      (wrap-series (series-sort x #:descending descending #:nulls-last nulls-last))]
-    [(list? x)
-     (if extract-key
-         (base:sort x by #:key extract-key #:cache-keys? cache-keys?)
-         (base:sort x by))]
+    [(list? x) (base:sort x by #:key extract-key #:cache-keys? cache-keys?)]
     [else
      (expr-sort (->col-expr 'sort x) #:descending descending #:nulls-last nulls-last)]))
 
@@ -134,25 +119,21 @@
                 '(30 50 40)))
 
 (module+ test
-  (require (only-in gregor datetime datetime<?)
+  (require racket/match
+           (only-in gregor datetime datetime<?)
            (only-in racket/contract exn:fail:contract:blame?)
-           (only-in racket/list make-list range remove-duplicates take)
+           (only-in racket/list cartesian-product make-list range remove-duplicates take)
            (only-in racket/math nan?)
            (prefix-in contracted: (submod ".."))
            polars/private/generic/test-fixtures)
 
-  (define (series-cells s) (for/list ([i (in-range (len s))]) (ref s i)))
-
   (define (frame-rows d)
     (define cols (for/list ([name (in-list (column-names d))])
-                   (list->vector (series-cells (ref d #:columns name)))))
+                   (~> d (ref #:columns name) series-cells list->vector)))
     (for/vector ([i (in-range (height d))])
       (for/vector ([c (in-list cols)]) (vector-ref c i))))
 
-  (define (flag-lists k)
-    (if (zero? k)
-        '(())
-        (for*/list ([b '(#f #t)] [rest (in-list (flag-lists (sub1 k)))]) (cons b rest))))
+  (define (flag-lists k) (apply cartesian-product (make-list k '(#f #t))))
 
   (define sort-pools
     (hash 'int64 '(-2 -1 0 1 2)
@@ -193,12 +174,14 @@
 
   (define (reference-sort-order rows key-idxs descending nulls-last)
     (define (row<? i j)
-      (let loop ([ks key-idxs] [ds descending] [ls nulls-last])
-        (and (pair? ks)
-             (let ([c (sort-key-compare (vector-ref (vector-ref rows i) (car ks))
-                                        (vector-ref (vector-ref rows j) (car ks))
-                                        (car ds) (car ls))])
-               (or (negative? c) (and (zero? c) (loop (cdr ks) (cdr ds) (cdr ls))))))))
+      (define first-difference
+        (for*/first ([(k d l) (in-parallel key-idxs descending nulls-last)]
+                     [c (in-value (sort-key-compare (vector-ref (vector-ref rows i) k)
+                                                    (vector-ref (vector-ref rows j) k)
+                                                    d l))]
+                     #:unless (zero? c))
+          c))
+      (and first-difference (negative? first-difference)))
     (base:sort (range (vector-length rows)) row<?))
 
   (define (sort-result-ok? out expected rows key-idxs #:exact? exact? #:payload? payload?)
@@ -228,24 +211,21 @@
       (define why (format "~s" (list dtypes n ds ls exact?)))
       (define (ok? out [m n])
         (sort-result-ok? out (take expected m) rows key-idxs #:exact? exact? #:payload? payload?))
-      (check-true (ok? (sort d keys #:descending ds #:nulls-last ls #:maintain-order exact?)) why)
-      (check-true (ok? (collect (sort (lazy d) keys #:descending ds #:nulls-last ls
-                                      #:maintain-order exact?)))
-                  why)
+      (define (sorted x) (sort x keys #:descending ds #:nulls-last ls #:maintain-order exact?))
+      (check-true (ok? (sorted d)) why)
+      (check-true (ok? (~> d lazy sorted collect)) why)
       (let ([m (quotient (add1 n) 2)])
-        (check-true (ok? (~> d lazy (sort keys #:descending ds #:nulls-last ls
-                                          #:maintain-order exact?)
-                             (head m) collect)
-                         m)
-                    why)))
+        (check-true (ok? (~> d lazy sorted (head m) collect) m) why)))
     (for* ([d1 '(#f #t)] [l1 '(#f #t)])
-      (check-equal? (frame-rows (sort d keys #:descending d1 #:nulls-last l1 #:maintain-order #t))
-                    (frame-rows (sort d keys #:descending (make-list k d1)
-                                      #:nulls-last (make-list k l1) #:maintain-order #t))))
+      (check-equal? (~> d (sort keys #:descending d1 #:nulls-last l1 #:maintain-order #t) frame-rows)
+                    (~> d
+                        (sort keys #:descending (make-list k d1) #:nulls-last (make-list k l1)
+                              #:maintain-order #t)
+                        frame-rows)))
     (define (schema x) (for/list ([name (in-list (column-names x))])
                          (list name (dtype (ref x #:columns name)))))
-    (check-equal? (schema (sort d keys #:descending #t #:nulls-last #t)) (schema d))
-    (check-equal? (schema (collect (sort (lazy d) keys #:descending #t #:nulls-last #t))) (schema d))
+    (check-equal? (~> d (sort keys #:descending #t #:nulls-last #t) schema) (schema d))
+    (check-equal? (~> d lazy (sort keys #:descending #t #:nulls-last #t) collect schema) (schema d))
     (check-equal? (frame-rows d) rows))
 
   (define (sort-column-laws d dtypes)
@@ -255,30 +235,21 @@
       (define expected (for/list ([i (in-list (reference-sort-order rows (list j) (list ds) (list ls)))])
                          (vector-ref (vector-ref rows i) j)))
       (define why (format "~s" (list (list-ref dtypes j) (vector-length rows) ds ls)))
+      (define (resorted x) (sort x #:descending ds #:nulls-last ls))
+      (define (resorted-by x) (sort x name #:descending ds #:nulls-last ls))
+      (define (presorted-by x) (sort x name #:descending ds))
+      (define (col-of out) (column out name))
       (define s (ref d #:columns name))
       (define one (select d name))
-      (define (col-of out) (column out name))
-      (check-equal? (series-cells (sort s #:descending ds #:nulls-last ls)) expected why)
-      (check-equal? (series-cells (sort (sort s #:descending ds) #:descending ds #:nulls-last ls))
-                    expected why)
-      (check-equal? (col-of (select d (sort name #:descending ds #:nulls-last ls))) expected why)
-      (check-equal? (col-of (~> d lazy (select (sort (col name) #:descending ds #:nulls-last ls))
-                                collect))
-                    expected why)
-      (check-equal? (col-of (select (sort d name #:descending ds)
-                                    (sort name #:descending ds #:nulls-last ls)))
-                    expected why)
-      (check-equal? (col-of (sort one name #:descending ds #:nulls-last ls)) expected why)
-      (check-equal? (col-of (sort (sort one name #:descending ds) name
-                                  #:descending ds #:nulls-last ls))
-                    expected why)
-      (check-equal? (col-of (~> d lazy (sort name #:descending ds #:nulls-last ls)
-                                (select name) collect))
-                    expected why)
-      (check-equal? (col-of (~> (sort d name #:descending ds) lazy
-                                (sort name #:descending ds #:nulls-last ls)
-                                (select name) collect))
-                    expected why)))
+      (check-equal? (~> s resorted series-cells) expected why)
+      (check-equal? (~> s (sort #:descending ds) resorted series-cells) expected why)
+      (check-equal? (~> d (select (resorted name)) col-of) expected why)
+      (check-equal? (~> d lazy (select (resorted (col name))) collect col-of) expected why)
+      (check-equal? (~> d presorted-by (select (resorted name)) col-of) expected why)
+      (check-equal? (~> one resorted-by col-of) expected why)
+      (check-equal? (~> one presorted-by resorted-by col-of) expected why)
+      (check-equal? (~> d lazy resorted-by (select name) collect col-of) expected why)
+      (check-equal? (~> d presorted-by lazy resorted-by (select name) collect col-of) expected why)))
 
   (define (sort-by-laws d k)
     (define keys (for/list ([j (in-range k)]) (format "k~a" j)))
@@ -286,36 +257,37 @@
     (for* ([ds (in-list (flag-lists k))] [ls (in-list (flag-lists k))])
       (define order (reference-sort-order rows (range k) ds ls))
       (define why (format "~s" (list k (vector-length rows) ds ls)))
-      (check-equal? (column (select d (sort-by "row" #:by keys #:descending ds #:nulls-last ls
-                                               #:maintain-order #t))
-                            "row")
+      (define (reordered x by #:maintain-order [maintain-order #f])
+        (sort-by x #:by by #:descending ds #:nulls-last ls #:maintain-order maintain-order))
+      (check-equal? (~> d (select (reordered "row" keys #:maintain-order #t)) (column "row"))
                     order why)
-      (check-equal? (column (select d (sort-by (col "row") #:by (map col keys) #:descending ds
-                                               #:nulls-last ls #:maintain-order #t))
-                            "row")
+      (check-equal? (~> d (select (reordered (col "row") (map col keys) #:maintain-order #t))
+                        (column "row"))
                     order why)
       (for ([j (in-range k)] [key (in-list keys)])
-        (check-equal? (column (select d (sort-by key #:by keys #:descending ds #:nulls-last ls)) key)
+        (check-equal? (~> d (select (reordered key keys)) (column key))
                       (for/list ([i (in-list order)]) (vector-ref (vector-ref rows i) j))
                       why))))
 
   (define nl-df (dataframe (list (series (list 3 polars-null 1 polars-null 2) #:name "a")
                                  (series (list "x" "y" polars-null "x" "y") #:name "b"))))
-  (check-equal? (column (sort nl-df "a") "a") (list polars-null polars-null 1 2 3))
-  (check-equal? (column (sort nl-df "a" #:descending #t) "a") (list polars-null polars-null 3 2 1))
-  (check-equal? (column (sort nl-df "a" #:nulls-last #t) "a") (list 1 2 3 polars-null polars-null))
-  (check-equal? (column (sort nl-df "a" #:descending #t #:nulls-last #t) "a")
+  (check-equal? (~> nl-df (sort "a") (column "a")) (list polars-null polars-null 1 2 3))
+  (check-equal? (~> nl-df (sort "a" #:descending #t) (column "a"))
+                (list polars-null polars-null 3 2 1))
+  (check-equal? (~> nl-df (sort "a" #:nulls-last #t) (column "a"))
+                (list 1 2 3 polars-null polars-null))
+  (check-equal? (~> nl-df (sort "a" #:descending #t #:nulls-last #t) (column "a"))
                 (list 3 2 1 polars-null polars-null))
   (let ([d (sort nl-df '("b" "a") #:descending '(#f #t) #:nulls-last '(#t #f))])
     (check-equal? (column d "a") (list polars-null 3 polars-null 2 1))
     (check-equal? (column d "b") (list "x" "x" "y" "y" polars-null)))
-  (check-equal? (column (sort nl-df "a" #:nulls-last '(#t)) "a")
-                (column (sort nl-df '("a") #:nulls-last #t) "a"))
-  (check-equal? (series-cells (sort (ref nl-df #:columns "a") #:descending #t #:nulls-last #t))
+  (check-equal? (~> nl-df (sort "a" #:nulls-last '(#t)) (column "a"))
+                (~> nl-df (sort '("a") #:nulls-last #t) (column "a")))
+  (check-equal? (~> nl-df (ref #:columns "a") (sort #:descending #t #:nulls-last #t) series-cells)
                 (list 3 2 1 polars-null polars-null))
-  (check-equal? (column (select nl-df (sort "a" #:descending #t #:nulls-last #t)) "a")
+  (check-equal? (~> nl-df (select (sort "a" #:descending #t #:nulls-last #t)) (column "a"))
                 (list 3 2 1 polars-null polars-null))
-  (check-equal? (column (select nl-df (sort (col "a") #:descending #t)) "a")
+  (check-equal? (~> nl-df (select (sort (col "a") #:descending #t)) (column "a"))
                 (list polars-null polars-null 3 2 1))
   (let ([d (with-columns nl-df (alias (sort "a") "s"))])
     (check-equal? (column-names d) '("a" "b" "s"))
@@ -336,27 +308,25 @@
   (let* ([delays (for/list ([i (in-range 300)])
                    (if (zero? (modulo i 7)) polars-null (- (modulo (* i 37) 211) 100)))]
          [d (dataframe (list (series delays #:name "delay") (series (range 300) #:name "id")))]
-         [want (lambda (k) (take (base:sort (filter number? delays) >) k))])
+         [want (lambda (k) (~> (filter number? delays) (base:sort >) (take k)))])
     (for ([k '(1 5 60)])
-      (check-equal? (column (~> d (sort "delay" #:descending #t #:nulls-last #t) (head k)) "delay")
+      (check-equal? (~> d (sort "delay" #:descending #t #:nulls-last #t) (head k) (column "delay"))
                     (want k))
-      (check-equal? (column (~> (select d "delay") (sort "delay" #:descending #t #:nulls-last #t)
-                                (head k))
-                            "delay")
+      (check-equal? (~> d (select "delay") (sort "delay" #:descending #t #:nulls-last #t)
+                        (head k) (column "delay"))
                     (want k))))
 
-  (define ranked-lazy
-    (~> ops-df lazy
-        (group-by "group")
-        (agg (alias (sum (col "value")) "sum_value"))
-        (sort "sum_value" #:descending #t)
-        collect))
-  (check-equal? (column ranked-lazy "group") '("b" "a" "c"))
-  (check-equal? (column ranked-lazy "sum_value") '(37 35 18))
-  (check-equal? (column (sort ops-df '("group" "value") #:descending '(#f #t)) "value")
+  (check-equal? (~> ops-df lazy
+                    (group-by "group")
+                    (agg (alias (sum (col "value")) "sum_value"))
+                    (sort "sum_value" #:descending #t)
+                    collect
+                    (column "group"))
+                '("b" "a" "c"))
+  (check-equal? (~> ops-df (sort '("group" "value") #:descending '(#f #t)) (column "value"))
                 '(25 10 30 7 18))
-  (check-equal? (series-cells (sort v64)) '(7 10 18 25 30))
-  (check-equal? (series-cells (sort v64 #:descending #t)) '(30 25 18 10 7))
+  (check-equal? (~> v64 sort series-cells) '(7 10 18 25 30))
+  (check-equal? (~> v64 (sort #:descending #t) series-cells) '(30 25 18 10 7))
 
   (define-syntax-rule (check-blame rx call)
     (check-exn (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
@@ -435,8 +405,9 @@
 
   (define dtypes '(int64 int32 float64 string boolean datetime))
   (for* ([dtype (in-list dtypes)] [shape (in-list '((0 7) (1/4 1) (3/4 23) (1 5)))])
+    (match-define (list density n) shape)
     (define d (random-sort-frame (vector->pseudo-random-generator (vector 82 95 88 1 2 3))
-                                 (list dtype) (cadr shape) (car shape)))
+                                 (list dtype) n density))
     (sort-law-case d (list dtype) #t)
     (sort-law-case (select d "k0") (list dtype) #f)
     (sort-column-laws d (list dtype))
