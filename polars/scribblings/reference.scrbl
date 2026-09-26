@@ -121,12 +121,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (select people (~> (col 'float64) (exclude "height") (* 2)))
 (select people (~> (all) (exclude "id") (exclude "weight")))
 (~> people
-    (with-columns (alias (> (col "height") 1.6) "tall"))
+    (with-columns (~> (col "height") (> 1.6) (alias "tall")))
     (group-by "tall")
-    (agg (mean (exclude (all) "id")))
+    (agg (~> (all) (exclude "id") mean))
     (sort "tall"))
 (multi-column-expr? (col "id"))
-(multi-column-expr? (* (col 'float64) 2))
+(~> (col 'float64) (* 2) multi-column-expr?)
 (eval:error (exclude (col "id") "weight"))]}
 
 @defproc[(expr->string [e Expr-ptr?]) string?]{
@@ -170,13 +170,13 @@ total
 (meta-root-names total)
 (meta-eq? total (alias (sum (+ (col "a") (col "b"))) "total"))
 (meta-eq? total (col "a"))
-(equal? total (alias (sum (+ (col "a") (col "b"))) "total"))
+(equal? total (~> (+ (col "a") (col "b")) sum (alias "total")))
 (meta-output-name (+ (col "a") (col "b")))
 (meta-output-name (lit 25))
 (meta-root-names "a")
 (meta-root-names (col #rx"^he"))
 (meta-output-name (col #rx"^he"))
-(meta-root-names (* (col 'float64) 2))
+(~> (col 'float64) (* 2) meta-root-names)
 (meta-eq? (col 'float64) (col 'f64))
 (eval:error (meta-output-name (col 'float64)))
 (eval:error (meta-output-name "*"))
@@ -384,12 +384,9 @@ total
   @racket[collect] with Polars' reason.
 
   @examples[#:eval ev
-(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
-    (filter (> (col "v") 2))
-    collect)
-(eval:error (~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
-                (filter (> (col "nope") 2))
-                collect))]}
+(define four (dataframe (list (series '(1 2 3 4) #:name "v"))))
+(~> four lazy (filter (> (col "v") 2)) collect)
+(eval:error (~> four lazy (filter (> (col "nope") 2)) collect))]}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
@@ -946,8 +943,8 @@ built.
   write: they also accept a column name.
 
   @examples[#:eval ev
-(expr-meta-output-name (expr-alias (col "a") "b"))
-(expr-meta-root-names (expr-add (col "a") (col "b")))
+(~> (col "a") (expr-alias "b") expr-meta-output-name)
+(~> (col "a") (expr-add (col "b")) expr-meta-root-names)
 (expr-meta-eq? (col "a") (expr-col "a"))]}
 
 @defproc[(expr-over [e Expr-ptr?] [keys (listof (or/c string? Expr-ptr?))]) Expr-ptr?]{
@@ -955,8 +952,8 @@ built.
   its keys as one list where @racket[over] is variadic.
 
   @examples[#:eval ev
-(expr-over (expr-sum (col "v")) (list "k" (col "h")))
-(~> khv (with-columns (expr-alias (expr-over (expr-sum (col "v")) (list "k")) "total")))]}
+(~> (col "v") expr-sum (expr-over (list "k" (col "h"))))
+(~> khv (with-columns (~> (col "v") expr-sum (expr-over (list "k")) (expr-alias "total"))))]}
 
 @deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]

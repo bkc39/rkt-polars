@@ -107,10 +107,10 @@
 ;; API gap: no polars.selectors, and no set operations on selectors (#50).
 (displayln (select df (col 'string) (col #rx"_high$")))
 (displayln
- (select df (for/list ([name (column-names df)]
-                       #:when (and (regexp-match? #rx"_" name)
-                                   (not (eq? (dtype (ref df name)) 'string))))
-              name)))
+ (select df (filter (lambda (name)
+                      (and (regexp-match? #rx"_" name)
+                           (~> (ref df name) dtype (eq? 'string) not)))
+                    (column-names df))))
 
 (define people
   (dataframe (list (series '("Anna" "Bob") #:name "name")
@@ -124,7 +124,7 @@
 
 ;; Debugging selectors: multi-column-expr? plays cs.is_selector; selecting
 ;; from the frame plays cs.expand_selector.
-(displayln (multi-column-expr? (not (col #rx"^has_"))))
+(displayln (~> (col #rx"^has_") not multi-column-expr?))
 (displayln (~> people (select (col #rx"^has_")) column-names))
 (displayln
  (for/list ([e (amplitude-expressions '("day" "year"))])

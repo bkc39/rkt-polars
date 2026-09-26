@@ -187,10 +187,10 @@ anything else is a Racket filter over the names.
 
 @examples[#:eval ev #:label #f
 (select df (col 'string) (col #rx"_high$"))
-(select df (for/list ([name (column-names df)]
-                      #:when (and (regexp-match? #rx"_" name)
-                                  (not (eq? (dtype (ref df name)) 'string))))
-             name))
+(select df (filter (lambda (name)
+                     (and (regexp-match? #rx"_" name)
+                          (~> (ref df name) dtype (eq? 'string) not)))
+                   (column-names df)))
 ]
 
 @subsubsection[#:tag "expressions-debugging-selectors"]{Debugging selectors}
@@ -206,7 +206,7 @@ as its plan, and selecting from the frame lists what a selector matches.
                    (series '(#t #f) #:name "has_tattoos")
                    (series '(#t #t) #:name "is_alive"))))
 (select people (not (col #rx"^has_")))
-(multi-column-expr? (not (col #rx"^has_")))
+(~> (col #rx"^has_") not multi-column-expr?)
 (not (col #rx"^has_"))
 (~> people (select (col #rx"^has_")) column-names)
 ]

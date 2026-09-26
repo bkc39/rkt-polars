@@ -37,14 +37,14 @@
 
 (displayln "by dtype: every float64 column, rounded (short and long spellings agree):")
 (displayln (select stocks (~> (col 'float64) (round #:decimals 0))))
-(displayln (column-names (select stocks (col 'f64))))
+(displayln (~> stocks (select (col 'f64)) column-names))
 
 (displayln "by a Polars regex string and by a Racket #rx regexp:")
 (displayln (select stocks "ticker" (col "^.*_high$")))
 (displayln (select stocks "ticker" (col #rx"_(high|low)$")))
 
 (displayln "a #px regexp with Racket's \\w class:")
-(displayln (column-names (select stocks (col #px"^\\w+_\\w+$"))))
+(displayln (~> stocks (select (col #px"^\\w+_\\w+$")) column-names))
 
 (displayln "exclude by regexp, from a dtype selection:")
 (displayln (select stocks (exclude (col 'float64) #rx"^day_")))
@@ -52,9 +52,9 @@
 (displayln "all inside agg is every column that is not a group key:")
 (displayln
  (~> stocks
-     (with-columns (alias (> (col "price") 200) "large"))
+     (with-columns (~> (col "price") (> 200) (alias "large")))
      (group-by "large")
-     (agg (mean (exclude (all) "ticker")))
+     (agg (~> (all) (exclude "ticker") mean))
      (sort "large")))
 
 (define lookahead #px"^(?!day_).*_(high|low)$")

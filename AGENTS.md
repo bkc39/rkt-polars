@@ -148,7 +148,8 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 - **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
   Racket build with docs, tests, guide scripts and examples,
-  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs only the second and is not enough.
+  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs
+  only the second and is not enough.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -162,7 +163,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
-  (the `examples` gate, in `push-gates` too; about 15 s). No `-x`: the
+  (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
   is red if it raises, exits non-zero or writes to stderr. The flake's
   Racket check runs the same command, so a broken example fails CI.

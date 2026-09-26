@@ -26,7 +26,7 @@
 (printf "output name: ~a\n" (meta-output-name bmi))
 (printf "root names:  ~a\n" (meta-root-names bmi))
 (printf "unaliased (first column wins): ~a\n"
-        (meta-output-name (+ (col "a") (col "b"))))
+        (~> (col "a") (+ (col "b")) meta-output-name))
 (printf "a literal: ~a\n" (meta-output-name (lit 25)))
 (printf "a bare name is lifted with col: ~a\n" (meta-root-names "weight"))
 (newline)
@@ -50,7 +50,8 @@
 (displayln "checking a generated pipeline before running it:")
 (define amplitudes
   (for/list ([period (in-list '("day" "year"))])
-    (alias (- (col (string-append period "_high")) (col (string-append period "_low")))
-           (string-append period "_amplitude"))))
+    (~> (col (string-append period "_high"))
+        (- (col (string-append period "_low")))
+        (alias (string-append period "_amplitude")))))
 (for ([e (in-list amplitudes)])
   (printf "~a <- ~a\n" (meta-output-name e) (meta-root-names e)))

@@ -13,10 +13,10 @@
 (require racket/file              ; make-temporary-file
          polars)
 
-(define (report label thunk)
+(define-syntax-rule (report label body)
   (printf "~a:\n  ~a\n\n" label
           (with-handlers ([exn:fail? exn-message])
-            (thunk)
+            body
             "no error")))
 
 (define df
@@ -24,29 +24,26 @@
                    (series '(1 2 3) #:name "v"))))
 
 (report "read-csv of a missing file"
-        (lambda () (read-csv "/no/such/file.csv")))
+        (read-csv "/no/such/file.csv"))
 
 (report "write-parquet into a missing directory"
-        (lambda () (write-parquet df "/no/such/dir/out.parquet")))
+        (write-parquet df "/no/such/dir/out.parquet"))
 
 (define csv-path (make-temporary-file "rkt-polars-not-parquet-~a.csv"))
-(dynamic-wind
- void
- (lambda ()
-   (write-csv df csv-path)
-   (report "read-parquet of a file that is not parquet"
-           (lambda () (read-parquet csv-path)))
-   (report "read-ndjson of the same file"
-           (lambda () (read-ndjson csv-path))))
- (lambda () (delete-file csv-path)))
+(write-csv df csv-path)
+(report "read-parquet of a file that is not parquet"
+        (read-parquet csv-path))
+(report "read-ndjson of the same file"
+        (read-ndjson csv-path))
+(delete-file csv-path)
 
 (define plan (scan-csv "/no/such/file.csv"))
 (printf "scan-csv of a missing file builds a plan: ~a\n\n" (lazyframe? plan))
 (report "collect runs it and reports the file"
-        (lambda () (collect plan)))
+        (collect plan))
 
 (report "collect of a plan that reads a missing column"
-        (lambda () (~> df lazy (filter (> (col "nope") 1)) collect)))
+        (~> df lazy (filter (> (col "nope") 1)) collect))
 
 (report "an eager select of a missing column, which runs the same way"
-        (lambda () (select df (col "nope"))))
+        (select df (col "nope")))
