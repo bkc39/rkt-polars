@@ -47,8 +47,9 @@ Imitate the neighbouring module in `polars/private/generic/`. `->col-expr`
 (in `generic/expr-util.rkt`) does the name-or-expression lift; `define-expr-unop`
 and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
-gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
-in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
+gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`,
+guide coverage and a numbered example in the same change (see
+Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
 in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
@@ -133,12 +134,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
   quietly working around it.
+- **Every new public name or keyword ships in the same PR with** (a) a
+  reference entry whose live `@examples` exercise it, including an
+  `eval:error` for a failure it reports; (b) guide coverage wherever the
+  upstream user guide covers the feature: a snippet in the matching chapter
+  of `polars/scribblings/guide/` and in its paired `user-guide/` `.rkt` and
+  `.py` scripts; and (c) a numbered example `examples/NN-<area>-<topic>.rkt`
+  at the next free number, which the `examples` gate runs. An example is
+  self-contained, prints its results, needs no network, and deletes any file
+  it writes.
 
 ## Verification
 
 - **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
-  Racket build with tests and docs, `cargo fmt --check`, the Racket version
-  floor). `nix build .#racket` runs only the second and is not enough.
+  Racket build with docs, tests, guide scripts and examples,
+  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs
+  only the second and is not enough.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -151,6 +162,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+- `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
+  (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
+  examples have no `test` submodule, so `-x` would run nothing. An example
+  is red if it raises, exits non-zero or writes to stderr. The flake's
+  Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
