@@ -1,6 +1,6 @@
 use crate::prelude::*;
 
-expr_binop!(expr_is_in, |a, b| a.is_in(b));
+expr_binop!(expr_is_in, |a, b| a.is_in(b, false));
 expr_unop!(expr_is_unique, |e| e.is_unique());
 expr_unop!(expr_is_duplicated, |e| e.is_duplicated());
 expr_unop!(expr_is_first_distinct, |e| e.is_first_distinct());

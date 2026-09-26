@@ -9,7 +9,8 @@ expr_unop!(expr_ceil, |e| e.ceil());
 expr_unop!(expr_sqrt, |e| e.sqrt());
 expr_unop!(expr_exp, |e| e.exp());
 expr_unop!(expr_log1p, |e| e.log1p());
-expr_unop_u32!(expr_round, |e, decimals| e.round(decimals));
+expr_unop_u32!(expr_round, |e, decimals| e
+    .round(decimals, RoundMode::HalfAwayFromZero));
 expr_binop!(expr_pow, |a, b| a.pow(b));
 
 #[no_mangle]
@@ -18,7 +19,7 @@ pub extern "C" fn expr_log(e: *const Expr, base: f64) -> *mut Expr {
         return ptr::null_mut();
     }
     let ee = unsafe { (*e).clone() };
-    Box::into_raw(Box::new(ee.log(base)))
+    Box::into_raw(Box::new(ee.log(lit(base))))
 }
 
 /// Clip values into `[min, max]`. Either bound may be absent (`has_*` == 0),

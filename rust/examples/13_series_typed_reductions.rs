@@ -1,9 +1,11 @@
 use polars::prelude::*;
 
 fn main() -> PolarsResult<()> {
-    let wide = Series::new("wide", [Some(1_099_511_627_776i64), None, Some(4)]);
-    let count = Series::new("count", [Some(1u32), Some(2), None, Some(7)]);
-    let big = Series::new("big", [10u64, 20, 4_294_967_296]);
+    let wide =
+        Series::new("wide".into(), [Some(1_099_511_627_776i64), None, Some(4)]);
+    let count =
+        Series::new("count".into(), [Some(1u32), Some(2), None, Some(7)]);
+    let big = Series::new("big".into(), [10u64, 20, 4_294_967_296]);
 
     println!(
         "wide sum={:?} min={:?} max={:?} mean={:?}",

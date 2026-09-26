@@ -13,7 +13,7 @@ fn main() -> PolarsResult<()> {
         writeln!(file, "b,30")?;
     }
 
-    let csv_out = LazyCsvReader::new(&csv_path)
+    let csv_out = LazyCsvReader::new(PlRefPath::try_from_path(&csv_path)?)
         .finish()?
         .filter(col("value").gt(lit(10)))
         .group_by([col("group")])
@@ -31,11 +31,13 @@ fn main() -> PolarsResult<()> {
         ParquetWriter::new(&mut file).finish(&mut source)?;
     }
 
-    let parquet_out =
-        LazyFrame::scan_parquet(&parquet_path, Default::default())?
-            .filter(col("x").gt_eq(lit(2)))
-            .select([col("x"), (col("x") * lit(10)).alias("ten_x")])
-            .collect()?;
+    let parquet_out = LazyFrame::scan_parquet(
+        PlRefPath::try_from_path(&parquet_path)?,
+        Default::default(),
+    )?
+    .filter(col("x").gt_eq(lit(2)))
+    .select([col("x"), (col("x") * lit(10)).alias("ten_x")])
+    .collect()?;
 
     println!("csv scan shape={:?}", csv_out.shape());
     println!("parquet scan shape={:?}", parquet_out.shape());

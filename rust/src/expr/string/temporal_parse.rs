@@ -8,7 +8,7 @@ pub(crate) fn strptime_options(
     cache: u8,
 ) -> StrptimeOptions {
     StrptimeOptions {
-        format,
+        format: format.map(Into::into),
         strict: strict != 0,
         exact: exact != 0,
         cache: cache != 0,

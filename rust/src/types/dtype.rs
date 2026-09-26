@@ -247,7 +247,7 @@ pub(crate) fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
         // when their respective features are enabled in the polars build.
         // We don't enable any of those today; route anything we don't recognize
         // through Unknown so the match stays exhaustive.
-        DataType::Unknown(_) => CompatDType {
+        _ => CompatDType {
             tag: Tag::Unknown as i32,
             time_unit: CompatTimeUnit::None as i32,
             flags: 0,

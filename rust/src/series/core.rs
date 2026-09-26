@@ -3,14 +3,17 @@ use crate::*;
 
 #[no_mangle]
 pub extern "C" fn series_make() -> *mut Series {
-    let s = Series::new("example", &[1, 2, 3, 4]);
+    let s = Series::new("example".into(), &[1, 2, 3, 4]);
     let boxed_s = Box::new(s);
     Box::into_raw(boxed_s)
 }
 
 #[no_mangle]
 pub extern "C" fn series_empty() -> *mut Series {
-    Box::into_raw(Box::new(Series::new_empty("", &DataType::Int32)))
+    Box::into_raw(Box::new(Series::new_empty(
+        PlSmallStr::EMPTY,
+        &DataType::Int32,
+    )))
 }
 
 #[no_mangle]
@@ -53,7 +56,7 @@ pub extern "C" fn series_rename(s_ptr: *mut Series, new_name: *const c_char) {
         let s = &mut *s_ptr;
         let c_str = CStr::from_ptr(new_name);
         if let Ok(str_slice) = c_str.to_str() {
-            s.rename(str_slice);
+            s.rename(str_slice.into());
         }
     }
 }
@@ -95,9 +98,9 @@ where
 
     unsafe {
         if let Ok(name) = CStr::from_ptr(name).to_str() {
-            ChunkedArray::from_vec(name, vec)
+            ChunkedArray::from_vec(name.into(), vec)
         } else {
-            ChunkedArray::from_vec("", vec)
+            ChunkedArray::from_vec(PlSmallStr::EMPTY, vec)
         }
     }
 }
