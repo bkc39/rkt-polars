@@ -789,13 +789,63 @@ renders it with no separate display call.
   column and a @racket["value"] column, with rows adapted to the dtype — a
   numeric series gets @racket["count"], @racket["null_count"], @racket["mean"],
   @racket["std"], @racket["min"], @racket["25%"], @racket["50%"], @racket["75%"]
-  and @racket["max"]; a boolean series drops @racket["std"] and the quantiles;
-  other dtypes (string, temporal) keep just @racket["count"], @racket["null_count"],
-  @racket["min"] and @racket["max"]. For a dataframe the result uses Polars'
-  fixed nine-row layout (a @racket["statistic"] column plus one column per input
-  column), leaving a cell @racket[polars-null] where a column has no value for
-  that statistic. Quantiles use nearest interpolation. Dispatches on
-  @racket[series?] / @racket[dataframe?].}
+  and @racket["max"]; a temporal series (date, datetime, time, duration) drops
+  @racket["std"]; a boolean series also drops the quantiles; a string series
+  keeps @racket["count"], @racket["null_count"], @racket["min"] and
+  @racket["max"]; any other dtype just the two counts. For a dataframe the
+  result uses Polars' fixed nine-row layout (a @racket["statistic"] column plus
+  one column per input column), leaving a cell @racket[polars-null] where a
+  column has no value for that statistic.
+
+  Numeric, boolean, null and nested columns summarise as @racket['float64],
+  every other column as strings; temporal values are written as Python prints
+  them. Quantiles use nearest interpolation. Every statistic of every column
+  comes from one query, so Polars computes the columns in parallel.
+
+  API gaps: a time-zone-aware datetime is written as its UTC clock time with no
+  offset, where Python writes the local time and the offset; a binary column
+  gets no @racket["min"] or @racket["max"].
+
+  Numeric, string and boolean columns, with nulls:
+
+  @examples[#:eval ev #:label #f
+(define flights
+  (dataframe
+   (list (series (list "UA" "AA" "UA" polars-null) #:name "carrier")
+         (series (list 1400 733 polars-null 1089) #:name "distance")
+         (series (list #t #f #t #t) #:name "on_time"))))
+(describe flights)]
+
+  Datetime, duration and date columns get a mean and quartiles; a date
+  column's mean is a datetime:
+
+  @examples[#:eval ev #:label #f
+(define times
+  (~> (dataframe
+       (list (series (list (datetime 2013 1 1 5) (datetime 2013 1 1 6)
+                           (datetime 2013 1 2 7) (datetime 2013 1 3 8))
+                     #:name "scheduled")
+             (series (list (datetime 2013 1 1 5 12) (datetime 2013 1 1 5 57)
+                           polars-null (datetime 2013 1 3 9 30))
+                     #:name "departed")))
+      (with-columns (alias (- (col "departed") (col "scheduled")) "delay")
+                    (alias (cast "scheduled" 'date) "day"))))
+(describe times)]
+
+  A series keeps only the rows its dtype has:
+
+  @examples[#:eval ev #:label #f
+(describe (series (list 3 1 polars-null 4 1 5) #:name "n"))
+(describe (ref times "day"))]
+
+  A nested column (here the lists @racket[agg] collects) and a null-dtype
+  column report only their counts, as floats; a frame with no rows reports
+  zero counts:
+
+  @examples[#:eval ev #:label #f
+(~> flights (group-by "carrier") (agg (col "distance")) describe)
+(~> flights (select (alias (cast "carrier" 'null) "nothing")) describe)
+(describe (head flights 0))]}
 
 @subsection{Low-level DataFrame API}
 
@@ -820,7 +870,13 @@ generic operations are simply the preferred surface.
   @racket[height], @racket[width], @racket[ref], @racket[column-name], and
   @racket[column-names]. @racket[display-dataframe] prints the Polars table to
   @racket[out]; since a @racket[dataframe] now prints itself, prefer plain
-  @racket[display].}
+  @racket[display]. @racket[dataframe-column] raises an error naming the
+  column when @racket[d] has none.
+
+  @examples[#:eval ev
+(define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
+(series-sum-i32 (dataframe-column scores "score"))
+(eval:error (dataframe-column scores "points"))]}
 
 @defproc[(DataFrame-ptr? [v any/c]) boolean?]{
   Recognises a foreign dataframe pointer. Both raw pointers returned by the
