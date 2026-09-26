@@ -7,7 +7,8 @@
                   dataframe-read-json-lines dataframe-read-parquet dataframe-write-csv
                   dataframe-write-json-lines dataframe-write-parquet)
          (only-in polars/private/generic/core
-                  dataframe? lazyframe? wrap-dataframe wrap-lazyframe))
+                  dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
+         syntax/parse/define)
 
 (provide (contract-out
           [read-csv (csv-reader/c dataframe?)]
@@ -21,7 +22,7 @@
           [write-parquet (-> dataframe? path-string? void?)]
           [write-ndjson (-> dataframe? path-string? void?)]))
 
-(define-syntax-rule (define-wrapped name wrap reader)
+(define-syntax-parse-rule (define-wrapped name:id wrap:expr reader:expr)
   (define name (procedure-rename (compose1 wrap reader) 'name)))
 
 (define-wrapped read-csv wrap-dataframe dataframe-read-csv)
