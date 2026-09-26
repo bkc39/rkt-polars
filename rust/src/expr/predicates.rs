@@ -1,6 +1,21 @@
 use crate::prelude::*;
 
-expr_binop!(expr_is_in, |a, b| a.is_in(b, false));
+/// A Series literal on the right of `is_in` is the collection itself, so it
+/// is imploded into one list value, as Python does with a list argument;
+/// polars 0.55 reads a same-dtype right side as deprecated and warns.
+fn as_collection(e: Expr) -> Expr {
+    match e {
+        Expr::Literal(v @ LiteralValue::Series(_)) => {
+            match v.clone().implode() {
+                Ok(list) => Expr::Literal(list),
+                Err(_) => Expr::Literal(v),
+            }
+        }
+        other => other,
+    }
+}
+
+expr_binop!(expr_is_in, |a, b| a.is_in(as_collection(b), false));
 expr_unop!(expr_is_unique, |e| e.is_unique());
 expr_unop!(expr_is_duplicated, |e| e.is_duplicated());
 expr_unop!(expr_is_first_distinct, |e| e.is_first_distinct());

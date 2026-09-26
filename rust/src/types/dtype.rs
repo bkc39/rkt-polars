@@ -243,11 +243,13 @@ pub(crate) fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
             flags: 0,
             array_width: 0,
         },
-        // Categorical/Enum/Decimal/Object exist as variants in polars but only
-        // when their respective features are enabled in the polars build.
-        // We don't enable any of those today; route anything we don't recognize
-        // through Unknown so the match stays exhaustive.
-        _ => CompatDType {
+        DataType::Int128
+        | DataType::UInt128
+        | DataType::Float16
+        | DataType::Decimal(..)
+        | DataType::Categorical(..)
+        | DataType::Enum(..)
+        | DataType::Unknown(_) => CompatDType {
             tag: Tag::Unknown as i32,
             time_unit: CompatTimeUnit::None as i32,
             flags: 0,

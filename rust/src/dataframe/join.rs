@@ -64,7 +64,7 @@ pub extern "C" fn dataframe_join(
             right,
             None,
             None,
-            polars::prelude::MaintainOrderJoin::LeftRight,
+            polars::prelude::MaintainOrderJoin::None,
         ) {
             Ok(out) => Box::into_raw(Box::new(out)),
             Err(_) => ptr::null_mut(),
@@ -100,8 +100,7 @@ pub extern "C" fn dataframe_join(
     if left_on.is_empty() || right_on.is_empty() {
         return ptr::null_mut();
     }
-    let mut args = polars::prelude::JoinArgs::new(join_type);
-    args.maintain_order = polars::prelude::MaintainOrderJoin::Left;
+    let args = polars::prelude::JoinArgs::new(join_type);
     match left.join(right, &left_on, &right_on, args, None) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),

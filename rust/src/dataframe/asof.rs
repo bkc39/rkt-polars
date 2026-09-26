@@ -184,6 +184,8 @@ pub extern "C" fn dataframe_join_asof_options(
             true, true,
         )
     } else {
+        // Polars cannot check sortedness within `by` groups; `true` would
+        // only print a warning to stderr.
         left.join_asof_by(
             right,
             left_on_str,
@@ -193,7 +195,7 @@ pub extern "C" fn dataframe_join_asof_options(
             strategy,
             tolerance,
             true,
-            true,
+            false,
         )
     };
     match result {

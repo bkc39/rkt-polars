@@ -10,7 +10,7 @@ expr_unop!(expr_sqrt, |e| e.sqrt());
 expr_unop!(expr_exp, |e| e.exp());
 expr_unop!(expr_log1p, |e| e.log1p());
 expr_unop_u32!(expr_round, |e, decimals| e
-    .round(decimals, RoundMode::HalfAwayFromZero));
+    .round(decimals, RoundMode::HalfToEven));
 expr_binop!(expr_pow, |a, b| a.pow(b));
 
 #[no_mangle]

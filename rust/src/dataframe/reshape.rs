@@ -125,7 +125,8 @@ pub extern "C" fn dataframe_unpivot(
         None => return ptr::null_mut(),
     };
     let df = unsafe { &*df_ptr };
-    match df.unpivot(Some(on), index) {
+    let on = if on.is_empty() { None } else { Some(on) };
+    match df.unpivot(on, index) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }

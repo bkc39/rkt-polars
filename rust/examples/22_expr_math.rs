@@ -10,9 +10,7 @@ fn main() -> PolarsResult<()> {
         .with_columns([
             col("x").abs().alias("abs"),
             col("x").sign().alias("sign"),
-            col("x")
-                .round(1, RoundMode::HalfAwayFromZero)
-                .alias("round1"),
+            col("x").round(1, RoundMode::HalfToEven).alias("round1"),
             col("x").floor().alias("floor"),
             col("x").ceil().alias("ceil"),
             col("x").clip(lit(-1.0), lit(2.0)).alias("clip"),
