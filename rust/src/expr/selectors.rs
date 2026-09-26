@@ -1,10 +1,9 @@
 use crate::prelude::*;
 use crate::*;
 
-/// Polars strips an `Exclude` node only while expanding a wildcard, dtype,
-/// columns, multi-index or regex leaf (`find_flags` in polars-plan's
-/// expr_expansion.rs); one left over panics at plan conversion, so
-/// `expr_exclude` refuses any other input.
+/// `expr_exclude` subtracts the names from each selector in the expression;
+/// an expression with no multi-column selector would drop them silently, so
+/// it is refused.
 fn is_multi_column(e: &Expr) -> bool {
     e.into_iter().any(|x| match x {
         Expr::Selector(Selector::ByIndex { indices, .. }) => indices.len() > 1,

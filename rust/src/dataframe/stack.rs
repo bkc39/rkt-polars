@@ -22,7 +22,12 @@ pub extern "C" fn dataframe_hstack(
             .collect()
     };
     let df = unsafe { &*df_ptr };
-    match df.hstack(&columns) {
+    let out = if df.width() == 0 {
+        DataFrame::new_infer_height(columns)
+    } else {
+        df.hstack(&columns)
+    };
+    match out {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }

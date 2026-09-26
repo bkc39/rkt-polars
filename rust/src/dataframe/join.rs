@@ -64,7 +64,7 @@ pub extern "C" fn dataframe_join(
             right,
             None,
             None,
-            polars::prelude::MaintainOrderJoin::None,
+            polars::prelude::MaintainOrderJoin::LeftRight,
         ) {
             Ok(out) => Box::into_raw(Box::new(out)),
             Err(_) => ptr::null_mut(),

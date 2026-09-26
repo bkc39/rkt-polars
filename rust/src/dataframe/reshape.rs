@@ -26,8 +26,8 @@ pub(crate) fn compat_pivot_agg(code: i32) -> Option<Expr> {
     }
 }
 
-// Eager pivot is a lazy pivot over the distinct `on` values, sorted, as
-// Python's DataFrame.pivot(sort_columns=True) does.
+// The output's `on` columns are sorted by value, as 0.41.3's
+// pivot_stable(sort_columns = true) produced them.
 fn pivot_eager(
     df: &DataFrame,
     on: Vec<String>,
