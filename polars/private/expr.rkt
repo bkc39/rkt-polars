@@ -1908,5 +1908,5 @@
 
   (define bad-glob (lazyframe-scan-csv "/tmp/[.csv"))
   (check-pred LazyFrame-ptr? bad-glob)
-  (check-exn #rx"^lazyframe-collect: failed to collect the query: invalid glob pattern"
+  (check-exn #rx"^lazyframe-collect: .*glob"
              (lambda () (lazyframe-collect bad-glob))))

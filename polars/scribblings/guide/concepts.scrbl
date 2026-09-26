@@ -113,7 +113,7 @@ bmi-expr
 ]
 
 An expression prints as its plan, in the notation Polars itself uses: the
-binding's @racket[/] is Polars' @tt{Divide} operator, shown as @tt{//}, and
+binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}, and
 @racket[pow] appears as a method suffix.
 
 @subsection{Contexts}

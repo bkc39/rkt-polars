@@ -398,6 +398,10 @@
   ;; hstack: append column(s)
   (check-equal? (column-names (hstack usr (series '(10 20 30 40) #:name "extra")))
                 '("uid" "name" "extra"))
+  (check-equal? (shape (hstack (dataframe '()) (series '(1 2 3) #:name "a"))) '(3 1))
+  (let ([stacked (vstack (dataframe (list (series '(1 2) #:name "x")))
+                         (dataframe (list (series (list polars-null 4) #:name "x"))))])
+    (check-equal? (column stacked "x") (list 1 2 polars-null 4)))
   ;; join-asof / pivot / unpivot
   (let ([obs (dataframe (list (series '(1 3 5) #:name "time" #:dtype 'i32)
                               (series '(100 300 500) #:name "reading" #:dtype 'i32)))]
@@ -417,20 +421,35 @@
          [pv (sort (pivot cells #:on '("k") #:index '("id") #:values '("v")) "id")])
     (check-equal? (column-names pv) '("id" "x" "y"))
     (check-equal? (dtype (ref pv "y")) 'int64)
-    (check-equal? (list (ref (ref pv "y") 0) (ref (ref pv "y") 1)) '(11 21))
-    (check-exn exn:fail?
+    (check-equal? (column pv "y") '(11 21))
+    (check-exn #rx"^dataframe-pivot: "
                (lambda () (pivot cells #:on '("k") #:index '("id") #:values '("v") #:agg #f))))
-  (let ([wide (dataframe (list (series '(1 2) #:name "id")
-                               (series '(10 20) #:name "a")
-                               (series '(30 40) #:name "b")))])
-    (check-equal? (column-names (unpivot wide #:on '() #:index '("id")))
-                  '("id" "variable" "value"))
-    (check-equal? (height (unpivot wide #:on '() #:index '("id"))) 4))
+  (let* ([gaps (dataframe (list (series '(1 2 2) #:name "id")
+                                (series '("y" "x" "y") #:name "k")
+                                (series (list 10 polars-null 21) #:name "v")))]
+         [sums (sort (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'sum) "id")]
+         [counts (sort (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'count) "id")]
+         [inferred (sort (pivot gaps #:on '("k") #:index '() #:values '("v") #:agg 'sum) "id")])
+    (check-equal? (column-names sums) '("id" "x" "y"))
+    (check-equal? (column sums "x") '(0 0))
+    (check-equal? (column counts "x") '(0 1))
+    (check-equal? (dtype (ref counts "x")) 'uint32)
+    (check-equal? (column-names inferred) '("id" "x" "y")))
+  (let ([numeric (dataframe (list (series '(1 1) #:name "id")
+                                  (series '(10 2) #:name "k")
+                                  (series '(5 6) #:name "v")))])
+    (check-equal? (column-names (pivot numeric #:on '("k") #:index '("id") #:values '("v")))
+                  '("id" "2" "10")))
+  (let* ([wide (dataframe (list (series '(1 2) #:name "id")
+                                (series '(10 20) #:name "a")
+                                (series '(30 40) #:name "b")))]
+         [long (unpivot wide #:on '() #:index '("id"))])
+    (check-equal? (column-names long) '("id" "variable" "value"))
+    (check-equal? (column long "variable") '("a" "a" "b" "b")))
   (let ([crossed (join (dataframe (list (series '("a" "b") #:name "l")))
                        (dataframe (list (series '(1 2) #:name "r")))
                        #:how 'cross)])
-    (check-equal? (for/list ([i (in-range 4)])
-                    (list (ref (ref crossed "l") i) (ref (ref crossed "r") i)))
+    (check-equal? (map list (column crossed "l") (column crossed "r"))
                   '(("a" 1) ("a" 2) ("b" 1) ("b" 2))))
 
   ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------

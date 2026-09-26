@@ -292,7 +292,7 @@ total
                                (series '(1 2) #:name "v"))))
 (define right (dataframe (list (series '("a" "c") #:name "k")
                                 (series '(10 30) #:name "w"))))
-(join left right #:on '("k") #:how 'left)
+(~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)]}
 
 @deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
@@ -431,6 +431,15 @@ total
 (~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
     (select (round "x")))
 (round 2.5)]}
+
+@defproc[(sign [x (or/c Expr-ptr? string?)]) Expr-ptr?]{
+  The sign of each element (@tt{.sign}): @racket[-1], @racket[0] or
+  @racket[1] in the column's own dtype, so a float column gives
+  @racket[-1.0], @racket[0.0] and @racket[1.0].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(-2 0 3) #:name "i") (series '(-2.5 0.0 3.5) #:name "f")))
+    (select (sign "i") (sign "f")))]}
 
 @deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
                                    [#:closed closed (or/c 'both 'left 'right 'none) 'both])

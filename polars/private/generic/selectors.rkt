@@ -98,15 +98,15 @@
   (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn #rx"duplicate output name 'x'"
+  (check-exn #rx"^lazyframe-collect: .*duplicate.*'x'"
              (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
-  (check-exn #rx"invalid regex in selector '.*\\(\\?=a\\)"
+  (check-exn #rx"^lazyframe-collect: .*\\(\\?=a\\)"
              (lambda () (select iris (col #px"(?=a)"))))
   (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
-  (check-exn #rx"invalid regex in selector '.*\\(\\?=a\\)"
+  (check-exn #rx"^lazyframe-collect: .*\\(\\?=a\\)"
              (lambda () (select iris (exclude (all) #px"(?=a)"))))
-  (check-exn #rx"invalid regex in selector '.*\\(a\\)\\\\1"
+  (check-exn #rx"^lazyframe-collect: .*\\(a\\)\\\\1"
              (lambda () (select iris (col #px"(a)\\1"))))
 
   (define odd-names

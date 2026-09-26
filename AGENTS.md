@@ -106,13 +106,17 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
   file, or an invalid glob pattern, is reported at `collect`, not at scan.
-- `round` rounds ties to even, as Python Polars and `racket/base` do; `sign`
-  keeps the dtype, so a float column gives `-1.0` / `0.0` / `1.0`.
+- `round` rounds ties to even, as Python Polars and `racket/base` do.
+- `sign` keeps the column's dtype: a float column gives `-1.0` / `0.0` / `1.0`.
 - A `join` promises no row order except `'cross`, as Python's default
   `maintain_order='none'`; sort the result when order matters.
-- Polars prints its own warnings to stderr. Casting a string to `'date` is
-  deprecated upstream: parse with `str-to-date`. Error wording follows the
-  crate, so tests match the stable part of a message (a name, a pattern).
+- `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
+  aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
+- `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
+- A polars deprecation prints a warning to stderr: replace the spelling it
+  names (a string cast to `'date` is `str-to-date`).
+- Error wording follows the crate version. A test matches our `who:` prefix
+  and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
