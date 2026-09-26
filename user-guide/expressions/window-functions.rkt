@@ -14,7 +14,7 @@
 (define pokemon
   (dataframe
    (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
-                   "Charizard" "CharizardMega Charizard X" "Squirtle"
+                   "Charizard" "Mega Charizard X" "Squirtle"
                    "Wartortle" "Blastoise")
                  #:name "Name")
          (series '("Grass" "Grass" "Grass" "Fire" "Fire" "Fire" "Fire"

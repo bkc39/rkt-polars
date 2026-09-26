@@ -25,7 +25,7 @@ pokemon = pl.DataFrame(
             "Charmander",
             "Charmeleon",
             "Charizard",
-            "CharizardMega Charizard X",
+            "Mega Charizard X",
             "Squirtle",
             "Wartortle",
             "Blastoise",
