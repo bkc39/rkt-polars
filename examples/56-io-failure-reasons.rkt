@@ -11,9 +11,10 @@
 ;;   racket examples/56-io-failure-reasons.rkt
 
 (require racket/file              ; make-temporary-file
+         syntax/parse/define
          polars)
 
-(define-syntax-rule (report label body)
+(define-syntax-parse-rule (report label:expr body:expr)
   (printf "~a:\n  ~a\n\n" label
           (with-handlers ([exn:fail? exn-message])
             body
