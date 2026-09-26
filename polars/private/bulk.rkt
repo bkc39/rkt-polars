@@ -9,6 +9,8 @@
          (only-in gregor jdn->date posix->datetime)
          (only-in gregor/time time)
          (only-in racket/match match)
+         (only-in syntax/parse/define define-syntax-parse-rule)
+         (for-syntax (only-in syntax/parse expr id))
          (only-in threading ~>>)
          (only-in polars/private/foreign
                   _Series-ptr dataframe-column dataframe-column-names dataframe-height
@@ -23,7 +25,7 @@
          series->vector)
 
 ;; Destinations include GC memory the collector may move: never #:blocking?.
-(define-syntax-rule (define-physical-copies name ...)
+(define-syntax-parse-rule (define-physical-copies name:id ...)
   (begin
     (define-compat name
       (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
@@ -89,9 +91,10 @@
 (define (block-size count)
   (max 1 (min count block-rows)))
 
-(define-syntax-rule (collect-blocks shape start count block fetch! valid null-value value-at)
+(define-syntax-parse-rule (collect-blocks shape:id start:expr count:expr block:expr
+                                          fetch!:expr valid:expr null-value:expr value-at:id)
   (let ()
-    (define-syntax-rule (row k)
+    (define-syntax-parse-rule (row k:expr)
       (if (and valid (eq? 0 (bytes-ref valid k))) null-value (value-at k)))
     (if (eq? shape 'list)
         (for/fold ([acc '()])
@@ -108,13 +111,14 @@
               (vector-set! out (+ from k) (row k))))
           out))))
 
-(define-syntax-rule (physical-rows shape who s dtype start count null-value copy! ctype ->value)
+(define-syntax-parse-rule (physical-rows shape:id who:id s:id dtype:id start:id count:id
+                                         null-value:id copy!:id ctype:id ->value:expr)
   (let* ([block (block-size count)]
          [dst (malloc block ctype 'atomic-interior)]
          [valid (validity s block)])
     (define (fetch! from m)
       (checked who dtype (copy! s from m dst block valid (if valid block 0))))
-    (define-syntax-rule (value-at k) (->value (ptr-ref dst ctype k)))
+    (define-syntax-parse-rule (value-at k:expr) (->value (ptr-ref dst ctype k)))
     (collect-blocks shape start count block fetch! valid null-value value-at)))
 
 (define (string-rows shape who s dtype start count null-value)
@@ -126,7 +130,7 @@
   (define (fetch! from m)
     (set! buf (~>> (series-str-byte-len s from m) (checked who dtype) make-bytes))
     (checked who dtype (series-copy-str s from m buf offsets valid)))
-  (define-syntax-rule (value-at k)
+  (define-syntax-parse-rule (value-at k:expr)
     (bytes->string/utf-8 buf #f (ptr-ref p _int64 k) (ptr-ref p _int64 (add1 k))))
   (collect-blocks shape start count block fetch! valid null-value value-at))
 
@@ -142,7 +146,7 @@
   (raise-arguments-error who message field (series-name s) "dtype" dtype))
 
 (define (rows shape who s dtype start count null-value)
-  (define-syntax-rule (physical copy! ctype ->value)
+  (define-syntax-parse-rule (physical copy!:id ctype:id ->value:expr)
     (physical-rows shape who s dtype start count null-value copy! ctype ->value))
   (match dtype
     ['int8 (physical series-copy-i8 _int8 values)]
@@ -163,7 +167,7 @@
     [`(duration ,_)
      (physical series-copy-i64 _int64 (lambda (v) (duration-value->period dtype v)))]
     ['null
-     (define-syntax-rule (value-at k) null-value)
+     (define-syntax-parse-rule (value-at k:expr) null-value)
      (collect-blocks shape start count (block-size count) void #f null-value value-at)]))
 
 (define (series-rows shape who field s null-value)
