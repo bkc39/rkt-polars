@@ -26,6 +26,24 @@ pub(crate) fn record<T, E: std::fmt::Display>(
     result.map_err(|err| set_last_error(err.to_string())).ok()
 }
 
+/// A panic that unwinds out of an `extern "C"` function aborts the host
+/// process, and polars 0.41.3 panics on some inputs where later versions
+/// return an error, so an entry point that runs polars code on
+/// caller-controlled data records the panic as the failure reason instead.
+pub(crate) fn guard_panic<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(
+        |payload| {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown cause".to_string());
+            set_last_error(format!("polars panicked: {}", msg));
+            None
+        },
+    )
+}
+
 pub(crate) fn decode_path<'a>(path: *const c_char) -> Option<&'a str> {
     if path.is_null() {
         set_last_error("path is null");

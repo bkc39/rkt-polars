@@ -7,17 +7,20 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          (only-in racket/contract
-                  [-> ->/c] any/c contract-out non-empty-listof or/c)
+                  [-> ->/c] ->i any/c contract-out flat-named-contract non-empty-listof or/c
+                  rename-contract)
          racket/runtime-path
          polars/private/column-pattern
-         (only-in polars/private/foreign ->compat-dtype _CompatDType _rsstring)
+         (only-in polars/private/foreign
+                  ->compat-dtype _CompatDType _rsstring sort-flags-mismatch sort-flags/c)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
          _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
-         expr-drop lazyframe-drop
+         expr-drop expr-drop-count lazyframe-drop
+         sort-by/c
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          lit ->expr
@@ -150,6 +153,21 @@
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
+
+(define sort-by-keys/c
+  (flat-named-contract 'sort-by-keys/c
+                       (or/c string? Expr-ptr? (non-empty-listof (or/c string? Expr-ptr?)))))
+
+(define (sort-by/c x/c name)
+  (rename-contract
+   (->i ([x x/c] #:by [by sort-by-keys/c])
+        (#:descending [descending sort-flags/c]
+         #:nulls-last [nulls-last sort-flags/c]
+         #:maintain-order [maintain-order boolean?])
+        #:pre/desc (by descending nulls-last)
+        (sort-flags-mismatch by descending nulls-last)
+        [result Expr-ptr?])
+   name))
 
 (module+ test
   (require rackunit (prefix-in contracted: (submod "..")))

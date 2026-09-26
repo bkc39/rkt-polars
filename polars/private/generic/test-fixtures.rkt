@@ -29,5 +29,8 @@
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
 
+(define (series-cells s)
+  (for/list ([i (in-range (len s))]) (ref s i)))
+
 (define (column d name)
-  (for/list ([i (in-range (height d))]) (ref (ref d #:columns name) i)))
+  (series-cells (ref d #:columns name)))
