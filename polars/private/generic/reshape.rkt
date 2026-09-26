@@ -411,6 +411,27 @@
     (check-equal? (sort (column-names pv) string<?) '("q1" "q2" "store"))
     (check-equal? (height pv) 2)
     (check-equal? (height (unpivot pv #:on '("q1" "q2") #:index '("store"))) 4))
+  (let* ([cells (dataframe (list (series '(1 1 2 2 2) #:name "id")
+                                 (series '("x" "y" "x" "y" "y") #:name "k")
+                                 (series '(10 11 20 21 22) #:name "v")))]
+         [pv (sort (pivot cells #:on '("k") #:index '("id") #:values '("v")) "id")])
+    (check-equal? (column-names pv) '("id" "x" "y"))
+    (check-equal? (dtype (ref pv "y")) 'int64)
+    (check-equal? (list (ref (ref pv "y") 0) (ref (ref pv "y") 1)) '(11 21))
+    (check-exn exn:fail?
+               (lambda () (pivot cells #:on '("k") #:index '("id") #:values '("v") #:agg #f))))
+  (let ([wide (dataframe (list (series '(1 2) #:name "id")
+                               (series '(10 20) #:name "a")
+                               (series '(30 40) #:name "b")))])
+    (check-equal? (column-names (unpivot wide #:on '() #:index '("id")))
+                  '("id" "variable" "value"))
+    (check-equal? (height (unpivot wide #:on '() #:index '("id"))) 4))
+  (let ([crossed (join (dataframe (list (series '("a" "b") #:name "l")))
+                       (dataframe (list (series '(1 2) #:name "r")))
+                       #:how 'cross)])
+    (check-equal? (for/list ([i (in-range 4)])
+                    (list (ref (ref crossed "l") i) (ref (ref crossed "r") i)))
+                  '(("a" 1) ("a" 2) ("b" 1) ("b" 2))))
 
   ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
   (check-pred lazyframe? (lazy ops-df))
