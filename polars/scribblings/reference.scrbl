@@ -548,6 +548,13 @@ an implementation detail and not part of the public series API.)
   @racket[len] returns the number of elements (and, on a dataframe, the number of
   rows). @racket[null-count] returns the number of null entries.}
 
+@defproc[(series-name [s series?]) string?]{
+  Returns the name of @racket[s], as Polars' @tt{Series.name}; a column taken
+  from a dataframe is named after the column.
+
+  @examples[#:eval ev #:label #f
+(series-name (series '(1 2) #:name "ints"))]}
+
 @deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
@@ -559,10 +566,14 @@ an implementation detail and not part of the public series API.)
 
 @subsection[#:tag "ref-series-convert"]{Converting to Racket values}
 
-These copy a whole column out of Polars a block of rows at a time, with a
-couple of foreign calls per block rather than one per element: Racket
-allocates the destination, Rust fills it, and nothing crosses the boundary to
-be freed later. Each element comes out as @racket[ref] returns it:
+These copy a column out of Polars in one foreign call rather than one per
+element: Racket allocates a buffer of the column's native type, Rust copies
+the values into it, and Racket builds its values from the buffer and frees it.
+Nothing crosses the boundary to be freed later. At its peak a conversion holds
+that buffer (one native value per row, plus a byte per row when the column has
+nulls) beside the result it builds; @racket[in-series] instead converts
+@racket[4096] rows at a time. Each element comes out as @racket[ref] returns
+it:
 
 @tabular[#:style 'boxed #:sep @hspace[2]
  (list (list @bold{dtype} @bold{element})
@@ -632,8 +643,9 @@ chapter of the guide walks through all of them.
 
 @defproc[(in-series [s series?] [#:null null-value any/c polars-null]) sequence?]{
   Returns a sequence of the elements of @racket[s], converted as by
-  @racket[series->list] but a block of rows at a time, so a loop that stops
-  early converts little more than it reads. A series is itself a sequence:
+  @racket[series->list] but 4096 rows at a time, so it never holds more than
+  one block's buffer and a loop that stops early converts little more than it
+  reads. A series is itself a sequence:
   @racket[(for ([x s]) ....)] iterates as @racket[(in-series s)] does.
 
   @examples[#:eval ev #:label #f
@@ -812,6 +824,37 @@ renders it with no separate display call.
 (dataframe->columns kv #:columns '("v" "k") #:null 0)
 (eval:error (dataframe->columns kv #:columns '("k" "k")))
 (eval:error (dataframe->columns kv #:columns '("nope")))]}
+
+@defproc[(dataframe->hash [d dataframe?]
+                          [#:columns columns (listof string?) (column-names d)]
+                          [#:null null-value any/c polars-null])
+         (and/c (hash/c string? vector?) immutable?)]{
+  Like @racket[dataframe->columns], but returns an immutable hash from each
+  selected column's name to its vector, as Polars' @tt{DataFrame.to_dict()} gives
+  a dict. The same names are checked and the same errors raised.
+
+  @examples[#:eval ev #:label #f
+(dataframe->hash kv)
+(hash-ref (dataframe->hash kv #:null 0) "v")
+(dataframe->hash kv #:columns '("k"))
+(eval:error (dataframe->hash kv #:columns '("nope")))]}
+
+@defproc[(in-dataframe-columns [d dataframe?]
+                               [#:columns columns (listof string?) (column-names d)])
+         sequence?]{
+  Returns a sequence of the selected columns of @racket[d], in the order of
+  @racket[columns], each as a @tech{series} named after its column, as Polars'
+  @tt{DataFrame.iter_columns()} does. Each column is fetched when the sequence
+  reaches it, and is released once nothing refers to it. An unknown or repeated
+  name raises @racket[exn:fail:contract] naming the column. The dataframe itself
+  is not a sequence.
+
+  @examples[#:eval ev #:label #f
+(for/list ([column (in-dataframe-columns kv)]) (series-name column))
+(for/list ([column (in-dataframe-columns kv #:columns '("v"))])
+  (series->list column #:null 0))
+(for/first ([column (in-dataframe-columns kv)]) column)
+(eval:error (in-dataframe-columns kv #:columns '("k" "k")))]}
 
 @defproc[(dataframe->f64vector [d dataframe?]
                                [#:columns columns (listof string?) (column-names d)]
@@ -1102,8 +1145,8 @@ A series is also a Racket sequence (through @racket[prop:sequence]): a
 @racket[for] clause, @racket[sequence?] and the @racketmodname[racket/sequence]
 operations see its elements, converted a block of rows at a time as by
 @racket[in-series], with @racket[polars-null] for a null entry. A dataframe is
-not a sequence; iterate over @racket[(ref d name)] or use
-@racket[dataframe->columns].
+not a sequence; iterate over its columns with @racket[in-dataframe-columns], or
+convert them with @racket[dataframe->columns].
 
 @examples[#:eval ev #:label #f
 (define ages (series (list 34 polars-null 51) #:name "age"))

@@ -3,8 +3,9 @@
 ;; Iterating over a series: a series is a Racket sequence, and in-series takes
 ;; #:null.
 ;;
-;; Rows are converted a block at a time, so a loop that stops early converts
-;; little more than it reads.
+;; Rows are converted 4096 at a time, so the loop streams and one that stops
+;; early converts little more than it reads. in-dataframe-columns walks a
+;; frame's columns as series.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/49-series-iteration.rkt
@@ -31,7 +32,9 @@
 (define big (series (build-list 1000000 values) #:name "n"))
 (writeln (for/first ([n (in-series big)] #:when (> (* n n) 1000)) n))
 
-;; a dataframe is not a sequence: iterate over one of its columns
+;; a dataframe is not a sequence: iterate over its columns, or one of them
 (define df (dataframe (list temps (series '("mon" "tue" "wed" "thu") #:name "day"))))
+(for ([column (in-dataframe-columns df)])
+  (printf "~a: ~a\n" (series-name column) (dtype column)))
 (for ([day (ref df "day")] [t (ref df "temp")])
   (printf "~a ~a\n" day t))

@@ -1,8 +1,8 @@
 """rkt-polars user guide — Interoperability: Series to Python values (Python reference).
 
 Mirrors https://docs.pola.rs/user-guide/misc/arrow/ (handing a frame's data to
-another library), through Series.to_list and DataFrame.to_dict, and
-racket-values.rkt.
+another library), through Series.to_list, DataFrame.iter_columns and
+DataFrame.to_dict, and racket-values.rkt.
 
 Inside `nix develop`:
     python user-guide/interop/racket_values.py
@@ -41,7 +41,11 @@ for name in people.columns:
 print([word.upper() for word in df["bar"]])
 print(sum(gappy.fill_null(0)))
 print(next(v for v in pl.Series(range(1_000_000)) if v > 41))
+for column in df.iter_columns():
+    print(column.name, column.dtype)
 
 # --- columns as Python data ----------------------------------------------
 print(df.to_dict(as_series=False))
+print(df.to_dict(as_series=False)["bar"])
+print(list(df.to_dict(as_series=False).items()))
 print(people.select("weight", "name").to_dict(as_series=False))

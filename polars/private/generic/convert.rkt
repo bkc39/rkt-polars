@@ -2,10 +2,12 @@
 
 (require racket/contract/base
          (only-in ffi/vector f64vector?)
+         (only-in racket/sequence sequence-map)
          (only-in polars/private/bulk
-                  dataframe->columns dataframe->f64vector in-series
-                  series->f64vector series->list series->vector)
-         (only-in polars/private/generic/core dataframe? series?))
+                  check-column-names dataframe->columns dataframe->f64vector dataframe->hash
+                  in-series series->f64vector series->list series->vector)
+         (only-in polars/private/foreign dataframe-column dataframe-column-names)
+         (only-in polars/private/generic/core dataframe? series? wrap-series))
 
 (provide
  (contract-out
@@ -17,10 +19,19 @@
    (->* (dataframe?)
         (#:columns (listof string?) #:null any/c)
         (listof (cons/c string? vector?)))]
+  [dataframe->hash
+   (->* (dataframe?)
+        (#:columns (listof string?) #:null any/c)
+        (and/c (hash/c string? vector?) immutable?))]
   [dataframe->f64vector
    (->* (dataframe?)
         (#:columns (listof string?) #:order (or/c 'fortran 'c) #:null (or/c real? 'error))
-        (values f64vector? exact-nonnegative-integer? exact-nonnegative-integer?))]))
+        (values f64vector? exact-nonnegative-integer? exact-nonnegative-integer?))]
+  [in-dataframe-columns (->* (dataframe?) (#:columns (listof string?)) sequence?)]))
+
+(define (in-dataframe-columns d #:columns [names (dataframe-column-names d)])
+  (check-column-names 'in-dataframe-columns d names)
+  (sequence-map (lambda (name) (wrap-series (dataframe-column d name))) names))
 
 (module+ test
   (require rackunit
@@ -176,6 +187,10 @@
                      (lambda () (contracted:in-series '(1 2)))
                      (lambda () (contracted:dataframe->columns withnull))
                      (lambda () (contracted:dataframe->columns frame #:columns '(a)))
+                     (lambda () (contracted:dataframe->hash withnull))
+                     (lambda () (contracted:dataframe->hash frame #:columns "a"))
+                     (lambda () (contracted:in-dataframe-columns withnull))
+                     (lambda () (contracted:in-dataframe-columns frame #:columns "user"))
                      (lambda () (contracted:dataframe->f64vector frame #:order 'row))
                      (lambda () (contracted:dataframe->f64vector frame #:columns "a"))
                      (lambda () (contracted:dataframe->f64vector frame #:null 'nan)))])
@@ -236,7 +251,9 @@
   (check-exn (null-error "dataframe->f64vector" "column" "b" 1)
              (lambda () (dataframe->f64vector bad #:columns '("b" "a") #:null 'error)))
   (for ([(who convert) (in-dict (list (cons "dataframe->f64vector" dataframe->f64vector)
-                                      (cons "dataframe->columns" dataframe->columns)))])
+                                      (cons "dataframe->columns" dataframe->columns)
+                                      (cons "dataframe->hash" dataframe->hash)
+                                      (cons "in-dataframe-columns" in-dataframe-columns)))])
     (define ((go cols)) (convert bad #:columns cols))
     (check-exn (frame-error who "no such column" "nope") (go '("a" "nope")))
     (check-exn (frame-error who "duplicate column" "a") (go '("a" "a")))
@@ -246,6 +263,8 @@
     (dataframe (list (series '(1 2) #:name "a") (cast (series '("p" "q") #:name "b") 'binary))))
   (check-exn (frame-error "dataframe->columns" "unsupported dtype" "b")
              (lambda () (dataframe->columns binary-frame)))
+  (check-exn (frame-error "dataframe->hash" "unsupported dtype" "b")
+             (lambda () (dataframe->hash binary-frame)))
   (for ([v (list polars-null 'missing)])
     (check-equal? (dataframe->columns mixed #:null v)
                   (for/list ([name (column-names mixed)])
@@ -253,6 +272,22 @@
   (check-equal? (dataframe->columns mixed #:columns '("f64" "i8"))
                 (list (cons "f64" (series->vector (ref mixed "f64")))
                       (cons "i8" (series->vector (ref mixed "i8")))))
+  (for* ([v (list polars-null 'missing)]
+         [cols (list (column-names mixed) '("f64" "i8") '())])
+    (check-equal? (dataframe->hash mixed #:columns cols #:null v)
+                  (make-immutable-hash (dataframe->columns mixed #:columns cols #:null v))))
+  (check-true (immutable? (dataframe->hash mixed)))
+  (check-equal? (for/list ([s (in-dataframe-columns mixed)]) (series-name s))
+                (column-names mixed))
+  (check-equal? (for/list ([s (in-dataframe-columns mixed #:columns '("f64" "i8"))])
+                  (cons (series-name s) (series->list s)))
+                (for/list ([name '("f64" "i8")])
+                  (cons name (series->list (ref mixed name)))))
+  (check-true (for/and ([s (in-dataframe-columns mixed)]) (series? s)))
+  (check-equal? (sequence->list (in-dataframe-columns mixed #:columns '())) '())
+  (check-equal? (for/first ([s (in-dataframe-columns mixed)]) (series-name s)) "i8")
+  (check-equal? (sort (hash-keys (dataframe->hash mixed)) string<?)
+                (sort (column-names mixed) string<?))
 
   (define (settle!)
     (for ([_ (in-range 4)])
@@ -269,6 +304,13 @@
   (check-equal? (drops-during (lambda () (dataframe->f64vector bad #:columns '("nope")))) 0)
   (check-equal? (drops-during (lambda () (dataframe->columns mixed))) 5)
   (check-equal? (drops-during (lambda () (dataframe->columns binary-frame))) 2)
+  (check-equal? (drops-during (lambda () (dataframe->hash mixed))) 5)
+  (let ([wanted 20]
+        [before (begin (settle!) (series-drop-count))])
+    (for ([_ (in-range wanted)])
+      (for ([s (in-dataframe-columns mixed)]) (series-name s)))
+    (settle!)
+    (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2)))
   (check-equal? (drops-during (lambda ()
                                 (for ([_ (in-range 100)])
                                   (series->list withnull)
@@ -288,6 +330,8 @@
                                    (series (list 1 polars-null) #:name "v"))))
   (check-equal? (dataframe->columns to-dict)
                 (list (cons "k" (vector "a" "b")) (cons "v" (vector 1 polars-null))))
+  (check-equal? (dataframe->hash to-dict)
+                (hash "k" (vector "a" "b") "v" (vector 1 polars-null)))
   (define to-numpy (dataframe (list (series (list 1 2 polars-null) #:name "a")
                                     (series '(0.5 1.5 2.5) #:name "b"))))
   (let-values ([(m nrows ncols) (dataframe->f64vector to-numpy)])

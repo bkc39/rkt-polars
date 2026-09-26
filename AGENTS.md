@@ -90,10 +90,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   otherwise observe a native free, and a pairing test checks that an explicit
   drop releases a frame exactly once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated (`ffi/vector` vectors, byte strings, `malloc`), some of
-  which the GC may move: those bindings are never `#:blocking?`. Every
-  destination travels with its length, Rust checks the rows it writes against
-  it, and a refused copy writes nothing.
+  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
+  paired `allocator`/`deallocator`, freed as soon as the conversion returns),
+  byte strings, and the `f64vector` a caller gets back. The last two may move:
+  those bindings are never `#:blocking?`. Every destination travels with its
+  length, Rust checks the rows it writes against it, and a refused copy writes
+  nothing.
 - **A change to any `#[no_mangle]` export must re-commit both
   `polars/native-libs/candidates/`.** The catalog installs those committed
   binaries (it has no Rust toolchain) and `define-compat` resolves every

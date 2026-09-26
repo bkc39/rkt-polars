@@ -22,8 +22,9 @@ pages, with the Python export calls those pages lean on: @tt{Series.to_list},
 @section[#:tag "interop-values"]{Series to Racket values}
 
 @racket[series->list] is @tt{Series.to_list()}, and @racket[series->vector] its
-vector twin. The column is copied out a block of rows at a time, not one
-foreign call per element. A null comes out as @racket[polars-null], or as the
+vector twin. The column is copied out in one foreign call into a buffer Racket
+owns, not one call per element; that buffer is the conversion's only memory
+beyond its result. A null comes out as @racket[polars-null], or as the
 @racket[#:null] value.
 
 @examples[#:eval ev #:label #f
@@ -61,8 +62,10 @@ API gaps: datetimes come out floored to the whole second, where
 
 A series is a sequence, so @racket[for] walks it directly, as Python's
 @tt{for x in s} does; @racket[in-series] adds @racket[#:null]. Rows are
-converted a block at a time, so a loop that stops early converts little more
-than it reads.
+converted 4096 at a time, so the loop streams: it never holds the whole
+column's buffer, and one that stops early converts little more than it reads.
+@racket[in-dataframe-columns] walks a frame's columns as series, as
+@tt{DataFrame.iter_columns()} does.
 
 @examples[#:eval ev #:label #f
 (for/list ([word (ref df "bar")]) (string-upcase word))
@@ -70,18 +73,22 @@ than it reads.
 (for/first ([v (in-series (series (build-list 1000000 values)))]
             #:when (> v 41))
   v)
+(for/list ([column (in-dataframe-columns df)])
+  (cons (series-name column) (dtype column)))
 ]
 
 @section[#:tag "interop-columns"]{Columns as Racket data}
 
-@racket[dataframe->columns] is @tt{DataFrame.to_dict(as_series=False)}: each
-column name paired with a vector of its values, in column order or in the
-order of @racket[#:columns].
+@racket[dataframe->hash] is @tt{DataFrame.to_dict(as_series=False)}: a hash
+from each column name to a vector of its values. @racket[dataframe->columns]
+gives the same pairs as an association list, in column order or in the order
+of @racket[#:columns].
 
 @examples[#:eval ev #:label #f
+(dataframe->hash df)
+(hash-ref (dataframe->hash df) "bar")
 (dataframe->columns df)
 (dataframe->columns people #:columns '("weight" "name"))
-(cdr (assoc "bar" (dataframe->columns df)))
 ]
 
 @section[#:tag "interop-numeric"]{Numeric buffers}

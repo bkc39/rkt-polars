@@ -2,8 +2,9 @@
 
 ;; Series to Racket values: series->list and series->vector.
 ;;
-;; A whole column is copied out a block of rows at a time (not one foreign call
-;; per element). A null comes out as polars-null, or as the #:null value.
+;; A whole column is copied out in one foreign call, into a buffer Racket
+;; allocates and frees (not one call per element). A null comes out as
+;; polars-null, or as the #:null value.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/47-series-to-racket.rkt

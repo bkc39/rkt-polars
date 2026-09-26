@@ -3,8 +3,8 @@
 ;; rkt-polars user guide — Interoperability: Series to Racket values,
 ;; iterating, and columns as Racket data.
 ;; Mirrors https://docs.pola.rs/user-guide/misc/arrow/ (handing a frame's data
-;; to another library), through Series.to_list and DataFrame.to_dict, and
-;; racket_values.py.
+;; to another library), through Series.to_list, DataFrame.iter_columns and
+;; DataFrame.to_dict, and racket_values.py.
 ;;
 ;; Inside `nix develop`:
 ;;   racket user-guide/interop/racket-values.rkt
@@ -44,7 +44,11 @@
 (writeln (for/first ([v (in-series (series (build-list 1000000 values)))]
                      #:when (> v 41))
            v))
+(for ([column (in-dataframe-columns df)])
+  (printf "~a ~a\n" (series-name column) (dtype column)))
 
 ;; --- columns as Racket data ----------------------------------------------
+(writeln (dataframe->hash df))
+(writeln (hash-ref (dataframe->hash df) "bar"))
 (writeln (dataframe->columns df))
 (writeln (dataframe->columns people #:columns '("weight" "name")))

@@ -2,36 +2,41 @@
 
 (require (only-in ffi/unsafe
                   -> _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
-                  _uint16 _uint32 _uint64 _uint8 ctype-sizeof malloc ptr-ref)
-         (only-in ffi/vector
-                  _f64vector _s64vector f64vector-length make-f64vector make-s64vector
-                  s64vector->cpointer s64vector-length)
+                  _uint16 _uint32 _uint64 _uint8 free malloc ptr-ref)
+         (only-in ffi/unsafe/alloc allocator deallocator)
+         (only-in ffi/vector _f64vector f64vector-length make-f64vector)
          (only-in gregor jdn->date posix->datetime)
          (only-in gregor/time time)
-         (only-in racket/match match)
+         (only-in racket/match match match-define)
          (only-in syntax/parse/define define-syntax-parse-rule)
-         (for-syntax (only-in syntax/parse expr id))
+         (for-syntax (only-in syntax/parse id))
          (only-in threading ~>>)
          (only-in polars/private/foreign
                   _Series-ptr dataframe-column dataframe-column-names dataframe-height
                   define-compat duration-value->period polars-null series-drop
                   series-dtype series-len series-name series-null-count))
 
-(provide dataframe->columns
+(provide check-column-names
+         dataframe->columns
          dataframe->f64vector
+         dataframe->hash
          in-series
          series->f64vector
          series->list
          series->vector)
 
-;; Destinations include GC memory the collector may move: never #:blocking?.
-(define-syntax-parse-rule (define-physical-copies name:id ...)
+;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
+(define free-buffer ((deallocator) free))
+(define alloc-buffer
+  ((allocator free-buffer) (lambda (count ctype) (malloc (max count 1) ctype 'raw))))
+
+(define-syntax-parse-rule (define-copies name:id ...)
   (begin
     (define-compat name
       (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
     ...))
 
-(define-physical-copies
+(define-copies
   series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
@@ -40,12 +45,7 @@
   (_fun _Series-ptr _size _size -> _int64))
 
 (define-compat series-copy-str
-  (_fun (s start count buf offsets valid) ::
-        (s : _Series-ptr) (start : _size) (count : _size)
-        (buf : _bytes) (_size = (bytes-length buf))
-        (offsets : _s64vector) (_size = (s64vector-length offsets))
-        (valid : _bytes) (_size = (if valid (bytes-length valid) 0))
-        -> _int64))
+  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
 
 (define-compat series-copy-as-f64
   (_fun (s dst offset stride null-value) ::
@@ -78,116 +78,111 @@
 (define (byte->boolean b)
   (not (eq? 0 b)))
 
+(struct layout (ctype read copy!))
+
+(define i8 (layout _int8 (lambda (p i) (ptr-ref p _int8 i)) series-copy-i8))
+(define i16 (layout _int16 (lambda (p i) (ptr-ref p _int16 i)) series-copy-i16))
+(define i32 (layout _int32 (lambda (p i) (ptr-ref p _int32 i)) series-copy-i32))
+(define i64 (layout _int64 (lambda (p i) (ptr-ref p _int64 i)) series-copy-i64))
+(define u8 (layout _uint8 (lambda (p i) (ptr-ref p _uint8 i)) series-copy-u8))
+(define u16 (layout _uint16 (lambda (p i) (ptr-ref p _uint16 i)) series-copy-u16))
+(define u32 (layout _uint32 (lambda (p i) (ptr-ref p _uint32 i)) series-copy-u32))
+(define u64 (layout _uint64 (lambda (p i) (ptr-ref p _uint64 i)) series-copy-u64))
+(define f32 (layout _float (lambda (p i) (ptr-ref p _float i)) series-copy-f32))
+(define f64 (layout _double (lambda (p i) (ptr-ref p _double i)) series-copy-f64))
+(define bool (layout _uint8 (lambda (p i) (ptr-ref p _uint8 i)) series-copy-bool))
+
+(define (layout-of dtype)
+  (match dtype
+    ['int8 (values i8 values)]
+    ['int16 (values i16 values)]
+    ['int32 (values i32 values)]
+    ['int64 (values i64 values)]
+    ['uint8 (values u8 values)]
+    ['uint16 (values u16 values)]
+    ['uint32 (values u32 values)]
+    ['uint64 (values u64 values)]
+    ['float32 (values f32 values)]
+    ['float64 (values f64 values)]
+    ['boolean (values bool byte->boolean)]
+    ['date (values i32 days->date)]
+    ['time (values i64 nanoseconds->time)]
+    [`(datetime ,unit ,_) (values i64 (epoch->datetime unit))]
+    [`(duration ,_) (values i64 (lambda (v) (duration-value->period dtype v)))]
+    [_ (values #f #f)]))
+
+(define (convertible? dtype)
+  (define-values (kind _convert) (layout-of dtype))
+  (or (memq dtype '(string null)) kind))
+
 (define (checked who dtype status)
   (when (negative? status)
     (error who "could not copy a series of dtype ~v (status ~a)" dtype status))
   status)
 
-(define (validity s count)
-  (and (positive? (series-null-count s)) (make-bytes count)))
-
-(define block-rows 65536)
-
-(define (block-size count)
-  (max 1 (min count block-rows)))
-
-(define-syntax-parse-rule (collect-blocks shape:id start:expr count:expr block:expr
-                                          fetch!:expr valid:expr null-value:expr value-at:id)
-  (let ()
-    (define-syntax-parse-rule (row k:expr)
-      (if (and valid (eq? 0 (bytes-ref valid k))) null-value (value-at k)))
-    (if (eq? shape 'list)
-        (for/fold ([acc '()])
-                  ([from (in-range (* block (quotient (sub1 count) block)) -1 (- block))])
-          (define m (min block (- count from)))
-          (fetch! (+ start from) m)
-          (for/fold ([acc acc]) ([k (in-range (sub1 m) -1 -1)])
-            (cons (row k) acc)))
-        (let ([out (make-vector count)])
-          (for ([from (in-range 0 count block)])
-            (define m (min block (- count from)))
-            (fetch! (+ start from) m)
-            (for ([k (in-range m)])
-              (vector-set! out (+ from k) (row k))))
-          out))))
-
-(define-syntax-parse-rule (physical-rows shape:id who:id s:id dtype:id start:id count:id
-                                         null-value:id copy!:id ctype:id ->value:expr)
-  (let* ([block (block-size count)]
-         [dst (malloc block ctype 'atomic-interior)]
-         [valid (validity s block)])
-    (define (fetch! from m)
-      (checked who dtype (copy! s from m dst block valid (if valid block 0))))
-    (define-syntax-parse-rule (value-at k:expr) (->value (ptr-ref dst ctype k)))
-    (collect-blocks shape start count block fetch! valid null-value value-at)))
-
-(define (string-rows shape who s dtype start count null-value)
-  (define block (block-size count))
-  (define offsets (make-s64vector (add1 block)))
-  (define p (s64vector->cpointer offsets))
-  (define valid (validity s block))
-  (define buf #"")
-  (define (fetch! from m)
-    (set! buf (~>> (series-str-byte-len s from m) (checked who dtype) make-bytes))
-    (checked who dtype (series-copy-str s from m buf offsets valid)))
-  (define-syntax-parse-rule (value-at k:expr)
-    (bytes->string/utf-8 buf #f (ptr-ref p _int64 k) (ptr-ref p _int64 (add1 k))))
-  (collect-blocks shape start count block fetch! valid null-value value-at))
-
-(define (convertible? dtype)
-  (match dtype
-    [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64 'float32 'float64
-         'boolean 'string 'date 'time 'null
-         `(datetime ,_ ,_) `(duration ,_))
-     #t]
-    [_ #f]))
-
 (define (reject who message field s dtype)
   (raise-arguments-error who message field (series-name s) "dtype" dtype))
 
-(define (rows shape who s dtype start count null-value)
-  (define-syntax-parse-rule (physical copy!:id ctype:id ->value:expr)
-    (physical-rows shape who s dtype start count null-value copy! ctype ->value))
-  (match dtype
-    ['int8 (physical series-copy-i8 _int8 values)]
-    ['int16 (physical series-copy-i16 _int16 values)]
-    ['int32 (physical series-copy-i32 _int32 values)]
-    ['int64 (physical series-copy-i64 _int64 values)]
-    ['uint8 (physical series-copy-u8 _uint8 values)]
-    ['uint16 (physical series-copy-u16 _uint16 values)]
-    ['uint32 (physical series-copy-u32 _uint32 values)]
-    ['uint64 (physical series-copy-u64 _uint64 values)]
-    ['float32 (physical series-copy-f32 _float values)]
-    ['float64 (physical series-copy-f64 _double values)]
-    ['boolean (physical series-copy-bool _uint8 byte->boolean)]
-    ['string (string-rows shape who s dtype start count null-value)]
-    ['date (physical series-copy-i32 _int32 days->date)]
-    ['time (physical series-copy-i64 _int64 nanoseconds->time)]
-    [`(datetime ,unit ,_) (physical series-copy-i64 _int64 (epoch->datetime unit))]
-    [`(duration ,_)
-     (physical series-copy-i64 _int64 (lambda (v) (duration-value->period dtype v)))]
-    ['null
-     (define-syntax-parse-rule (value-at k:expr) null-value)
-     (collect-blocks shape start count (block-size count) void #f null-value value-at)]))
-
-(define (series-rows shape who field s null-value)
+(define (convertible-dtype who field s)
   (define dtype (series-dtype s))
   (unless (convertible? dtype)
     (reject who "unsupported dtype" field s dtype))
-  (rows shape who s dtype 0 (series-len s) null-value))
+  dtype)
+
+(define (validity s count)
+  (and (positive? (series-null-count s)) (make-bytes count)))
+
+(define (valid-len valid)
+  (if valid (bytes-length valid) 0))
+
+(define (call-with-strings who s dtype start count valid null-value proc)
+  (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
+  (define offsets (alloc-buffer (add1 count) _int64))
+  (checked who dtype (series-copy-str s start count buf (bytes-length buf)
+                                      offsets (add1 count) valid (valid-len valid)))
+  (define (row i)
+    (if (and valid (eq? 0 (bytes-ref valid i)))
+        null-value
+        (bytes->string/utf-8 buf #f (ptr-ref offsets _int64 i) (ptr-ref offsets _int64 (add1 i)))))
+  (begin0 (proc row) (free-buffer offsets)))
+
+(define (call-with-physical who s dtype start count valid null-value proc)
+  (define-values (kind convert) (layout-of dtype))
+  (match-define (layout ctype read copy!) kind)
+  (define dst (alloc-buffer count ctype))
+  (checked who dtype (copy! s start count dst count valid (valid-len valid)))
+  (define (row i)
+    (if (and valid (eq? 0 (bytes-ref valid i)))
+        null-value
+        (convert (read dst i))))
+  (begin0 (proc row) (free-buffer dst)))
+
+(define (call-with-rows who s dtype start count null-value proc)
+  (define valid (validity s count))
+  (case dtype
+    [(null) (proc (lambda (i) null-value))]
+    [(string) (call-with-strings who s dtype start count valid null-value proc)]
+    [else (call-with-physical who s dtype start count valid null-value proc)]))
+
+(define (column->vector who field s null-value)
+  (define n (series-len s))
+  (call-with-rows who s (convertible-dtype who field s) 0 n null-value
+                  (lambda (row) (build-vector n row))))
 
 (define (series->list s #:null [null-value polars-null])
-  (series-rows 'list 'series->list "series" s null-value))
+  (define n (series-len s))
+  (call-with-rows 'series->list s (convertible-dtype 'series->list "series" s) 0 n null-value
+                  (lambda (row)
+                    (for/fold ([acc '()]) ([i (in-range (sub1 n) -1 -1)])
+                      (cons (row i) acc)))))
 
 (define (series->vector s #:null [null-value polars-null])
-  (series-rows 'vector 'series->vector "series" s null-value))
+  (column->vector 'series->vector "series" s null-value))
 
 (define series-chunk-rows 4096)
 
 (define (in-series s #:null [null-value polars-null] #:chunk-rows [chunk-rows series-chunk-rows])
-  (define dtype (series-dtype s))
-  (unless (convertible? dtype)
-    (reject 'in-series "unsupported dtype" "series" s dtype))
+  (define dtype (convertible-dtype 'in-series "series" s))
   (define n (series-len s))
   (make-do-sequence
    (lambda ()
@@ -195,8 +190,10 @@
      (define chunk (vector))
      (define (element i)
        (unless (< (- i chunk-start) (vector-length chunk))
+         (define count (min chunk-rows (- n i)))
          (set! chunk-start i)
-         (set! chunk (rows 'vector 'in-series s dtype i (min chunk-rows (- n i)) null-value)))
+         (set! chunk (call-with-rows 'in-series s dtype i count null-value
+                                     (lambda (row) (build-vector count row)))))
        (vector-ref chunk (- i chunk-start)))
      (values element add1 0 (lambda (i) (< i n)) #f #f))))
 
@@ -244,18 +241,23 @@
      (proc (reverse fetched)))
    (lambda () (for-each series-drop fetched))))
 
+(define (frame-columns who d names null-value)
+  (call-with-columns
+   who d names
+   (lambda (columns)
+     (for-each (lambda (s) (convertible-dtype who "column" s)) columns)
+     (for/list ([name (in-list names)] [s (in-list columns)])
+       (cons name (column->vector who "column" s null-value))))))
+
 (define (dataframe->columns d
                             #:columns [names (dataframe-column-names d)]
                             #:null [null-value polars-null])
-  (call-with-columns
-   'dataframe->columns d names
-   (lambda (columns)
-     (for ([s (in-list columns)])
-       (define dtype (series-dtype s))
-       (unless (convertible? dtype)
-         (reject 'dataframe->columns "unsupported dtype" "column" s dtype)))
-     (for/list ([name (in-list names)] [s (in-list columns)])
-       (cons name (series-rows 'vector 'dataframe->columns "column" s null-value))))))
+  (frame-columns 'dataframe->columns d names null-value))
+
+(define (dataframe->hash d
+                         #:columns [names (dataframe-column-names d)]
+                         #:null [null-value polars-null])
+  (make-immutable-hash (frame-columns 'dataframe->hash d names null-value)))
 
 (define (dataframe->f64vector d
                               #:columns [names (dataframe-column-names d)]
@@ -296,12 +298,4 @@
          [s (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
                   (series-head (series-new-str "x" (gappy-strs (add1 n))) n))])
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows))
-                  (for/list ([i (in-range n)]) (series-ref s i))))
-
-  (for ([n (list (sub1 block-rows) block-rows (add1 block-rows) (+ (* 2 block-rows) 5))])
-    (define xs (gappy-ints n))
-    (define s (series-new-i64 "x" xs))
-    (check-equal? (series->list s) xs)
-    (check-equal? (series->vector s) (list->vector xs))
-    (define strs (gappy-strs n))
-    (check-equal? (series->list (series-new-str "s" strs)) strs)))
+                  (for/list ([i (in-range n)]) (series-ref s i)))))
