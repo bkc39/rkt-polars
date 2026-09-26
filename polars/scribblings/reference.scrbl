@@ -269,6 +269,10 @@ total
   @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
   length and name.
 
+  API gap: inside @racket[agg] or @racket[over], when @racket[x] is itself
+  group-aware (@racketidfont{shift}, @racketidfont{diff}), the Polars 0.41.3 crate drops
+  @racket[nulls-last] and puts the nulls first.
+
   @examples[#:eval ev
 (define scores
   (dataframe (list (series '("ann" "bob" "cy" "dee") #:name "name")

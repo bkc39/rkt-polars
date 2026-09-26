@@ -1640,7 +1640,7 @@
         [result frame?])
    name))
 
-;; the raw bindings read one flag per key, so a list of any other length never reaches them
+;; the raw bindings read (length names) flags from each list: never pass a shorter one
 (define (sort-flags who keyword flags keys)
   (cond
     [(boolean? flags) (for/list ([_ (in-list keys)]) flags)]

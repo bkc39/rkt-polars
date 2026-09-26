@@ -161,12 +161,13 @@ pub extern "C" fn expr_sort_with_options(
     let opts = SortOptions::default()
         .with_order_descending(descending != 0)
         .with_nulls_last(nulls_last != 0);
-    // `sort_by` sorts with `arg_sort`, which avoids the `sort_with` defects
-    // `sort_series` describes.
+    // A group-wise `apply` sees each group's dtype, so `sort_series` can route
+    // around the `sort_with` defects; the default sort has none of them.
     let sorted = if opts.descending || opts.nulls_last {
-        inner
-            .clone()
-            .sort_by([inner], SortMultipleOptions::from(&opts))
+        inner.apply(
+            move |s| sort_series(&s, opts).map(Some),
+            GetOutput::same_type(),
+        )
     } else {
         inner.sort(opts)
     };
