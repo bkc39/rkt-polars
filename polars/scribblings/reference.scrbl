@@ -201,14 +201,81 @@ total
   non-dataframe it falls back to @racketmodname[racket/base]'s @racket[filter],
   so @racket[(filter even? '(1 2 3 4))] is @racket['(2 4)].}
 
-@defproc[(sort [d dataframe?]
-               [names (or/c string? (listof string?))]
-               [#:descending descending (or/c boolean? (listof boolean?)) #f])
-         dataframe?]{
-  Sorts @racket[d] by one or more columns. @racket[#:descending] is a single
-  boolean applied to all keys, or a per-key list. Applied to a non-dataframe it
-  falls back to @racketmodname[racket/base]'s @racket[sort], so
-  @racket[(sort '(3 1 2) <)] is @racket['(1 2 3)].}
+@defproc*[([(sort [d dataframe?] [by (or/c string? (non-empty-listof string?))]
+                  [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                  [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                  [#:maintain-order maintain-order boolean? #f])
+            dataframe?]
+           [(sort [lf lazyframe?] [by (or/c string? (non-empty-listof string?))]
+                  [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                  [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                  [#:maintain-order maintain-order boolean? #f])
+            lazyframe?]
+           [(sort [s series?]
+                  [#:descending descending boolean? #f]
+                  [#:nulls-last nulls-last boolean? #f])
+            series?]
+           [(sort [e (or/c Expr-ptr? string?)]
+                  [#:descending descending boolean? #f]
+                  [#:nulls-last nulls-last boolean? #f])
+            Expr-ptr?]
+           [(sort [lst list?] [less-than? (any/c any/c . -> . any/c)]
+                  [#:key extract-key (or/c #f (any/c . -> . any/c)) #f]
+                  [#:cache-keys? cache-keys? boolean? #f])
+            list?])]{
+  Sorts a @tech{dataframe} or @tech{lazyframe} by the column or columns
+  @racket[by] (@tt{df.sort}), or a series by its values (@tt{Series.sort}).
+  Given an @tech{expression}, or a column name lifted with @racket[col], it
+  builds the expression that sorts that one column (@tt{Expr.sort}).
+
+  Nulls come first, whatever the direction, unless @racket[nulls-last] is
+  true; NaN sorts above every other float. For a frame, @racket[descending]
+  and @racket[nulls-last] are each one boolean for every key or a list of one
+  boolean per key. Rows that tie on every key keep their input order when
+  @racket[maintain-order] is true, and are in no particular order otherwise.
+
+  A sorted expression reorders its own column only, so in
+  @racket[with-columns] it no longer lines up with the rest of its row. Use it
+  in @racket[select] or @racket[agg], and @racket[sort-by] to reorder one
+  column by others. A frame sorts by column names only: sorting by an
+  expression (@tt{df.sort(pl.col("a") * -1)}) has no spelling yet.
+
+  On a list, @racket[sort] is @racketmodname[racket/base]'s, and passing it
+  one of the Polars keywords is a contract violation.
+
+  @examples[#:eval ev
+(define flights
+  (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
+                   (series (list 12 polars-null 340 -3 polars-null) #:name "delay"))))
+(sort flights "delay" #:descending #t)
+(~> flights (sort "delay" #:descending #t #:nulls-last #t) (head 2))
+(sort flights '("carrier" "delay")
+      #:descending '(#f #t) #:nulls-last '(#f #t) #:maintain-order #t)
+(~> flights lazy (sort "delay" #:nulls-last #t) collect)
+(sort (ref flights #:columns "delay") #:descending #t #:nulls-last #t)
+(select flights (sort "delay" #:nulls-last #t))
+(sort '(3 1 2) <)
+(eval:error (sort '(3 1 2) < #:descending #t))]}
+
+@defproc[(sort-by [x (or/c Expr-ptr? string?)]
+                  [#:by by (or/c Expr-ptr? string? (non-empty-listof (or/c Expr-ptr? string?)))]
+                  [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                  [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                  [#:maintain-order maintain-order boolean? #f])
+         Expr-ptr?]{
+  Builds the expression that reorders the column @racket[x] by the key or keys
+  @racket[by] (@tt{Expr.sort_by}); a column name is lifted with @racket[col]
+  in either place. The keywords mean what they mean for a frame
+  @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
+  length and name.
+
+  @examples[#:eval ev
+(define scores
+  (dataframe (list (series '("ann" "bob" "cy" "dee") #:name "name")
+                   (series (list 3 polars-null 1 3) #:name "score"))))
+(select scores (sort-by "name" #:by "score" #:descending #t #:nulls-last #t
+                        #:maintain-order #t))
+(select scores (sort-by "name" #:by '("score" "name") #:descending '(#t #f)))]}
 
 @deftogether[(@defproc[(select [d (or/c dataframe? lazyframe?)] [spec any/c] ...)
                        (or/c dataframe? lazyframe?)]
@@ -637,6 +704,13 @@ dtype or a specific typed result.
   default to microseconds. Raises an error when Polars cannot perform the
   cast. The fluent @racket[cast] wraps this for the generic layer.}
 
+@defproc[(series-sort [s Series-ptr?]
+                      [#:descending descending boolean? #f]
+                      [#:nulls-last nulls-last boolean? #f])
+         Series-ptr?]{
+  Returns a sorted copy of @racket[s]; the fluent @racket[sort] on a series
+  wraps it.}
+
 @section[#:tag "ref-dataframes"]{DataFrames}
 
 A @tech{dataframe} is a collection of equal-length named series. Like a
@@ -738,6 +812,16 @@ generic operations are simply the preferred surface.
   (Polars' @tt{vstack}). The fluent @racket[vstack] is the wrapper-returning
   equivalent.}
 
+@defproc[(dataframe-sort [d DataFrame-ptr?]
+                         [names (non-empty-listof string?)]
+                         [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                         [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                         [#:maintain-order maintain-order boolean? #f])
+         DataFrame-ptr?]{
+  Returns @racket[d] sorted by the columns @racket[names]; the fluent
+  @racket[sort] on a dataframe wraps it, and its entry describes the keywords.
+  A column absent from @racket[d] raises @racket[exn:fail].}
+
 @subsection[#:tag "ref-reading-writing"]{Reading & writing}
 
 @deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
@@ -777,6 +861,16 @@ are the wrapper-returning equivalents.
                                                [aggs (listof Expr-ptr?)]) LazyFrame-ptr?])]{
   The lazy forms of the @secref["ref-expr-contexts"]. Each appends a step to
   the plan and returns the extended plan; nothing runs until
+  @racket[lazyframe-collect].}
+
+@defproc[(lazyframe-sort [lf LazyFrame-ptr?]
+                         [names (non-empty-listof string?)]
+                         [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                         [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                         [#:maintain-order maintain-order boolean? #f])
+         LazyFrame-ptr?]{
+  Appends a sort by the columns @racket[names] to the plan; the fluent
+  @racket[sort] on a lazyframe wraps it. An absent column is reported at
   @racket[lazyframe-collect].}
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
@@ -890,6 +984,21 @@ built.
   @racket[mean], @racket[min], @racket[max], @racket[median], @racket[count],
   @racket[n-unique], @racket[first], @racket[last], @racket[std] and
   @racket[var] dispatch to these when given an expression or a column name.}
+
+@deftogether[(@defproc[(expr-sort [e Expr-ptr?]
+                                  [#:descending descending boolean? #f]
+                                  [#:nulls-last nulls-last boolean? #f])
+                       Expr-ptr?]
+              @defproc[(expr-sort-by [e Expr-ptr?]
+                                     [#:by by (or/c string? Expr-ptr?
+                                                    (non-empty-listof (or/c string? Expr-ptr?)))]
+                                     [#:descending descending (or/c boolean? (listof boolean?)) #f]
+                                     [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
+                                     [#:maintain-order maintain-order boolean? #f])
+                       Expr-ptr?])]{
+  The expression-only forms of @racket[sort] on an expression and of
+  @racket[sort-by], which are the ones to write: they also accept a column
+  name.}
 
 @subsection[#:tag "ref-expr-contexts"]{Eager expression contexts}
 

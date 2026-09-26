@@ -7,6 +7,9 @@
          ffi/unsafe/define/conventions
          gregor
          gregor/period
+         (only-in racket/contract/base
+                  ->* ->i contract-out flat-named-contract listof non-empty-listof or/c
+                  rename-contract)
          racket/match
          racket/runtime-path
          syntax/parse/define
@@ -15,7 +18,20 @@
 (module+ test
   (require rackunit))
 
-(provide (all-defined-out))
+(provide (except-out (all-defined-out) series-sort dataframe-sort)
+         (contract-out
+          [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
+                            Series-ptr?)]
+          [dataframe-sort
+           (rename-contract
+            (->i ([df DataFrame-ptr?] [names (non-empty-listof string?)])
+                 (#:descending [descending sort-flags/c]
+                  #:nulls-last [nulls-last sort-flags/c]
+                  #:maintain-order [maintain-order boolean?])
+                 #:pre/desc (names descending nulls-last)
+                 (sort-flags-mismatch names descending nulls-last)
+                 [result DataFrame-ptr?])
+            'dataframe-sort/c)]))
 
 (define-runtime-path native-libs-dir "../native-libs")
 
@@ -490,11 +506,14 @@
   (_fun _Series-ptr -> _Series-ptr))
 
 (define-compat series-sort/raw
-  (_fun _Series-ptr _uint8 -> _Series-ptr)
-  #:c-id series_sort)
+  (_fun _Series-ptr _stdbool _stdbool -> _Series-ptr/null)
+  #:c-id series_sort_with_options
+  #:wrap (allocator series-drop))
 
-(define (series-sort s #:descending [descending #f])
-  (series-sort/raw s (if descending 1 0)))
+(define (series-sort s #:descending [descending #f] #:nulls-last [nulls-last #f])
+  (call/foreign-error 'series-sort
+                      (lambda () (series-sort/raw s descending nulls-last))
+                      "failed to sort the series"))
 
 (module+ test
   (define s (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
@@ -1596,28 +1615,47 @@
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-sort/c
+(define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
         (names : (_list i _string))
-        (descending : (_list i _uint8))
+        (descending : (_list i _stdbool))
+        (nulls-last : (_list i _stdbool))
         (_size = (length names))
-        -> _DataFrame-ptr)
-  #:c-id dataframe_sort
+        (maintain-order : _stdbool)
+        -> _DataFrame-ptr/null)
+  #:c-id dataframe_sort_with_options
   #:wrap (allocator dataframe-drop))
 
-(define (dataframe-sort df names #:descending [descending #f])
-  (define dlist
-    (cond
-      [(eq? descending #f) (map (lambda (_) 0) names)]
-      [(eq? descending #t) (map (lambda (_) 1) names)]
-      [(list? descending)
-       (unless (= (length descending) (length names))
-         (error 'dataframe-sort
-                "descending list length ~a does not match names length ~a"
-                (length descending) (length names)))
-       (map (lambda (b) (if b 1 0)) descending)]
-      [else (error 'dataframe-sort "bad descending: ~v" descending)]))
-  (dataframe-sort/c df names dlist))
+(define sort-flags/c
+  (flat-named-contract 'sort-flags/c (or/c boolean? (listof boolean?))))
+
+(define (sort-flags-mismatch keys descending nulls-last)
+  (define n (if (list? keys) (length keys) 1))
+  (or (for/first ([flags (in-list (list descending nulls-last))]
+                  [keyword (in-list '("#:descending" "#:nulls-last"))]
+                  #:when (and (list? flags) (not (= (length flags) n))))
+        (format "the length of ~a (~a) does not match the number of sort keys (~a)"
+                keyword (length flags) n))
+      #t))
+
+;; the raw bindings read one flag per key, so a list of any other length never reaches them
+(define (sort-flags who keyword flags keys)
+  (cond
+    [(boolean? flags) (for/list ([_ (in-list keys)]) flags)]
+    [(= (length flags) (length keys)) flags]
+    [else (raise-arguments-error who (format "~a needs one flag per sort key" keyword)
+                                 keyword flags
+                                 "keys" keys)]))
+
+(define (dataframe-sort df names
+                        #:descending [descending #f]
+                        #:nulls-last [nulls-last #f]
+                        #:maintain-order [maintain-order #f])
+  (define flags (sort-flags 'dataframe-sort "#:descending" descending names))
+  (define nulls (sort-flags 'dataframe-sort "#:nulls-last" nulls-last names))
+  (call/foreign-error 'dataframe-sort
+                      (lambda () (dataframe-sort/raw df names flags nulls maintain-order))
+                      "failed to sort by ~v" names))
 
 (define-syntax-parse-rule (define-group-by-agg name:id rust-id:id)
   (define-compat name
@@ -2245,3 +2283,36 @@
     (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
 
   (delete-file ok-csv))
+
+(module+ test
+  (require (only-in racket/contract exn:fail:contract:blame?)
+           (prefix-in contracted: (submod "..")))
+  (define (sort-blame? rx)
+    (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e)))))
+  (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
+                                        (series-new-i64 "y" '(1 2 3)))))
+  (check-exn (sort-blame? #rx"^dataframe-sort: contract violation.*#:descending \\(2\\) does not match the number of sort keys \\(1\\)")
+             (lambda () (contracted:dataframe-sort sort-src '("x") #:descending '(#t #f))))
+  (check-exn (sort-blame? #rx"^dataframe-sort: contract violation")
+             (lambda () (contracted:dataframe-sort sort-src '())))
+  (check-exn (sort-blame? #rx"^dataframe-sort: contract violation")
+             (lambda () (contracted:dataframe-sort sort-src "x")))
+  (check-exn (sort-blame? #rx"^series-sort: contract violation")
+             (lambda () (contracted:series-sort (series-new-i64 "x" '(1)) #:nulls-last '(#t))))
+  (check-exn #rx"^dataframe-sort: failed to sort by .*nope"
+             (lambda () (contracted:dataframe-sort sort-src '("nope"))))
+  (check-equal? (let ([s (contracted:series-sort (dataframe-column sort-src "x") #:nulls-last #t)])
+                  (for/list ([i (in-range (series-len s))]) (series-ref s i)))
+                (list 1 3 polars-null))
+
+  (settle!)
+  (let ([before (dataframe-drop-count)])
+    (dataframe-drop (contracted:dataframe-sort sort-src '("x") #:descending #t #:nulls-last #t
+                                               #:maintain-order #t))
+    (settle!)
+    (check-equal? (- (dataframe-drop-count) before) 1))
+  (let ([before (dataframe-drop-count)])
+    (for ([_ (in-range 20)])
+      (contracted:dataframe-sort sort-src '("x" "y") #:nulls-last '(#t #f)))
+    (settle!)
+    (check >= (- (dataframe-drop-count) before) 10)))

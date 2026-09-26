@@ -1,6 +1,6 @@
 #lang racket/base
 
-;; Data-first frame/series operations that thread with ~>: filter, sort, the
+;; Data-first frame/series operations that thread with ~>: filter, the
 ;; reshaping verbs (head/tail/slice/reverse/unique/drop-nulls), dataframe column
 ;; ops (select/drop/with-column), the group-by/agg handle, and clone/rename.
 
@@ -27,29 +27,6 @@
     [(list (? Expr-ptr? e) (? Expr-ptr? pred))
      (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
-
-;; sort: (sort df names #:descending d) -> dataframe; (sort series #:descending d)
-;; -> series; otherwise racket/base sort.  `names` may be one name or a list.
-(define (sort x [second unset] #:descending [descending unset])
-  (cond
-    [(dataframe? x)
-     (when (eq? second unset)
-       (error 'sort "sorting a dataframe requires column name(s)"))
-     (wrap-dataframe
-      (dataframe-sort x (if (list? second) second (list second))
-                      #:descending (if (eq? descending unset) #f descending)))]
-    [(lazyframe? x)
-     (when (eq? second unset)
-       (error 'sort "sorting a lazyframe requires column name(s)"))
-     (wrap-lazyframe
-      (lazyframe-sort x (if (list? second) second (list second))
-                      #:descending (if (eq? descending unset) #f descending)))]
-    [(series? x)
-     (wrap-series
-      (series-sort x #:descending (if (eq? descending unset) #f descending)))]
-    [(eq? second unset)
-     (error 'sort "racket/base sort needs a less-than? procedure")]
-    [else (base:sort x second)]))
 
 ;; --- reshaping verbs (series + dataframe) -----------------------------------
 ;; reverse is series-only with a racket/base list fallback (no dataframe-reverse).
@@ -216,7 +193,7 @@
 
 ;; --- lazy: a DataFrame's deferred query plan, and back ----------------------
 ;; (~> df lazy (filter ...) (group-by ...) (agg ...) (sort ...) collect) mirrors
-;; df.lazy().filter(...)...collect().  filter / sort / group-by+agg above
+;; df.lazy().filter(...)...collect().  filter / group-by+agg above
 ;; dispatch on lazyframe? to build the plan instead of running eagerly.
 (define (lazy d)
   (guard-dataframe 'lazy d)
@@ -291,12 +268,6 @@
   (check-equal? (height (filter ops-df mask)) 3)
   (check-equal? (filter even? '(1 2 3 4)) '(2 4))
 
-  ;; sort: dataframe (multi-key) and racket/base fallback
-  (define sorted (sort ops-df '("group" "value") #:descending '(#f #t)))
-  (check-pred dataframe? sorted)
-  (check-equal? (ref (ref sorted #:columns "value") 0) 25)
-  (check-equal? (sort '(3 1 2) <) '(1 2 3))
-
   ;; group-by + agg
   (check-pred grouped? (group-by ops-df "group"))
   (define rolled
@@ -320,8 +291,6 @@
   (check-equal? (mask->list (tail v64 2)) '(30 18))
   (check-equal? (mask->list (slice v64 1 2)) '(25 7))
   (check-equal? (mask->list (reverse v64)) '(18 30 7 25 10))
-  (check-equal? (min (head (sort v64) 1)) 7)
-  (check-equal? (max (head (sort v64 #:descending #t) 1)) 30)
   (define dups (series '(1 1 2 3 3 3) #:dtype 'i32))
   (check-equal? (len (unique dups)) 3)
   (check-equal? (n-unique dups) 3)
@@ -412,20 +381,7 @@
     (check-equal? (height pv) 2)
     (check-equal? (height (unpivot pv #:on '("q1" "q2") #:index '("store"))) 4))
 
-  ;; --- lazy pipeline: lazy -> filter -> group-by/agg -> sort -> collect ------
   (check-pred lazyframe? (lazy ops-df))
-  (define ranked
-    (~> ops-df lazy
-        (filter (> (col "value") 8))          ; drops value 7 (group b's 7)
-        (group-by "group")
-        (agg (~> (col "value") sum (alias "sum_value")))
-        (sort "sum_value" #:descending #t)
-        collect))
-  (check-pred dataframe? ranked)
-  (check-equal? (height ranked) 3)
-  (check-equal? (sort (column-names ranked) string<?) '("group" "sum_value"))
-  (check-equal? (ref (ref ranked #:columns "group") 0) "a")    ; a: 10+25 = 35 (highest)
-  (check-equal? (ref (ref ranked #:columns "sum_value") 0) 35)
   ;; lazy head / tail / slice (build the plan, then collect)
   (check-equal? (height (~> ops-df lazy (head 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)

@@ -7,6 +7,8 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
+         (only-in racket/contract/base
+                  ->* ->i contract-out non-empty-listof or/c rename-contract)
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
@@ -20,6 +22,7 @@
                   _rsstring
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
+                  sort-flags sort-flags/c sort-flags-mismatch
                   _CompatDType make-CompatDType
                   compat-dtype-tag/boolean
                   compat-dtype-tag/uint8 compat-dtype-tag/uint16
@@ -100,25 +103,50 @@
          expr-cum-sum expr-cum-prod expr-cum-min expr-cum-max expr-cum-count
          expr-shift expr-diff
          expr-reverse expr-filter expr-gather
-         expr-sort-by expr-rank expr-head expr-tail expr-slice
+         expr-rank expr-head expr-tail expr-slice
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-std expr-var
-         expr-over expr-sort
+         expr-over
          expr-when
          dataframe-lazy
          lazyframe-with-columns lazyframe-collect
          lazyframe-filter lazyframe-select
          lazyframe-group-by-agg
-         lazyframe-sort lazyframe-unique lazyframe-drop-nulls
+         lazyframe-unique lazyframe-drop-nulls
          lazyframe-head lazyframe-tail lazyframe-slice
          lazyframe-join
          lazyframe-scan-csv lazyframe-scan-parquet
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         dataframe-sort-exprs
-         expr-meta-output-name expr-meta-root-names expr-meta-eq?)
+         expr-meta-output-name expr-meta-root-names expr-meta-eq?
+         (contract-out
+          [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
+          [expr-sort-by
+           (rename-contract
+            (->i ([e Expr-ptr?]
+                  #:by [by (or/c string? Expr-ptr? (non-empty-listof (or/c string? Expr-ptr?)))])
+                 (#:descending [descending sort-flags/c]
+                  #:nulls-last [nulls-last sort-flags/c]
+                  #:maintain-order [maintain-order boolean?])
+                 #:pre/desc (by descending nulls-last)
+                 (sort-flags-mismatch by descending nulls-last)
+                 [result Expr-ptr?])
+            'expr-sort-by/c)]
+          [lazyframe-sort (frame-sort/c LazyFrame-ptr? 'lazyframe-sort/c)]
+          [dataframe-sort-exprs (frame-sort/c DataFrame-ptr? 'dataframe-sort-exprs/c)]))
+
+(define (frame-sort/c frame? name)
+  (rename-contract
+   (->i ([frame frame?] [names (non-empty-listof string?)])
+        (#:descending [descending sort-flags/c]
+         #:nulls-last [nulls-last sort-flags/c]
+         #:maintain-order [maintain-order boolean?])
+        #:pre/desc (names descending nulls-last)
+        (sort-flags-mismatch names descending nulls-last)
+        [result frame?])
+   name))
 
 (define-compat expr-meta-output-name/raw
   (_fun _Expr-ptr -> _rsstring)
@@ -586,25 +614,24 @@
 (define-compat expr-sort-by/raw
   (_fun _Expr-ptr
         (by : (_list i _Expr-ptr))
-        (descending : (_list i _uint8))
+        (descending : (_list i _stdbool))
+        (nulls-last : (_list i _stdbool))
         (_size = (length by))
-        -> _Expr-ptr)
-  #:c-id expr_sort_by
+        (maintain-order : _stdbool)
+        -> _Expr-ptr/null)
+  #:c-id expr_sort_by_with_options
   #:wrap (allocator expr-drop))
 
-(define (expr-sort-by e #:by by #:descending [descending #f])
+(define (expr-sort-by e #:by by
+                      #:descending [descending #f]
+                      #:nulls-last [nulls-last #f]
+                      #:maintain-order [maintain-order #f])
   (define by-list (if (list? by) by (list by)))
-  (when (null? by-list) (error 'expr-sort-by "#:by needs at least one key"))
-  (define by-exprs (map ->key-expr by-list))
-  (define desc-bytes
-    (cond
-      [(boolean? descending) (for/list ([_ (in-list by-exprs)]) (if descending 1 0))]
-      [(list? descending)
-       (unless (= (length descending) (length by-exprs))
-         (error 'expr-sort-by "#:descending list length must match #:by"))
-       (for/list ([d (in-list descending)]) (if d 1 0))]
-      [else (error 'expr-sort-by "#:descending must be a boolean or list of booleans, got ~v" descending)]))
-  (expr-sort-by/raw e by-exprs desc-bytes))
+  (or (expr-sort-by/raw e (map ->key-expr by-list)
+                        (sort-flags 'expr-sort-by "#:descending" descending by-list)
+                        (sort-flags 'expr-sort-by "#:nulls-last" nulls-last by-list)
+                        maintain-order)
+      (error 'expr-sort-by "failed to build the sort_by expression")))
 
 (define-compat expr-rank/raw
   (_fun _Expr-ptr _uint8 _uint8 _uint8 _uint64 -> _Expr-ptr)
@@ -727,12 +754,13 @@
   (expr-over/c e (map ->key-expr parts)))
 
 (define-compat expr-sort/raw
-  (_fun _Expr-ptr _uint8 -> _Expr-ptr)
-  #:c-id expr_sort
+  (_fun _Expr-ptr _stdbool _stdbool -> _Expr-ptr/null)
+  #:c-id expr_sort_with_options
   #:wrap (allocator expr-drop))
 
-(define (expr-sort e #:descending [descending #f])
-  (expr-sort/raw e (if descending 1 0)))
+(define (expr-sort e #:descending [descending #f] #:nulls-last [nulls-last #f])
+  (or (expr-sort/raw e descending nulls-last)
+      (error 'expr-sort "failed to build the sort expression")))
 
 ;; --- Conditional: when / then / otherwise ---
 
@@ -825,28 +853,26 @@
 ;; mid-stream.  `lazyframe-sort` accepts the same #:descending shapes as
 ;; the eager `dataframe-sort` (a single bool, or a per-column list).
 
-(define-compat lazyframe-sort/c
+(define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
         (names : (_list i _string))
-        (descending : (_list i _uint8))
+        (descending : (_list i _stdbool))
+        (nulls-last : (_list i _stdbool))
         (_size = (length names))
-        -> _LazyFrame-ptr)
-  #:c-id lazyframe_sort
+        (maintain-order : _stdbool)
+        -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_sort_with_options
   #:wrap (allocator lazyframe-drop))
 
-(define (lazyframe-sort lf names #:descending [descending #f])
-  (define dlist
-    (cond
-      [(eq? descending #f) (map (lambda (_) 0) names)]
-      [(eq? descending #t) (map (lambda (_) 1) names)]
-      [(list? descending)
-       (unless (= (length descending) (length names))
-         (error 'lazyframe-sort
-                "descending list length ~a does not match names length ~a"
-                (length descending) (length names)))
-       (map (lambda (b) (if b 1 0)) descending)]
-      [else (error 'lazyframe-sort "bad descending: ~v" descending)]))
-  (lazyframe-sort/c lf names dlist))
+(define (lazyframe-sort lf names
+                        #:descending [descending #f]
+                        #:nulls-last [nulls-last #f]
+                        #:maintain-order [maintain-order #f])
+  (or (lazyframe-sort/raw lf names
+                          (sort-flags 'lazyframe-sort "#:descending" descending names)
+                          (sort-flags 'lazyframe-sort "#:nulls-last" nulls-last names)
+                          maintain-order)
+      (error 'lazyframe-sort "failed to build the sort plan")))
 
 (define-compat lazyframe-unique
   (_fun _LazyFrame-ptr -> _LazyFrame-ptr)
@@ -856,9 +882,15 @@
   (_fun _LazyFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define (dataframe-sort-exprs df names #:descending [descending #f])
+(define (dataframe-sort-exprs df names
+                              #:descending [descending #f]
+                              #:nulls-last [nulls-last #f]
+                              #:maintain-order [maintain-order #f])
   (lazyframe-collect
-   (lazyframe-sort (dataframe-lazy df) names #:descending descending)))
+   (lazyframe-sort (dataframe-lazy df) names
+                   #:descending descending
+                   #:nulls-last nulls-last
+                   #:maintain-order maintain-order)))
 
 ;; --- Phase A7: lazy head / tail / slice ---
 ;;
@@ -1911,3 +1943,36 @@
       (lazyframe-scan-csv "/tmp/[.csv")))
   (check-regexp-match #rx"^lazyframe-scan-csv: failed to scan /tmp/\\[\\.csv: .+" bad-glob-message)
   (check-equal? (length (regexp-match* #rx"\\[\\.csv" bad-glob-message)) 1))
+
+(module+ test
+  (require (only-in racket/contract exn:fail:contract:blame?)
+           (prefix-in contracted: (submod "..")))
+  (define (sort-blame? who)
+    (lambda (e)
+      (and (exn:fail:contract:blame? e)
+           (regexp-match? (pregexp (format "^~a: contract violation" who)) (exn-message e)))))
+  (define sort-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "g" '(2 1))
+                                                       (series-new-i64 "h" '(1 2))))))
+  (check-exn (sort-blame? "expr-sort-by")
+             (lambda () (contracted:expr-sort-by (col "g") #:by '("g" "h") #:nulls-last '(#t))))
+  (check-exn (sort-blame? "expr-sort-by") (lambda () (contracted:expr-sort-by (col "g") #:by '())))
+  (check-exn (sort-blame? "expr-sort") (lambda () (contracted:expr-sort (col "g") #:nulls-last 'yes)))
+  (check-exn (sort-blame? "lazyframe-sort") (lambda () (contracted:lazyframe-sort sort-lf '())))
+  (check-exn (sort-blame? "dataframe-sort-exprs")
+             (lambda () (contracted:dataframe-sort-exprs
+                         (lazyframe-collect sort-lf) '("g") #:descending '(#t #t))))
+  (check-equal? (series-ref (dataframe-column (contracted:dataframe-sort-exprs
+                                               (lazyframe-collect sort-lf) '("g")
+                                               #:descending #t #:nulls-last #t)
+                                              "g")
+                            0)
+                2)
+
+  (define sort-drops-before (expr-drop-count))
+  (for ([_ (in-range 100)])
+    (void (contracted:expr-sort (col "g") #:nulls-last #t))
+    (void (contracted:expr-sort-by (col "g") #:by "h" #:nulls-last #t #:maintain-order #t)))
+  (for ([_ (in-range 10)])
+    (collect-garbage)
+    (sleep 0.01))
+  (check-true (>= (- (expr-drop-count) sort-drops-before) 250)))
