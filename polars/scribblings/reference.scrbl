@@ -68,7 +68,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       containing characters above U+00FF; there the selection follows
       the class as written. The crate has no
       lookaround, backreferences, atomic groups or conditionals; a
-      regexp using them is rejected at @racket[collect].}]
+      regexp using them is rejected at @racket[collect]. To select by
+      such a regexp, match @racket[column-names] in Racket and select
+      the names, as in the last example below.}]
 
   A multi-column @racket[col] expands inside any expression to one output
   per matched column, in the frame's column order, each keeping the
@@ -86,10 +88,15 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
                    (series '(57.9 72.5 53.6) #:name "weight")
                    (series '(1.56 1.77 1.65) #:name "height"))))
 (select people (* (col 'float64) 1.1))
+(list (dtype-spec? 'f64) (dtype-spec? 'float))
+(select people (col "^.*ght$"))
 (select people (col #rx"^he"))
 (select people (col #px"^\\w+t$"))
 (select people (~> (col "id") (* 10) (alias "id10"))
-               (alias (lit 0) "zero"))]}
+               (alias (lit 0) "zero"))
+(eval:error (select people (col #px"^(?!id)")))
+(select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
+                       (column-names people)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -109,8 +116,17 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @examples[#:eval ev
 (select people (all))
 (select people (exclude (all) "id"))
+(select people (exclude (all) #rx"^w" "id"))
+(select people (exclude (all) "^h.*$"))
 (select people (~> (col 'float64) (exclude "height") (* 2)))
+(select people (~> (all) (exclude "id") (exclude "weight")))
+(~> people
+    (with-columns (~> (col "height") (> 1.6) (alias "tall")))
+    (group-by "tall")
+    (agg (~> (all) (exclude "id") mean))
+    (sort "tall"))
 (multi-column-expr? (col "id"))
+(~> (col 'float64) (* 2) multi-column-expr?)
 (eval:error (exclude (col "id") "weight"))]}
 
 @defproc[(expr->string [e Expr-ptr?]) string?]{
@@ -118,12 +134,17 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @tt{col("v")} for a column, @tt{[(a) + (b)]} for a binary operation,
   @tt{.alias("n")} and @tt{.sum()} as method suffixes. This is also what an
   expression prints as at the REPL and throughout this manual, so an
-  expression is a value you can read, not an opaque pointer.
+  expression is a value you can read, not an opaque pointer. A regexp
+  @racket[col] prints as the Polars pattern it is translated to.
 
   @examples[#:eval ev
 (col "weight")
 (alias (* (col "v") 10) "v10")
-(expr->string (> (col "v") 2))]}
+(expr->string (> (col "v") 2))
+(~> (col "v") sum (over "k"))
+(exclude (all) "id")
+(col 'float64)
+(col #rx"^he")]}
 
 @deftogether[(@defproc[(meta-output-name [e (or/c Expr-ptr? string?)]) string?]
               @defproc[(meta-root-names [e (or/c Expr-ptr? string?)]) (listof string?)]
@@ -137,6 +158,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   plans; @racket[equal?] on expressions is identity. A column name is lifted
   with @racket[col] wherever an expression is expected.
 
+  A multi-column expression is read off the plan too, before any frame
+  says which columns it will match. For a regexp @racket[col], the output
+  name and the one root name are its translated pattern; a dtype
+  @racket[col] or @racket[(all)] has no root names and no output name.
+
   @examples[#:eval ev
 (define total (alias (sum (+ (col "a") (col "b"))) "total"))
 total
@@ -144,7 +170,15 @@ total
 (meta-root-names total)
 (meta-eq? total (alias (sum (+ (col "a") (col "b"))) "total"))
 (meta-eq? total (col "a"))
+(equal? total (~> (+ (col "a") (col "b")) sum (alias "total")))
+(meta-output-name (+ (col "a") (col "b")))
+(meta-output-name (lit 25))
 (meta-root-names "a")
+(meta-root-names (col #rx"^he"))
+(meta-output-name (col #rx"^he"))
+(~> (col 'float64) (* 2) meta-root-names)
+(meta-eq? (col 'float64) (col 'f64))
+(eval:error (meta-output-name (col 'float64)))
 (eval:error (meta-output-name "*"))
 (eval:error (meta-output-name 5))]}
 
@@ -306,7 +340,22 @@ total
   cannot be opened or created, Polars' own for input it cannot parse.
 
   @examples[#:eval ev
-(eval:error (read-csv "/no/such/file.csv"))]}
+(eval:error (read-csv "/no/such/file.csv"))
+(define small (dataframe (list (series '(1 2) #:name "v"))))
+(eval:error (write-parquet small "/no/such/dir/out.parquet"))]
+
+  Here @racket[not-parquet] is a path in the temporary directory:
+
+  @examples[#:eval ev #:hidden
+(define not-parquet (build-path (find-system-path 'temp-dir) "polars-not-parquet.csv"))]
+
+  @examples[#:eval ev #:label #f
+(write-csv small not-parquet)
+(eval:error (read-parquet not-parquet))
+(eval:error (read-ndjson not-parquet))]
+
+  @examples[#:eval ev #:hidden
+(delete-file not-parquet)]}
 
 @deftogether[(@defproc[(scan-csv [path path-string?]
                                  [#:has-header has-header boolean? #t]
@@ -330,12 +379,14 @@ total
   @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
   @racket[select], @racket[with-columns], @racket[filter] and the other
   fluent operations extend without running anything — and @racket[collect]
-  executes the plan and returns the resulting dataframe.
+  executes the plan and returns the resulting dataframe. A plan that cannot
+  run, such as one reading a column the frame lacks, is reported by
+  @racket[collect] with Polars' reason.
 
   @examples[#:eval ev
-(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
-    (filter (> (col "v") 2))
-    collect)]}
+(define four (dataframe (list (series '(1 2 3 4) #:name "v"))))
+(~> four lazy (filter (> (col "v") 2)) collect)
+(eval:error (~> four lazy (filter (> (col "nope") 2)) collect))]}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
@@ -358,14 +409,57 @@ total
   group of the @racket[key]s — column names or expressions, as
   @racket[group-by] takes them — and broadcast back onto the group's rows
   rather than reduced to one row per group, so it belongs in
-  @racket[with-columns] where @racket[agg] would collapse it. Only Polars'
-  default @tt{group_to_rows} mapping is exposed.
+  @racket[with-columns] where @racket[agg] would collapse it. An aggregate
+  is repeated on every row of its group; an expression that keeps one value
+  per row, such as @racket[rank], is computed within the group and each
+  value lands on the row it came from. Only Polars' default
+  @tt{group_to_rows} mapping is exposed.
 
   @examples[#:eval ev
 (define kv (dataframe (list (series '("x" "y" "x") #:name "k")
                             (series '(1 2 3) #:name "v"))))
 (~> kv (group-by "k") (agg (alias (sum "v") "total")))
-(~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))]}
+(~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))
+(define khv (dataframe (list (series '("a" "a" "a" "b") #:name "k")
+                             (series '("x" "y" "x" "x") #:name "h")
+                             (series '(1 2 3 4) #:name "v"))))
+(~> khv (with-columns (~> (col "v") sum (over "k" "h") (alias "total"))
+                      (~> (col "v") mean (over (col "k")) (alias "mean"))
+                      (~> (col "v") (rank #:descending #t) (over "k") (alias "rank"))
+                      (~> (col "v") max (over (> (col "v") 1)) (alias "band_max"))))
+(eval:error (over (col "v")))]}
+
+@deftogether[(@defproc[(sort-by [x (or/c Expr-ptr? string?)]
+                                [#:by by (or/c string? Expr-ptr? (listof (or/c string? Expr-ptr?)))]
+                                [#:descending descending (or/c boolean? (listof boolean?)) #f])
+                       Expr-ptr?]
+              @defproc[(rank [x (or/c Expr-ptr? string?)]
+                             [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
+                             [#:descending descending boolean? #f]
+                             [#:seed seed (or/c exact-nonnegative-integer? #f) #f])
+                       Expr-ptr?]
+              @defproc[(gather [x (or/c Expr-ptr? string?)]
+                               [indices (or/c Expr-ptr? series? (listof exact-integer?))])
+                       Expr-ptr?])]{
+  Ordering within a column (@tt{.sort_by}, @tt{.rank}, @tt{.gather}).
+  @racket[sort-by] reorders @racket[x] by the @racket[#:by] keys, with
+  @racket[#:descending] one flag or one per key. @racket[rank] numbers each
+  value by its place in the sorted order, ties resolved by
+  @racket[#:method]; the result is @racket['uint32], or @racket['float64]
+  for @racket['average]. @racket[gather] picks values by position. Each
+  lifts a column name with @racket[col], and each is computed per group
+  under @racket[over].
+
+  @examples[#:eval ev
+(define scores (dataframe (list (series '("a" "b" "c" "d") #:name "name")
+                                (series '(30 10 30 20) #:name "score"))))
+(~> scores
+    (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
+                  (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
+(~> scores (select (sort-by "name" #:by (list "score" "name") #:descending '(#t #f))
+                   (sort-by "score" #:by "score" #:descending #t)))
+(~> scores (select (gather "name" '(3 0))))
+(eval:error (rank "score" #:method 'first))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...) any/c]
@@ -380,7 +474,7 @@ total
   @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
   used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
   they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
-  works.}
+  works.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
@@ -873,7 +967,11 @@ built.
 @defproc[(expr-col [name string?]) Expr-ptr?]{
   The column reference @racket[col] is built on: @racket[name] is taken
   literally, except that a name of the form @tt{^...$} is a regex
-  projection, which is how the regexp arm of @racket[col] is spelled.}
+  projection, which is how the regexp arm of @racket[col] is spelled.
+
+  @examples[#:eval ev
+(expr-col "weight")
+(expr-col "^.*ght$")]}
 
 @deftogether[(@defproc[(expr-all) Expr-ptr?]
               @defproc[(expr-exclude [e multi-column-expr?]
@@ -885,16 +983,35 @@ built.
   @tt{pl.col(pl.Float64)}. @racket[expr-exclude] takes its names as one
   list where the generic @racket[exclude] is variadic. A regexp
   @racket[col] needs no entry point of its own: it is @racket[expr-col]
-  with the pattern rendered in Polars' @tt{^...$} form.}
+  with the pattern rendered in Polars' @tt{^...$} form.
+
+  @examples[#:eval ev
+(expr-all)
+(expr-exclude (expr-all) (list "id" #rx"^w"))
+(expr-dtype-col 'f64)
+(select people (expr-exclude (expr-dtype-col 'float64) (list "height")))]}
 
 @deftogether[(@defproc[(expr-meta-output-name [e Expr-ptr?]) string?]
               @defproc[(expr-meta-root-names [e Expr-ptr?]) (listof string?)]
               @defproc[(expr-meta-eq? [a Expr-ptr?] [b Expr-ptr?]) boolean?])]{
   The expression-only forms of @racket[meta-output-name],
   @racket[meta-root-names] and @racket[meta-eq?], which are the ones to
-  write: they also accept a column name.}
+  write: they also accept a column name.
 
-@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
+  @examples[#:eval ev
+(~> (col "a") (expr-alias "b") expr-meta-output-name)
+(~> (col "a") (expr-add (col "b")) expr-meta-root-names)
+(expr-meta-eq? (col "a") (expr-col "a"))]}
+
+@defproc[(expr-over [e Expr-ptr?] [keys (listof (or/c string? Expr-ptr?))]) Expr-ptr?]{
+  The window expression @racket[over] is built on (@tt{Expr.over}), taking
+  its keys as one list where @racket[over] is variadic.
+
+  @examples[#:eval ev
+(~> (col "v") expr-sum (expr-over (list "k" (col "h"))))
+(~> khv (with-columns (~> (col "v") expr-sum (expr-over (list "k")) (expr-alias "total"))))]}
+
+@deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-mul [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-div [a any/c] [b any/c]) Expr-ptr?]

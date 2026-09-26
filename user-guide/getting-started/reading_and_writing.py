@@ -32,4 +32,5 @@ print(df)
 csv_path = Path(tempfile.gettempdir()) / "output.csv"
 df.write_csv(csv_path)
 df_csv = pl.read_csv(csv_path, try_parse_dates=True)
+csv_path.unlink()
 print(df_csv)

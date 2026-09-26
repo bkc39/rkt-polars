@@ -47,6 +47,10 @@ come back as strings; parse them with @racket[str-to-date].
     (with-columns (str-to-date "birthdate")))
 ]
 
+@examples[#:eval ev #:hidden
+(delete-file csv-path)
+]
+
 API gaps: no date dtype from gregor @tt{date} values; no
 @tt{try_parse_dates} on @racket[read-csv].
 
