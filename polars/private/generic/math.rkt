@@ -30,15 +30,17 @@
 
 ;; round to #:decimals places (default 0); numbers round with the same rule.
 (define (p-round x #:decimals [decimals 0])
-  (cond [(number? x) (let ([f (base:expt 10 decimals)])
-                       (base:/ (base:round (base:* x f)) f))]
+  (cond [(number? x)
+         (define f (base:expt 10 decimals))
+         (base:/ (base:round (base:* x f)) f)]
         [else (expr-round (->col-expr 'round x) #:decimals decimals)]))
 
 ;; logarithm; #:base defaults to natural (e).  Numbers use racket/base log.
 (define (p-log x #:base [base #f])
   (cond [(number? x) (if base (base:log x base) (base:log x))]
-        [else (let ([e (->col-expr 'log x)])
-                (if base (expr-log e #:base base) (expr-log e)))]))
+        [else
+         (define e (->col-expr 'log x))
+         (if base (expr-log e #:base base) (expr-log e))]))
 
 ;; raise to a power (exponent auto-lifted to a literal); clamp to [lower, upper]
 ;; (either bound may be omitted).

@@ -8,17 +8,17 @@
 (define compat-lib-pattern #rx"^libcompat\\.")
 
 (define (preinstall-error . args)
-  (apply error (cons 'pre-installer args)))
+  (apply error 'pre-installer args))
 
 (define (copy-native-libs! dest-dir source-dir pattern)
   (make-directory* dest-dir)
-  (for ([f (in-list (directory-list source-dir))])
-    (when (regexp-match? pattern (path->string f))
-      (define src (build-path source-dir f))
-      (define dst (build-path dest-dir f))
-      (when (file-exists? dst)
-        (delete-file dst))
-      (copy-file src dst))))
+  (for ([f (in-list (directory-list source-dir))]
+        #:when (regexp-match? pattern (path->string f)))
+    (define src (build-path source-dir f))
+    (define dst (build-path dest-dir f))
+    (when (file-exists? dst)
+      (delete-file dst))
+    (copy-file src dst)))
 
 (define (has-matching-files? dir pattern)
   (and (directory-exists? dir)

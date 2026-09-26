@@ -55,6 +55,6 @@
           (- (length modules) (length failures))
           (length modules))
   (unless (null? missing)
-    (printf "(each module stops at its first missing symbol; more may be missing)\n"))
+    (displayln "(each module stops at its first missing symbol; more may be missing)"))
   (unless (null? failures)
     (exit 1)))

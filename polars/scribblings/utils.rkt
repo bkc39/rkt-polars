@@ -30,6 +30,7 @@
          scribble/core
          scribble/decode
          racket/sandbox
+         syntax/parse/define
          (for-syntax racket/base))
 
 (require (for-label polars
@@ -60,9 +61,8 @@
 ;; raised", after mz.rkt.
 (define (*exnraise s)
   (make-element #f (list s " exception is raised")))
-(define-syntax exnraise
-  (syntax-rules ()
-    [(_ s) (*exnraise (racket s))]))
+(define-syntax-parse-rule (exnraise s:id)
+  (*exnraise (racket s)))
 
 ;; A margin note pointing from a guide chapter into the reference, after
 ;; guide-utils.rkt's `refdetails`.

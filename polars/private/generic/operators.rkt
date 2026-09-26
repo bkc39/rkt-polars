@@ -15,7 +15,9 @@
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
-         polars/private/generic/dtype)
+         polars/private/generic/dtype
+         syntax/parse/define
+         (for-syntax racket/base))
 
 (provide (all-defined-out))
 
@@ -29,7 +31,8 @@
   (if (series? other) other (const-series (series-dtype s) (series-len s) other)))
 
 ;; --- comparison operators ---------------------------------------------------
-(define-syntax-rule (define-cmp name expr-op series-op series-op-reflected base-op)
+(define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
+                                      series-op-reflected:expr base-op:expr)
   (define (name . args)
     (cond
       [(andmap base:number? args) (apply base-op args)]
@@ -59,7 +62,7 @@
         [(series? b) (wrap-series (series-op (cmp-other b a) b))]
         [else (base-op a b)]))
 
-(define-syntax-rule (define-arith name expr-op series-op base-op)
+(define-syntax-parse-rule (define-arith name:id expr-op:expr series-op:expr base-op:expr)
   (define (name . args)
     (cond
       [(andmap base:number? args) (apply base-op args)]   ; numeric fast path
@@ -89,23 +92,23 @@
 (define (combine-or a b)
   (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)  (wrap-series (series-or a b))))
 
-(define-syntax p-and
-  (syntax-rules ()
-    [(_)         #t]
-    [(_ e)       e]
-    [(_ e0 e ...) (let ([v e0])
-                    (if (or (Expr-ptr? v) (series? v))
-                        (combine-and v (p-and e ...))   ; predicate build (eager)
-                        (if v (p-and e ...) v)))]))      ; booleans: racket `and`
+(define-syntax-parser p-and
+  [(_) #'#t]
+  [(_ e:expr) #'e]
+  [(_ e0:expr e:expr ...+)
+   #'(let ([v e0])
+       (if (or (Expr-ptr? v) (series? v))
+           (combine-and v (p-and e ...))   ; predicate build (eager)
+           (if v (p-and e ...) v)))])      ; booleans: racket `and`
 
-(define-syntax p-or
-  (syntax-rules ()
-    [(_)         #f]
-    [(_ e)       e]
-    [(_ e0 e ...) (let ([v e0])
-                    (if (or (Expr-ptr? v) (series? v))
-                        (combine-or v (p-or e ...))
-                        (if v v (p-or e ...))))]))        ; booleans: racket `or`
+(define-syntax-parser p-or
+  [(_) #'#f]
+  [(_ e:expr) #'e]
+  [(_ e0:expr e:expr ...+)
+   #'(let ([v e0])
+       (if (or (Expr-ptr? v) (series? v))
+           (combine-or v (p-or e ...))
+           (if v v (p-or e ...))))])       ; booleans: racket `or`
 
 (define (p-not x)
   (cond [(Expr-ptr? x) (expr-not x)]
@@ -147,10 +150,9 @@
     (error 'otherwise "`otherwise` must follow `then`, got ~v" wa))
   (expr-when (when-acc-clauses wa) #:otherwise default))
 
-(define-syntax p-when
-  (syntax-rules ()
-    [(_ c) (when-pending '() c)]                       ; one arg: start the builder
-    [(_ test body ...) (base:when test body ...)]))    ; else: racket control-flow
+(define-syntax-parser p-when
+  [(_ c:expr) #'(when-pending '() c)]                  ; one arg: start the builder
+  [(_ test:expr body:expr ...) #'(base:when test body ...)])  ; else: racket control-flow
 
 (module+ test
   ;; pure operator behaviour only (Expr-ptr? / series via ref / numbers); the

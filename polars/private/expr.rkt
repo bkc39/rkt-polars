@@ -34,7 +34,8 @@
                   compat-time-unit/none
                   compat-time-unit/nanoseconds
                   compat-time-unit/microseconds
-                  compat-time-unit/milliseconds))
+                  compat-time-unit/milliseconds)
+         syntax/parse/define)
 
 (module+ test
   (require gregor
@@ -515,7 +516,7 @@
 
 ;; --- Cumulative + shift / diff ---
 
-(define-syntax-rule (define-cum name raw c-id)
+(define-syntax-parse-rule (define-cum name:id raw:id c-id:id)
   (begin
     (define-compat raw
       (_fun _Expr-ptr _uint8 -> _Expr-ptr)

@@ -11,7 +11,8 @@
 
 (require (only-in racket/contract/base flat-named-contract or/c)
          polars/private/foreign
-         polars/private/expr)
+         polars/private/expr
+         syntax/parse/define)
 
 (provide ->col-expr col-expr/c define-expr-unop define-math-unop)
 
@@ -25,11 +26,11 @@
   (flat-named-contract 'col-expr/c (or/c string? Expr-ptr?)))
 
 ;; unary, non-shadowing (Polars-only): Expr/colname -> Expr.
-(define-syntax-rule (define-expr-unop name who expr-op)
+(define-syntax-parse-rule (define-expr-unop name:id who:expr expr-op:expr)
   (define (name x) (expr-op (->col-expr who x))))
 
 ;; unary, racket/base-shadowing: Expr/colname -> Expr; number -> racket/base.
-(define-syntax-rule (define-math-unop name who expr-op base-op)
+(define-syntax-parse-rule (define-math-unop name:id who:expr expr-op:expr base-op:expr)
   (define (name x)
     (cond [(Expr-ptr? x) (expr-op x)]
           [(string? x)   (expr-op (col x))]

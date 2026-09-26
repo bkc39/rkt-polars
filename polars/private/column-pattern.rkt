@@ -18,7 +18,10 @@
   (hash "alpha" "a-zA-Z" "upper" "A-Z" "lower" "a-z" "digit" "0-9" "xdigit" "0-9a-fA-F"
         "alnum" "a-zA-Z0-9" "word" "a-zA-Z0-9_" "blank" " \\t" "space" " \\t\\n\\f\\r"
         "graph" "!-~" "print" "\\t -~" "cntrl" "\\x00-\\x1F" "ascii" "\\x00-\\x7F"))
-(define posix-class (string-append "\\[:(?:" (string-join (hash-keys posix-classes) "|") "):\\]"))
+(define posix-class (string-join (hash-keys posix-classes)
+                                 "|"
+                                 #:before-first "\\[:(?:"
+                                 #:after-last "):\\]"))
 
 (define rx-token #px"\\\\.|\\[\\^?\\]?[^]]*\\]|\\(\\?[-ims]+:|.")
 (define px-token
