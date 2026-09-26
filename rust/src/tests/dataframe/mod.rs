@@ -14,6 +14,7 @@ fn make_gx() -> (*mut DataFrame, *mut Series, *mut Series) {
 }
 
 mod asof;
+mod csv;
 mod groupby;
 mod io;
 mod join;

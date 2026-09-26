@@ -76,18 +76,25 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`
-  and `scan` helpers do it) and records the **cause alone**; the Racket
+  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`,
+  `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
-  or it attaches a stale reason from an unrelated call.
+  or it attaches a stale reason from an unrelated call. `call/foreign-error`
+  also respells the Python keyword names in Polars' "You might want to try"
+  hints (`null_values` → `#:null-values`, ...).
 - `dataframe_drop_count` and `expr_drop_count` count native releases; the
   reclamation tests assert on them because Racket cannot otherwise observe a
   native free, and a pairing test checks that an explicit drop releases a
   frame exactly once.
+- **An export never changes its signature under the same symbol.** A new
+  signature gets a new symbol (`dataframe_read_csv` became
+  `dataframe_read_csv_with_options`), so a stale library fails at load, when
+  `define-compat` cannot resolve the symbol, instead of misreading its
+  arguments.
 - **A change to any `#[no_mangle]` export needs both
   `polars/native-libs/candidates/` refreshed before it merges.** The catalog
   installs those committed binaries (it has no Rust toolchain) and
@@ -102,8 +109,31 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `read-csv` is `(collect (scan-csv ...))` with the same keywords: one Rust
+  entry point, `dataframe_read_csv_with_options`, builds the scan and
+  collects it. The one difference is the separator guard: when
+  `#:separator` is not given, a one-column result whose header splits on a
+  tab, `;` or `|` (and whose first row agrees) raises. The eager readers
+  glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
+  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
+  of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file is reported at `collect`, not at scan.
+  file is reported at `collect`. Reported at scan instead: a glob that
+  matches no file, and, with `#:schema-overrides`, an override naming a
+  column the header lacks. That check reads the header because 0.41.3
+  applies a full-length override list by position and would silently rename
+  the column.
+- IO paths resolve against Racket's `current-directory`, not the process's
+  (`path->complete-string` in `foreign.rkt`). For a globbing reader it
+  escapes `[`, `*` and `?` in the directory part, so only the part the
+  caller wrote is a pattern.
+- Parquet reads add hive (`key=value`) columns only for a directory path,
+  never for a single file or a glob, matching Python (0.41.3's
+  `HiveOptions { enabled: None }`).
+- The separator guard is stricter than Python, whose `read_csv` returns the
+  one column; the #86 scoreboard (check C1) requires the error.
+- A `'time` schema override is a contract error: 0.41.3 cannot parse a
+  `Time` column from CSV, though `#:try-parse-dates` infers one.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a

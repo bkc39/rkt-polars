@@ -20,3 +20,4 @@ mentioned, see the @secref["reference"].
 
 @include-section["guide/getting-started.scrbl"]
 @include-section["guide/concepts.scrbl"]
+@include-section["guide/io.scrbl"]

@@ -28,9 +28,6 @@
 (define csv-path (build-path (find-system-path 'temp-dir) "output.csv"))
 (write-csv df csv-path)
 
-;; API gap: read-csv has no try_parse_dates; parse the column afterwards.
-(define df-csv
-  (~> (read-csv csv-path)
-      (with-columns (str-to-date "birthdate"))))
+(define df-csv (read-csv csv-path #:try-parse-dates #t))
 
 (displayln df-csv)

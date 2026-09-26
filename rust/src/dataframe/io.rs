@@ -33,6 +33,42 @@ fn read_frame(
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 
+pub(crate) struct PathRules {
+    pub glob: bool,
+    pub directory: bool,
+}
+
+fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
+    if rules.glob && path.contains(['*', '?', '[']) {
+        return Ok(());
+    }
+    let metadata = std::fs::metadata(path).map_err(
+        |err| polars_err!(ComputeError: "cannot open file: {}", err),
+    )?;
+    polars_ensure!(
+        rules.directory || !metadata.is_dir(),
+        ComputeError: "cannot open file: it is a directory; pass a glob pattern such as dir/*.csv"
+    );
+    Ok(())
+}
+
+pub(crate) fn collect_frame(
+    path: *const c_char,
+    rules: PathRules,
+    build: impl FnOnce(&str) -> PolarsResult<LazyFrame>,
+) -> *mut DataFrame {
+    clear_last_error();
+    decode_path(path)
+        .and_then(|path| {
+            record(
+                require_path(path, &rules)
+                    .and_then(|()| build(path))
+                    .and_then(LazyFrame::collect),
+            )
+        })
+        .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
+}
+
 fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
@@ -74,16 +110,6 @@ pub extern "C" fn dataframe_write_csv(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_read_csv(path: *const c_char) -> *mut DataFrame {
-    read_frame(path, |file| {
-        CsvReadOptions::default()
-            .with_has_header(true)
-            .into_reader_with_file_handle(file)
-            .finish()
-    })
-}
-
-#[no_mangle]
 pub extern "C" fn dataframe_write_parquet(
     df_ptr: *mut DataFrame,
     path: *const c_char,
@@ -97,7 +123,14 @@ pub extern "C" fn dataframe_write_parquet(
 pub extern "C" fn dataframe_read_parquet(
     path: *const c_char,
 ) -> *mut DataFrame {
-    read_frame(path, |file| ParquetReader::new(file).finish())
+    collect_frame(
+        path,
+        PathRules {
+            glob: true,
+            directory: true,
+        },
+        |path| parquet_scan(path, None),
+    )
 }
 
 #[no_mangle]
