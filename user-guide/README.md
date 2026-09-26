@@ -44,6 +44,13 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expressions and contexts | `expressions-and-contexts.rkt` | `expressions_and_contexts.py` |
 | Lazy API | `lazy-api.rkt` | `lazy_api.py` |
 
+`expressions/` — [upstream](https://docs.pola.rs/user-guide/expressions/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| Expression expansion | `expression-expansion.rkt` | `expression_expansion.py` |
+| Window functions | `window-functions.rkt` | `window_functions.py` |
+
 `interop/` — upstream [Arrow producer/consumer](https://docs.pola.rs/user-guide/misc/arrow/) and [Visualization](https://docs.pola.rs/user-guide/misc/visualization/), through `to_list` / `to_dict` / `to_numpy`
 
 | Topic | Racket | Python |

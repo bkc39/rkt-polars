@@ -32,5 +32,6 @@
 (define df-csv
   (~> (read-csv csv-path)
       (with-columns (str-to-date "birthdate"))))
+(delete-file csv-path)
 
 (displayln df-csv)

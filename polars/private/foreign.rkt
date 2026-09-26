@@ -1897,6 +1897,8 @@
   (check-equal? (series-dtype score-col) 'int32)
   (check-equal? (series-len score-col) 4)
   (check-equal? (series-sum-i32 score-col) 94)
+  (check-exn #rx"^dataframe-column: no column named \"points\"$"
+             (lambda () (dataframe-column example-df "points")))
 
   ;; column-names helper
   (check-equal? (dataframe-column-names example-df)

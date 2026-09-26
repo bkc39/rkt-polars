@@ -29,3 +29,7 @@ planet-cache/
 /libexample.dylib
 /use-example.rkt
 /use-ffi.rkt
+
+# nycflights benchmark data, fetched by bench/run.sh
+/bench/data/
+__pycache__/
