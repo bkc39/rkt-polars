@@ -7,9 +7,9 @@
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
          (only-in gregor jdn->date posix->datetime)
          (only-in gregor/time time)
-         (only-in racket/match match match-define)
+         (only-in racket/match match)
          (only-in syntax/parse/define define-syntax-parse-rule)
-         (for-syntax (only-in syntax/parse id))
+         (for-syntax (only-in syntax/parse expr id))
          (only-in threading ~>>)
          (only-in polars/private/foreign
                   _Series-ptr dataframe-column dataframe-column-names dataframe-height
@@ -65,7 +65,7 @@
     [(microseconds) 1000000]
     [else 1000]))
 
-(define ((epoch->datetime unit) value)
+(define (epoch->datetime unit value)
   (define k (per-second unit))
   (posix->datetime (quotient (- value (modulo value k)) k)))
 
@@ -75,45 +75,13 @@
   (define-values (hour minute) (quotient/remainder minutes 60))
   (time hour minute second nanosecond))
 
-(define (byte->boolean b)
-  (not (eq? 0 b)))
-
-(struct layout (ctype read copy!))
-
-(define i8 (layout _int8 (lambda (p i) (ptr-ref p _int8 i)) series-copy-i8))
-(define i16 (layout _int16 (lambda (p i) (ptr-ref p _int16 i)) series-copy-i16))
-(define i32 (layout _int32 (lambda (p i) (ptr-ref p _int32 i)) series-copy-i32))
-(define i64 (layout _int64 (lambda (p i) (ptr-ref p _int64 i)) series-copy-i64))
-(define u8 (layout _uint8 (lambda (p i) (ptr-ref p _uint8 i)) series-copy-u8))
-(define u16 (layout _uint16 (lambda (p i) (ptr-ref p _uint16 i)) series-copy-u16))
-(define u32 (layout _uint32 (lambda (p i) (ptr-ref p _uint32 i)) series-copy-u32))
-(define u64 (layout _uint64 (lambda (p i) (ptr-ref p _uint64 i)) series-copy-u64))
-(define f32 (layout _float (lambda (p i) (ptr-ref p _float i)) series-copy-f32))
-(define f64 (layout _double (lambda (p i) (ptr-ref p _double i)) series-copy-f64))
-(define bool (layout _uint8 (lambda (p i) (ptr-ref p _uint8 i)) series-copy-bool))
-
-(define (layout-of dtype)
-  (match dtype
-    ['int8 (values i8 values)]
-    ['int16 (values i16 values)]
-    ['int32 (values i32 values)]
-    ['int64 (values i64 values)]
-    ['uint8 (values u8 values)]
-    ['uint16 (values u16 values)]
-    ['uint32 (values u32 values)]
-    ['uint64 (values u64 values)]
-    ['float32 (values f32 values)]
-    ['float64 (values f64 values)]
-    ['boolean (values bool byte->boolean)]
-    ['date (values i32 days->date)]
-    ['time (values i64 nanoseconds->time)]
-    [`(datetime ,unit ,_) (values i64 (epoch->datetime unit))]
-    [`(duration ,_) (values i64 (lambda (v) (duration-value->period dtype v)))]
-    [_ (values #f #f)]))
-
 (define (convertible? dtype)
-  (define-values (kind _convert) (layout-of dtype))
-  (or (memq dtype '(string null)) kind))
+  (match dtype
+    [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64 'float32 'float64
+         'boolean 'string 'date 'time 'null
+         `(datetime ,_ ,_) `(duration ,_))
+     #t]
+    [_ #f]))
 
 (define (checked who dtype status)
   (when (negative? status)
@@ -135,46 +103,86 @@
 (define (valid-len valid)
   (if valid (bytes-length valid) 0))
 
-(define (call-with-strings who s dtype start count valid null-value proc)
+(define-syntax-parse-rule (collect shape:id count:id valid:id null-value:id i:id element:expr)
+  (cond
+    [(and (eq? shape 'list) valid)
+     (for/fold ([acc '()]) ([i (in-range (sub1 count) -1 -1)])
+       (cons (if (eq? 0 (bytes-ref valid i)) null-value element) acc))]
+    [(eq? shape 'list)
+     (for/fold ([acc '()]) ([i (in-range (sub1 count) -1 -1)])
+       (cons element acc))]
+    [valid
+     (for/vector #:length count ([i (in-range count)])
+       (if (eq? 0 (bytes-ref valid i)) null-value element))]
+    [else
+     (for/vector #:length count ([i (in-range count)])
+       element)]))
+
+(define-syntax-parse-rule (define-physical-rows name:id ctype:id copy!:id convert:expr)
+  (define (name shape who s dtype arg start count valid null-value)
+    (define dst (alloc-buffer count ctype))
+    (checked who dtype (copy! s start count dst count valid (valid-len valid)))
+    (begin0 (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i)))
+            (free-buffer dst))))
+
+(define-physical-rows int8-rows _int8 series-copy-i8 (lambda (_ v) v))
+(define-physical-rows int16-rows _int16 series-copy-i16 (lambda (_ v) v))
+(define-physical-rows int32-rows _int32 series-copy-i32 (lambda (_ v) v))
+(define-physical-rows int64-rows _int64 series-copy-i64 (lambda (_ v) v))
+(define-physical-rows uint8-rows _uint8 series-copy-u8 (lambda (_ v) v))
+(define-physical-rows uint16-rows _uint16 series-copy-u16 (lambda (_ v) v))
+(define-physical-rows uint32-rows _uint32 series-copy-u32 (lambda (_ v) v))
+(define-physical-rows uint64-rows _uint64 series-copy-u64 (lambda (_ v) v))
+(define-physical-rows float32-rows _float series-copy-f32 (lambda (_ v) v))
+(define-physical-rows float64-rows _double series-copy-f64 (lambda (_ v) v))
+(define-physical-rows boolean-rows _uint8 series-copy-bool (lambda (_ v) (not (eq? 0 v))))
+(define-physical-rows date-rows _int32 series-copy-i32 (lambda (_ v) (days->date v)))
+(define-physical-rows time-rows _int64 series-copy-i64 (lambda (_ v) (nanoseconds->time v)))
+(define-physical-rows datetime-rows _int64 series-copy-i64 epoch->datetime)
+(define-physical-rows duration-rows _int64 series-copy-i64 duration-value->period)
+
+(define (string-rows shape who s dtype start count valid null-value)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
   (define offsets (alloc-buffer (add1 count) _int64))
   (checked who dtype (series-copy-str s start count buf (bytes-length buf)
                                       offsets (add1 count) valid (valid-len valid)))
-  (define (row i)
-    (if (and valid (eq? 0 (bytes-ref valid i)))
-        null-value
-        (bytes->string/utf-8 buf #f (ptr-ref offsets _int64 i) (ptr-ref offsets _int64 (add1 i)))))
-  (begin0 (proc row) (free-buffer offsets)))
+  (begin0 (collect shape count valid null-value i
+                   (bytes->string/utf-8 buf #f
+                                        (ptr-ref offsets _int64 i)
+                                        (ptr-ref offsets _int64 (add1 i))))
+          (free-buffer offsets)))
 
-(define (call-with-physical who s dtype start count valid null-value proc)
-  (define-values (kind convert) (layout-of dtype))
-  (match-define (layout ctype read copy!) kind)
-  (define dst (alloc-buffer count ctype))
-  (checked who dtype (copy! s start count dst count valid (valid-len valid)))
-  (define (row i)
-    (if (and valid (eq? 0 (bytes-ref valid i)))
-        null-value
-        (convert (read dst i))))
-  (begin0 (proc row) (free-buffer dst)))
-
-(define (call-with-rows who s dtype start count null-value proc)
+(define (rows shape who s dtype start count null-value)
   (define valid (validity s count))
-  (case dtype
-    [(null) (proc (lambda (i) null-value))]
-    [(string) (call-with-strings who s dtype start count valid null-value proc)]
-    [else (call-with-physical who s dtype start count valid null-value proc)]))
+  (define (physical typed-rows [arg #f])
+    (typed-rows shape who s dtype arg start count valid null-value))
+  (match dtype
+    ['int8 (physical int8-rows)]
+    ['int16 (physical int16-rows)]
+    ['int32 (physical int32-rows)]
+    ['int64 (physical int64-rows)]
+    ['uint8 (physical uint8-rows)]
+    ['uint16 (physical uint16-rows)]
+    ['uint32 (physical uint32-rows)]
+    ['uint64 (physical uint64-rows)]
+    ['float32 (physical float32-rows)]
+    ['float64 (physical float64-rows)]
+    ['boolean (physical boolean-rows)]
+    ['date (physical date-rows)]
+    ['time (physical time-rows)]
+    [`(datetime ,unit ,_) (physical datetime-rows unit)]
+    [`(duration ,_) (physical duration-rows dtype)]
+    ['string (string-rows shape who s dtype start count valid null-value)]
+    ['null (if (eq? shape 'list)
+               (for/list ([_ (in-range count)]) null-value)
+               (make-vector count null-value))]))
 
 (define (column->vector who field s null-value)
-  (define n (series-len s))
-  (call-with-rows who s (convertible-dtype who field s) 0 n null-value
-                  (lambda (row) (build-vector n row))))
+  (rows 'vector who s (convertible-dtype who field s) 0 (series-len s) null-value))
 
 (define (series->list s #:null [null-value polars-null])
-  (define n (series-len s))
-  (call-with-rows 'series->list s (convertible-dtype 'series->list "series" s) 0 n null-value
-                  (lambda (row)
-                    (for/fold ([acc '()]) ([i (in-range (sub1 n) -1 -1)])
-                      (cons (row i) acc)))))
+  (define dtype (convertible-dtype 'series->list "series" s))
+  (rows 'list 'series->list s dtype 0 (series-len s) null-value))
 
 (define (series->vector s #:null [null-value polars-null])
   (column->vector 'series->vector "series" s null-value))
@@ -192,8 +200,7 @@
        (unless (< (- i chunk-start) (vector-length chunk))
          (define count (min chunk-rows (- n i)))
          (set! chunk-start i)
-         (set! chunk (call-with-rows 'in-series s dtype i count null-value
-                                     (lambda (row) (build-vector count row)))))
+         (set! chunk (rows 'vector 'in-series s dtype i count null-value)))
        (vector-ref chunk (- i chunk-start)))
      (values element add1 0 (lambda (i) (< i n)) #f #f))))
 
