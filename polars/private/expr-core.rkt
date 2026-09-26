@@ -198,7 +198,7 @@
                 "[(col(\"a\")) + (col(\"b\"))]")
   (check-equal? (expr->string (expr-alias (col "a") "b")) "col(\"a\").alias(\"b\")")
   (check-equal? (expr->string (expr-mul (col "v") (lit 10))) "[(col(\"v\")) * (dyn int: 10)]")
-  (check-equal? (expr->string (lit "hi")) "String(hi)")
+  (check-equal? (expr->string (lit "hi")) "\"hi\"")
   (check-equal? (expr->string (lit #t)) "true")
   (check-pred Expr-ptr? print-col)
   (check-true (cpointer? print-col))

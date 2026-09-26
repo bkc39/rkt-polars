@@ -284,7 +284,8 @@ total
   Joins @racket[right] onto @racket[left] on the shared key columns
   @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
   (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}.
+  @tech{lazyframe}. As in Python Polars, only a @racket['cross] join promises
+  a row order; sort the result when order matters.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
@@ -423,7 +424,13 @@ total
   Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
   (@tt{.round}). Each takes an expression or a bare column-name string (lifted
   with @racket[col]); @racket[round] on a plain number falls back to numeric
-  rounding. See @secref["fluent-shadowing"].}
+  rounding. Ties round to even in both cases, as in Python Polars and
+  @racketmodname[racket/base]. See @secref["fluent-shadowing"].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
+    (select (round "x")))
+(round 2.5)]}
 
 @deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
                                    [#:closed closed (or/c 'both 'left 'right 'none) 'both])
@@ -431,8 +438,8 @@ total
               @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
-  lifted with @racket[lit], which has no date spelling; cast a string instead:
-  @racket[(cast (lit "1982-12-31") 'date)].}
+  lifted with @racket[lit], which has no date spelling; parse a string instead:
+  @racket[(str-to-date (lit "1982-12-31"))].}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]

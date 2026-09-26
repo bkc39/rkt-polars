@@ -4,8 +4,10 @@
 
 `polars` is a Racket binding to the [Polars](https://pola.rs) DataFrame
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
-**0.41.3**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
-macOS arm64 ship with the package, so users need no Rust toolchain.
+**0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
+macOS arm64 ship with the package, so users need no Rust toolchain. The
+`dtype-decimal` feature is on only because polars' `sign` does not compile
+without it (#106); Decimal is not surfaced.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -103,7 +105,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file is reported at `collect`, not at scan.
+  file, or an invalid glob pattern, is reported at `collect`, not at scan.
+- `round` rounds ties to even, as Python Polars and `racket/base` do; `sign`
+  keeps the dtype, so a float column gives `-1.0` / `0.0` / `1.0`.
+- A `join` promises no row order except `'cross`, as Python's default
+  `maintain_order='none'`; sort the result when order matters.
+- Polars prints its own warnings to stderr. Casting a string to `'date` is
+  deprecated upstream: parse with `str-to-date`. Error wording follows the
+  crate, so tests match the stable part of a message (a name, a pattern).
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a

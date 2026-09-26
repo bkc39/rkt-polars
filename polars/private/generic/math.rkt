@@ -73,11 +73,18 @@
              (alias (pow (p-abs "x") 2) "p2"))))
   (define (c name i) (ref (ref out #:columns name) i))
   (check-equal? (c "abs" 0) 2.5)
-  (check-equal? (c "sign" 0) -1)    ; sign yields an integer
+  (check-equal? (c "sign" 0) -1.0)
   (check-equal? (c "fl" 0) -3.0)
   (check-equal? (c "ce" 0) -2.0)
   (check-equal? (c "cl" 0) -1.0)   ; clamped up to lower
   (check-equal? (c "cl" 4) 2.0)    ; clamped down to upper
   (check-= (c "sq" 4) 2.0 1e-9)    ; sqrt(|4.0|)
   (check-= (c "l2" 4) 2.0 1e-9)    ; log2(|4.0|)
-  (check-= (c "p2" 0) 6.25 1e-9))  ; (-2.5)^2 via |x|^2
+  (check-= (c "p2" 0) 6.25 1e-9)   ; (-2.5)^2 via |x|^2
+
+  (define ties '(-2.5 -1.5 -0.5 0.5 1.5 2.5 0.125 2.345))
+  (define ties-df (dataframe (list (series ties #:name "x"))))
+  (for ([decimals (in-list '(0 1 2))])
+    (define rounded (ref (select ties-df (p-round "x" #:decimals decimals)) "x"))
+    (check-equal? (for/list ([i (in-range (length ties))]) (ref rounded i))
+                  (map (lambda (x) (p-round x #:decimals decimals)) ties))))

@@ -146,8 +146,8 @@ binding's @racket[/] is Polars' @tt{Divide} operator, shown as @tt{//}, and
 @examples[#:eval ev #:label #f
 (~> df
     (filter (and (is-between "birthdate"
-                             (cast (lit "1982-12-31") 'date)
-                             (cast (lit "1996-01-01") 'date))
+                             (str-to-date (lit "1982-12-31"))
+                             (str-to-date (lit "1996-01-01")))
                  (> (col "height") 1.7))))
 ]
 

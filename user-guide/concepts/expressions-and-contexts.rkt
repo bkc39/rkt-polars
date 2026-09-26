@@ -56,8 +56,8 @@
 (displayln
  (~> df
      (filter (and (is-between "birthdate"
-                              (cast (lit "1982-12-31") 'date)
-                              (cast (lit "1996-01-01") 'date))
+                              (str-to-date (lit "1982-12-31"))
+                              (str-to-date (lit "1996-01-01")))
                   (> (col "height") 1.7)))))
 
 ;; group-by and aggregations

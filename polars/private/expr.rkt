@@ -1760,7 +1760,7 @@
            (expr-alias (expr-pow (expr-abs (col "x")) 2) "sq")
            (expr-alias (expr-log (expr-abs (col "x")) #:base 2) "log2"))))
   (check-equal? (col->list m "abs") '(2.4 1.0 0.0 1.6 4.0))
-  (check-equal? (col->list m "sign") '(-1 -1 0 1 1))
+  (check-equal? (col->list m "sign") '(-1.0 -1.0 0.0 1.0 1.0))
   (check-equal? (col->list m "r0") '(-2.0 -1.0 0.0 2.0 4.0))
   (check-equal? (col->list m "fl") '(-3.0 -1.0 0.0 1.0 4.0))
   (check-equal? (col->list m "ce") '(-2.0 -1.0 0.0 2.0 4.0))
@@ -1906,8 +1906,7 @@
   (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
              (lambda () (lazyframe-collect deferred)))
 
-  (define bad-glob-message
-    (with-handlers ([exn:fail? exn-message])
-      (lazyframe-scan-csv "/tmp/[.csv")))
-  (check-regexp-match #rx"^lazyframe-scan-csv: failed to scan /tmp/\\[\\.csv: .+" bad-glob-message)
-  (check-equal? (length (regexp-match* #rx"\\[\\.csv" bad-glob-message)) 1))
+  (define bad-glob (lazyframe-scan-csv "/tmp/[.csv"))
+  (check-pred LazyFrame-ptr? bad-glob)
+  (check-exn #rx"^lazyframe-collect: failed to collect the query: invalid glob pattern"
+             (lambda () (lazyframe-collect bad-glob))))

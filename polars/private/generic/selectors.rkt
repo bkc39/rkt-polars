@@ -98,13 +98,16 @@
   (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn #rx"the name 'x' is duplicate"
+  (check-exn #rx"duplicate output name 'x'"
              (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
   (check-pred Expr-ptr? (col #px"(?=a)"))
-  (check-exn #rx"look-around" (lambda () (select iris (col #px"(?=a)"))))
+  (check-exn #rx"invalid regex in selector '.*\\(\\?=a\\)"
+             (lambda () (select iris (col #px"(?=a)"))))
   (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
-  (check-exn #rx"look-around" (lambda () (select iris (exclude (all) #px"(?=a)"))))
-  (check-exn #rx"backreferences" (lambda () (select iris (col #px"(a)\\1"))))
+  (check-exn #rx"invalid regex in selector '.*\\(\\?=a\\)"
+             (lambda () (select iris (exclude (all) #px"(?=a)"))))
+  (check-exn #rx"invalid regex in selector '.*\\(a\\)\\\\1"
+             (lambda () (select iris (col #px"(a)\\1"))))
 
   (define odd-names
     '("d" "q1" "aa" "a" "a{2}" "w_x" "back\\slash" "br[ack]et" "amp&and" "tilde~x"
