@@ -56,6 +56,29 @@
           fi
         fi
       '';
+
+      # Resyntax for the project's suite (lint/, run by
+      # scripts/resyntax-lint.sh), at a pinned commit so that a new upstream
+      # rule cannot turn an unrelated PR red.  Dev shell only: `nix run
+      # .#bench` does not need it.
+      resyntaxSource = "https://github.com/jackfirth/resyntax.git#40f3497321f8590eb6a0b7c7984a9116323b7ebf";
+      lintSetup = pkgs: ''
+        lint_id=$(printf '%s' "${resyntaxSource}" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-16)
+        lint_stamp="$PLTUSERHOME/.resyntax-installed-$lint_id"
+        if [ ! -f "$lint_stamp" ]; then
+          echo "Installing Resyntax in $PLTUSERHOME"
+          rm -f "$PLTUSERHOME"/.resyntax-installed-* 2>/dev/null || true
+          # install skips an older pin that is already present; update moves it.
+          if raco pkg install --batch --auto --no-docs --scope user --skip-installed \
+               "${resyntaxSource}" \
+            && raco pkg update --batch --auto --no-docs --scope user "${resyntaxSource}"; then
+            touch "$lint_stamp"
+          else
+            echo "Resyntax setup FAILED — stamp not written; will retry next shell entry." >&2
+          fi
+        fi
+        export PATH="$(racket -e '(require setup/dirs)(display (path->string (find-user-console-bin-dir)))'):$PATH"
+      '';
     in
     {
       packages = forAllSystems (system:
@@ -320,9 +343,16 @@
             echo "OK: Racket $have >= $want"
             touch $out
           '';
+          # The no-syntax-rule gate, so that `nix flake check` covers it.
+          no-syntax-rule = pkgs.runCommand "rkt-polars-no-syntax-rule" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/no-syntax-rule.sh
+            touch $out
+          '';
         in
         {
-          inherit rustfmt racket-version;
+          inherit rustfmt racket-version no-syntax-rule;
           inherit (self.packages.${system}) rust racket;
         });
 
@@ -349,7 +379,7 @@
               (python pkgs)
             ];
 
-            shellHook = devSetup pkgs rust;
+            shellHook = devSetup pkgs rust + lintSetup pkgs;
           };
         });
     };

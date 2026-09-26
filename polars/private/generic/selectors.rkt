@@ -5,9 +5,10 @@
 
 (provide (contract-out
           [all (-> Expr-ptr?)]
-          [exclude (->* (multi-column-expr? (or/c string? regexp?))
-                        #:rest (listof (or/c string? regexp?))
-                        Expr-ptr?)]))
+          [exclude (-> multi-column-expr?
+                       (or/c string? regexp?)
+                       (or/c string? regexp?) ...
+                       Expr-ptr?)]))
 
 (define all expr-all)
 

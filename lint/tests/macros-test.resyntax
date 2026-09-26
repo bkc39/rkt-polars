@@ -1,0 +1,156 @@
+#lang resyntax/test
+
+
+require: lint/macros syntax-parse-migrations
+
+
+header:
+- #lang racket/base
+
+
+test: "define-syntax-rule becomes define-syntax-parse-rule where syntax/parse/define is required"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (swap! a b)
+  (let ([tmp a])
+    (set! a b)
+    (set! b tmp)))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (swap! a b)
+  (let ([tmp a])
+    (set! a b)
+    (set! b tmp)))
+------------------------------
+
+
+test: "patterns with ellipses keep them"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (my-let ([x e] ...) body ...)
+  ((lambda (x ...) body ...) e ...))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (my-let ([x e] ...) body ...)
+  ((lambda (x ...) body ...) e ...))
+------------------------------
+
+
+test: "a dotted rest pattern without an ellipsis is rewritten"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (my-list . args) (list . args))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (my-list . args) (list . args))
+------------------------------
+
+
+test: "a define-syntax-rule in an internal-definition context is rewritten"
+------------------------------
+(require syntax/parse/define)
+(define (show-twice x)
+  (define-syntax-rule (twice e) (begin e e))
+  (twice (displayln x)))
+==============================
+(require syntax/parse/define)
+(define (show-twice x)
+  (define-syntax-parse-rule (twice e) (begin e e))
+  (twice (displayln x)))
+------------------------------
+
+
+test: "a define-syntax-rule in a submodule is rewritten"
+------------------------------
+(require syntax/parse/define)
+(module+ test
+  (define-syntax-rule (twice e) (begin e e))
+  (twice (void)))
+==============================
+(require syntax/parse/define)
+(module+ test
+  (define-syntax-parse-rule (twice e) (begin e e))
+  (twice (void)))
+------------------------------
+
+
+test: "a single-clause syntax-rules macro becomes define-syntax-parse-rule"
+------------------------------
+(require syntax/parse/define)
+(define-syntax my-unless
+  (syntax-rules ()
+    [(_ c body ...) (if c (void) (begin body ...))]))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (my-unless c body ...)
+  (if c
+      (void)
+      (begin
+        body ...)))
+------------------------------
+
+
+no-change-test: "not rewritten where define-syntax-parse-rule is unbound"
+------------------------------
+(define-syntax-rule (swap! a b)
+  (let ([tmp a])
+    (set! a b)
+    (set! b tmp)))
+------------------------------
+
+
+no-change-test: "not rewritten where define-syntax-parse-rule is some other binding"
+------------------------------
+(define-syntax-rule (define-syntax-parse-rule . forms) (void))
+(define-syntax-rule (twice e) (begin e e))
+------------------------------
+
+
+no-change-test: "a single-clause syntax-rules macro is left alone where define-syntax-parse-rule is unbound"
+------------------------------
+(define-syntax my-unless
+  (syntax-rules ()
+    [(_ c body ...) (if c (void) (begin body ...))]))
+------------------------------
+
+
+no-change-test: "pattern variables containing a colon are left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (label a:b) 'a:b)
+------------------------------
+
+
+no-change-test: "pattern variables starting with a tilde are left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (quoted ~x) '~x)
+------------------------------
+
+
+no-change-test: "a pattern variable named ...+ is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (pair x ...+) '(x ...+))
+------------------------------
+
+
+no-change-test: "an ellipsis before a dotted tail is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (split (x y) ... . rest) '((x ...) rest))
+------------------------------
+
+
+no-change-test: "an escaped ellipsis in the pattern is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (dots (... ...) x) 'x)
+------------------------------
+
+
+no-change-test: "a macro that names itself is left alone"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (who-am-i) 'who-am-i)
+------------------------------

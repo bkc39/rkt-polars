@@ -15,7 +15,8 @@
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
-         polars/private/generic/dtype)
+         polars/private/generic/dtype
+         syntax/parse/define)
 
 (provide (all-defined-out))
 
@@ -29,7 +30,8 @@
   (if (series? other) other (const-series (series-dtype s) (series-len s) other)))
 
 ;; --- comparison operators ---------------------------------------------------
-(define-syntax-rule (define-cmp name expr-op series-op series-op-reflected base-op)
+(define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
+                                      series-op-reflected:expr base-op:expr)
   (define (name . args)
     (cond
       [(andmap base:number? args) (apply base-op args)]
@@ -59,7 +61,7 @@
         [(series? b) (wrap-series (series-op (cmp-other b a) b))]
         [else (base-op a b)]))
 
-(define-syntax-rule (define-arith name expr-op series-op base-op)
+(define-syntax-parse-rule (define-arith name:id expr-op:expr series-op:expr base-op:expr)
   (define (name . args)
     (cond
       [(andmap base:number? args) (apply base-op args)]   ; numeric fast path

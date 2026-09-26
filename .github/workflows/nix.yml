@@ -22,3 +22,30 @@ jobs:
 
       - name: Run flake checks
         run: nix flake check --print-build-logs
+
+  lint:
+    name: Lint (no-syntax-rule, resyntax)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Also a flake check; run first here for a fast, annotated failure.
+      - name: No define-syntax-rule
+        run: scripts/no-syntax-rule.sh
+
+      - name: Install Nix
+        if: ${{ !cancelled() }}
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Configure Nix Cache
+        if: ${{ !cancelled() }}
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+
+      # The dev shell installs the pinned Resyntax; the suite is lint/.
+      - name: Resyntax suite tests
+        if: ${{ !cancelled() }}
+        run: nix develop --command raco test lint
+
+      - name: Resyntax
+        if: ${{ !cancelled() }}
+        run: nix develop --command scripts/resyntax-lint.sh

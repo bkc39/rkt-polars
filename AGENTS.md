@@ -52,6 +52,15 @@ in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
 in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
+### Macros
+
+`define-syntax-parse-rule` (or `syntax-parse`), never `define-syntax-rule`,
+with a syntax class on each pattern variable (`name:id`, `op:expr`). Require
+the whole of `syntax/parse/define`: it also provides the syntax classes, and
+with only an `only-in` of `define-syntax-parse-rule` an annotation fails with
+"not defined as syntax class". The `no-syntax-rule` gate rejects any
+`define-syntax-rule`; the `resyntax` gate's suite rewrites the ones it can.
+
 ### Adding an FFI entry point
 
 Rust side: `#[no_mangle] pub extern "C"`, in the module for its family under
@@ -136,9 +145,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
   Racket build with tests and docs, `cargo fmt --check`, the Racket version
-  floor). `nix build .#racket` runs only the second and is not enough.
+  floor, no `define-syntax-rule`). `nix build .#racket` runs only the second
+  and is not enough. CI's Resyntax job is the one check it does not cover.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -153,6 +163,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
+- The lint gates are `scripts/no-syntax-rule.sh` (a grep; no shell needed)
+  and `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
+  The second runs the project's Resyntax suite, `lint/`: the default
+  recommendations minus the rules it disables, plus the project's own rules,
+  each tested by a `#lang resyntax/test` file (`raco test lint`). `lint/` is
+  outside the published package and the nix build never compiles it. A
+  review comment that is a semantics-preserving local rewrite becomes a rule
+  there; anything else becomes a grep gate. The Resyntax run takes minutes
+  (one large file alone takes about four), so it is not a push gate; CI runs
+  it on every PR.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
   nycflights file into `bench/data/` (gitignored) and prints the scoreboard
   (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table

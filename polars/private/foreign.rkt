@@ -776,20 +776,23 @@
 (define (bool->u8 b) (if b 1 0))
 
 (define (series-new-bool name bools)
-  (if (contains-polars-null? bools)
-      (let-values ([(clean-values valid) (values+valid bools #f)])
-        (series-new-bool/opt/raw name (map bool->u8 clean-values) valid))
-      (series-new-bool/raw name (map bool->u8 bools))))
+  (cond
+    [(contains-polars-null? bools)
+     (define-values (clean-values valid) (values+valid bools #f))
+     (series-new-bool/opt/raw name (map bool->u8 clean-values) valid)]
+    [else (series-new-bool/raw name (map bool->u8 bools))]))
 
 (define (series-new-bool/vec name bools)
-  (if (for/or ([value (in-vector bools)])
-        (polars-null? value))
-      (let-values ([(clean-values valid) (values+valid (vector->list bools) #f)])
-        (series-new-bool/opt/raw name (map bool->u8 clean-values) valid))
-      (series-new-bool/vec/raw name
-                               (for/vector #:length (vector-length bools)
-                                           ([b (in-vector bools)])
-                                 (bool->u8 b)))))
+  (cond
+    [(for/or ([value (in-vector bools)])
+       (polars-null? value))
+     (define-values (clean-values valid) (values+valid (vector->list bools) #f))
+     (series-new-bool/opt/raw name (map bool->u8 clean-values) valid)]
+    [else
+     (series-new-bool/vec/raw name
+                              (for/vector #:length (vector-length bools)
+                                          ([b (in-vector bools)])
+                                (bool->u8 b)))]))
 
 (module+ test
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
@@ -978,9 +981,9 @@
        [(float64) (require-ref-value dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
        [(boolean)
         (define value (series-ref-bool/raw s index))
-        (if (zero? (CompatOptBool-valid value))
-            (error 'series-ref "could not read non-null value for dtype ~v" dtype)
-            (compat-opt-bool->datum value))]
+        (when (zero? (CompatOptBool-valid value))
+          (error 'series-ref "could not read non-null value for dtype ~v" dtype))
+        (compat-opt-bool->datum value)]
        [(string) (require-ref-value dtype (series-ref-str/raw s index))]
        [(date)
         (require-ref-value dtype
@@ -1125,9 +1128,9 @@
              (lambda () (series-ref ref-i32 3))))
 
 (define (require-series-result who result)
-  (if result
-      (cast result _pointer _Series-ptr)
-      (error who "operation failed")))
+  (unless result
+    (error who "operation failed"))
+  (cast result _pointer _Series-ptr))
 
 (define-compat series-cast/c
   (_fun _Series-ptr _CompatDType -> _pointer)
@@ -1332,11 +1335,11 @@
   #:wrap (allocator dataframe-drop))
 
 (define (require-dataframe-result who result)
-  (if result
-      (let ([df (cast result _pointer _DataFrame-ptr)])
-        (register-finalizer df dataframe-drop)
-        df)
-      (error who "operation failed")))
+  (unless result
+    (error who "operation failed"))
+  (define df (cast result _pointer _DataFrame-ptr))
+  (register-finalizer df dataframe-drop)
+  df)
 
 (define-cstruct _Shape
   ([rows _size]

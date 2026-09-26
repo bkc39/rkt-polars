@@ -57,7 +57,11 @@
     [(numeric-dtype? dt)
      (stats-frame describe-stat-names (numeric-describe-values s))]
     [(eq? dt 'boolean)
-     (define (bool->f v) (if (polars-null? v) v (if v 1.0 0.0)))
+     (define (bool->f v)
+       (cond
+         [(polars-null? v) v]
+         [v 1.0]
+         [else 0.0]))
      (stats-frame '("count" "null_count" "mean" "min" "max")
                   (list (exact->inexact count) (exact->inexact nulls)
                         (->f64-or-null (mean s)) (bool->f (min s)) (bool->f (max s))))]
@@ -76,7 +80,11 @@
   (cond
     [(numeric-dtype? dt) (numeric-describe-values s)]
     [(eq? dt 'boolean)
-     (define (bool->f v) (if (polars-null? v) v (if v 1.0 0.0)))
+     (define (bool->f v)
+       (cond
+         [(polars-null? v) v]
+         [v 1.0]
+         [else 0.0]))
      (list (exact->inexact count) (exact->inexact nulls) (->f64-or-null (mean s))
            polars-null (bool->f (min s)) polars-null polars-null polars-null (bool->f (max s)))]
     [else

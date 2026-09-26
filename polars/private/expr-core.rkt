@@ -104,7 +104,7 @@
   (cond
     [(boolean? v) (expr-lit-bool v)]
     [(exact-integer? v)
-     (if (and (>= v -2147483648) (<= v 2147483647))
+     (if (<= -2147483648 v 2147483647)
          (expr-lit-i32 v)
          (expr-lit-i64 v))]
     [(real? v) (expr-lit-f64 (exact->inexact v))]
