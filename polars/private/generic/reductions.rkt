@@ -1,12 +1,5 @@
 #lang racket/base
 
-;; dtype-dispatched reductions (sum / mean / min / max) and the Polars-style
-;; aggregator spellings (count / n-unique / median / std / var / first / last /
-;; alias).  Numeric series reduce via the fast typed FFI; non-numeric series
-;; (string / temporal / boolean) reduce via the expr engine through the single
-;; `series-agg-via-expr` helper — the one home for that computation (describe
-;; reuses min/max/mean rather than duplicating it).
-
 (require racket/match
          (prefix-in base: racket/base)
          polars/private/foreign
@@ -52,10 +45,6 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
-;; reduce a series to a scalar via the expr engine — handles every dtype,
-;; including string/temporal min/max and boolean mean.  Single home for the
-;; expr-based reduction (shared by the non-numeric paths below and, through
-;; them, by describe).
 (define (series-agg-via-expr expr-op s)
   (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))

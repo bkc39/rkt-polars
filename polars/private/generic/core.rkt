@@ -1,12 +1,5 @@
 #lang racket/base
 
-;; The wrapper core: the series / dataframe wrapper structs, their capability
-;; generics (ref / len / shape / dtype / null-count), the smart constructors,
-;; the dataframe accessors, and ref dispatch.  `describe` is NOT a struct method
-;; (it's a plain function in describe.rkt that reuses the public reductions);
-;; keeping it out of the struct is what lets reductions depend on this core
-;; without a cycle.
-
 (require racket/generic
          (only-in ffi/unsafe prop:cpointer)
          polars/private/foreign
