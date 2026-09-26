@@ -169,6 +169,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
+- `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
+  nycflights file into `bench/data/` (gitignored) and prints the scoreboard
+  (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table
+  (`bench/perf.rkt`, `bench/perf.py`) for the working tree. Each nycflights
+  leg (#88) reports it before and after, from a quiet host: the table's
+  header prints the load average, and a Rust build alongside moves ratios
+  several-fold. `bench/` is outside the published
+  package; nothing under `polars/` may depend on it. A check for API a leg
+  has not landed yet resolves it at run time and reports FAIL with the
+  reason, so the harness compiles against master.
 
 ## Process
 

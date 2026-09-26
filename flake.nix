@@ -18,6 +18,44 @@
       # The Racket release this flake targets; nixpkgs supplies the actual
       # toolchain, and the `racket-version` check asserts it is at least this.
       minRacketVersion = "9.3";
+
+      # Python with polars, for the side-by-side reference programs under
+      # user-guide/ and bench/perf.py; numpy is what polars' to_numpy needs.
+      python = pkgs: pkgs.python3.withPackages (ps: [ ps.polars ps.numpy ]);
+
+      # The dev shell's setup, shared with `nix run .#bench` so that both run
+      # the working tree through the same PLTUSERHOME.
+      devSetup = pkgs: rust: ''
+        export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
+
+        # PLTUSERHOME must live outside $PWD: raco pkg install --link
+        # rejects a link target that overlaps with a collects dir, and
+        # PLTUSERHOME contains a collects dir.  Key the location on a
+        # hash of the project path so multiple checkouts don't collide.
+        cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/rkt-polars-devshell"
+        project_id=$(printf '%s' "$PWD" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-12)
+        export PLTUSERHOME="$cache_root/$project_id"
+        mkdir -p "$PLTUSERHOME"
+
+        mkdir -p "$PWD/polars/native-libs"
+        cp -f ${rust}/lib/libcompat.* "$PWD/polars/native-libs/"
+
+        # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
+        info_hash=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-16)
+        deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
+        if [ ! -f "$deps_stamp" ]; then
+          echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
+          rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
+          if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
+               --name rkt-polars "$PWD" \
+            && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
+            touch "$deps_stamp"
+            echo "Done. Run 'raco test -x -c polars' to test."
+          else
+            echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
+          fi
+        fi
+      '';
     in
     {
       packages = forAllSystems (system:
@@ -195,10 +233,30 @@
               ls -la "$DEST"
             '';
           };
+
+          bench = pkgs.writeShellApplication {
+            name = "bench";
+            meta.description = "Print the nycflights scoreboard and the rkt-polars / Python polars ratio table";
+            runtimeInputs = [
+              pkgs.racket
+              (python pkgs)
+              pkgs.coreutils
+              pkgs.curl
+              pkgs.gawk
+            ];
+            text = ''
+              if [ ! -x bench/run.sh ] || [ ! -f polars/info.rkt ]; then
+                echo "bench: run from the root of an rkt-polars checkout" >&2
+                exit 1
+              fi
+            '' + devSetup pkgs rust + ''
+              exec ${pkgs.bash}/bin/bash bench/run.sh "$@"
+            '';
+          };
         in
         {
           default = racket;
-          inherit rust racket racket-deps copy-native-libs;
+          inherit rust racket racket-deps copy-native-libs bench;
         });
 
       apps = forAllSystems (system: {
@@ -206,6 +264,11 @@
           type = "app";
           program = "${self.packages.${system}.copy-native-libs}/bin/copy-native-libs";
           meta.description = "Copy the Nix-built libcompat shared library into polars/native-libs";
+        };
+        bench = {
+          type = "app";
+          program = "${self.packages.${system}.bench}/bin/bench";
+          meta.description = "Print the nycflights scoreboard and the rkt-polars / Python polars ratio table";
         };
       });
 
@@ -284,42 +347,10 @@
               pkgs.stdenv.cc
               # `nix fmt` / the flake's formatter output.
               pkgs.nixfmt-rfc-style
-              # Python with polars, for the side-by-side reference programs
-              # under user-guide/ (e.g. python user-guide/getting-started/*.py).
-              (pkgs.python3.withPackages (ps: [ ps.polars ]))
+              (python pkgs)
             ];
 
-            shellHook = ''
-              export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
-
-              # PLTUSERHOME must live outside $PWD: raco pkg install --link
-              # rejects a link target that overlaps with a collects dir, and
-              # PLTUSERHOME contains a collects dir.  Key the location on a
-              # hash of the project path so multiple checkouts don't collide.
-              cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/rkt-polars-devshell"
-              project_id=$(printf '%s' "$PWD" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-12)
-              export PLTUSERHOME="$cache_root/$project_id"
-              mkdir -p "$PLTUSERHOME"
-
-              mkdir -p "$PWD/polars/native-libs"
-              cp -f ${rust}/lib/libcompat.* "$PWD/polars/native-libs/"
-
-              # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
-              info_hash=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-16)
-              deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
-              if [ ! -f "$deps_stamp" ]; then
-                echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
-                rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
-                if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
-                     --name rkt-polars "$PWD" \
-                  && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
-                  touch "$deps_stamp"
-                  echo "Done. Run 'raco test -x -c polars' to test."
-                else
-                  echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
-                fi
-              fi
-            '';
+            shellHook = devSetup pkgs rust;
           };
         });
     };
