@@ -29,5 +29,6 @@
 (write-csv df csv-path)
 
 (define df-csv (read-csv csv-path #:try-parse-dates #t))
+(delete-file csv-path)
 
 (displayln df-csv)

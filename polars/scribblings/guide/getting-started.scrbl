@@ -46,6 +46,10 @@ Round-trip through CSV with @racket[write-csv] and @racket[read-csv];
 (read-csv csv-path #:try-parse-dates #t)
 ]
 
+@examples[#:eval ev #:hidden
+(delete-file csv-path)
+]
+
 API gap: no date dtype from gregor @tt{date} values.
 
 @section[#:tag "gs-expressions-contexts"]{Expressions and contexts}
