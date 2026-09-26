@@ -51,6 +51,14 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expression expansion | `expression-expansion.rkt` | `expression_expansion.py` |
 | Window functions | `window-functions.rkt` | `window_functions.py` |
 
+`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
+[multiple files](https://docs.pola.rs/user-guide/io/multiple/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| CSV, with the reading options | `csv.rkt` | `csv.py` |
+| Multiple files | `multiple.rkt` | `multiple.py` |
+
 `interop/` — upstream [Arrow producer/consumer](https://docs.pola.rs/user-guide/misc/arrow/) and [Visualization](https://docs.pola.rs/user-guide/misc/visualization/), through `to_list` / `to_dict` / `to_numpy`
 
 | Topic | Racket | Python |
@@ -59,4 +67,5 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Numeric buffers (`to_numpy`; the Python side needs numpy) | `numeric-buffers.rkt` | `numeric_buffers.py` |
 | Data for a plot | `visualization.rkt` | `visualization.py` |
 
-`data/` holds the small CSV inputs the scripts read.
+`data/` holds the small CSV inputs the scripts read; the `io/` scripts read
+the fixtures under `polars/scribblings/data/`, which the manual uses too.
