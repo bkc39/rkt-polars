@@ -385,8 +385,9 @@ total
   U+FFFD.
 
   The result is @racket[(collect (scan-csv path ....))] with the same
-  keywords, plus one check, stricter than Python's @tt{read_csv}, which
-  returns the one column. When @racket[separator] is @racket[#f] and the
+  keywords; as in Python, a single file is read eagerly rather than through
+  a plan, which is faster. There is one extra check, stricter than Python's
+  @tt{read_csv}, which returns the one column. When @racket[separator] is @racket[#f] and the
   file reads as one column whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to
   pass --- unless the first row is not a string, or splits into a different

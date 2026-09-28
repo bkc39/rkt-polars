@@ -120,9 +120,15 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
-- `read-csv` is `(collect (scan-csv ...))` with the same keywords: one Rust
-  entry point, `dataframe_read_csv_with_options`, builds the scan and
-  collects it. The one difference is the separator guard: when
+- `read-csv` returns what `(collect (scan-csv ...))` returns for the same
+  keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
+  reads a glob pattern by scan and collect, and a single file with 0.55's
+  eager `CsvReader`, which is about three times faster on nycflights. Both
+  are built from one decoded request, and a table-driven Rust test holds
+  the eager, one-file-glob and scan reads to identical frames and error
+  texts, with three listed exceptions (a malformed-quote error's chunk
+  locator; an `#:n-rows 0` read of invalid UTF-8 fails eagerly). The one
+  deliberate difference is the separator guard: when
   `#:separator` is not given, a one-column result whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
