@@ -92,8 +92,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
-  unwinds out of an `extern "C"` function aborts the Racket process, and crate
-  0.41.3 panics on some inputs where later versions return an error (#108).
+  unwinds out of an `extern "C"` function aborts the Racket process, and
+  polars panics on some inputs where it could return an error (crate 0.41.3
+  did so on a nulls-last boolean sort and a null-dtype `arg_sort`; 0.55.2
+  does neither, `rust/src/tests/crate_sort.rs`, and #108 removes the
+  routing around them).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today

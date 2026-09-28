@@ -60,9 +60,10 @@ fn sort_frame(
     names: Vec<String>,
     opts: SortMultipleOptions,
 ) -> PolarsResult<DataFrame> {
-    let by = df.select_series(names)?;
+    let by = df.select_to_vec(names)?;
     if let [key] = by.as_slice() {
         if df.width() == 1 {
+            let key = key.as_materialized_series();
             return Ok(sort_series(key, SortOptions::from(&opts))?.into_frame());
         }
     }

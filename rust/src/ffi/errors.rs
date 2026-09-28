@@ -27,9 +27,9 @@ pub(crate) fn record<T, E: std::fmt::Display>(
 }
 
 /// A panic that unwinds out of an `extern "C"` function aborts the host
-/// process, and polars 0.41.3 panics on some inputs where later versions
-/// return an error, so an entry point that runs polars code on
-/// caller-controlled data records the panic as the failure reason instead.
+/// process, and polars panics on some inputs where it could return an error,
+/// so an entry point that runs polars code on caller-controlled data records
+/// the panic as the failure reason instead.
 pub(crate) fn guard_panic<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(
         |payload| {

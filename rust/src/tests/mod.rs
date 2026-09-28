@@ -2,6 +2,7 @@ use super::*;
 use std::ptr;
 
 mod abi;
+mod crate_sort;
 mod dataframe;
 mod expr;
 mod last_error;

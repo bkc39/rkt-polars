@@ -172,8 +172,10 @@ pub extern "C" fn expr_sort_with_options(
     // around the `sort_with` defects; the default sort has none of them.
     let sorted = if opts.descending || opts.nulls_last {
         inner.apply(
-            move |s| sort_series(&s, opts).map(Some),
-            GetOutput::same_type(),
+            move |c| {
+                sort_series(c.as_materialized_series(), opts).map(Column::from)
+            },
+            |_, field| Ok(field.clone()),
         )
     } else {
         inner.sort(opts)
