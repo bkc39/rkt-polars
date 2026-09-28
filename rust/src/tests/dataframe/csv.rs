@@ -229,6 +229,38 @@ fn schema_overrides_set_the_named_columns_only() {
 }
 
 #[test]
+fn a_time_override_parses_times_of_day() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "t.csv", b"t,d\n05:00:00,1h\n06:30:15,2h\n");
+    let time = Csv {
+        overrides: vec![(
+            cstr("t"),
+            dtype(CompatDTypeTag::Time, CompatTimeUnit::None),
+        )],
+        ..Default::default()
+    };
+    let df = time.read(&path);
+    let t = df.column("t").unwrap();
+    assert_eq!(t.dtype(), &DataType::Time);
+    assert_eq!(t.null_count(), 0);
+    let nanos = t.cast(&DataType::Int64).unwrap();
+    assert_eq!(
+        nanos.i64().unwrap().get(1),
+        Some((6 * 3600 + 30 * 60 + 15) * 1_000_000_000)
+    );
+
+    let duration = Csv {
+        overrides: vec![(
+            cstr("d"),
+            dtype(CompatDTypeTag::Duration, CompatTimeUnit::Microseconds),
+        )],
+        ..Default::default()
+    };
+    let msg = duration.read_err(&path);
+    assert!(msg.contains("duration"), "{:?}", msg);
+}
+
+#[test]
 fn an_unsupported_override_names_its_column() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "o.csv", b"a\n1\n");
@@ -350,26 +382,34 @@ fn a_glob_reads_every_match_in_sorted_order() {
     assert!(eager.equals_missing(&lazy));
 }
 
+fn empty_expansion(msg: &str) -> bool {
+    msg.starts_with("failed to retrieve ")
+        && msg.contains(": expanded paths were empty (path expansion input: ")
+}
+
 #[test]
-fn a_glob_matching_nothing_says_so_at_scan() {
+fn a_glob_matching_nothing_says_so_at_collect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let pattern = dir.path().join("*.csv");
     let msg = Csv::default().read_err(&pattern);
-    assert_eq!(msg, "no files match the pattern");
-    let msg = Csv::default().scan_err(&pattern);
-    assert_eq!(msg, "no files match the pattern");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    let lf = Csv::default().call(&pattern, lazyframe_scan_csv_with_options);
+    assert!(!lf.is_null(), "{:?}", recorded_error());
+    assert!(lazyframe_collect(lf).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    lazyframe_drop(lf);
 
     let p = cstr(dir.path().join("*.parquet").to_str().unwrap());
     assert!(dataframe_read_parquet(p.as_ptr()).is_null());
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("no files match the pattern")
-    );
-    assert!(lazyframe_scan_parquet_options(p.as_ptr(), 0, 0).is_null());
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("no files match the pattern")
-    );
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    let lf = lazyframe_scan_parquet_options(p.as_ptr(), 0, 0);
+    assert!(!lf.is_null(), "{:?}", recorded_error());
+    assert!(lazyframe_collect(lf).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    lazyframe_drop(lf);
 }
 
 #[test]
@@ -398,7 +438,7 @@ fn a_missing_file_keeps_the_os_reason_without_the_path() {
 }
 
 #[test]
-fn an_override_for_an_absent_column_is_an_error_not_a_rename() {
+fn an_override_for_an_absent_column_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "ab.csv", b"a,b\n1,2\n");
     let csv = Csv {
@@ -468,10 +508,10 @@ fn parquet_reads_a_glob_in_sorted_order() {
 fn parquet_single_file_read_matches_the_reader_it_replaced() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("one.parquet");
-    let mut expected = DataFrame::new(vec![
-        Series::new("i", [Some(1i64), None, Some(3)]),
-        Series::new("s", [Some("a"), Some("b"), None]),
-        Series::new("f", [1.5f64, 2.5, 3.5]),
+    let mut expected = DataFrame::new_infer_height(vec![
+        Column::new("i".into(), [Some(1i64), None, Some(3)]),
+        Column::new("s".into(), [Some("a"), Some("b"), None]),
+        Column::new("f".into(), [1.5f64, 2.5, 3.5]),
     ])
     .unwrap();
     let file = std::fs::File::create(&path).unwrap();
@@ -494,7 +534,9 @@ fn a_single_parquet_file_under_a_hive_directory_gains_no_columns() {
     let hive = dir.path().join("year=2013");
     std::fs::create_dir(&hive).unwrap();
     let path = hive.join("one.parquet");
-    let mut df = DataFrame::new(vec![Series::new("x", [1i64, 2])]).unwrap();
+    let mut df =
+        DataFrame::new_infer_height(vec![Column::new("x".into(), [1i64, 2])])
+            .unwrap();
     let file = std::fs::File::create(&path).unwrap();
     ParquetWriter::new(file).finish(&mut df).unwrap();
 
@@ -541,7 +583,7 @@ fn strings(df: &DataFrame, name: &str) -> Vec<String> {
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .map(|v| v.expect("no nulls").to_string())
         .collect()
 }

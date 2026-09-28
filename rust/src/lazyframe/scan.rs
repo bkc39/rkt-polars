@@ -12,16 +12,6 @@ pub(crate) fn scan(
         .map_or(ptr::null_mut(), |lf| Box::into_raw(Box::new(lf)))
 }
 
-pub(crate) fn require_files(lf: LazyFrame) -> PolarsResult<LazyFrame> {
-    if let DslPlan::Scan { paths, .. } = &lf.logical_plan {
-        polars_ensure!(
-            !paths.is_empty(),
-            ComputeError: "no files match the pattern"
-        );
-    }
-    Ok(lf)
-}
-
 pub(crate) fn parquet_scan(
     path: &str,
     n_rows: Option<usize>,
@@ -34,7 +24,7 @@ pub(crate) fn parquet_scan(
         },
         ..Default::default()
     };
-    LazyFrame::scan_parquet(path, args).and_then(require_files)
+    LazyFrame::scan_parquet(path.into(), args)
 }
 
 #[no_mangle]

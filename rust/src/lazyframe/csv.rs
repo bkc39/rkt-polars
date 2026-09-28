@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::{
-    collect_c_strings, collect_frame, polars_dtype_from_compat, require_files,
-    scan, CompatCsvOptions, CompatDType, PathRules,
+    collect_c_strings, collect_frame, polars_dtype_from_compat, scan,
+    CompatCsvOptions, CompatDType, PathRules,
 };
 
 struct CsvArrays {
@@ -30,7 +30,11 @@ fn decode_null_values(
     let values = unsafe { collect_c_strings(ptrs, len) }.ok_or_else(
         || polars_err!(ComputeError: "null values are not valid UTF-8 strings"),
     )?;
-    Ok((!values.is_empty()).then_some(NullValues::AllColumns(values)))
+    Ok((!values.is_empty()).then(|| {
+        NullValues::AllColumns(
+            values.into_iter().map(PlSmallStr::from).collect(),
+        )
+    }))
 }
 
 fn decode_overrides(
@@ -54,7 +58,7 @@ fn decode_overrides(
         .zip(dtypes)
         .map(|(name, dtype)| {
             polars_dtype_from_compat(dtype)
-                .map(|dtype| Field::new(name, dtype))
+                .map(|dtype| Field::new(name.into(), dtype))
                 .ok_or_else(|| {
                     polars_err!(ComputeError: "unsupported dtype for column {:?}", name)
                 })
@@ -68,12 +72,12 @@ fn parse_reader(
     options: &CompatCsvOptions,
     comment_prefix: Option<&str>,
 ) -> LazyCsvReader {
-    LazyCsvReader::new(path)
+    LazyCsvReader::new(path.into())
         .with_glob(options.glob)
         .with_has_header(options.has_header)
         .with_separator(options.separator)
         .with_quote_char(options.has_quote_char.then_some(options.quote_char))
-        .with_comment_prefix(comment_prefix)
+        .with_comment_prefix(comment_prefix.map(PlSmallStr::from))
         .with_skip_rows(options.skip_rows)
         .with_encoding(if options.lossy_utf8 {
             CsvEncoding::LossyUtf8
@@ -89,7 +93,7 @@ fn require_override_columns(
     let names = header
         .with_infer_schema_length(Some(0))
         .finish()?
-        .schema()?;
+        .collect_schema()?;
     let missing: Vec<String> = overrides
         .iter_names()
         .filter(|name| !names.contains(name))
@@ -129,8 +133,7 @@ fn csv_scan(
         .with_dtype_overwrite(overrides.clone())
         .with_ignore_errors(options.ignore_errors)
         .with_try_parse_dates(options.try_parse_dates)
-        .finish()
-        .and_then(require_files)?;
+        .finish()?;
     if let Some(overrides) = &overrides {
         require_override_columns(reader, overrides)?;
     }
