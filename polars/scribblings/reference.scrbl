@@ -662,11 +662,7 @@ total
                       (~> (col "v") max (over (> (col "v") 1)) (alias "band_max"))))
 (eval:error (over (col "v")))]}
 
-@deftogether[(@defproc[(sort-by [x (or/c Expr-ptr? string?)]
-                                [#:by by (or/c string? Expr-ptr? (listof (or/c string? Expr-ptr?)))]
-                                [#:descending descending (or/c boolean? (listof boolean?)) #f])
-                       Expr-ptr?]
-              @defproc[(rank [x (or/c Expr-ptr? string?)]
+@deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
                              [#:seed seed (or/c exact-nonnegative-integer? #f) #f])
@@ -674,9 +670,8 @@ total
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series? (listof exact-integer?))])
                        Expr-ptr?])]{
-  Ordering within a column (@tt{.sort_by}, @tt{.rank}, @tt{.gather}).
-  @racket[sort-by] reorders @racket[x] by the @racket[#:by] keys, with
-  @racket[#:descending] one flag or one per key. @racket[rank] numbers each
+  Ordering within a column (@tt{.rank}, @tt{.gather}); @racket[sort-by] is
+  documented with the other sorts. @racket[rank] numbers each
   value by its place in the sorted order, ties resolved by
   @racket[#:method]; the result is @racket['uint32], or @racket['float64]
   for @racket['average]. @racket[gather] picks values by position. Each
@@ -689,8 +684,6 @@ total
 (~> scores
     (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
-(~> scores (select (sort-by "name" #:by (list "score" "name") #:descending '(#t #f))
-                   (sort-by "score" #:by "score" #:descending #t)))
 (~> scores (select (gather "name" '(3 0))))
 (eval:error (rank "score" #:method 'first))]}
 

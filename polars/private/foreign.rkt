@@ -2254,6 +2254,10 @@
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
+  (define (settle!)
+    (for ([_ (in-range 4)])
+      (collect-garbage)
+      (sleep 0.1)))
   (define (sort-blame? rx)
     (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e)))))
   (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
