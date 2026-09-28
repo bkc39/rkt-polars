@@ -1,14 +1,8 @@
 #lang racket/base
 
-;; The wrapper core: the series / dataframe wrapper structs, their capability
-;; generics (ref / len / shape / dtype / null-count), the smart constructors,
-;; the dataframe accessors, and ref dispatch.  `describe` is NOT a struct method
-;; (it's a plain function in describe.rkt that reuses the public reductions);
-;; keeping it out of the struct is what lets reductions depend on this core
-;; without a cycle.
-
 (require racket/generic
          (only-in ffi/unsafe prop:cpointer)
+         (only-in polars/private/bulk in-series)
          polars/private/foreign
          polars/private/generic/dtype
          polars/private/generic/printing)
@@ -51,6 +45,7 @@
   #:property prop:custom-write
   (lambda (s port mode)
     (write-string (series->string s) port))
+  #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
      (series-ref* s key columns rows))]
@@ -85,7 +80,7 @@
      (define-values (rows cols) (dataframe-shape d))
      (list rows cols))])
 
-(define dataframe? dataframe-rec?)
+(define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
 
 ;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
@@ -107,7 +102,7 @@
   #:property prop:custom-write
   (lambda (lf port mode) (write-string "#<lazyframe>" port)))
 
-(define lazyframe? lazyframe-rec?)
+(define (lazyframe? v) (lazyframe-rec? v))
 (define (wrap-lazyframe ptr) (lazyframe-rec ptr))
 
 ;; ---------------------------------------------------------------------------
@@ -125,27 +120,6 @@
 (define (column-names d)
   (guard-dataframe 'column-names d)
   (dataframe-column-names d))
-
-;; csv round-trip, prefix-free (Polars' df.write_csv / pl.read_csv).
-(define (write-csv d path)
-  (guard-dataframe 'write-csv d)
-  (dataframe-write-csv d path))
-(define (read-csv path)
-  (wrap-dataframe (dataframe-read-csv path)))
-
-;; parquet round-trip (Polars' df.write_parquet / pl.read_parquet).
-(define (write-parquet d path)
-  (guard-dataframe 'write-parquet d)
-  (dataframe-write-parquet d path))
-(define (read-parquet path)
-  (wrap-dataframe (dataframe-read-parquet path)))
-
-;; newline-delimited JSON / JSON Lines (Polars' df.write_ndjson / pl.read_ndjson).
-(define (write-ndjson d path)
-  (guard-dataframe 'write-ndjson d)
-  (dataframe-write-json-lines d path))
-(define (read-ndjson path)
-  (wrap-dataframe (dataframe-read-json-lines path)))
 
 ;; shape as a list (examples); shape/values is the multiple-values variant.
 (define (shape/values x) (apply values (shape x)))
@@ -198,7 +172,7 @@
 (module+ test
   ;; fixtures are inline here: core can't require test-fixtures (which requires
   ;; core) without a compile-time cycle.
-  (require rackunit racket/file (only-in gregor datetime))
+  (require rackunit (only-in gregor datetime) (only-in racket/sequence sequence->list))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -247,6 +221,12 @@
   (check-equal? (dtype ints) 'int32)
   (check-equal? (null-count withnull) 1)
 
+  (check-true (sequence? withnull))
+  (check-equal? (for/list ([x withnull]) x) (list 10 polars-null 30))
+  (for ([_ (in-range 2)])
+    (check-equal? (sequence->list withnull) (list 10 polars-null 30)))
+  (check-false (sequence? frame))
+
   ;; dataframe wrapper + shape / len / width / height / column metadata
   (check-pred dataframe? frame)
   (check-false (dataframe? ints))
@@ -257,26 +237,6 @@
   (check-equal? (width frame) 3)
   (check-equal? (column-name frame 0) "user")
   (check-equal? (column-names frame) '("user" "score" "cost"))
-
-  ;; csv round-trip: write-csv -> read-csv preserves shape + column names
-  (define csv-tmp (make-temporary-file "rkt-polars-test-~a.csv"))
-  (write-csv frame csv-tmp)
-  (define frame-rt (read-csv csv-tmp))
-  (check-pred dataframe? frame-rt)
-  (check-equal? (shape frame-rt) '(3 3))
-  (check-equal? (column-names frame-rt) '("user" "score" "cost"))
-  (delete-file csv-tmp)
-
-  ;; parquet + ndjson round-trips preserve shape + column names
-  (define pq-tmp (make-temporary-file "rkt-polars-test-~a.parquet"))
-  (write-parquet frame pq-tmp)
-  (check-equal? (shape (read-parquet pq-tmp)) '(3 3))
-  (check-equal? (column-names (read-parquet pq-tmp)) '("user" "score" "cost"))
-  (delete-file pq-tmp)
-  (define nd-tmp (make-temporary-file "rkt-polars-test-~a.jsonl"))
-  (write-ndjson frame nd-tmp)
-  (check-equal? (shape (read-ndjson nd-tmp)) '(3 3))
-  (delete-file nd-tmp)
 
   ;; ref: single column (positional or #:columns) -> series; list -> dataframe
   (check-pred series? (ref frame "score"))

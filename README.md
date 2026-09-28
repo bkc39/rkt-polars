@@ -149,6 +149,8 @@ cargo fmt --manifest-path rust/Cargo.toml --all --check    # same check as CI
 cd rust && cargo build --release
 cp target/release/libcompat.dylib ../polars/native-libs/   # macOS
 cd .. && raco test -x -c polars
+raco test user-guide                                       # the guide's scripts
+raco test -e -Q --empty-stdin -j 8 examples                # every numbered example
 ```
 
 On macOS, `otool -D polars/native-libs/libcompat.dylib` should print
