@@ -231,8 +231,11 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/operators
+           (only-in polars/private/foreign dataframe-sort)
            polars/private/generic/reductions
            polars/private/generic/test-fixtures)
+
+  (define (sorted-by d key) (wrap-dataframe (dataframe-sort d (list key))))
 
   ;; clone / rename / rename!
   (define original (series '(1 2 3) #:name "orig" #:dtype 'i32))
@@ -368,7 +371,7 @@
   (let* ([cells (dataframe (list (series '(1 1 2 2 2) #:name "id")
                                  (series '("x" "y" "x" "y" "y") #:name "k")
                                  (series '(10 11 20 21 22) #:name "v")))]
-         [pv (sort (pivot cells #:on '("k") #:index '("id") #:values '("v")) "id")])
+         [pv (sorted-by (pivot cells #:on '("k") #:index '("id") #:values '("v")) "id")])
     (check-equal? (column-names pv) '("id" "x" "y"))
     (check-equal? (dtype (ref pv "y")) 'int64)
     (check-equal? (column pv "y") '(11 21))
@@ -377,9 +380,9 @@
   (let* ([gaps (dataframe (list (series '(1 2 2) #:name "id")
                                 (series '("y" "x" "y") #:name "k")
                                 (series (list 10 polars-null 21) #:name "v")))]
-         [sums (sort (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'sum) "id")]
-         [counts (sort (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'count) "id")]
-         [inferred (sort (pivot gaps #:on '("k") #:index '() #:values '("v") #:agg 'sum) "id")])
+         [sums (sorted-by (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'sum) "id")]
+         [counts (sorted-by (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'count) "id")]
+         [inferred (sorted-by (pivot gaps #:on '("k") #:index '() #:values '("v") #:agg 'sum) "id")])
     (check-equal? (column-names sums) '("id" "x" "y"))
     (check-equal? (column sums "x") '(0 0))
     (check-equal? (column counts "x") '(0 1))

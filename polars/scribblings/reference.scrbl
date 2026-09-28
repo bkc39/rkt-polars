@@ -329,11 +329,8 @@ total
   @racket[by] (@tt{Expr.sort_by}); a column name is lifted with @racket[col]
   in either place. The keywords mean what they mean for a frame
   @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
-  length and name.
-
-  API gap: inside @racket[agg] or @racket[over], when @racket[x] is itself
-  group-aware (@racketidfont{shift}, @racketidfont{diff}), the Polars 0.41.3 crate drops
-  @racket[nulls-last] and puts the nulls first.
+  length and name. Inside @racket[agg] or @racket[over] it sorts each group,
+  including when @racket[x] is itself group-aware, such as a @racketidfont{shift}.
 
   @examples[#:eval ev
 (define scores
