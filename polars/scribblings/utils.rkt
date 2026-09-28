@@ -33,6 +33,7 @@
          (for-syntax racket/base))
 
 (require (for-label polars
+                    ffi/vector
                     (only-in racket/string non-empty-string?)
                     (only-in threading ~> ~>>)
                     (except-in racket/base
@@ -41,7 +42,7 @@
 
 (provide (all-from-out scribble/manual)
          (all-from-out scribble/example)
-         (for-label (all-from-out polars racket/string threading racket/base))
+         (for-label (all-from-out polars ffi/vector racket/string threading racket/base))
          make-polars-eval
          see-reference
          exnraise)
