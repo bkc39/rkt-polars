@@ -166,7 +166,9 @@
       [(real? a) (cond [(< a b) -1] [(< b a) 1] [else 0])]
       [(string? a) (cond [(string<? a b) -1] [(string<? b a) 1] [else 0])]
       [(boolean? a) (cond [(eq? a b) 0] [a 1] [else -1])]
-      [else (cond [(datetime<? a b) -1] [(datetime<? b a) 1] [else 0])]))
+      [(datetime<? a b) -1]
+      [(datetime<? b a) 1]
+      [else 0]))
 
   (define (sort-key-compare a b descending? nulls-last?)
     (cond
@@ -218,8 +220,8 @@
       (define (sorted x) (sort x keys #:descending ds #:nulls-last ls #:maintain-order exact?))
       (check-true (ok? (sorted d)) why)
       (check-true (ok? (~> d lazy sorted collect)) why)
-      (let ([m (quotient (add1 n) 2)])
-        (check-true (ok? (~> d lazy sorted (head m) collect) m) why)))
+      (define m (quotient (add1 n) 2))
+      (check-true (ok? (~> d lazy sorted (head m) collect) m) why))
     (for* ([d1 '(#f #t)] [l1 '(#f #t)])
       (check-equal? (~> d (sort keys #:descending d1 #:nulls-last l1 #:maintain-order #t) frame-rows)
                     (~> d

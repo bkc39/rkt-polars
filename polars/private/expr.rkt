@@ -1872,8 +1872,8 @@
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
-  (define (sort-blame? rx)
-    (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e)))))
+  (define ((sort-blame? rx) e)
+    (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "g" '(2 1))
                                                        (series-new-i64 "h" '(1 2))))))
   (check-exn (sort-blame? #rx"^expr-sort-by: contract violation")
