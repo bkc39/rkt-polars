@@ -49,6 +49,12 @@ df
 @examples[#:eval ev #:label #f
 (head df 3)
 (tail df 3)
+]
+
+@racket[describe] computes summary statistics for every column; the date
+column gets a mean and quartiles too:
+
+@examples[#:eval ev #:label #f
 (describe df)
 ]
 

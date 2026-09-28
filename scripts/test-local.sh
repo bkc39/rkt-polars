@@ -6,8 +6,9 @@
 # `polars` -- not the repo root -- with no Rust toolchain and no env-var
 # override.  This forces the pre-installer (polars/private/install-compat.rkt)
 # to copy the prebuilt shared object out of
-# polars/native-libs/candidates/<platform>/, then builds docs and runs tests
-# the way pkg-build.racket-lang.org does.
+# polars/native-libs/candidates/<platform>/, then instantiates every module
+# against it, builds docs and runs tests the way pkg-build.racket-lang.org
+# does.
 #
 # Usage: scripts/test-local.sh
 set -euo pipefail
@@ -25,10 +26,14 @@ echo ">> clearing staged native libs (force install from candidates/)"
 rm -f polars/native-libs/libcompat.* || true
 
 echo ">> installing the polars collection (pulls deps: gregor-lib, etc.)"
-raco pkg install --batch --auto --copy --name polars "$ROOT/polars"
+raco pkg install --batch --auto --copy --no-docs --name polars "$ROOT/polars"
+
+echo ">> instantiating every module against the staged libcompat"
+racket "$ROOT/scripts/check-bindings.rkt"
 
 echo ">> building docs + checking declared deps (as the package server does)"
-raco setup --check-pkg-deps --pkgs polars
+# --no-docs above skipped threading-doc too; the manual's `~>` links need it.
+raco setup --check-pkg-deps --pkgs polars threading-doc
 
 echo ">> running tests"
 raco test -x -c polars

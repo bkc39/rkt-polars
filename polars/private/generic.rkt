@@ -17,6 +17,7 @@
 ;; (all-from-out drops rename-out names that collide with the module language).
 
 (require polars/private/generic/core
+         polars/private/generic/io
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators

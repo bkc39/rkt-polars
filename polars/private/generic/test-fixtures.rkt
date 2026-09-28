@@ -34,3 +34,9 @@
 
 (define (column d name)
   (series-cells (ref d #:columns name)))
+
+(define (frame=? a b)
+  (and (equal? (column-names a) (column-names b))
+       (for/and ([name (in-list (column-names a))])
+         (and (equal? (dtype (ref a #:columns name)) (dtype (ref b #:columns name)))
+              (equal? (column a name) (column b name))))))

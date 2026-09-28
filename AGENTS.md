@@ -13,8 +13,8 @@ not the repo root, and anything the docs need at build time (fixtures, helper
 modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
-docs.racket-lang.org/polars and rebuilds from `master` within about half an
-hour of a merge.
+docs.racket-lang.org/polars. The package build server rebuilds it from
+`master` on its own cycle, roughly daily, not on each merge.
 
 ## The three layers
 
@@ -47,8 +47,9 @@ Imitate the neighbouring module in `polars/private/generic/`. `->col-expr`
 (in `generic/expr-util.rkt`) does the name-or-expression lift; `define-expr-unop`
 and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
-gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
-in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
+gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`,
+guide coverage and a numbered example in the same change (see
+Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
 in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
@@ -76,15 +77,17 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`
-  and `scan` helpers do it) and records the **cause alone**; the Racket
+  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`,
+  `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
   `dataframe_sort_with_options` and `series_sort_with_options` — or it
-  attaches a stale reason from an unrelated call.
+  attaches a stale reason from an unrelated call. `call/foreign-error`
+  also respells the Python keyword names in Polars' "You might want to try"
+  hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and crate
   0.41.3 panics on some inputs where later versions return an error (#108).
@@ -97,25 +100,50 @@ it. Racket side: `define-compat` with `#:c-id`.
   reclamation tests assert on them because Racket cannot otherwise observe a
   native free, and a pairing test checks that an explicit drop releases a
   frame exactly once.
-- **A change to any `#[no_mangle]` export must re-commit both
-  `polars/native-libs/candidates/`.** The catalog installs those committed
-  binaries (it has no Rust toolchain) and `define-compat` resolves every
-  symbol at module load, so a stale candidate breaks `raco setup` on
-  pkgs.racket-lang.org. Take them from the PR's CI run
-  (`gh run download <run> -n libcompat-linux` and `-n libcompat-darwin`; the
-  snap `gh` cannot write under a hidden directory such as `~/.claude`), check
-  the new exports (`nm -D`) and the glibc floor (≤ 2.17), and run the suite
-  with the Linux candidate staged in place of the nix-built library. CI's
-  catalog-install jobs test the fresh artifact, not the committed one, so CI
-  stays green on a stale candidate (#77). See `polars/native-libs/BUILDING.md`.
+- **An export never changes its signature under the same symbol.** A new
+  signature gets a new symbol (`dataframe_read_csv` became
+  `dataframe_read_csv_with_options`), so a stale library fails at load, when
+  `define-compat` cannot resolve the symbol, instead of misreading its
+  arguments.
+- **A change to any `#[no_mangle]` export needs both
+  `polars/native-libs/candidates/` refreshed before it merges.** The catalog
+  installs those committed binaries (it has no Rust toolchain) and
+  `define-compat` resolves every symbol at module load, so a stale candidate
+  breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
+  jobs go red on it. Refresh with `scripts/refresh-candidates.sh <PR>` on the
+  branch; any other Rust change also reaches catalog users only through a
+  refresh. See `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
 - `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `read-csv` is `(collect (scan-csv ...))` with the same keywords: one Rust
+  entry point, `dataframe_read_csv_with_options`, builds the scan and
+  collects it. The one difference is the separator guard: when
+  `#:separator` is not given, a one-column result whose header splits on a
+  tab, `;` or `|` (and whose first row agrees) raises. The eager readers
+  glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
+  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
+  of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file is reported at `collect`, not at scan.
+  file is reported at `collect`. Reported at scan instead: a glob that
+  matches no file, and, with `#:schema-overrides`, an override naming a
+  column the header lacks. That check reads the header because 0.41.3
+  applies a full-length override list by position and would silently rename
+  the column.
+- IO paths resolve against Racket's `current-directory`, not the process's
+  (`path->complete-string` in `foreign.rkt`). For a globbing reader it
+  escapes `[`, `*` and `?` in the directory part, so only the part the
+  caller wrote is a pattern.
+- Parquet reads add hive (`key=value`) columns only for a directory path,
+  never for a single file or a glob, matching Python (0.41.3's
+  `HiveOptions { enabled: None }`).
+- The separator guard is stricter than Python, whose `read_csv` returns the
+  one column; the #86 scoreboard (check C1) requires the error.
+- A `'time` schema override is a contract error: 0.41.3 cannot parse a
+  `Time` column from CSV, though `#:try-parse-dates` infers one.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
@@ -145,12 +173,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
   quietly working around it.
+- **Every new public name or keyword ships in the same PR with** (a) a
+  reference entry whose live `@examples` exercise it, including an
+  `eval:error` for a failure it reports; (b) guide coverage wherever the
+  upstream user guide covers the feature: a snippet in the matching chapter
+  of `polars/scribblings/guide/` and in its paired `user-guide/` `.rkt` and
+  `.py` scripts; and (c) a numbered example `examples/NN-<area>-<topic>.rkt`
+  at the next free number, which the `examples` gate runs. An example is
+  self-contained, prints its results, needs no network, and deletes any file
+  it writes.
 
 ## Verification
 
 - **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
-  Racket build with tests and docs, `cargo fmt --check`, the Racket version
-  floor). `nix build .#racket` runs only the second and is not enough.
+  Racket build with docs, tests, guide scripts and examples,
+  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs
+  only the second and is not enough.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -163,8 +201,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+- `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
+  (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
+  examples have no `test` submodule, so `-x` would run nothing. An example
+  is red if it raises, exits non-zero or writes to stderr. The flake's
+  Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
+- `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
+  nycflights file into `bench/data/` (gitignored) and prints the scoreboard
+  (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table
+  (`bench/perf.rkt`, `bench/perf.py`) for the working tree. Each nycflights
+  leg (#88) reports it before and after, from a quiet host: the table's
+  header prints the load average, and a Rust build alongside moves ratios
+  several-fold. `bench/` is outside the published
+  package; nothing under `polars/` may depend on it. A check for API a leg
+  has not landed yet resolves it at run time and reports FAIL with the
+  reason, so the harness compiles against master.
 
 ## Process
 
