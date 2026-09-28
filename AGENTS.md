@@ -22,10 +22,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
 
 1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
-   lazyframes). `define-compat` binds a C symbol; the Racket name is the
-   symbol with `_` → `-`, or an explicit `#:c-id`. Bindings whose Racket name
-   carries a `/raw` or `/c` suffix are wrapped by a checking function of the
-   plain name.
+   lazyframes), `bulk.rkt` (whole-column copies into Racket-allocated
+   buffers, behind `series->list` and its siblings). `define-compat` binds a
+   C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
+   `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
+   wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str-to-date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -49,8 +50,9 @@ Imitate the neighbouring module in `polars/private/generic/`. `->col-expr`
 (in `generic/expr-util.rkt`) does the name-or-expression lift; `define-expr-unop`
 and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
-gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`
-in the same change. Tests go in the module's `(module+ test ...)`. Contracts go
+gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`,
+guide coverage and a numbered example in the same change (see
+Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
 in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
@@ -78,18 +80,32 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`
-  and `scan` helpers do it) and records the **cause alone**; the Racket
+  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`,
+  `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family and `lazyframe_collect` —
-  or it attaches a stale reason from an unrelated call.
-- `dataframe_drop_count` and `expr_drop_count` count native releases; the
-  reclamation tests assert on them because Racket cannot otherwise observe a
-  native free, and a pairing test checks that an explicit drop releases a
-  frame exactly once.
+  or it attaches a stale reason from an unrelated call. `call/foreign-error`
+  also respells the Python keyword names in Polars' "You might want to try"
+  hints (`null_values` → `#:null-values`, ...).
+- `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
+  native releases; the reclamation tests assert on them because Racket cannot
+  otherwise observe a native free, and a pairing test checks that an explicit
+  drop releases a frame exactly once.
+- The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
+  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
+  paired `allocator`/`deallocator`, freed as soon as the conversion returns),
+  byte strings, and the `f64vector` a caller gets back. The last two may move:
+  those bindings are never `#:blocking?`. Every destination travels with its
+  length, Rust checks the rows it writes against it, and a refused copy writes
+  nothing.
+- **An export never changes its signature under the same symbol.** A new
+  signature gets a new symbol (`dataframe_read_csv` became
+  `dataframe_read_csv_with_options`), so a stale library fails at load, when
+  `define-compat` cannot resolve the symbol, instead of misreading its
+  arguments.
 - **A change to any `#[no_mangle]` export needs both
   `polars/native-libs/candidates/` refreshed before it merges.** The catalog
   installs those committed binaries (it has no Rust toolchain) and
@@ -104,8 +120,31 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `read-csv` is `(collect (scan-csv ...))` with the same keywords: one Rust
+  entry point, `dataframe_read_csv_with_options`, builds the scan and
+  collects it. The one difference is the separator guard: when
+  `#:separator` is not given, a one-column result whose header splits on a
+  tab, `;` or `|` (and whose first row agrees) raises. The eager readers
+  glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
+  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
+  of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file, or an invalid glob pattern, is reported at `collect`, not at scan.
+  file is reported at `collect`. Reported at scan instead: a glob that
+  matches no file, and, with `#:schema-overrides`, an override naming a
+  column the header lacks. That check reads the header because 0.41.3
+  applies a full-length override list by position and would silently rename
+  the column.
+- IO paths resolve against Racket's `current-directory`, not the process's
+  (`path->complete-string` in `foreign.rkt`). For a globbing reader it
+  escapes `[`, `*` and `?` in the directory part, so only the part the
+  caller wrote is a pattern.
+- Parquet reads add hive (`key=value`) columns only for a directory path,
+  never for a single file or a glob, matching Python (0.41.3's
+  `HiveOptions { enabled: None }`).
+- The separator guard is stricter than Python, whose `read_csv` returns the
+  one column; the #86 scoreboard (check C1) requires the error.
+- A `'time` schema override is a contract error: 0.41.3 cannot parse a
+  `Time` column from CSV, though `#:try-parse-dates` infers one.
 - `round` rounds ties to even, as Python Polars and `racket/base` do.
 - `sign` keeps the column's dtype: a float column gives `-1.0` / `0.0` / `1.0`.
 - A `join` promises no row order except `'cross`, as Python's default
@@ -121,6 +160,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a
   `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
+- `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
+  datetimes to whole seconds (#100); the conversions raise on an unsupported
+  dtype, `binary` included (#99), even when every entry is null.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
@@ -146,12 +188,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
   quietly working around it.
+- **Every new public name or keyword ships in the same PR with** (a) a
+  reference entry whose live `@examples` exercise it, including an
+  `eval:error` for a failure it reports; (b) guide coverage wherever the
+  upstream user guide covers the feature: a snippet in the matching chapter
+  of `polars/scribblings/guide/` and in its paired `user-guide/` `.rkt` and
+  `.py` scripts; and (c) a numbered example `examples/NN-<area>-<topic>.rkt`
+  at the next free number, which the `examples` gate runs. An example is
+  self-contained, prints its results, needs no network, and deletes any file
+  it writes.
 
 ## Verification
 
 - **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
-  Racket build with tests and docs, `cargo fmt --check`, the Racket version
-  floor). `nix build .#racket` runs only the second and is not enough.
+  Racket build with docs, tests, guide scripts and examples,
+  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs
+  only the second and is not enough.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -164,6 +216,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+- `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
+  (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
+  examples have no `test` submodule, so `-x` would run nothing. An example
+  is red if it raises, exits non-zero or writes to stderr. The flake's
+  Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the

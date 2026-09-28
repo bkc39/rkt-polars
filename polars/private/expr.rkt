@@ -10,8 +10,10 @@
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
+         (only-in racket/contract/base ->* contract-out or/c)
          (only-in polars/private/foreign
                   call/foreign-error
+                  path->complete-string
                   _DataFrame-ptr
                   _DataFrame-ptr/null
                   DataFrame-ptr?
@@ -39,6 +41,7 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in polars/private/csv lazyframe-scan-csv)
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -113,7 +116,10 @@
          lazyframe-sort lazyframe-unique lazyframe-drop-nulls
          lazyframe-head lazyframe-tail lazyframe-slice
          lazyframe-join
-         lazyframe-scan-csv lazyframe-scan-parquet
+         (contract-out
+          [lazyframe-scan-parquet (->* (path-string?)
+                                       (#:n-rows (or/c #f exact-nonnegative-integer?))
+                                       LazyFrame-ptr?)])
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
@@ -151,59 +157,6 @@
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define (path->string-or-string who p)
-  (cond
-    [(string? p) p]
-    [(path? p) (path->string p)]
-    [else (error who "expected path-string?, got ~v" p)]))
-
-(define-compat lazyframe-scan-csv/raw
-  (_fun _string -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_csv
-  #:wrap (allocator lazyframe-drop))
-
-(define-compat lazyframe-scan-csv/options/raw
-  (_fun _string _uint8 _uint8 _size _uint8 _size -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_csv_options
-  #:wrap (allocator lazyframe-drop))
-
-(define (separator->byte who separator)
-  (cond
-    [(char? separator)
-     (define value (char->integer separator))
-     (unless (<= 0 value 255)
-       (error who "separator must fit in one byte, got ~v" separator))
-     value]
-    [(string? separator)
-     (unless (= (string-length separator) 1)
-       (error who "separator string must have length 1, got ~v" separator))
-     (separator->byte who (string-ref separator 0))]
-    [(and (exact-integer? separator) (<= 0 separator 255)) separator]
-    [else (error who "separator must be a byte, character, or one-character string, got ~v"
-                 separator)]))
-
-(define (check-nonnegative-option who name value)
-  (unless (exact-nonnegative-integer? value)
-    (error who "~a must be an exact nonnegative integer, got ~v" name value)))
-
-(define (lazyframe-scan-csv path
-                            #:has-header [has-header #t]
-                            #:separator [separator #\,]
-                            #:skip-rows [skip-rows 0]
-                            #:n-rows [n-rows #f])
-  (unless (boolean? has-header)
-    (error 'lazyframe-scan-csv "has-header must be a boolean, got ~v" has-header))
-  (check-nonnegative-option 'lazyframe-scan-csv "skip-rows" skip-rows)
-  (when n-rows
-    (check-nonnegative-option 'lazyframe-scan-csv "n-rows" n-rows))
-  (define p (path->string-or-string 'lazyframe-scan-csv path))
-  (define sep (separator->byte 'lazyframe-scan-csv separator))
-  (call/foreign-error 'lazyframe-scan-csv
-                      (lambda ()
-                        (lazyframe-scan-csv/options/raw p (if has-header 1 0) sep skip-rows
-                                                        (if n-rows 1 0) (or n-rows 0)))
-                      "failed to scan ~a" path))
-
 (define-compat lazyframe-scan-parquet/raw
   (_fun _string -> _LazyFrame-ptr/null)
   #:c-id lazyframe_scan_parquet
@@ -215,9 +168,7 @@
   #:wrap (allocator lazyframe-drop))
 
 (define (lazyframe-scan-parquet path #:n-rows [n-rows #f])
-  (when n-rows
-    (check-nonnegative-option 'lazyframe-scan-parquet "n-rows" n-rows))
-  (define p (path->string-or-string 'lazyframe-scan-parquet path))
+  (define p (path->complete-string 'lazyframe-scan-parquet path #:glob? #t))
   (call/foreign-error 'lazyframe-scan-parquet
                       (lambda ()
                         (lazyframe-scan-parquet/options/raw p (if n-rows 1 0) (or n-rows 0)))

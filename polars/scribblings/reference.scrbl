@@ -1,7 +1,36 @@
 #lang scribble/manual
-@(require "utils.rkt")
+@(require "utils.rkt"
+          racket/runtime-path
+          syntax/parse/define
+          (for-syntax racket/base syntax/strip-context))
 
-@(define ev (make-polars-eval))
+@(define-runtime-path data-dir "data")
+@(define ev (make-polars-eval #:directory data-dir))
+
+@(begin-for-syntax
+   (define csv-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:has-header has-header boolean? #t]
+       [#:separator separator (or/c csv-char/c #f) #f]
+       [#:quote-char quote-char (or/c csv-char/c #f) #\"]
+       [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
+       [#:skip-rows skip-rows exact-nonnegative-integer? 0]
+       [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
+       [#:null-values null-values (or/c string? (listof string?) #f) #f]
+       [#:infer-schema-length infer-schema-length (or/c exact-nonnegative-integer? #f) 100]
+       [#:schema-overrides schema-overrides
+                           (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
+                           '()]
+       [#:ignore-errors ignore-errors boolean? #f]
+       [#:try-parse-dates try-parse-dates boolean? #f]
+       [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
+       [#:glob glob boolean? #t]))))
+
+@(define-syntax-parser defcsvproc
+   [(_ (name result) body ...)
+    #:with (argument ...) (replace-context #'name csv-arguments)
+    #'(defproc (name argument ...) result body ...)])
 
 @title[#:tag "reference"]{Reference}
 
@@ -68,7 +97,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       containing characters above U+00FF; there the selection follows
       the class as written. The crate has no
       lookaround, backreferences, atomic groups or conditionals; a
-      regexp using them is rejected at @racket[collect].}]
+      regexp using them is rejected at @racket[collect]. To select by
+      such a regexp, match @racket[column-names] in Racket and select
+      the names, as in the last example below.}]
 
   A multi-column @racket[col] expands inside any expression to one output
   per matched column, in the frame's column order, each keeping the
@@ -86,10 +117,15 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
                    (series '(57.9 72.5 53.6) #:name "weight")
                    (series '(1.56 1.77 1.65) #:name "height"))))
 (select people (* (col 'float64) 1.1))
+(list (dtype-spec? 'f64) (dtype-spec? 'float))
+(select people (col "^.*ght$"))
 (select people (col #rx"^he"))
 (select people (col #px"^\\w+t$"))
 (select people (~> (col "id") (* 10) (alias "id10"))
-               (alias (lit 0) "zero"))]}
+               (alias (lit 0) "zero"))
+(eval:error (select people (col #px"^(?!id)")))
+(select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
+                       (column-names people)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -109,8 +145,17 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @examples[#:eval ev
 (select people (all))
 (select people (exclude (all) "id"))
+(select people (exclude (all) #rx"^w" "id"))
+(select people (exclude (all) "^h.*$"))
 (select people (~> (col 'float64) (exclude "height") (* 2)))
+(select people (~> (all) (exclude "id") (exclude "weight")))
+(~> people
+    (with-columns (~> (col "height") (> 1.6) (alias "tall")))
+    (group-by "tall")
+    (agg (~> (all) (exclude "id") mean))
+    (sort "tall"))
 (multi-column-expr? (col "id"))
+(~> (col 'float64) (* 2) multi-column-expr?)
 (eval:error (exclude (col "id") "weight"))]}
 
 @defproc[(expr->string [e Expr-ptr?]) string?]{
@@ -118,12 +163,17 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @tt{col("v")} for a column, @tt{[(a) + (b)]} for a binary operation,
   @tt{.alias("n")} and @tt{.sum()} as method suffixes. This is also what an
   expression prints as at the REPL and throughout this manual, so an
-  expression is a value you can read, not an opaque pointer.
+  expression is a value you can read, not an opaque pointer. A regexp
+  @racket[col] prints as the Polars pattern it is translated to.
 
   @examples[#:eval ev
 (col "weight")
 (alias (* (col "v") 10) "v10")
-(expr->string (> (col "v") 2))]}
+(expr->string (> (col "v") 2))
+(~> (col "v") sum (over "k"))
+(exclude (all) "id")
+(col 'float64)
+(col #rx"^he")]}
 
 @deftogether[(@defproc[(meta-output-name [e (or/c Expr-ptr? string?)]) string?]
               @defproc[(meta-root-names [e (or/c Expr-ptr? string?)]) (listof string?)]
@@ -137,6 +187,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   plans; @racket[equal?] on expressions is identity. A column name is lifted
   with @racket[col] wherever an expression is expected.
 
+  A multi-column expression is read off the plan too, before any frame
+  says which columns it will match. For a regexp @racket[col], the output
+  name and the one root name are its translated pattern; a dtype
+  @racket[col] or @racket[(all)] has no root names and no output name.
+
   @examples[#:eval ev
 (define total (alias (sum (+ (col "a") (col "b"))) "total"))
 total
@@ -144,7 +199,15 @@ total
 (meta-root-names total)
 (meta-eq? total (alias (sum (+ (col "a") (col "b"))) "total"))
 (meta-eq? total (col "a"))
+(equal? total (~> (+ (col "a") (col "b")) sum (alias "total")))
+(meta-output-name (+ (col "a") (col "b")))
+(meta-output-name (lit 25))
 (meta-root-names "a")
+(meta-root-names (col #rx"^he"))
+(meta-output-name (col #rx"^he"))
+(~> (col 'float64) (* 2) meta-root-names)
+(meta-eq? (col 'float64) (col 'f64))
+(eval:error (meta-output-name (col 'float64)))
 (eval:error (meta-output-name "*"))
 (eval:error (meta-output-name 5))]}
 
@@ -295,48 +358,198 @@ total
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)]}
 
-@deftogether[(@defproc[(read-csv [path path-string?]) dataframe?]
-              @defproc[(read-parquet [path path-string?]) dataframe?]
-              @defproc[(read-ndjson [path path-string?]) dataframe?]
-              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
-  Eager file I/O (@tt{pl.read_csv} / @tt{df.write_csv} and friends). Dates
-  are not parsed on read; see @racket[str-to-date]. A failure names the
-  operation, the path and the cause: the operating system's for a file that
-  cannot be opened or created, Polars' own for input it cannot parse.
+@defcsvproc[(read-csv dataframe?)]{
+  Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
+  a glob pattern (@litchar{*}, @litchar{?}, @litchar{[...]}): every matching
+  file is read, in sorted filename order, and the files must share a header;
+  @racket[#:glob #f] takes the path literally, and @litchar{[[]} matches a
+  literal @litchar{[} in a pattern. A relative @racket[path] is resolved
+  against @racket[current-directory], whose own name is never read as a
+  pattern. A directory is an error: name its files with a pattern.
+
+  A @racket[csv-char/c] is one ASCII character other than newline or return.
+  @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
+  differ from it, and @racket[#:quote-char #f] turns quoting off.
+  Lines that start with @racket[comment-prefix] are skipped, as are the first
+  @racket[skip-rows] lines of each file; @racket[n-rows] caps the rows read.
+  A field equal to one of @racket[null-values] reads as null. Column types
+  are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
+  reads every row, and @racket[0] makes every column a string.
+  @racket[schema-overrides] fixes the named columns' types. A
+  @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
+  accepts except @racket['time] and a duration, which Polars 0.41.3 cannot
+  parse from CSV. Each column appears at most once
+  (@racket[distinct-names?]), and naming a column the file lacks is an
+  error. With @racket[#:ignore-errors #t] a field
+  that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
+  dates, times of day and datetimes as @racket['date], @racket['time] and
+  @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
+  U+FFFD.
+
+  The result is @racket[(collect (scan-csv path ....))] with the same
+  keywords, plus one check, stricter than Python's @tt{read_csv}, which
+  returns the one column. When @racket[separator] is @racket[#f] and the
+  file reads as one column whose header splits on a tab, @litchar{;} or
+  @litchar{|}, @racket[read-csv] raises an error naming the separator to
+  pass --- unless the first row is not a string, or splits into a different
+  number of fields. Passing a @racket[separator], even @racket[#\,], turns
+  the check off.
+
+  A failure names the operation, the path and the cause: the operating
+  system's for a file that cannot be opened, Polars' own for input it cannot
+  parse.
+
+  The examples read @filepath{flights.tsv}, 102 rows of the nycflights13 data
+  with @litchar{NA} for a missing value. Without @racket[#:separator] the
+  separator check stops the read; with it, the first @litchar{NA} fails to
+  parse, and @racket[#:null-values] fixes that:
 
   @examples[#:eval ev
-(eval:error (read-csv "/no/such/file.csv"))]}
+(eval:error (read-csv "flights.tsv"))
+(eval:error (read-csv "flights.tsv" #:separator #\tab))
+(define flights (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
+(shape flights)
+(null-count (ref flights #:columns "dep_delay"))
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values '("NA" ""))
+    (ref #:columns "arr_delay")
+    null-count)]
 
-@deftogether[(@defproc[(scan-csv [path path-string?]
-                                 [#:has-header has-header boolean? #t]
-                                 [#:separator separator char? #\,]
-                                 [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-                                 [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
-                       lazyframe?]
+  Failures. A missing file or an unwritable path reports the operating
+  system's reason; a file in the wrong format reports Polars':
+
+  @examples[#:eval ev #:label #f
+(eval:error (read-csv "/no/such/file.csv"))
+(define small (dataframe (list (series '(1 2) #:name "v"))))
+(eval:error (write-parquet small "/no/such/dir/out.parquet"))]
+
+  Here @racket[not-parquet] is a path in the temporary directory:
+
+  @examples[#:eval ev #:hidden
+(define not-parquet (build-path (find-system-path 'temp-dir) "polars-not-parquet.csv"))]
+
+  @examples[#:eval ev #:label #f
+(write-csv small not-parquet)
+(eval:error (read-parquet not-parquet))
+(eval:error (read-ndjson not-parquet))]
+
+  @examples[#:eval ev #:hidden
+(delete-file not-parquet)]
+
+  Types. @racket[#:ignore-errors] turns what does not parse into nulls;
+  @racket[#:infer-schema-length] widens or narrows the rows types are
+  inferred from; @racket[#:schema-overrides] and @racket[#:try-parse-dates]
+  set them outright. An override for a column the file lacks is an error:
+
+  @examples[#:eval ev #:label #f
+(~> (read-csv "flights.tsv" #:separator #\tab #:ignore-errors #t)
+    (ref #:columns "dep_delay")
+    null-count)
+(~> (read-csv "flights.tsv" #:separator #\tab #:infer-schema-length #f)
+    (ref #:columns "dep_delay")
+    dtype)
+(~> (read-csv "flights.tsv" #:separator #\tab #:infer-schema-length 0)
+    (ref #:columns "year")
+    dtype)
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
+              #:try-parse-dates #t
+              #:schema-overrides '(("dep_delay" . f64) ("flight" . int32)))
+    (select "dep_delay" "flight" "time_hour")
+    (tail 3))
+(eval:error (read-csv "flights.tsv" #:separator #\tab
+                      #:schema-overrides '(("dep_dealy" . f64))))]
+
+  Layout. @filepath{notes.csv} has a comment line, @litchar{;} between fields
+  and @litchar{'} around a field that holds one; @filepath{latin1.csv} is not
+  UTF-8:
+
+  @examples[#:eval ev #:label #f
+(read-csv "notes.csv" #:separator #\; #:comment-prefix "#" #:quote-char #\')
+(eval:error (read-csv "notes.csv" #:separator #\; #:comment-prefix "#"))
+(read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1)
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA" #:n-rows 2)
+    (select "carrier" "flight" "dep_delay"))
+(eval:error (read-csv "latin1.csv"))
+(read-csv "latin1.csv" #:encoding 'utf8-lossy)]
+
+  Files. A pattern reads every match, in filename order; one that matches
+  nothing, a literal path with @racket[#:glob #f], and a directory are
+  errors:
+
+  @examples[#:eval ev #:label #f
+(read-csv "parts/*.csv")
+(eval:error (read-csv "parts/*.tsv"))
+(eval:error (read-csv "parts/part-?.csv" #:glob #f))
+(eval:error (read-csv "parts"))]}
+
+@defcsvproc[(scan-csv lazyframe?)]{
+  Starts a @tech{lazyframe} plan from CSV without reading it
+  (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
+  runs the plan, and that is where a file that cannot be read is reported.
+  Two things are reported here instead: a glob pattern that matches no file,
+  and, when @racket[schema-overrides] is given, a column it names that the
+  header lacks, which reads the header. The separator check does not apply,
+  and a directory reads every file in it.
+
+  @examples[#:eval ev
+(~> (scan-csv "flights.tsv" #:separator #\tab #:null-values "NA")
+    (filter (> (col "dep_delay") 30))
+    (select "carrier" "dep_delay")
+    collect)
+(~> (scan-csv "parts/*.csv") (group-by "origin") (agg (sum "dep_delay")) collect)
+(shape (collect (scan-csv "flights.tsv")))
+(define plan (scan-csv "/no/such/file.csv"))
+(eval:error (collect plan))
+(eval:error (scan-csv "parts/*.tsv"))
+(eval:error (scan-csv "flights.tsv" #:separator #\tab
+                      #:schema-overrides '(("dep_dealy" . f64))))]}
+
+@deftogether[(@defproc[(read-parquet [path path-string?]) dataframe?]
               @defproc[(scan-parquet [path path-string?]
                                      [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
                        lazyframe?])]{
-  Start a @tech{lazyframe} plan from a file without reading it
-  (@tt{pl.scan_csv} / @tt{pl.scan_parquet}); @racket[collect] runs it, and
-  that is where a file that cannot be read is reported.
+  Read Parquet eagerly (@tt{pl.read_parquet}), or start a plan from it
+  (@tt{pl.scan_parquet}). @racket[path] is always a glob pattern: the
+  matching files stack in sorted filename order, and one that matches
+  nothing is an error. A directory reads every file in it and adds its
+  @litchar{key=value} subdirectory names as columns; a single file or a
+  pattern adds none, as in Python, and neither does a directory whose own
+  path holds @litchar{[}, @litchar{*} or @litchar{?} (Polars 0.41.3). @racket[read-parquet] is
+  @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
+  literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
+  @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
 
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define parquet-dir (make-temporary-directory "polars-doc-~a"))
+(for ([i '(1 2 3)])
+  (write-parquet (read-csv (format "parts/part-~a.csv" i))
+                 (build-path parquet-dir (format "part-~a.parquet" i))))]
   @examples[#:eval ev
-(define plan (scan-csv "/no/such/file.csv"))
-(eval:error (collect plan))]}
+(read-parquet (build-path parquet-dir "*.parquet"))
+(collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))]}
+
+@deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
+              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
+  Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
+  CSV, Parquet or newline-delimited JSON (@tt{df.write_csv} and friends).
+  API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
+  file and takes no glob pattern (#44).}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
   @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
   @racket[select], @racket[with-columns], @racket[filter] and the other
   fluent operations extend without running anything — and @racket[collect]
-  executes the plan and returns the resulting dataframe.
+  executes the plan and returns the resulting dataframe. A plan that cannot
+  run, such as one reading a column the frame lacks, is reported by
+  @racket[collect] with Polars' reason.
 
   @examples[#:eval ev
-(~> (lazy (dataframe (list (series '(1 2 3 4) #:name "v"))))
-    (filter (> (col "v") 2))
-    collect)]}
+(define four (dataframe (list (series '(1 2 3 4) #:name "v"))))
+(~> four lazy (filter (> (col "v") 2)) collect)
+(eval:error (~> four lazy (filter (> (col "nope") 2)) collect))]}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
@@ -359,14 +572,57 @@ total
   group of the @racket[key]s — column names or expressions, as
   @racket[group-by] takes them — and broadcast back onto the group's rows
   rather than reduced to one row per group, so it belongs in
-  @racket[with-columns] where @racket[agg] would collapse it. Only Polars'
-  default @tt{group_to_rows} mapping is exposed.
+  @racket[with-columns] where @racket[agg] would collapse it. An aggregate
+  is repeated on every row of its group; an expression that keeps one value
+  per row, such as @racket[rank], is computed within the group and each
+  value lands on the row it came from. Only Polars' default
+  @tt{group_to_rows} mapping is exposed.
 
   @examples[#:eval ev
 (define kv (dataframe (list (series '("x" "y" "x") #:name "k")
                             (series '(1 2 3) #:name "v"))))
 (~> kv (group-by "k") (agg (alias (sum "v") "total")))
-(~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))]}
+(~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))
+(define khv (dataframe (list (series '("a" "a" "a" "b") #:name "k")
+                             (series '("x" "y" "x" "x") #:name "h")
+                             (series '(1 2 3 4) #:name "v"))))
+(~> khv (with-columns (~> (col "v") sum (over "k" "h") (alias "total"))
+                      (~> (col "v") mean (over (col "k")) (alias "mean"))
+                      (~> (col "v") (rank #:descending #t) (over "k") (alias "rank"))
+                      (~> (col "v") max (over (> (col "v") 1)) (alias "band_max"))))
+(eval:error (over (col "v")))]}
+
+@deftogether[(@defproc[(sort-by [x (or/c Expr-ptr? string?)]
+                                [#:by by (or/c string? Expr-ptr? (listof (or/c string? Expr-ptr?)))]
+                                [#:descending descending (or/c boolean? (listof boolean?)) #f])
+                       Expr-ptr?]
+              @defproc[(rank [x (or/c Expr-ptr? string?)]
+                             [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
+                             [#:descending descending boolean? #f]
+                             [#:seed seed (or/c exact-nonnegative-integer? #f) #f])
+                       Expr-ptr?]
+              @defproc[(gather [x (or/c Expr-ptr? string?)]
+                               [indices (or/c Expr-ptr? series? (listof exact-integer?))])
+                       Expr-ptr?])]{
+  Ordering within a column (@tt{.sort_by}, @tt{.rank}, @tt{.gather}).
+  @racket[sort-by] reorders @racket[x] by the @racket[#:by] keys, with
+  @racket[#:descending] one flag or one per key. @racket[rank] numbers each
+  value by its place in the sorted order, ties resolved by
+  @racket[#:method]; the result is @racket['uint32], or @racket['float64]
+  for @racket['average]. @racket[gather] picks values by position. Each
+  lifts a column name with @racket[col], and each is computed per group
+  under @racket[over].
+
+  @examples[#:eval ev
+(define scores (dataframe (list (series '("a" "b" "c" "d") #:name "name")
+                                (series '(30 10 30 20) #:name "score"))))
+(~> scores
+    (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
+                  (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
+(~> scores (select (sort-by "name" #:by (list "score" "name") #:descending '(#t #f))
+                   (sort-by "score" #:by "score" #:descending #t)))
+(~> scores (select (gather "name" '(3 0))))
+(eval:error (rank "score" #:method 'first))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...) any/c]
@@ -381,7 +637,7 @@ total
   @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
   used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
   they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
-  works.}
+  works.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
@@ -552,7 +808,9 @@ an implementation detail and not part of the public series API.)
               @defproc[(polars-null? [v any/c]) boolean?])]{
   @racket[polars-null] is the sentinel marking a missing value: pass it among the
   elements given to @racket[series] to produce nulls, and it is what @racket[ref]
-  returns for a null entry. @racket[polars-null?] tests for it.}
+  returns for a null entry, and what the conversions in
+  @secref["ref-series-convert"] return by default. @racket[polars-null?] tests
+  for it.}
 
 @deftogether[(@defproc[(dtype [s has-dtype?]) (or/c symbol? pair?)]
               @defproc[(len [x sized?]) exact-nonnegative-integer?]
@@ -562,6 +820,13 @@ an implementation detail and not part of the public series API.)
   @racket[len] returns the number of elements (and, on a dataframe, the number of
   rows). @racket[null-count] returns the number of null entries.}
 
+@defproc[(series-name [s series?]) string?]{
+  Returns the name of @racket[s], as Polars' @tt{Series.name}; a column taken
+  from a dataframe is named after the column.
+
+  @examples[#:eval ev #:label #f
+(series-name (series '(1 2) #:name "ints"))]}
+
 @deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
@@ -570,6 +835,98 @@ an implementation detail and not part of the public series API.)
   @racket[void] as is conventional for @litchar{!} mutators; @racket[rename]
   returns a renamed copy and leaves the original untouched. @racket[clone] (and
   its series-specific alias @racket[series-clone]) returns an independent copy.}
+
+@subsection[#:tag "ref-series-convert"]{Converting to Racket values}
+
+These copy a column out of Polars in one foreign call rather than one per
+element: Racket allocates a buffer of the column's native type, Rust copies
+the values into it, and Racket builds its values from the buffer and frees it.
+Nothing crosses the boundary to be freed later. At its peak a conversion holds
+that buffer (one native value per row, plus a byte per row when the column has
+nulls) beside the result it builds; @racket[in-series] instead converts
+@racket[4096] rows at a time. Each element comes out as @racket[ref] returns
+it:
+
+@tabular[#:style 'boxed #:sep @hspace[2]
+ (list (list @bold{dtype} @bold{element})
+       (list "integer dtypes" @racket[exact-integer?])
+       (list @elem{@racket['float32], @racket['float64]} @racket[flonum?])
+       (list @racket['boolean] @racket[boolean?])
+       (list @racket['string] @racket[string?])
+       (list @racket['date] @elem{a gregor @tt{date}})
+       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, floored to the second})
+       (list @racket['(duration unit)] @elem{a gregor @tt{period} in that unit})
+       (list @racket['time] @elem{a gregor @tt{time}})
+       (list @racket['null] "the null value"))]
+
+A null entry becomes the @racket[#:null] value. A series of any other dtype
+raises @racket[exn:fail:contract] naming the dtype, even when every entry is
+null. The @secref["interop"]
+chapter of the guide walks through all of them.
+
+@examples[#:eval ev #:hidden (require ffi/vector)]
+
+@examples[#:eval ev #:label #f
+(series->list (series (list 1.5 polars-null)))
+(series->list (series (list "a" polars-null "")))
+(series->list (series (list #t #f polars-null)))
+(series->list (series (list (datetime 2024 1 2 3 4 5) polars-null)))
+(series->list (cast (series '(19724) #:dtype 'i32) 'date))
+(series->list (cast (series '(11045000000000) #:dtype 'i64) 'time))
+(series->list (cast (series '(1500) #:dtype 'i64) '(duration milliseconds)))
+(eval:error (series->list (cast (series '("a") #:name "b") 'binary)))]
+
+@deftogether[(@defproc[(series->list [s series?] [#:null null-value any/c polars-null]) list?]
+              @defproc[(series->vector [s series?] [#:null null-value any/c polars-null])
+                       vector?])]{
+  Returns the elements of @racket[s] in order, as a fresh list or a fresh
+  mutable vector, with @racket[null-value] in place of each null entry. Mirrors
+  Polars' @tt{Series.to_list()}, with @racket[polars-null] for @tt{None}.
+
+  @examples[#:eval ev #:label #f
+(define s (series (list 3 polars-null 1) #:name "x"))
+(series->list s)
+(series->list s #:null 'missing)
+(series->vector s)
+(series->vector s #:null 0)]}
+
+@defproc[(series->f64vector [s series?] [#:null null-value (or/c real? 'error) +nan.0])
+         f64vector?]{
+  Copies a numeric series into a fresh @racket[f64vector], the
+  @racketmodname[ffi/vector] type that foreign code takes. Integers become the
+  nearest flonum, as @racket[exact->inexact] gives, and booleans become
+  @racket[1.0] and @racket[0.0]. A null entry becomes @racket[null-value] as a
+  flonum, as @tt{Series.to_numpy()} gives @tt{nan}; with @racket['error] a null
+  raises @racket[exn:fail:contract] naming its row. Any other dtype raises
+  @racket[exn:fail:contract] naming the dtype.
+
+  The result is ordinary garbage-collected memory, which Racket CS may move:
+  pass it to a foreign call that is not @racket[#:blocking?], and do not let
+  foreign code keep the pointer past the call.
+
+  @examples[#:eval ev #:label #f
+(define xs (series (list 1 polars-null 3) #:name "x"))
+(f64vector->list (series->f64vector xs))
+(f64vector->list (series->f64vector xs #:null 0))
+(f64vector->list (series->f64vector (series (list #t #f))))
+(f64vector->list (series->f64vector (series '(1 2)) #:null 'error))
+(eval:error (series->f64vector xs #:null 'error))
+(eval:error (series->f64vector (series '("a") #:name "s")))]}
+
+@defproc[(in-series [s series?] [#:null null-value any/c polars-null]) sequence?]{
+  Returns a sequence of the elements of @racket[s], converted as by
+  @racket[series->list] but 4096 rows at a time, so it never holds more than
+  one block's buffer and a loop that stops early converts little more than it
+  reads. A series is itself a sequence:
+  @racket[(for ([x s]) ....)] iterates as @racket[(in-series s)] does.
+
+  @examples[#:eval ev #:label #f
+(for/list ([x (in-series xs)]) x)
+(for/sum ([x (in-series xs #:null 0)]) x)
+(for/list ([x (series '("a" "b"))]) (string-upcase x))
+(for/first ([x (in-series (series (build-list 100000 values)))]
+            #:when (> x 41))
+  x)]}
 
 @subsection[#:tag "promotion"]{dtype promotion}
 
@@ -703,7 +1060,8 @@ renders it with no separate display call.
   as a series, and a @emph{list} of selectors returns a column-projected
   dataframe. It is data-first, so it threads. @racket[#:rows] is reserved for
   row slicing and currently raises an error. Provided by the @racket[gen:has-ref]
-  interface.}
+  interface. For a whole column, @racket[series->list] and its siblings convert
+  in one pass where a @racket[ref] loop makes one foreign call per element.}
 
 @defproc[(describe [x (or/c series? dataframe?)]) dataframe?]{
   Mirrors Polars' @tt{.describe()}: returns a summary-statistics @tech{dataframe}
@@ -711,13 +1069,148 @@ renders it with no separate display call.
   column and a @racket["value"] column, with rows adapted to the dtype — a
   numeric series gets @racket["count"], @racket["null_count"], @racket["mean"],
   @racket["std"], @racket["min"], @racket["25%"], @racket["50%"], @racket["75%"]
-  and @racket["max"]; a boolean series drops @racket["std"] and the quantiles;
-  other dtypes (string, temporal) keep just @racket["count"], @racket["null_count"],
-  @racket["min"] and @racket["max"]. For a dataframe the result uses Polars'
-  fixed nine-row layout (a @racket["statistic"] column plus one column per input
-  column), leaving a cell @racket[polars-null] where a column has no value for
-  that statistic. Quantiles use nearest interpolation. Dispatches on
-  @racket[series?] / @racket[dataframe?].}
+  and @racket["max"]; a temporal series (date, datetime, time, duration) drops
+  @racket["std"]; a boolean series also drops the quantiles; a string series
+  keeps @racket["count"], @racket["null_count"], @racket["min"] and
+  @racket["max"]; any other dtype just the two counts. For a dataframe the
+  result uses Polars' fixed nine-row layout (a @racket["statistic"] column plus
+  one column per input column), leaving a cell @racket[polars-null] where a
+  column has no value for that statistic.
+
+  Numeric, boolean, null and nested columns summarise as @racket['float64],
+  every other column as strings; temporal values are written as Python prints
+  them. Quantiles use nearest interpolation. Every statistic of every column
+  comes from one query, so Polars computes the columns in parallel.
+
+  API gaps: a time-zone-aware datetime is written as its UTC clock time with no
+  offset, where Python writes the local time and the offset; a binary column
+  gets no @racket["min"] or @racket["max"].
+
+  Numeric, string and boolean columns, with nulls:
+
+  @examples[#:eval ev #:label #f
+(define flights
+  (dataframe
+   (list (series (list "UA" "AA" "UA" polars-null) #:name "carrier")
+         (series (list 1400 733 polars-null 1089) #:name "distance")
+         (series (list #t #f #t #t) #:name "on_time"))))
+(describe flights)]
+
+  Datetime, duration and date columns get a mean and quartiles; a date
+  column's mean is a datetime:
+
+  @examples[#:eval ev #:label #f
+(define times
+  (~> (dataframe
+       (list (series (list (datetime 2013 1 1 5) (datetime 2013 1 1 6)
+                           (datetime 2013 1 2 7) (datetime 2013 1 3 8))
+                     #:name "scheduled")
+             (series (list (datetime 2013 1 1 5 12) (datetime 2013 1 1 5 57)
+                           polars-null (datetime 2013 1 3 9 30))
+                     #:name "departed")))
+      (with-columns (alias (- (col "departed") (col "scheduled")) "delay")
+                    (alias (cast "scheduled" 'date) "day"))))
+(describe times)]
+
+  A series keeps only the rows its dtype has:
+
+  @examples[#:eval ev #:label #f
+(describe (series (list 3 1 polars-null 4 1 5) #:name "n"))
+(describe (ref times "day"))]
+
+  A nested column (here the lists @racket[agg] collects) and a null-dtype
+  column report only their counts, as floats; a frame with no rows reports
+  zero counts:
+
+  @examples[#:eval ev #:label #f
+(~> flights (group-by "carrier") (agg (col "distance")) describe)
+(~> flights (select (alias (cast "carrier" 'null) "nothing")) describe)
+(describe (head flights 0))]}
+
+@subsection[#:tag "ref-dataframe-convert"]{Converting to Racket values}
+
+@defproc[(dataframe->columns [d dataframe?]
+                             [#:columns columns (listof string?) (column-names d)]
+                             [#:null null-value any/c polars-null])
+         (listof (cons/c string? vector?))]{
+  Returns each selected column, in the order of @racket[columns], paired with
+  @racket[(series->vector column #:null null-value)]. Mirrors Polars'
+  @tt{DataFrame.to_dict(as_series=False)}. An unknown or repeated name, or a
+  column of an unsupported dtype, raises @racket[exn:fail:contract] naming the
+  column.
+
+  @examples[#:eval ev #:label #f
+(define kv (dataframe (list (series '("a" "b") #:name "k")
+                            (series (list 1 polars-null) #:name "v"))))
+(dataframe->columns kv)
+(dataframe->columns kv #:columns '("v" "k") #:null 0)
+(eval:error (dataframe->columns kv #:columns '("k" "k")))
+(eval:error (dataframe->columns kv #:columns '("nope")))]}
+
+@defproc[(dataframe->hash [d dataframe?]
+                          [#:columns columns (listof string?) (column-names d)]
+                          [#:null null-value any/c polars-null])
+         (and/c (hash/c string? vector?) immutable?)]{
+  Like @racket[dataframe->columns], but returns an immutable hash from each
+  selected column's name to its vector, as Polars' @tt{DataFrame.to_dict()} gives
+  a dict. The same names are checked and the same errors raised.
+
+  @examples[#:eval ev #:label #f
+(dataframe->hash kv)
+(hash-ref (dataframe->hash kv #:null 0) "v")
+(dataframe->hash kv #:columns '("k"))
+(eval:error (dataframe->hash kv #:columns '("nope")))]}
+
+@defproc[(in-dataframe-columns [d dataframe?]
+                               [#:columns columns (listof string?) (column-names d)])
+         sequence?]{
+  Returns a sequence of the selected columns of @racket[d], in the order of
+  @racket[columns], each as a @tech{series} named after its column, as Polars'
+  @tt{DataFrame.iter_columns()} does. Each column is fetched when the sequence
+  reaches it, and is released once nothing refers to it. An unknown or repeated
+  name raises @racket[exn:fail:contract] naming the column. The dataframe itself
+  is not a sequence.
+
+  @examples[#:eval ev #:label #f
+(for/list ([column (in-dataframe-columns kv)]) (series-name column))
+(for/list ([column (in-dataframe-columns kv #:columns '("v"))])
+  (series->list column #:null 0))
+(for/first ([column (in-dataframe-columns kv)]) column)
+(eval:error (in-dataframe-columns kv #:columns '("k" "k")))]}
+
+@defproc[(dataframe->f64vector [d dataframe?]
+                               [#:columns columns (listof string?) (column-names d)]
+                               [#:order order (or/c 'fortran 'c) 'fortran]
+                               [#:null null-value (or/c real? 'error) +nan.0])
+         (values f64vector? exact-nonnegative-integer? exact-nonnegative-integer?)]{
+  Copies the selected columns into one fresh @racket[f64vector] and returns it
+  with its row and column counts, mirroring Polars' @tt{DataFrame.to_numpy()}.
+  With @racket['fortran] (column-major, the default) row @racket[i] of column
+  @racket[j] is at index @racket[(+ (* j nrows) i)]; with @racket['c]
+  (row-major) it is at @racket[(+ (* i ncols) j)]. Each column converts as by
+  @racket[series->f64vector]. Every column's dtype is checked before anything is
+  copied, and a column that is not numeric raises naming the column and its
+  dtype. With @racket['error], a null raises naming the first column in
+  @racket[columns] that has one, and that column's first null row. As with
+  @racket[series->f64vector], the buffer may move: hand it only to a foreign
+  call that is not @racket[#:blocking?].
+
+  @examples[#:eval ev #:label #f
+(define xy (dataframe (list (series (list 1 2 polars-null) #:name "a")
+                            (series '(0.5 1.5 2.5) #:name "b"))))
+(define-values (m nrows ncols) (dataframe->f64vector xy))
+(list nrows ncols)
+(f64vector->list m)
+(define-values (m/f rows/f cols/f) (dataframe->f64vector xy #:order 'fortran))
+(equal? (f64vector->list m/f) (f64vector->list m))
+(define-values (m/c rows/c cols/c) (dataframe->f64vector xy #:order 'c))
+(f64vector->list m/c)
+(define-values (b rows/b cols/b) (dataframe->f64vector xy #:columns '("b") #:null 'error))
+(f64vector->list b)
+(define-values (z rows/z cols/z) (dataframe->f64vector xy #:null 0))
+(f64vector->list z)
+(eval:error (dataframe->f64vector xy #:null 'error))
+(eval:error (dataframe->f64vector (dataframe (list (series '("p") #:name "s")))))]}
 
 @subsection{Low-level DataFrame API}
 
@@ -742,7 +1235,13 @@ generic operations are simply the preferred surface.
   @racket[height], @racket[width], @racket[ref], @racket[column-name], and
   @racket[column-names]. @racket[display-dataframe] prints the Polars table to
   @racket[out]; since a @racket[dataframe] now prints itself, prefer plain
-  @racket[display].}
+  @racket[display]. @racket[dataframe-column] raises an error naming the
+  column when @racket[d] has none.
+
+  @examples[#:eval ev
+(define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
+(series-sum-i32 (dataframe-column scores "score"))
+(eval:error (dataframe-column scores "points"))]}
 
 @defproc[(DataFrame-ptr? [v any/c]) boolean?]{
   Recognises a foreign dataframe pointer. Both raw pointers returned by the
@@ -757,13 +1256,23 @@ generic operations are simply the preferred surface.
 @subsection[#:tag "ref-reading-writing"]{Reading & writing}
 
 @deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-read-csv [path path-string?]) dataframe?]
               @defproc[(dataframe-write-parquet [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-read-parquet [path path-string?]) dataframe?]
               @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
   Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON; the
-  fluent @racket[read-csv] and friends are the surface.}
+  fluent @racket[read-csv] and friends are the surface. Like
+  @racket[read-parquet], @racket[dataframe-read-parquet] accepts a glob
+  pattern.}
+
+@deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
+              @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
+  The raw-pointer reader and scan under @racket[read-csv] and
+  @racket[scan-csv], with the same keywords and checks.
+
+  @examples[#:eval ev
+(dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
+(dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 
@@ -833,7 +1342,11 @@ built.
 @defproc[(expr-col [name string?]) Expr-ptr?]{
   The column reference @racket[col] is built on: @racket[name] is taken
   literally, except that a name of the form @tt{^...$} is a regex
-  projection, which is how the regexp arm of @racket[col] is spelled.}
+  projection, which is how the regexp arm of @racket[col] is spelled.
+
+  @examples[#:eval ev
+(expr-col "weight")
+(expr-col "^.*ght$")]}
 
 @deftogether[(@defproc[(expr-all) Expr-ptr?]
               @defproc[(expr-exclude [e multi-column-expr?]
@@ -845,16 +1358,35 @@ built.
   @tt{pl.col(pl.Float64)}. @racket[expr-exclude] takes its names as one
   list where the generic @racket[exclude] is variadic. A regexp
   @racket[col] needs no entry point of its own: it is @racket[expr-col]
-  with the pattern rendered in Polars' @tt{^...$} form.}
+  with the pattern rendered in Polars' @tt{^...$} form.
+
+  @examples[#:eval ev
+(expr-all)
+(expr-exclude (expr-all) (list "id" #rx"^w"))
+(expr-dtype-col 'f64)
+(select people (expr-exclude (expr-dtype-col 'float64) (list "height")))]}
 
 @deftogether[(@defproc[(expr-meta-output-name [e Expr-ptr?]) string?]
               @defproc[(expr-meta-root-names [e Expr-ptr?]) (listof string?)]
               @defproc[(expr-meta-eq? [a Expr-ptr?] [b Expr-ptr?]) boolean?])]{
   The expression-only forms of @racket[meta-output-name],
   @racket[meta-root-names] and @racket[meta-eq?], which are the ones to
-  write: they also accept a column name.}
+  write: they also accept a column name.
 
-@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
+  @examples[#:eval ev
+(~> (col "a") (expr-alias "b") expr-meta-output-name)
+(~> (col "a") (expr-add (col "b")) expr-meta-root-names)
+(expr-meta-eq? (col "a") (expr-col "a"))]}
+
+@defproc[(expr-over [e Expr-ptr?] [keys (listof (or/c string? Expr-ptr?))]) Expr-ptr?]{
+  The window expression @racket[over] is built on (@tt{Expr.over}), taking
+  its keys as one list where @racket[over] is variadic.
+
+  @examples[#:eval ev
+(~> (col "v") expr-sum (expr-over (list "k" (col "h"))))
+(~> khv (with-columns (~> (col "v") expr-sum (expr-over (list "k")) (expr-alias "total"))))]}
+
+@deftogether[(@defproc[(expr-add [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-sub [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-mul [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-div [a any/c] [b any/c]) Expr-ptr?]
@@ -969,5 +1501,19 @@ exports its method(s) and a predicate that recognises values implementing it.
               @defproc[(has-null-count? [v any/c]) boolean?])]{
   The @racket[null-count] capability (method: @racket[null-count]). Implemented
   by series.}
+
+A series is also a Racket sequence (through @racket[prop:sequence]): a
+@racket[for] clause, @racket[sequence?] and the @racketmodname[racket/sequence]
+operations see its elements, converted a block of rows at a time as by
+@racket[in-series], with @racket[polars-null] for a null entry. A dataframe is
+not a sequence; iterate over its columns with @racket[in-dataframe-columns], or
+convert them with @racket[dataframe->columns].
+
+@examples[#:eval ev #:label #f
+(define ages (series (list 34 polars-null 51) #:name "age"))
+(sequence? ages)
+(for/list ([age ages]) age)
+(for/sum ([age ages] #:unless (polars-null? age)) age)
+(sequence? (dataframe (list ages)))]
 
 @(close-eval ev)
