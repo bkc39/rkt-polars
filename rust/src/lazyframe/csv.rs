@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{
-    collect_c_strings, collect_frame, polars_dtype_from_compat, scan,
+    collect_c_strings, is_pattern, polars_dtype_from_compat, read_path, scan,
     CompatCsvOptions, CompatDType, PathRules,
 };
 
@@ -67,31 +67,105 @@ fn decode_overrides(
     Ok(Some(Arc::new(Schema::from_iter(fields))))
 }
 
-fn parse_reader(
-    path: &str,
+struct CsvRequest {
+    comment_prefix: Option<CommentPrefix>,
+    null_values: Option<NullValues>,
+    overrides: Option<SchemaRef>,
+}
+
+fn comment_prefix(prefix: String) -> CommentPrefix {
+    match prefix.as_bytes() {
+        [byte] if byte.is_ascii() => CommentPrefix::Single(*byte),
+        _ => CommentPrefix::Multi(prefix.into()),
+    }
+}
+
+fn decode(arrays: &CsvArrays) -> PolarsResult<CsvRequest> {
+    Ok(CsvRequest {
+        comment_prefix: decode_comment_prefix(arrays.comment_prefix)?
+            .map(comment_prefix),
+        null_values: decode_null_values(
+            arrays.null_values,
+            arrays.null_values_len,
+        )?,
+        overrides: decode_overrides(
+            arrays.override_names,
+            arrays.override_dtypes,
+            arrays.overrides_len,
+        )?,
+    })
+}
+
+fn encoding(options: &CompatCsvOptions) -> CsvEncoding {
+    if options.lossy_utf8 {
+        CsvEncoding::LossyUtf8
+    } else {
+        CsvEncoding::Utf8
+    }
+}
+
+fn parse_options(
     options: &CompatCsvOptions,
-    comment_prefix: Option<&str>,
-) -> LazyCsvReader {
-    LazyCsvReader::new(path.into())
-        .with_glob(options.glob)
-        .with_has_header(options.has_header)
+    request: &CsvRequest,
+) -> CsvParseOptions {
+    CsvParseOptions::default()
         .with_separator(options.separator)
         .with_quote_char(options.has_quote_char.then_some(options.quote_char))
-        .with_comment_prefix(comment_prefix.map(PlSmallStr::from))
+        .with_comment_prefix(request.comment_prefix.clone())
+        .with_encoding(encoding(options))
+        .with_null_values(request.null_values.clone())
+        .with_try_parse_dates(options.try_parse_dates)
+}
+
+fn read_options(
+    options: &CompatCsvOptions,
+    request: &CsvRequest,
+) -> CsvReadOptions {
+    CsvReadOptions::default()
+        .with_has_header(options.has_header)
         .with_skip_rows(options.skip_rows)
-        .with_encoding(if options.lossy_utf8 {
-            CsvEncoding::LossyUtf8
-        } else {
-            CsvEncoding::Utf8
-        })
+        .with_n_rows(options.has_n_rows.then_some(options.n_rows))
+        .with_infer_schema_length(
+            options
+                .has_infer_schema_length
+                .then_some(options.infer_schema_length),
+        )
+        .with_ignore_errors(options.ignore_errors)
+        .with_schema_overwrite(request.overrides.clone())
+        .with_parse_options(parse_options(options, request))
+}
+
+fn lazy_reader(
+    path: &str,
+    options: &CompatCsvOptions,
+    read: CsvReadOptions,
+) -> LazyCsvReader {
+    let parse = read.get_parse_options();
+    LazyCsvReader::new(path.into())
+        .with_glob(options.glob)
+        .with_has_header(read.has_header)
+        .with_skip_rows(read.skip_rows)
+        .with_n_rows(read.n_rows)
+        .with_infer_schema_length(read.infer_schema_length)
+        .with_ignore_errors(read.ignore_errors)
+        .with_dtype_overwrite(read.schema_overwrite)
+        .map_parse_options(|_| (*parse).clone())
 }
 
 fn require_override_columns(
-    header: LazyCsvReader,
-    overrides: &Schema,
+    path: &str,
+    options: &CompatCsvOptions,
+    request: &CsvRequest,
 ) -> PolarsResult<()> {
-    let names = header
+    let Some(overrides) = &request.overrides else {
+        return Ok(());
+    };
+    let header = CsvReadOptions::default()
+        .with_has_header(options.has_header)
+        .with_skip_rows(options.skip_rows)
         .with_infer_schema_length(Some(0))
+        .with_parse_options(parse_options(options, request));
+    let names = lazy_reader(path, options, header)
         .finish()?
         .collect_schema()?;
     let missing: Vec<String> = overrides
@@ -112,36 +186,30 @@ fn csv_scan(
     options: &CompatCsvOptions,
     arrays: &CsvArrays,
 ) -> PolarsResult<LazyFrame> {
-    let comment_prefix = decode_comment_prefix(arrays.comment_prefix)?;
-    let null_values =
-        decode_null_values(arrays.null_values, arrays.null_values_len)?;
-    let overrides = decode_overrides(
-        arrays.override_names,
-        arrays.override_dtypes,
-        arrays.overrides_len,
-    )?;
-    let reader = parse_reader(path, options, comment_prefix.as_deref());
-    let lf = reader
-        .clone()
-        .with_n_rows(options.has_n_rows.then_some(options.n_rows))
-        .with_infer_schema_length(
-            options
-                .has_infer_schema_length
-                .then_some(options.infer_schema_length),
-        )
-        .with_null_values(null_values)
-        .with_dtype_overwrite(overrides.clone())
-        .with_ignore_errors(options.ignore_errors)
-        .with_try_parse_dates(options.try_parse_dates)
-        .finish()?;
-    if let Some(overrides) = &overrides {
-        require_override_columns(reader, overrides)?;
-    }
+    let request = decode(arrays)?;
+    let lf =
+        lazy_reader(path, options, read_options(options, &request)).finish()?;
+    require_override_columns(path, options, &request)?;
     Ok(lf)
 }
 
+fn csv_read(
+    path: &str,
+    options: &CompatCsvOptions,
+    arrays: &CsvArrays,
+) -> PolarsResult<DataFrame> {
+    if is_pattern(path, options.glob) {
+        return csv_scan(path, options, arrays)?.collect();
+    }
+    let request = decode(arrays)?;
+    require_override_columns(path, options, &request)?;
+    read_options(options, &request)
+        .try_into_reader_with_file_path(Some(path.into()))?
+        .finish()
+}
+
 macro_rules! csv_entry {
-    ($name:ident -> $out:ty, |$path:ident, $options:ident, $scan:ident| $body:expr) => {
+    ($name:ident -> $out:ty, |$path:ident, $options:ident, $arrays:ident| $body:expr) => {
         #[no_mangle]
         #[allow(clippy::too_many_arguments)]
         pub extern "C" fn $name(
@@ -154,7 +222,7 @@ macro_rules! csv_entry {
             override_dtypes: *const CompatDType,
             overrides_len: usize,
         ) -> *mut $out {
-            let arrays = CsvArrays {
+            let $arrays = CsvArrays {
                 comment_prefix,
                 null_values,
                 null_values_len,
@@ -162,23 +230,22 @@ macro_rules! csv_entry {
                 override_dtypes,
                 overrides_len,
             };
-            let $scan = |path: &str| csv_scan(path, &$options, &arrays);
             $body
         }
     };
 }
 
-csv_entry!(lazyframe_scan_csv_with_options -> LazyFrame, |path, options, csv| {
-    scan(path, csv)
+csv_entry!(lazyframe_scan_csv_with_options -> LazyFrame, |path, options, arrays| {
+    scan(path, |path| csv_scan(path, &options, &arrays))
 });
 
-csv_entry!(dataframe_read_csv_with_options -> DataFrame, |path, options, csv| {
-    collect_frame(
+csv_entry!(dataframe_read_csv_with_options -> DataFrame, |path, options, arrays| {
+    read_path(
         path,
         PathRules {
             glob: options.glob,
             directory: false,
         },
-        csv,
+        |path| csv_read(path, &options, &arrays),
     )
 });

@@ -2,7 +2,7 @@ use super::test_util::*;
 use super::*;
 use std::path::{Path, PathBuf};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Csv {
     options: CompatCsvOptions,
     comment_prefix: Option<CString>,
@@ -150,6 +150,180 @@ fn eager_read_matches_scan_then_collect() {
         let lazy = Csv::default().scan_collect(&path);
         assert!(eager.equals_missing(&lazy), "{}", name);
     }
+}
+
+type Outcome = Result<DataFrame, String>;
+
+impl Csv {
+    fn read_outcome(&self, path: &Path) -> Outcome {
+        let out = self.call(path, dataframe_read_csv_with_options);
+        if out.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        Ok(unsafe { *Box::from_raw(out) })
+    }
+
+    fn scan_outcome(&self, path: &Path) -> Outcome {
+        let lf = self.call(path, lazyframe_scan_csv_with_options);
+        if lf.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        let out = lazyframe_collect(lf);
+        lazyframe_drop(lf);
+        if out.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        Ok(unsafe { *Box::from_raw(out) })
+    }
+}
+
+fn same_outcome(a: &Outcome, b: &Outcome) -> bool {
+    match (a, b) {
+        (Ok(a), Ok(b)) => a.schema() == b.schema() && a.equals_missing(b),
+        (Err(a), Err(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn one_file_pattern(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    path.with_file_name(format!("[{}]{}", first, chars.as_str()))
+}
+
+const OPTION_FIXTURES: &[(&str, &[u8])] = &[
+    ("a.csv", b"a,b,d\n1,x,2024-01-01\n2,NA,2024-01-02\n-,y,\n"),
+    ("late-float.csv", b"a\n1\n2\n3\n4.5\n"),
+    ("semi.txt", b"# note\na;b\n'x;y';1\n# mid\nz;2\n"),
+    ("slashed.csv", b"a,b\n//skip\n1,2\n3,4\n"),
+    (
+        "times.csv",
+        b"t,d,a\n05:00:00,2020-01-02,2013-01-01 05:00:00\n",
+    ),
+    ("latin.csv", b"a\ncaf\xe9\n"),
+    ("tabs.tsv", b"a\tb\nNA\t2\n3\t-\n"),
+];
+
+fn option_cases() -> Vec<(&'static str, Csv)> {
+    let case = |label, set: fn(&mut Csv)| {
+        let mut csv = Csv::default();
+        set(&mut csv);
+        (label, csv)
+    };
+    let int32 = dtype(CompatDTypeTag::Int32, CompatTimeUnit::None);
+    let float64 = dtype(CompatDTypeTag::Float64, CompatTimeUnit::None);
+    let time = dtype(CompatDTypeTag::Time, CompatTimeUnit::None);
+    let mut cases = vec![
+        case("defaults", |_| {}),
+        case("no header", |c| c.options.has_header = false),
+        case("separator ;", |c| c.options.separator = b';'),
+        case("separator tab", |c| c.options.separator = b'\t'),
+        case("quote '", |c| c.options.quote_char = b'\''),
+        case("no quoting", |c| c.options.has_quote_char = false),
+        case("comment #", |c| c.comment_prefix = Some(cstr("#"))),
+        case("comment //", |c| c.comment_prefix = Some(cstr("//"))),
+        case("skip rows", |c| c.options.skip_rows = 1),
+        case("n rows 2", |c| {
+            c.options.has_n_rows = true;
+            c.options.n_rows = 2;
+        }),
+        case("n rows 0", |c| {
+            c.options.has_n_rows = true;
+            c.options.n_rows = 0;
+        }),
+        case("null NA", |c| c.null_values = vec![cstr("NA")]),
+        case("null NA and -", |c| {
+            c.null_values = vec![cstr("NA"), cstr("-")]
+        }),
+        case("infer every row", |c| {
+            c.options.has_infer_schema_length = false
+        }),
+        case("infer 0", |c| c.options.infer_schema_length = 0),
+        case("infer 1", |c| c.options.infer_schema_length = 1),
+        case("ignore errors", |c| c.options.ignore_errors = true),
+        case("try parse dates", |c| c.options.try_parse_dates = true),
+        case("lossy utf8", |c| c.options.lossy_utf8 = true),
+        case("glob off", |c| c.options.glob = false),
+        case("; ' # together", |c| {
+            c.options.separator = b';';
+            c.options.quote_char = b'\'';
+            c.comment_prefix = Some(cstr("#"));
+        }),
+        case("NA, skip and n rows together", |c| {
+            c.null_values = vec![cstr("NA"), cstr("-")];
+            c.options.skip_rows = 1;
+            c.options.has_header = false;
+            c.options.has_n_rows = true;
+            c.options.n_rows = 1;
+        }),
+    ];
+    for (label, overrides) in [
+        ("override a int32", vec![(cstr("a"), int32)]),
+        ("override a float64", vec![(cstr("a"), float64)]),
+        (
+            "override a and t time",
+            vec![(cstr("a"), float64), (cstr("t"), time)],
+        ),
+        ("override an absent column", vec![(cstr("zzz"), float64)]),
+    ] {
+        cases.push((
+            label,
+            Csv {
+                overrides,
+                ..Default::default()
+            },
+        ));
+    }
+    cases
+}
+
+const EAGER_ONLY_OUTCOMES: &[(&str, &str)] = &[
+    ("separator ;", "quoted.csv"),
+    ("separator tab", "quoted.csv"),
+    ("n rows 0", "latin.csv"),
+];
+
+#[test]
+fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures = FIXTURES
+        .iter()
+        .map(|(name, text)| (*name, text.as_bytes()))
+        .chain(OPTION_FIXTURES.iter().copied());
+    let paths: Vec<PathBuf> = fixtures
+        .map(|(name, contents)| write(dir.path(), name, contents))
+        .collect();
+    let mut outcomes = (0, 0);
+    let mut mismatches = Vec::new();
+    for (label, csv) in option_cases() {
+        let mut globbed = csv.clone();
+        globbed.options.glob = true;
+        for path in &paths {
+            let eager = csv.read_outcome(path);
+            let glob = globbed.read_outcome(&one_file_pattern(path));
+            let scan = csv.scan_outcome(path);
+            let name = path.file_name().unwrap().to_str().unwrap();
+            let agree =
+                same_outcome(&eager, &glob) && same_outcome(&eager, &scan);
+            let expected = EAGER_ONLY_OUTCOMES.contains(&(label, name));
+            if agree == expected {
+                mismatches.push(format!(
+                    "{} on {}: eager {:?}, glob {:?}, scan {:?}",
+                    label, name, eager, glob, scan
+                ));
+            }
+            if expected {
+                assert!(eager.is_err() && same_outcome(&glob, &scan));
+            }
+            match eager {
+                Ok(_) => outcomes.0 += 1,
+                Err(_) => outcomes.1 += 1,
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    assert!(outcomes.0 > 300 && outcomes.1 > 50, "{:?}", outcomes);
 }
 
 #[test]

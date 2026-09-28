@@ -38,8 +38,12 @@ pub(crate) struct PathRules {
     pub directory: bool,
 }
 
+pub(crate) fn is_pattern(path: &str, glob: bool) -> bool {
+    glob && path.contains(['*', '?', '['])
+}
+
 fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
-    if rules.glob && path.contains(['*', '?', '[']) {
+    if is_pattern(path, rules.glob) {
         return Ok(());
     }
     let metadata = std::fs::metadata(path).map_err(
@@ -52,21 +56,25 @@ fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
     Ok(())
 }
 
+pub(crate) fn read_path(
+    path: *const c_char,
+    rules: PathRules,
+    read: impl FnOnce(&str) -> PolarsResult<DataFrame>,
+) -> *mut DataFrame {
+    clear_last_error();
+    decode_path(path)
+        .and_then(|path| {
+            record(require_path(path, &rules).and_then(|()| read(path)))
+        })
+        .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
+}
+
 pub(crate) fn collect_frame(
     path: *const c_char,
     rules: PathRules,
     build: impl FnOnce(&str) -> PolarsResult<LazyFrame>,
 ) -> *mut DataFrame {
-    clear_last_error();
-    decode_path(path)
-        .and_then(|path| {
-            record(
-                require_path(path, &rules)
-                    .and_then(|()| build(path))
-                    .and_then(LazyFrame::collect),
-            )
-        })
-        .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
+    read_path(path, rules, |path| build(path).and_then(LazyFrame::collect))
 }
 
 fn write_frame(
