@@ -25,7 +25,8 @@
          (all-from-out polars/private/expr)
          (except-out (all-from-out polars/private/foreign)
                      call/foreign-error dataframe-drop-count last-error-message
-                     series-drop-count)
+                     series-drop-count dataframe-sort/raw frame-sort/c series-sort/raw
+                     sort-flags sort-flags/c sort-flags-mismatch)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>

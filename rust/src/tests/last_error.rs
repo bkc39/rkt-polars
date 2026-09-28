@@ -32,3 +32,13 @@ fn reading_the_reason_leaves_it_in_place() {
     assert_eq!(recorded_error().as_deref(), Some("kept"));
     assert_eq!(recorded_error().as_deref(), Some("kept"));
 }
+
+#[test]
+fn guard_panic_records_the_panic_as_the_reason() {
+    clear_last_error();
+    assert_eq!(guard_panic(|| -> Option<()> { panic!("boom") }), None);
+    assert_eq!(recorded_error().as_deref(), Some("polars panicked: boom"));
+    assert_eq!(guard_panic(|| -> Option<()> { panic!("boom {}", 2) }), None);
+    assert_eq!(recorded_error().as_deref(), Some("polars panicked: boom 2"));
+    assert_eq!(guard_panic(|| Some(7)), Some(7));
+}
