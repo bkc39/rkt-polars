@@ -4,6 +4,7 @@ use super::*;
 mod core;
 mod meta;
 mod selectors;
+mod sort;
 
 fn column(name: &str) -> *mut Expr {
     let n = test_util::cstr(name);

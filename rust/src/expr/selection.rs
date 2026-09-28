@@ -7,28 +7,29 @@ expr_unop!(expr_reverse, |e| e.reverse());
 expr_binop!(expr_filter, |a, b| a.filter(b));
 expr_binop!(expr_gather, |a, b| a.gather(b));
 
-/// sort_by parallel `by` exprs + `descending` flags (length `n`).
 #[no_mangle]
-pub extern "C" fn expr_sort_by(
+pub extern "C" fn expr_sort_by_with_options(
     e: *const Expr,
     by: *const *const Expr,
     descending: *const u8,
+    nulls_last: *const u8,
     n: usize,
+    maintain_order: u8,
 ) -> *mut Expr {
-    if e.is_null() || by.is_null() || descending.is_null() || n == 0 {
+    if e.is_null() {
         return ptr::null_mut();
     }
-    let by = unsafe { std::slice::from_raw_parts(by, n) };
-    let desc = unsafe { std::slice::from_raw_parts(descending, n) };
-    if by.iter().any(|p| p.is_null()) {
-        return ptr::null_mut();
-    }
-    let by_vec: Vec<Expr> =
-        by.iter().map(|p| unsafe { (**p).clone() }).collect();
-    let desc_vec: Vec<bool> = desc.iter().map(|b| *b != 0).collect();
+    let opts = match unsafe {
+        sort_multiple_options(descending, nulls_last, n, maintain_order)
+    } {
+        Ok(o) => o,
+        Err(_) => return ptr::null_mut(),
+    };
+    let by_vec = match unsafe { collect_exprs(by, n) } {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
     let ee = unsafe { (*e).clone() };
-    let opts =
-        SortMultipleOptions::default().with_order_descending_multi(desc_vec);
     Box::into_raw(Box::new(ee.sort_by(by_vec, opts)))
 }
 
@@ -148,13 +149,29 @@ pub extern "C" fn expr_over(
 }
 
 #[no_mangle]
-pub extern "C" fn expr_sort(e: *const Expr, descending: u8) -> *mut Expr {
+pub extern "C" fn expr_sort_with_options(
+    e: *const Expr,
+    descending: u8,
+    nulls_last: u8,
+) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
     }
     let inner = unsafe { (*e).clone() };
-    let opts = SortOptions::default().with_order_descending(descending != 0);
-    Box::into_raw(Box::new(inner.sort(opts)))
+    let opts = SortOptions::default()
+        .with_order_descending(descending != 0)
+        .with_nulls_last(nulls_last != 0);
+    // A group-wise `apply` sees each group's dtype, so `sort_series` can route
+    // around the `sort_with` defects; the default sort has none of them.
+    let sorted = if opts.descending || opts.nulls_last {
+        inner.apply(
+            move |s| sort_series(&s, opts).map(Some),
+            GetOutput::same_type(),
+        )
+    } else {
+        inner.sort(opts)
+    };
+    Box::into_raw(Box::new(sorted))
 }
 
 // LazyGroupBy::agg consumes self and LazyGroupBy is not Clone, which

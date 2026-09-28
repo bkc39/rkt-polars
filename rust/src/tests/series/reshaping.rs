@@ -75,14 +75,69 @@ fn unique_dedupes_entries() {
 #[test]
 fn sort_ascending_and_descending() {
     let s = make_i32("xs", &[3, 1, 2]);
-    let asc = series_sort(s, 0);
+    let asc = series_sort_with_options(s, 0, 0);
     assert_eq!(series_ref_i32(asc, 0).value, 1);
     assert_eq!(series_ref_i32(asc, 2).value, 3);
     series_drop(asc);
-    let desc = series_sort(s, 1);
+    let desc = series_sort_with_options(s, 1, 0);
     assert_eq!(series_ref_i32(desc, 0).value, 3);
     assert_eq!(series_ref_i32(desc, 2).value, 1);
     series_drop(desc);
+    series_drop(s);
+}
+
+fn sorted_i32s(
+    s: *mut Series,
+    descending: u8,
+    nulls_last: u8,
+) -> Vec<Option<i32>> {
+    let out = series_sort_with_options(s, descending, nulls_last);
+    assert!(!out.is_null(), "{:?}", recorded_error());
+    let v = opt_i32s(out);
+    series_drop(out);
+    v
+}
+
+#[test]
+fn sort_places_nulls_by_flag() {
+    let s = make_opt_i32("xs", &[Some(2), None, Some(1)]);
+    assert_eq!(sorted_i32s(s, 0, 0), vec![None, Some(1), Some(2)]);
+    assert_eq!(sorted_i32s(s, 0, 1), vec![Some(1), Some(2), None]);
+    assert_eq!(sorted_i32s(s, 1, 0), vec![None, Some(2), Some(1)]);
+    assert_eq!(sorted_i32s(s, 1, 1), vec![Some(2), Some(1), None]);
+    series_drop(s);
+}
+
+#[test]
+fn sort_places_boolean_nulls_by_flag() {
+    let (t, f) = (Some(true), Some(false));
+    let s = make_opt_bool("b", &[t, None, f, t]);
+    let cases = [
+        (0, 0, [None, f, t, t]),
+        (0, 1, [f, t, t, None]),
+        (1, 0, [None, t, t, f]),
+        (1, 1, [t, t, f, None]),
+    ];
+    for (descending, nulls_last, expected) in cases {
+        let out = series_sort_with_options(s, descending, nulls_last);
+        assert!(!out.is_null(), "{:?}", recorded_error());
+        assert_eq!(opt_bools(out), expected.to_vec());
+        series_drop(out);
+    }
+    series_drop(s);
+}
+
+#[test]
+fn sort_of_a_sorted_series_honours_nulls_last() {
+    let s = make_opt_i32("xs", &[Some(3), None, Some(1), None, Some(2)]);
+    for (descending, expected) in [(0, [1, 2, 3]), (1, [3, 2, 1])] {
+        let once = series_sort_with_options(s, descending, 0);
+        let mut want: Vec<Option<i32>> =
+            expected.iter().map(|&v| Some(v)).collect();
+        want.extend([None, None]);
+        assert_eq!(sorted_i32s(once, descending, 1), want);
+        series_drop(once);
+    }
     series_drop(s);
 }
 
@@ -94,5 +149,6 @@ fn reshaping_null_series_returns_null() {
     assert!(series_reverse(ptr::null_mut()).is_null());
     assert!(series_drop_nulls(ptr::null_mut()).is_null());
     assert!(series_unique(ptr::null_mut()).is_null());
-    assert!(series_sort(ptr::null_mut(), 0).is_null());
+    assert!(series_sort_with_options(ptr::null_mut(), 0, 0).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("series is null"));
 }
