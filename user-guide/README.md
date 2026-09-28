@@ -51,4 +51,13 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Expression expansion | `expression-expansion.rkt` | `expression_expansion.py` |
 | Window functions | `window-functions.rkt` | `window_functions.py` |
 
-`data/` holds the small CSV inputs the scripts read.
+`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
+[multiple files](https://docs.pola.rs/user-guide/io/multiple/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| CSV, with the reading options | `csv.rkt` | `csv.py` |
+| Multiple files | `multiple.rkt` | `multiple.py` |
+
+`data/` holds the small CSV inputs the scripts read; the `io/` scripts read
+the fixtures under `polars/scribblings/data/`, which the manual uses too.

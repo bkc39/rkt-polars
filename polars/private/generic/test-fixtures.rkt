@@ -31,3 +31,9 @@
 
 (define (column d name)
   (for/list ([i (in-range (height d))]) (ref (ref d #:columns name) i)))
+
+(define (frame=? a b)
+  (and (equal? (column-names a) (column-names b))
+       (for/and ([name (in-list (column-names a))])
+         (and (equal? (dtype (ref a #:columns name)) (dtype (ref b #:columns name)))
+              (equal? (column a name) (column b name))))))
