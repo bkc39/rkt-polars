@@ -217,9 +217,9 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
+- `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
-- `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
+- `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
   is red if it raises, exits non-zero or writes to stderr. The flake's
