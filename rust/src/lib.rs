@@ -27,8 +27,9 @@ pub use series::*;
 pub use types::*;
 
 pub(crate) use ffi::{
-    clear_last_error, collect_c_strings, collect_exprs, decode_path, record,
-    rust_string_to_ptr, set_last_error,
+    clear_last_error, collect_c_strings, collect_exprs, decode_path,
+    guard_panic, record, rust_string_to_ptr, set_last_error,
+    sort_multiple_options,
 };
 #[cfg(test)]
 pub(crate) use series::ymdhms_to_naive_datetime;

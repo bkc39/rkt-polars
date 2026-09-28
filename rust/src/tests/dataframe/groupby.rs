@@ -35,7 +35,15 @@ fn run_group_by(
 fn sorted_by_g(df: *mut DataFrame) -> *mut DataFrame {
     let g = cstr("g");
     let by: [*const c_char; 1] = [g.as_ptr()];
-    dataframe_sort(df, by.as_ptr(), ptr::null(), by.len())
+    let flags: [u8; 1] = [0];
+    dataframe_sort_with_options(
+        df,
+        by.as_ptr(),
+        flags.as_ptr(),
+        flags.as_ptr(),
+        by.len(),
+        0,
+    )
 }
 
 // Polars 0.41 renames the aggregated column by suffixing the

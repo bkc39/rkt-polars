@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{clear_last_error, record, set_last_error};
+use crate::{clear_last_error, guard_panic, record, set_last_error};
 
 #[no_mangle]
 pub extern "C" fn lazyframe_drop(lf: *mut LazyFrame) {
@@ -25,6 +25,6 @@ pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
         return ptr::null_mut();
     }
     let owned = unsafe { (*lf).clone() };
-    record(owned.collect())
+    guard_panic(|| record(owned.collect()))
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
