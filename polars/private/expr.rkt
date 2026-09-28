@@ -38,7 +38,8 @@
                   compat-time-unit/none
                   compat-time-unit/nanoseconds
                   compat-time-unit/microseconds
-                  compat-time-unit/milliseconds))
+                  compat-time-unit/milliseconds)
+         syntax/parse/define)
 
 (module+ test
   (require gregor
@@ -472,7 +473,7 @@
 
 ;; --- Cumulative + shift / diff ---
 
-(define-syntax-rule (define-cum name raw c-id)
+(define-syntax-parse-rule (define-cum name:id raw:id c-id:id)
   (begin
     (define-compat raw
       (_fun _Expr-ptr _uint8 -> _Expr-ptr)
@@ -1870,8 +1871,8 @@
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
-  (define (sort-blame? rx)
-    (lambda (e) (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e)))))
+  (define ((sort-blame? rx) e)
+    (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "g" '(2 1))
                                                        (series-new-i64 "h" '(1 2))))))
   (check-exn (sort-blame? #rx"^expr-sort-by: contract violation")

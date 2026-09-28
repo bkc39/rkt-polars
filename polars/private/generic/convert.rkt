@@ -329,8 +329,9 @@
   (check-equal? (drops-during (lambda () (dataframe->hash mixed))) 5)
   (let ([wanted 20]
         [before (begin (settle!) (series-drop-count))])
-    (for ([_ (in-range wanted)])
-      (for ([s (in-dataframe-columns mixed)]) (series-name s)))
+    (for* ([_ (in-range wanted)]
+           [s (in-dataframe-columns mixed)])
+      (series-name s))
     (settle!)
     (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2)))
   (check-equal? (drops-during (lambda ()

@@ -1,0 +1,35 @@
+#lang resyntax/test
+
+
+require: lint polars-style
+
+
+header:
+- #lang racket/base
+
+
+test: "the suite carries the default recommendations"
+- (define (f a b c) (and a (and b c)))
+- (define (f a b c) (and a b c))
+
+
+test: "the suite carries the define-syntax-parse-rule migration"
+------------------------------
+(require syntax/parse/define)
+(define-syntax-rule (twice e) (begin e e))
+==============================
+(require syntax/parse/define)
+(define-syntax-parse-rule (twice e) (begin e e))
+------------------------------
+
+
+no-change-test: "map over one list stays map"
+- (map (lambda (x) (displayln x) (* x 2)) (list 1 2 3))
+
+
+no-change-test: "the suite never recommends define-syntax-rule"
+------------------------------
+(define-syntax my-unless
+  (syntax-rules ()
+    [(_ c body ...) (if c (void) (begin body ...))]))
+------------------------------

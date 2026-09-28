@@ -56,6 +56,21 @@ Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
 in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
+### Macros
+
+`define-syntax-parse-rule`, or `define-syntax-parser` for several clauses;
+never `define-syntax-rule` or `syntax-rules`. Put a syntax class on each
+pattern variable (`name:id`, `op:expr`). Require the whole of
+`syntax/parse/define`: it also provides the syntax classes, and with only an
+`only-in` of `define-syntax-parse-rule` an annotation fails with "not defined
+as syntax class" (a `define-syntax-parser` clause also needs `(for-syntax
+racket/base)` for `#'`). `define-syntax-parse-rule` leaves each expansion at
+the template's source location, where `define-syntax-rule` moved it to the
+use site; a macro whose location shows (a rackunit helper, a template that
+is a `lambda`) is a `define-syntax-parser` clause returning
+`(syntax/loc this-syntax ...)`. The `no-syntax-rule` gate rejects both old
+forms; the `resyntax` gate's suite rewrites the ones it can.
+
 ### Adding an FFI entry point
 
 Rust side: `#[no_mangle] pub extern "C"`, in the module for its family under
@@ -221,10 +236,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (four checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
   Racket build with docs, tests, guide scripts and examples,
-  `cargo fmt --check`, the Racket version floor). `nix build .#racket` runs
-  only the second and is not enough.
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
+  `nix build .#racket` runs only the second and is not enough. It does not
+  cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
@@ -235,15 +251,25 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -c polars` (Racket), `raco test user-guide` (the guide's
+- `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
-- `raco test -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
+- `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
   is red if it raises, exits non-zero or writes to stderr. The flake's
   Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
+- The lint gates are `scripts/no-syntax-rule.sh` (a grep; no shell needed)
+  and `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
+  The second runs the project's Resyntax suite, `lint/`: the default
+  recommendations minus the rules it disables, plus the project's own rules,
+  each tested by a `#lang resyntax/test` file (`raco test lint`). `lint/` is
+  outside the published package and the nix build never compiles it. A
+  review comment that is a semantics-preserving local rewrite becomes a rule
+  there; anything else becomes a grep gate. The Resyntax run takes minutes
+  (one large file alone takes about four), so it is not a push gate; CI runs
+  it on every PR.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
   nycflights file into `bench/data/` (gitignored) and prints the scoreboard
   (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table
