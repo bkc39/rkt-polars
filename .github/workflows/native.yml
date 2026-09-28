@@ -170,19 +170,25 @@ jobs:
           architecture: ${{ matrix.arch }}
 
       - name: Install from the committed candidate and test
+        id: committed-test
         run: scripts/test-local.sh
 
       # What loading cannot show: the glibc floor, and that the two binaries
       # export the same symbols.
       - name: Check both committed binaries
+        id: committed-verify
         if: ${{ !cancelled() && matrix.platform == 'linux' }}
         run: >-
           python3 scripts/verify-candidates.py
           polars/native-libs/candidates/linux/libcompat.so
           polars/native-libs/candidates/darwin/libcompat.dylib
 
+      # Only when a candidate step itself failed: a setup failure (the Racket
+      # download, the checkout) says nothing about the candidates.
       - name: Say how to refresh the candidates
-        if: failure()
+        if: >-
+          ${{ failure() && (steps.committed-test.outcome == 'failure'
+          || steps.committed-verify.outcome == 'failure') }}
         env:
           PR: ${{ github.event.pull_request.number }}
           RUN: ${{ github.run_id }}

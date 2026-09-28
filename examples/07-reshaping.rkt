@@ -48,7 +48,7 @@
     (displayln "carol,30")))
 
 (define score (ref (read-csv csv-path) #:columns "score"))
-(printf "\nscore from csv (with one empty cell):\n")
+(displayln "\nscore from csv (with one empty cell):")
 (printf "  len:        ~a\n" (len score))
 (printf "  null-count: ~a\n" (null-count score))
 (printf "  drop-nulls: ~a\n" (~> score drop-nulls len))

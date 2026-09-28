@@ -102,7 +102,7 @@
           (cell rkt-ms 9)
           (cell py-ms 9)
           (cell ratio 8)
-          (if (null? notes) "" (string-append "   " (string-join notes "; ")))))
+          (if (null? notes) "" (string-join notes "; " #:before-first "   "))))
 
 (module+ main
   (ensure-data)

@@ -77,8 +77,8 @@
   [(define (len d) (dataframe-height d))]
   #:methods gen:has-shape
   [(define (shape d)
-     (let-values ([(rows cols) (dataframe-shape d)])
-       (list rows cols)))])
+     (define-values (rows cols) (dataframe-shape d))
+     (list rows cols))])
 
 (define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
@@ -139,11 +139,13 @@
 
 ;; ref for a series: positional index only.
 (define (series-ref* s key columns rows)
-  (cond
-    [(not (eq? columns unset)) (error 'ref "a series has no columns to select")]
-    [(not (eq? rows unset)) (error 'ref "series row slicing not supported")]
-    [(eq? key unset) (error 'ref "ref on a series requires an index")]
-    [else (series-ref s key)]))
+  (unless (eq? columns unset)
+    (error 'ref "a series has no columns to select"))
+  (unless (eq? rows unset)
+    (error 'ref "series row slicing not supported"))
+  (when (eq? key unset)
+    (error 'ref "ref on a series requires an index"))
+  (series-ref s key))
 
 ;; a dataframe column selector, as a name.
 (define (column->name d c)

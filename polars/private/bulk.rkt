@@ -230,12 +230,11 @@
 (define (check-column-names who d names)
   (define present (for/hash ([name (in-list (dataframe-column-names d))]) (values name #t)))
   (for/fold ([seen (hash)] #:result (void)) ([name (in-list names)])
-    (cond
-      [(not (hash-ref present name #f))
-       (raise-arguments-error who "no such column" "column" name)]
-      [(hash-ref seen name #f)
-       (raise-arguments-error who "duplicate column" "column" name)]
-      [else (hash-set seen name #t)])))
+    (unless (hash-ref present name #f)
+      (raise-arguments-error who "no such column" "column" name))
+    (when (hash-ref seen name #f)
+      (raise-arguments-error who "duplicate column" "column" name))
+    (hash-set seen name #t)))
 
 (define (call-with-columns who d names proc)
   (check-column-names who d names)
