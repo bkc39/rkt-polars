@@ -39,7 +39,6 @@
    (lambda (v)
      (and (dtype-spec? v)
           (match v
-            ['time #f]
             [(cons 'duration _) #f]
             [_ #t])))))
 

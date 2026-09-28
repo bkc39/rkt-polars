@@ -4,11 +4,11 @@
 ;;
 ;; #:schema-overrides fixes named columns' types, as an association list of
 ;; name -> dtype in any spelling `series #:dtype` accepts ('i32 or 'int32,
-;; 'f64 or 'float64, 'datetime or '(datetime milliseconds)); the other
-;; columns are still inferred. #:infer-schema-length sets how many rows
-;; inference reads: the default 100, #f for every row, 0 for strings
-;; throughout. An override naming a column the file lacks is an error rather
-;; than a silent rename.
+;; 'f64 or 'float64, 'datetime or '(datetime milliseconds), 'time) but a
+;; duration; the other columns are still inferred. #:infer-schema-length sets
+;; how many rows inference reads: the default 100, #f for every row, 0 for
+;; strings throughout. An override naming a column the file lacks is an
+;; error, where Python ignores it.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/41-csv-schema.rkt
@@ -43,6 +43,13 @@
                          #:schema-overrides '(("time_hour" . (datetime milliseconds))))
                (ref #:columns "time_hour")
                dtype))
+(newline)
+
+(define clock (make-temporary-file "rkt-polars-clock-~a.csv"))
+(display-lines-to-file '("gate,departs" "B12,05:40:00" "C3,18:05:30") clock #:exists 'replace)
+(displayln "a 'time override parses times of day:")
+(displayln (read-csv clock #:schema-overrides '(("departs" . time))))
+(delete-file clock)
 (newline)
 
 (displayln "an override for a column the file lacks:")

@@ -40,7 +40,9 @@
            racket/runtime-path
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list last remove-duplicates)
+           (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains?)
+           (only-in polars/private/bulk in-series series->list)
            (only-in threading ~>)
            (only-in gregor datetime)
            (prefix-in contracted: (submod ".."))
@@ -96,7 +98,6 @@
       (#:null-values . ("NA" 1)) (#:infer-schema-length . -1) (#:infer-schema-length . 1.5)
       (#:schema-overrides . ((a . int32))) (#:schema-overrides . (("a" . bogus)))
       (#:schema-overrides . (("a" . (duration microseconds))))
-      (#:schema-overrides . (("a" . time)))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
       (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)
 ))
@@ -137,7 +138,7 @@
   (for ([hint '("#:infer-schema-length 10000" "#:schema-overrides" "#:ignore-errors to #t"
                 "`NA` to #:null-values")])
     (check-true (string-contains? unparsed hint) hint))
-  (check-false (regexp-match? #rx"null_values|ignore_errors|infer_schema_length|dtypes" unparsed))
+  (check-false (regexp-match? #rx"null_values|ignore_errors|infer_schema_length|schema_overrides" unparsed))
   (check-true (frame=? flights-na (read-csv flights #:separator #\tab #:null-values '("NA"))))
   (check-true (frame=? (read-csv flights #:separator #\tab #:infer-schema-length 0)
                        (read-csv flights #:separator #\tab #:infer-schema-length 0
@@ -207,6 +208,10 @@
   (define parsed (read-csv dated #:try-parse-dates #t))
   (check-equal? (dtypes-of parsed) '(date time (datetime microseconds #f)))
   (check-equal? (column parsed "ts") (list (datetime 2013 1 1 5)))
+  (define clocked (scratch-file "clocked.csv" "t" "05:00:00" "06:30:15"))
+  (define clocked-frame (read-csv clocked #:schema-overrides '(("t" . time))))
+  (check-equal? (dtypes-of clocked-frame) '(time))
+  (check-true (frame=? clocked-frame (read-csv clocked #:try-parse-dates #t)))
   (check-equal? (~> (read-csv flights #:separator #\tab #:null-values "NA" #:try-parse-dates #t)
                     (ref #:columns "time_hour")
                     dtype)
@@ -240,6 +245,19 @@
   (check-equal? (height skipped) 99998)
   (check-equal? (ref (ref skipped #:columns "column_1") 0) 2)
 
+  (define gappy (build-path scratch "gappy.csv"))
+  (call-with-output-file gappy #:exists 'replace
+    (lambda (out)
+      (write-string "x,s\n" out)
+      (for ([i (in-range 200000)])
+        (write-string (if (zero? (modulo i 7)) ",\n" (format "~a,s~a\n" i i)) out))))
+  (define gappy-frame (read-csv gappy))
+  (for ([name '("x" "s")])
+    (define s (ref gappy-frame #:columns name))
+    (define expected (for/list ([i (in-range (height gappy-frame))]) (ref s i)))
+    (check-equal? (series->list s) expected name)
+    (check-equal? (sequence->list (in-series s #:chunk-rows 4093)) expected name))
+
   (define gone (build-path scratch "gone.csv"))
   (check-exn #rx"^lazyframe-collect: " (lambda () (collect (scan-csv gone))))
   (check-exn #rx"^lazyframe-scan-csv: failed to scan "
@@ -270,10 +288,12 @@
   (check-exn #rx"^dataframe-read-csv: " (lambda () (read-csv (build-path scratch "mixed" "*.csv"))))
 
   (define nothing (build-path scratch "globbed" "*.none"))
+  (check-pred lazyframe? (scan-csv nothing))
+  (check-pred lazyframe? (scan-parquet nothing))
   (for ([thunk (list (lambda () (read-csv nothing))
-                     (lambda () (scan-csv nothing))
+                     (lambda () (collect (scan-csv nothing)))
                      (lambda () (read-parquet nothing))
-                     (lambda () (scan-parquet nothing)))])
+                     (lambda () (collect (scan-parquet nothing))))])
     (check-exn #rx": no files match the pattern$" thunk))
 
   (void (scratch-file "literal/a1.csv" "x" "1"))

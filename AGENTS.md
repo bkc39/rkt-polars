@@ -129,22 +129,25 @@ it. Racket side: `define-compat` with `#:c-id`.
   a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
   of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file is reported at `collect`. Reported at scan instead: a glob that
-  matches no file, and, with `#:schema-overrides`, an override naming a
-  column the header lacks. That check reads the header because 0.41.3
-  applies a full-length override list by position and would silently rename
-  the column.
+  file, an invalid glob pattern, or one that matches no file is reported at
+  `collect`, as in Python (0.55 expands a pattern at collect). Reported at
+  scan instead: with `#:schema-overrides`, an override naming a column the
+  header lacks. That check reads the header because 0.55 applies overrides
+  by name and ignores an absent one, as Python 1.42.1 does; a misspelt
+  override would otherwise do nothing. `call/foreign-error` respells 0.55's
+  empty-expansion reason, which carries the pattern, as `no files match the
+  pattern`.
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
-  never for a single file or a glob, matching Python (0.41.3's
-  `HiveOptions { enabled: None }`).
+  never for a single file or a glob, matching Python (`HiveOptions {
+  enabled: None }`, which 0.55 resolves at collect).
 - The separator guard is stricter than Python, whose `read_csv` returns the
   one column; the #86 scoreboard (check C1) requires the error.
-- A `'time` schema override is a contract error: 0.41.3 cannot parse a
-  `Time` column from CSV, though `#:try-parse-dates` infers one.
+- A duration schema override is a contract error: polars cannot parse a
+  `Duration` column from CSV, in Python either.
 - `round` rounds ties to even, as Python Polars and `racket/base` do.
 - `sign` keeps the column's dtype: a float column gives `-1.0` / `0.0` / `1.0`.
 - A `join` promises no row order except `'cross`, as Python's default

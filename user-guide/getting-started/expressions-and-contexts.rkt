@@ -46,8 +46,8 @@
 (displayln
  (~> df (filter (< (dt-year "birthdate") 1990))))
 
-;; API gaps: no date literals (cast a string instead), and filter takes a
-;; single predicate, so the two conditions are joined with `and`.
+;; API gaps: no date literals (parse a string with str-to-date), and filter
+;; takes a single predicate, so the two conditions are joined with `and`.
 (displayln
  (~> df
      (filter (and (is-between "birthdate"

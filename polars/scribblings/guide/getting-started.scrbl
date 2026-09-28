@@ -92,8 +92,9 @@ API gaps: no multi-column @tt{col("weight", "height")}; no @tt{name.suffix}.
                  (> (col "height") 1.7))))
 ]
 
-API gaps: no date literals; @racket[filter] takes one predicate, so combine
-with @racket[and].
+API gaps: no date literals, so the bounds parse a string with
+@racket[str-to-date]; @racket[filter] takes one predicate, so combine with
+@racket[and].
 
 @subsection[#:tag "gs-group-by"]{group-by}
 

@@ -110,8 +110,7 @@ and @racket[#:n-rows] frame the rows to read.
 
 API gaps: @tt{null_values} takes no per-column mapping (#101); no
 @tt{columns}, @tt{new_columns}, @tt{eol_char}, @tt{row_index_name},
-@tt{truncate_ragged_lines} or @tt{decimal_comma}. A @racket['time] override is
-rejected, because Polars 0.41.3 cannot parse one from CSV.
+@tt{truncate_ragged_lines} or @tt{decimal_comma}.
 
 @section[#:tag "io-multiple"]{Multiple files}
 

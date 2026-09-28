@@ -157,6 +157,10 @@ binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}
                  (> (col "height") 1.7))))
 ]
 
+API gaps: no date literals, so the bounds parse a string with
+@racket[str-to-date]; @racket[filter] takes one predicate, so combine with
+@racket[and].
+
 @subsubsection[#:tag "concepts-group-by"]{group-by and aggregations}
 
 Group keys may be expressions. A bare @racket[(col "name")] inside

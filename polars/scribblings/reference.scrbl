@@ -188,9 +188,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   with @racket[col] wherever an expression is expected.
 
   A multi-column expression is read off the plan too, before any frame
-  says which columns it will match. For a regexp @racket[col], the output
-  name and the one root name are its translated pattern; a dtype
-  @racket[col] or @racket[(all)] has no root names and no output name.
+  says which columns it will match, so a regexp or dtype @racket[col] or
+  @racket[(all)] has no root names and no output name, as in Python.
 
   @examples[#:eval ev
 (define total (alias (sum (+ (col "a") (col "b"))) "total"))
@@ -204,7 +203,7 @@ total
 (meta-output-name (lit 25))
 (meta-root-names "a")
 (meta-root-names (col #rx"^he"))
-(meta-output-name (col #rx"^he"))
+(eval:error (meta-output-name (col #rx"^he")))
 (~> (col 'float64) (* 2) meta-root-names)
 (meta-eq? (col 'float64) (col 'f64))
 (eval:error (meta-output-name (col 'float64)))
@@ -377,11 +376,10 @@ total
   reads every row, and @racket[0] makes every column a string.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
-  accepts except @racket['time] and a duration, which Polars 0.41.3 cannot
-  parse from CSV. Each column appears at most once
-  (@racket[distinct-names?]), and naming a column the file lacks is an
-  error. With @racket[#:ignore-errors #t] a field
-  that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
+  accepts except a duration, which Polars cannot parse from CSV. Each column
+  appears at most once (@racket[distinct-names?]), and naming a column the
+  file lacks is an error, where Python ignores the override. With
+  @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
   @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
   U+FFFD.
@@ -484,11 +482,11 @@ total
 @defcsvproc[(scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
   (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
-  runs the plan, and that is where a file that cannot be read is reported.
-  Two things are reported here instead: a glob pattern that matches no file,
-  and, when @racket[schema-overrides] is given, a column it names that the
-  header lacks, which reads the header. The separator check does not apply,
-  and a directory reads every file in it.
+  runs the plan, and that is where a file that cannot be read, or a glob
+  pattern that matches no file, is reported. One thing is reported here
+  instead: when @racket[schema-overrides] is given, a column it names that
+  the header lacks, which reads the header. The separator check does not
+  apply, and a directory reads every file in it.
 
   @examples[#:eval ev
 (~> (scan-csv "flights.tsv" #:separator #\tab #:null-values "NA")
@@ -499,7 +497,8 @@ total
 (shape (collect (scan-csv "flights.tsv")))
 (define plan (scan-csv "/no/such/file.csv"))
 (eval:error (collect plan))
-(eval:error (scan-csv "parts/*.tsv"))
+(define no-match (scan-csv "parts/*.tsv"))
+(eval:error (collect no-match))
 (eval:error (scan-csv "flights.tsv" #:separator #\tab
                       #:schema-overrides '(("dep_dealy" . f64))))]}
 
@@ -510,10 +509,12 @@ total
   Read Parquet eagerly (@tt{pl.read_parquet}), or start a plan from it
   (@tt{pl.scan_parquet}). @racket[path] is always a glob pattern: the
   matching files stack in sorted filename order, and one that matches
-  nothing is an error. A directory reads every file in it and adds its
+  nothing is an error, which @racket[scan-parquet] leaves to
+  @racket[collect]. A directory reads every file in it and adds its
   @litchar{key=value} subdirectory names as columns; a single file or a
   pattern adds none, as in Python, and neither does a directory whose own
-  path holds @litchar{[}, @litchar{*} or @litchar{?} (Polars 0.41.3). @racket[read-parquet] is
+  path holds @litchar{[}, @litchar{*} or @litchar{?}, which Polars reads as
+  a pattern once it is escaped. @racket[read-parquet] is
   @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
   literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
   @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
