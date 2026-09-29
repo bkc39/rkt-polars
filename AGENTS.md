@@ -95,8 +95,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
   `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
-  (#47). `require-series-result` and `require-dataframe-result` are the
-  remaining hand-written copies (#72).
+  (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
+  <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
+  `who: operation failed` itself, so no wrapper is needed. A test in
+  `foreign.rkt` reads every `define-compat` under `polars/private` and fails
+  on one of these four result types without its allocator, or on a
+  `_pointer` result.
+- The `series`, `dataframe` and `lazyframe` wrappers carry
+  `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
+  release the pointer the allocator registered, once. A new wrapper struct
+  around an allocated pointer needs the property too.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
@@ -124,8 +132,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series_sort_with_options` do.
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free, and a pairing test checks that an explicit
-  drop releases a frame exactly once.
+  otherwise observe a native free (`foreign.rkt` has a case for each Series-
+  and DataFrame-returning binding but the file readers), and pairing tests
+  check that an explicit drop, of a pointer or a wrapper, releases it exactly
+  once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
   Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
   paired `allocator`/`deallocator`, freed as soon as the conversion returns),

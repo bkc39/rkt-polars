@@ -24,9 +24,10 @@
 (provide dataframe-read-csv lazyframe-scan-csv
          (all-from-out polars/private/expr)
          (except-out (all-from-out polars/private/foreign)
-                     call/foreign-error dataframe-drop-count last-error-message
-                     series-drop-count dataframe-sort/raw frame-sort/c series-sort/raw
-                     sort-flags sort-flags/c sort-flags-mismatch)
+                     allocator/or-fail call/foreign-error dataframe-drop-count
+                     last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
+                     prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
+                     series-sort/raw sort-flags sort-flags/c sort-flags-mismatch)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
