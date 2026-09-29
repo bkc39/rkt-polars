@@ -143,14 +143,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   check that an explicit drop, of a pointer or a wrapper, releases it exactly
   once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
-  paired `allocator`/`deallocator`, freed as soon as the conversion returns),
-  byte strings, and the `f64vector` a caller gets back. `series_copy_cat`
-  also returns the copy's category strings as a new series, which the
-  caller drops once it has read them. The last two may move:
-  those bindings are never `#:blocking?`. Every destination travels with its
+  Racket allocated: a raw buffer of the column's native type (bound with
+  `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
+  and the `f64vector` a caller gets back. `series_copy_cat` also returns the
+  copy's category strings as a new series, held with `with-release` while the
+  conversion reads them. The byte strings and the `f64vector` may move: those
+  bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
+- **A scoped native resource is never paired by hand.** A buffer or owned
+  result used only for the length of a computation is bound with
+  `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
+  expand into `dynamic-wind`, so the release runs on return, raise and
+  escape; the buffer's finalizer backs up a thread killed inside the extent.
+  No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
+  fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`), so a stale library fails at load, when

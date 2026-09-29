@@ -16,6 +16,7 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/resource with-raw-buffer)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
@@ -1056,10 +1057,9 @@
      (expt 10 scale)))
 
 (define (series-ref-decimal s index scale)
-  (define words (malloc 2 _uint64 'raw))
-  (begin0 (and (zero? (series-copy-decimal s index 1 words 2 #f 0))
-               (decimal-ref words 0 scale))
-          (free words)))
+  (with-raw-buffer ([words 2 _uint64])
+    (and (zero? (series-copy-decimal s index 1 words 2 #f 0))
+         (decimal-ref words 0 scale))))
 
 (define (series-ref s index)
   (unless (exact-nonnegative-integer? index)

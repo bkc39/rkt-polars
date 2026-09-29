@@ -2,8 +2,8 @@
 
 (require (only-in ffi/unsafe
                   -> _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
-                  _uint16 _uint32 _uint64 _uint8 free malloc ptr-ref)
-         (only-in ffi/unsafe/alloc allocator deallocator)
+                  _uint16 _uint32 _uint64 _uint8 ptr-ref)
+         (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
          (only-in gregor jdn->date posix->datetime)
          (only-in gregor/time time)
@@ -15,7 +15,8 @@
                   _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
                   dataframe-height decimal-ref define-compat duration-value->period
                   polars-null series-copy-decimal series-drop series-dtype series-len
-                  series-name series-null-count))
+                  series-name series-null-count)
+         (only-in polars/private/resource with-raw-buffer with-release))
 
 (provide check-column-names
          dataframe->columns
@@ -27,10 +28,6 @@
          series->vector)
 
 ;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
-(define free-buffer ((deallocator) free))
-(define alloc-buffer
-  ((allocator free-buffer) (lambda (count ctype) (malloc (max count 1) ctype 'raw))))
-
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
     (define-compat name
@@ -125,10 +122,9 @@
 
 (define-syntax-parse-rule (define-physical-rows name:id ctype:id copy!:id convert:expr)
   (define (name shape who s dtype arg start count valid null-value)
-    (define dst (alloc-buffer count ctype))
-    (checked who dtype (copy! s start count dst count valid (valid-len valid)))
-    (begin0 (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i)))
-            (free-buffer dst))))
+    (with-raw-buffer ([dst count ctype])
+      (checked who dtype (copy! s start count dst count valid (valid-len valid)))
+      (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i))))))
 
 (define-physical-rows int8-rows _int8 series-copy-i8 (lambda (_ v) v))
 (define-physical-rows int16-rows _int16 series-copy-i16 (lambda (_ v) v))
@@ -148,33 +144,29 @@
 
 (define (string-rows shape who s dtype start count valid null-value)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
-  (define offsets (alloc-buffer (add1 count) _int64))
-  (checked who dtype (series-copy-str s start count buf (bytes-length buf)
-                                      offsets (add1 count) valid (valid-len valid)))
-  (begin0 (collect shape count valid null-value i
-                   (bytes->string/utf-8 buf #f
-                                        (ptr-ref offsets _int64 i)
-                                        (ptr-ref offsets _int64 (add1 i))))
-          (free-buffer offsets)))
+  (with-raw-buffer ([offsets (add1 count) _int64])
+    (checked who dtype (series-copy-str s start count buf (bytes-length buf)
+                                        offsets (add1 count) valid (valid-len valid)))
+    (collect shape count valid null-value i
+             (bytes->string/utf-8 buf #f
+                                  (ptr-ref offsets _int64 i)
+                                  (ptr-ref offsets _int64 (add1 i))))))
 
 (define (categorical-rows shape who s dtype start count valid null-value)
-  (define codes (alloc-buffer count _uint32))
-  (define table (series-copy-cat s start count codes count valid (valid-len valid)))
-  (unless table
-    (free-buffer codes)
-    (checked who dtype -1))
-  (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null))
-  (series-drop table)
-  (define symbols (for/vector #:length (vector-length names) ([name (in-vector names)])
-                    (string->symbol name)))
-  (begin0 (collect shape count valid null-value i (vector-ref symbols (ptr-ref codes _uint32 i)))
-          (free-buffer codes)))
+  (with-raw-buffer ([codes count _uint32])
+    (with-release ([table (series-copy-cat s start count codes count valid (valid-len valid))
+                          series-drop])
+      (unless table
+        (checked who dtype -1))
+      (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null))
+      (define symbols (for/vector #:length (vector-length names) ([name (in-vector names)])
+                        (string->symbol name)))
+      (collect shape count valid null-value i (vector-ref symbols (ptr-ref codes _uint32 i))))))
 
 (define (decimal-rows shape who s dtype scale start count valid null-value)
-  (define words (alloc-buffer (* 2 count) _uint64))
-  (checked who dtype (series-copy-decimal s start count words (* 2 count) valid (valid-len valid)))
-  (begin0 (collect shape count valid null-value i (decimal-ref words i scale))
-          (free-buffer words)))
+  (with-raw-buffer ([words (* 2 count) _uint64])
+    (checked who dtype (series-copy-decimal s start count words (* 2 count) valid (valid-len valid)))
+    (collect shape count valid null-value i (decimal-ref words i scale))))
 
 (define (rows shape who s dtype start count null-value)
   (define valid (validity s count))
