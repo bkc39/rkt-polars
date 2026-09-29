@@ -10,9 +10,9 @@
 (require polars)
 
 ;; The first rows of upstream's Pokémon table, with its types as an Enum.
-(define types
-  '(enum Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
-         Flying Dragon Dark Ghost Poison Rock Ice Fairy))
+(define-enum types
+  Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
+  Flying Dragon Dark Ghost Poison Rock Ice Fairy)
 (define pokemon
   (dataframe
    (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"

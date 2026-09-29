@@ -2,10 +2,10 @@
 
 ;; Enum columns.
 ;;
-;; '(enum cat ...) declares the categories, in order, up front. The values read
-;; back as symbols, sorting and comparing follow the declared order, and a
-;; value outside the categories is an error: building the series, casting to
-;; it, or comparing with it.
+;; (define-enum name cat ...) declares the categories, in order, up front. The
+;; values read back as symbols, sorting and comparing follow the declared
+;; order, and a value outside the categories is an error: building the series,
+;; casting to it, or comparing with it.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/59-dtypes-enum.rkt
@@ -16,7 +16,7 @@
   (with-handlers ([exn:fail? (lambda (e) (displayln (exn-message e)))])
     (thunk)))
 
-(define log-levels '(enum debug info warning error))
+(define-enum log-levels debug info warning error)
 
 (define logs
   (dataframe

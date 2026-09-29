@@ -14,7 +14,7 @@
     (thunk)))
 
 ;; --- data type Enum: creating an Enum ------------------------------------
-(define bears-enum '(enum Polar Panda Brown))
+(define-enum bears-enum Polar Panda Brown)
 (define bears (series '(Polar Panda Brown Brown Polar) #:dtype bears-enum))
 (displayln bears)
 
@@ -22,7 +22,7 @@
 (report (lambda () (series '(Polar Panda Brown Polar Shark) #:dtype bears-enum)))
 
 ;; --- category ordering and comparison ------------------------------------
-(define log-levels '(enum debug info warning error))
+(define-enum log-levels debug info warning error)
 
 (define logs
   (dataframe

@@ -237,7 +237,7 @@ Enum when the categories are known. Both read back as symbols. See
 @subsubsection[#:tag "categoricals-enum-creating"]{Creating an Enum}
 
 @examples[#:eval ev #:label #f
-(define bears-enum '(enum Polar Panda Brown))
+(define-enum bears-enum Polar Panda Brown)
 (define bears (series '(Polar Panda Brown Brown Polar) #:dtype bears-enum))
 bears
 ]
@@ -253,7 +253,7 @@ bears
 An Enum sorts and compares in the order of its categories.
 
 @examples[#:eval ev #:label #f
-(define log-levels '(enum debug info warning error))
+(define-enum log-levels debug info warning error)
 (define logs
   (dataframe
    (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
@@ -352,9 +352,9 @@ back onto the rows, so the frame keeps its height. The Pokémon below are the
 first rows of upstream's table.
 
 @examples[#:eval ev #:label #f
-(define types
-  '(enum Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
-         Flying Dragon Dark Ghost Poison Rock Ice Fairy))
+(define-enum types
+  Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
+  Flying Dragon Dark Ghost Poison Rock Ice Fairy)
 (define pokemon
   (dataframe
    (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"

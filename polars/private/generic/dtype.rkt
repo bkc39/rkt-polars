@@ -6,11 +6,25 @@
 (require racket/match
          (only-in gregor datetime?)
          polars/private/foreign
-         polars/private/series)
+         polars/private/series
+         syntax/parse/define
+         (for-syntax racket/base syntax/parse))
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec?)
+         dtype-spec? define-enum)
+
+(begin-for-syntax
+  (define-syntax-class enum-category
+    #:description "an enum category (an identifier or a string)"
+    (pattern name:id #:with symbol #'name)
+    (pattern text:str
+             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text))))
+
+(define-syntax-parse-rule (define-enum name:id category:enum-category ...+)
+  #:fail-when (check-duplicate-identifier (syntax->list #'(category.symbol ...)))
+              "duplicate enum category"
+  (define name '(enum category.symbol ...)))
 
 ;; Accept both the short constructor spellings (i32, f64, str, bool) and the
 ;; canonical symbols returned by series-dtype (int32, float64, string,
@@ -119,3 +133,21 @@
   (match dt
     [(or 'date 'time (list 'datetime _ _) (list 'duration _)) #t]
     [_ #f]))
+
+(module+ test
+  (require rackunit
+           syntax/macro-testing)
+
+  (define-enum log-levels debug info warning error)
+  (check-equal? log-levels '(enum debug info warning error))
+  (check-true (enum-dtype? log-levels))
+
+  (define-enum sizes small "Very High")
+  (check-equal? sizes '(enum small |Very High|))
+
+  (check-exn #rx"duplicate enum category"
+             (lambda () (convert-compile-time-error (let () (define-enum twice a b a) twice))))
+  (check-exn #rx"duplicate enum category"
+             (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
+  (check-exn #rx"expected more terms"
+             (lambda () (convert-compile-time-error (let () (define-enum none) none)))))

@@ -383,7 +383,8 @@ total
     (with-columns (cast "v" 'float64)))
 (cast (series '("UA" "AA" "UA")) 'categorical)
 (eval:error (cast (series '(1 2 3)) 'f64))
-(eval:error (cast (series '("UA" "B6")) '(enum UA AA)))]}
+(define-enum carriers UA AA)
+(eval:error (cast (series '("UA" "B6")) carriers))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
@@ -874,7 +875,7 @@ an implementation detail and not part of the public series API.)
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
   @racket[polars-null] for missing values. Exact integers are coerced to
   flonums when the target dtype is floating point. Symbols infer
-  @racket['categorical]; a @racket['categorical] or @racket['(enum ....)]
+  @racket['categorical]; a @racket['categorical] or Enum (@racket[define-enum])
   series is built from strings or symbols alike, and an Enum raises on a
   value outside its categories (@secref["ref-categorical"]).
 
@@ -883,8 +884,9 @@ an implementation detail and not part of the public series API.)
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")
-(series '("debug" "error") #:dtype '(enum debug info error))
-(eval:error (series '(debug fatal) #:dtype '(enum debug info error)))]}
+(define-enum severity debug info error)
+(series '("debug" "error") #:dtype severity)
+(eval:error (series '(debug fatal) #:dtype severity))]}
 
 @defproc[(series->string [s series?]) string?]{
   Renders @racket[s] in Polars' series format (a @tt{shape} line, a
@@ -1025,9 +1027,9 @@ chapter of the guide walks through all of them.
 @subsection[#:tag "ref-categorical"]{Categorical, Enum and Decimal}
 
 A @racket['categorical] column stores each distinct string once and a code
-per row, as Polars' @tt{Categorical}; an @racket['(enum cat ...)] column
-does the same over categories declared up front, in order, as
-@tt{pl.Enum}. Both read back as symbols, which Racket interns: a symbol is
+per row, as Polars' @tt{Categorical}; an Enum column (dtype
+@racket['(enum cat ...)], defined with @racket[define-enum]) does the same
+over categories declared up front, in order, as @tt{pl.Enum}. Both read back as symbols, which Racket interns: a symbol is
 already the dictionary encoding. The codes stay inside Polars. Every
 categorical column in the process shares them, and they restart once the
 last one is dropped, so each conversion fetches the strings afresh.
@@ -1047,6 +1049,26 @@ last one is dropped, so each conversion fetches the strings afresh.
   @item{@racket[describe] gives a categorical or Enum column
     @tt{count} and @tt{null_count} only, as Python does.}]
 
+@defform[(define-enum id category ...+)
+         #:grammar ([category id string])]{
+  Binds @racket[id] to the Enum dtype with the given categories, in order:
+  the datum @racket['(enum category ...)] that @racket[dtype] reports for
+  such a column, so @racket[equal?] compares the two. A string category is
+  the symbol of that string, for a name that is not an identifier. A
+  duplicate category, or none, is a syntax error. The datum itself is
+  accepted wherever a dtype is (@tt{pl.Enum([...])}).
+
+  @examples[#:eval ev #:label #f
+  (define-enum log-levels debug info warning error)
+  log-levels
+  (define levels (series '(debug info debug error) #:name "level" #:dtype log-levels))
+  (equal? (dtype levels) log-levels)
+  (series->list (cast (series '("warning" "info")) log-levels))
+  (define-enum sizes small "Very High")
+  sizes
+  (eval:error (define-enum twice debug info debug))
+  (eval:error (series '(info fatal) #:dtype log-levels))]}
+
 A @racket['(decimal precision scale)] column holds exact decimals, which
 @racket[ref] and the conversions read as exact rationals. Decimal columns
 come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
@@ -1055,8 +1077,7 @@ come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
 @examples[#:eval ev #:label #f
 (define logs
   (dataframe
-   (list (series '(debug info debug error) #:name "level"
-                 #:dtype '(enum debug info warning error))
+   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
          (series '(api db api db) #:name "source"))))
 (for/list ([name (column-names logs)]) (dtype (ref logs name)))
 (filter logs (> (col "level") 'info))

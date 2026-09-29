@@ -33,12 +33,13 @@
          polars/private/generic/describe
          polars/private/generic/selectors
          polars/private/generic/window
-         polars/private/generic/meta)
+         polars/private/generic/meta
+         (only-in polars/private/generic/dtype define-enum))
 
 (provide series series? series->string
          dataframe dataframe? lazyframe?
          describe ref
-         len shape shape/values dtype null-count
+         len shape shape/values dtype null-count define-enum
          width height column-name column-names
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
          series->list series->vector series->f64vector in-series

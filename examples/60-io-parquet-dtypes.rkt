@@ -20,9 +20,10 @@
 (for ([name (column-names produce)])
   (printf "~a: ~s ~s\n" name (dtype (ref produce name)) (series->list (ref produce name))))
 
+(define-enum grade-levels low mid high)
 (define grades
   (dataframe (list (series '(apple fig apple) #:name "item")
-                   (series '(low high mid) #:name "grade" #:dtype '(enum low mid high)))))
+                   (series '(low high mid) #:name "grade" #:dtype grade-levels))))
 (define path (make-temporary-file "rkt-polars-grades-~a.parquet"))
 (write-parquet grades path)
 (define back (read-parquet path))

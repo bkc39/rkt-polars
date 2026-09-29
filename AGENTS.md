@@ -228,8 +228,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   symbols infers `'categorical`. It cannot build a `date` column from gregor
   `date`s (#63), and `lit` rejects gregor values.
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
-  `lit` and `is-in` read a symbol as its name's string. An Enum is spelled
-  `'(enum sym ...)`, as `dtype` prints it. Every categorical shares polars'
+  `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
+  datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define
+  one with `(define-enum id category ...)`, which checks the categories at
+  compile time and binds that datum. Every categorical shares polars'
   one global mapping (no named `Categories`), whose codes restart when the
   last categorical column drops: the codes never leave Rust, and
   `series_copy_cat` re-encodes each copy densely with its own category table.
