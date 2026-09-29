@@ -36,16 +36,19 @@ pub extern "C" fn dataframe_new(
     if series_ptrs.is_null() && length != 0 {
         return ptr::null_mut();
     }
-    let columns: Vec<Series> = if length == 0 {
+    let columns: Vec<Column> = if length == 0 {
         Vec::new()
     } else {
         let slice = unsafe { std::slice::from_raw_parts(series_ptrs, length) };
         if slice.iter().any(|p| p.is_null()) {
             return ptr::null_mut();
         }
-        slice.iter().map(|&p| unsafe { (*p).clone() }).collect()
+        slice
+            .iter()
+            .map(|&p| unsafe { (*p).clone() }.into_column())
+            .collect()
     };
-    match DataFrame::new(columns) {
+    match DataFrame::new_infer_height(columns) {
         Ok(df) => Box::into_raw(Box::new(df)),
         Err(_) => ptr::null_mut(),
     }

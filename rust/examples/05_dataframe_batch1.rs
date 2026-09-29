@@ -11,12 +11,25 @@ fn main() -> PolarsResult<()> {
         "amount" => [10i32, 20, 30, 40]
     ]?;
 
-    let with_region =
-        df.hstack(&[Series::new("region", ["east", "west", "west", "east"])])?;
-    let semi =
-        df.join(&orders, ["uid"], ["uid"], JoinArgs::new(JoinType::Semi))?;
-    let anti =
-        df.join(&orders, ["uid"], ["uid"], JoinArgs::new(JoinType::Anti))?;
+    let with_region = df.hstack(&[Series::new(
+        "region".into(),
+        ["east", "west", "west", "east"],
+    )
+    .into_column()])?;
+    let semi = df.join(
+        &orders,
+        ["uid"],
+        ["uid"],
+        JoinArgs::new(JoinType::Semi),
+        None,
+    )?;
+    let anti = df.join(
+        &orders,
+        ["uid"],
+        ["uid"],
+        JoinArgs::new(JoinType::Anti),
+        None,
+    )?;
 
     let parquet_path = std::env::temp_dir().join("rkt-polars-batch1.parquet");
     {

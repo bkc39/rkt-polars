@@ -11,8 +11,12 @@ fn main() -> PolarsResult<()> {
         .lazy()
         .with_columns([
             col("x").fill_null(lit(0.0)).alias("x_filled"),
-            col("x").forward_fill(None).alias("x_ffill"),
-            col("x").backward_fill(None).alias("x_bfill"),
+            col("x")
+                .fill_null_with_strategy(FillNullStrategy::Forward(None))
+                .alias("x_ffill"),
+            col("x")
+                .fill_null_with_strategy(FillNullStrategy::Backward(None))
+                .alias("x_bfill"),
             col("x").is_null().alias("x_is_null"),
             col("y").fill_nan(lit(-99.0)).alias("y_no_nan"),
             col("y").is_nan().alias("y_is_nan"),

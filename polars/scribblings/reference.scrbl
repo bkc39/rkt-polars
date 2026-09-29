@@ -188,9 +188,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   with @racket[col] wherever an expression is expected.
 
   A multi-column expression is read off the plan too, before any frame
-  says which columns it will match. For a regexp @racket[col], the output
-  name and the one root name are its translated pattern; a dtype
-  @racket[col] or @racket[(all)] has no root names and no output name.
+  says which columns it will match, so a regexp or dtype @racket[col] or
+  @racket[(all)] has no root names and no output name, as in Python.
 
   @examples[#:eval ev
 (define total (alias (sum (+ (col "a") (col "b"))) "total"))
@@ -204,7 +203,7 @@ total
 (meta-output-name (lit 25))
 (meta-root-names "a")
 (meta-root-names (col #rx"^he"))
-(meta-output-name (col #rx"^he"))
+(eval:error (meta-output-name (col #rx"^he")))
 (~> (col 'float64) (* 2) meta-root-names)
 (meta-eq? (col 'float64) (col 'f64))
 (eval:error (meta-output-name (col 'float64)))
@@ -330,11 +329,8 @@ total
   @racket[by] (@tt{Expr.sort_by}); a column name is lifted with @racket[col]
   in either place. The keywords mean what they mean for a frame
   @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
-  length and name.
-
-  API gap: inside @racket[agg] or @racket[over], when @racket[x] is itself
-  group-aware (@racketidfont{shift}, @racketidfont{diff}), the Polars 0.41.3 crate drops
-  @racket[nulls-last] and puts the nulls first.
+  length and name. Inside @racket[agg] or @racket[over] it sorts each group,
+  including when @racket[x] is itself group-aware, such as a @racketidfont{shift}.
 
   @examples[#:eval ev
 (define scores
@@ -418,14 +414,15 @@ total
   Joins @racket[right] onto @racket[left] on the shared key columns
   @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
   (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}.
+  @tech{lazyframe}. As in Python Polars, only a @racket['cross] join promises
+  a row order; sort the result when order matters.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
                                (series '(1 2) #:name "v"))))
 (define right (dataframe (list (series '("a" "c") #:name "k")
                                 (series '(10 30) #:name "w"))))
-(join left right #:on '("k") #:how 'left)
+(~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)]}
 
 @defcsvproc[(read-csv dataframe?)]{
@@ -447,18 +444,18 @@ total
   reads every row, and @racket[0] makes every column a string.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
-  accepts except @racket['time] and a duration, which Polars 0.41.3 cannot
-  parse from CSV. Each column appears at most once
-  (@racket[distinct-names?]), and naming a column the file lacks is an
-  error. With @racket[#:ignore-errors #t] a field
-  that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
+  accepts except a duration, which Polars cannot parse from CSV. Each column
+  appears at most once (@racket[distinct-names?]), and naming a column the
+  file lacks is an error, where Python ignores the override. With
+  @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
   @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
   U+FFFD.
 
   The result is @racket[(collect (scan-csv path ....))] with the same
-  keywords, plus one check, stricter than Python's @tt{read_csv}, which
-  returns the one column. When @racket[separator] is @racket[#f] and the
+  keywords; as in Python, a single file is read eagerly rather than through
+  a plan, which is faster. There is one extra check, stricter than Python's
+  @tt{read_csv}, which returns the one column. When @racket[separator] is @racket[#f] and the
   file reads as one column whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to
   pass --- unless the first row is not a string, or splits into a different
@@ -554,11 +551,11 @@ total
 @defcsvproc[(scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
   (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
-  runs the plan, and that is where a file that cannot be read is reported.
-  Two things are reported here instead: a glob pattern that matches no file,
-  and, when @racket[schema-overrides] is given, a column it names that the
-  header lacks, which reads the header. The separator check does not apply,
-  and a directory reads every file in it.
+  runs the plan, and that is where a file that cannot be read, or a glob
+  pattern that matches no file, is reported. One thing is reported here
+  instead: when @racket[schema-overrides] is given, a column it names that
+  the header lacks, which reads the header. The separator check does not
+  apply, and a directory reads every file in it.
 
   @examples[#:eval ev
 (~> (scan-csv "flights.tsv" #:separator #\tab #:null-values "NA")
@@ -569,7 +566,8 @@ total
 (shape (collect (scan-csv "flights.tsv")))
 (define plan (scan-csv "/no/such/file.csv"))
 (eval:error (collect plan))
-(eval:error (scan-csv "parts/*.tsv"))
+(define no-match (scan-csv "parts/*.tsv"))
+(eval:error (collect no-match))
 (eval:error (scan-csv "flights.tsv" #:separator #\tab
                       #:schema-overrides '(("dep_dealy" . f64))))]}
 
@@ -580,10 +578,12 @@ total
   Read Parquet eagerly (@tt{pl.read_parquet}), or start a plan from it
   (@tt{pl.scan_parquet}). @racket[path] is always a glob pattern: the
   matching files stack in sorted filename order, and one that matches
-  nothing is an error. A directory reads every file in it and adds its
+  nothing is an error, which @racket[scan-parquet] leaves to
+  @racket[collect]. A directory reads every file in it and adds its
   @litchar{key=value} subdirectory names as columns; a single file or a
   pattern adds none, as in Python, and neither does a directory whose own
-  path holds @litchar{[}, @litchar{*} or @litchar{?} (Polars 0.41.3). @racket[read-parquet] is
+  path holds @litchar{[}, @litchar{*} or @litchar{?}, which Polars reads as
+  a pattern once it is escaped. @racket[read-parquet] is
   @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
   literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
   @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
@@ -743,7 +743,22 @@ total
   Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
   (@tt{.round}). Each takes an expression or a bare column-name string (lifted
   with @racket[col]); @racket[round] on a plain number falls back to numeric
-  rounding. See @secref["fluent-shadowing"].}
+  rounding. Ties round to even in both cases, as in Python Polars and
+  @racketmodname[racket/base]. See @secref["fluent-shadowing"].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
+    (select (round "x")))
+(round 2.5)]}
+
+@defproc[(sign [x (or/c Expr-ptr? string?)]) Expr-ptr?]{
+  The sign of each element (@tt{.sign}): @racket[-1], @racket[0] or
+  @racket[1] in the column's own dtype, so a float column gives
+  @racket[-1.0], @racket[0.0] and @racket[1.0].
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(-2 0 3) #:name "i") (series '(-2.5 0.0 3.5) #:name "f")))
+    (select (sign "i") (sign "f")))]}
 
 @deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
                                    [#:closed closed (or/c 'both 'left 'right 'none) 'both])
@@ -751,8 +766,8 @@ total
               @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
-  lifted with @racket[lit], which has no date spelling; cast a string instead:
-  @racket[(cast (lit "1982-12-31") 'date)].}
+  lifted with @racket[lit], which has no date spelling; parse a string instead:
+  @racket[(str->date (lit "1982-12-31"))].}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -771,22 +786,22 @@ total
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
                                     [#:group-index group-index exact-nonnegative-integer? 1])
                        Expr-ptr?]
-              @defproc[(str-to-date [x (or/c Expr-ptr? string?)]
-                                    [#:format format (or/c string? #f) #f]
-                                    [#:strict strict boolean? #t]
-                                    [#:exact exact boolean? #t]
-                                    [#:cache cache boolean? #t])
+              @defproc[(str->date [x (or/c Expr-ptr? string?)]
+                                  [#:format format (or/c string? #f) #f]
+                                  [#:strict strict boolean? #t]
+                                  [#:exact exact boolean? #t]
+                                  [#:cache cache boolean? #t])
                        Expr-ptr?]
-              @defproc[(str-to-datetime [x (or/c Expr-ptr? string?)]
-                                        [#:format format (or/c string? #f) #f]
-                                        [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
-                                        [#:strict strict boolean? #t]
-                                        [#:exact exact boolean? #t]
-                                        [#:cache cache boolean? #t])
+              @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
+                                      [#:format format (or/c string? #f) #f]
+                                      [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
+                                      [#:strict strict boolean? #t]
+                                      [#:exact exact boolean? #t]
+                                      [#:cache cache boolean? #t])
                        Expr-ptr?])]{
   @racket[str-extract] returns capture group @racket[#:group-index] of the
-  first regex match (@tt{.str.extract}). @racket[str-to-date] and
-  @racket[str-to-datetime] parse strings with a chrono @tt{strptime}
+  first regex match (@tt{.str.extract}). @racket[str->date] and
+  @racket[str->datetime] parse strings with a chrono @tt{strptime}
   @racket[#:format], inferred when omitted (@tt{.str.to_date},
   @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
   on unparseable values.}

@@ -64,7 +64,7 @@ pub extern "C" fn dataframe_rename(
     };
     let df = unsafe { &*df_ptr };
     let mut out = df.clone();
-    match out.rename(old_str, new_str) {
+    match out.rename(old_str, new_str.into()) {
         Ok(_) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -81,7 +81,7 @@ pub extern "C" fn dataframe_with_column(
     let df = unsafe { &*df_ptr };
     let s = unsafe { &*series_ptr };
     let mut out = df.clone();
-    match out.with_column(s.clone()) {
+    match out.with_column(s.clone().into_column()) {
         Ok(_) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -117,7 +117,7 @@ pub extern "C" fn dataframe_column(
         Err(_) => return ptr::null_mut(),
     };
     match df.column(name_str) {
-        Ok(s) => Box::into_raw(Box::new(s.clone())),
+        Ok(s) => Box::into_raw(Box::new(s.as_materialized_series().clone())),
         Err(_) => ptr::null_mut(),
     }
 }

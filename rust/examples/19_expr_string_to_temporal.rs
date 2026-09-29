@@ -12,18 +12,18 @@ fn main() -> PolarsResult<()> {
         ..Default::default()
     };
     let embedded_date = StrptimeOptions {
-        format: Some("%Y-%m-%d".to_string()),
+        format: Some("%Y-%m-%d".into()),
         strict: false,
         exact: false,
         cache: true,
     };
     let datetime = StrptimeOptions {
-        format: Some("%Y-%m-%d %H:%M:%S".to_string()),
+        format: Some("%Y-%m-%d %H:%M:%S".into()),
         strict: false,
         ..Default::default()
     };
     let time = StrptimeOptions {
-        format: Some("%H:%M:%S%.f".to_string()),
+        format: Some("%H:%M:%S%.f".into()),
         strict: false,
         ..Default::default()
     };

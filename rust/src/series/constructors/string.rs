@@ -1,11 +1,13 @@
 use crate::prelude::*;
 use crate::*;
 
-pub(crate) fn name_from_ptr(p: *const c_char) -> &'static str {
+pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
     if p.is_null() {
-        return "";
+        return PlSmallStr::EMPTY;
     }
-    unsafe { CStr::from_ptr(p).to_str() }.unwrap_or_default()
+    unsafe { CStr::from_ptr(p).to_str() }
+        .unwrap_or_default()
+        .into()
 }
 
 #[no_mangle]

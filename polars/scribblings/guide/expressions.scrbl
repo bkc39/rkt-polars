@@ -212,14 +212,14 @@ as its plan, and selecting from the frame lists what a selector matches.
 ]
 
 @racket[meta-root-names] and @racket[meta-output-name] read the plan
-without a frame: a named expression reports its inputs and output, a
-regexp selector only its pattern, and a dtype selector nothing.
+without a frame: a named expression reports its inputs and output, and a
+selector, by regexp or by dtype, nothing.
 
 @examples[#:eval ev #:label #f
 (for/list ([e (amplitude-expressions '("day" "year"))])
   (list (meta-output-name e) (meta-root-names e)))
 (meta-root-names (col #rx"^has_"))
-(meta-output-name (col #rx"^has_"))
+(eval:error (meta-output-name (col #rx"^has_")))
 (meta-root-names (col 'bool))
 (eval:error (meta-output-name (col 'bool)))
 ]

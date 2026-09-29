@@ -14,7 +14,7 @@
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
-         expr-str-to-date expr-str-to-datetime expr-str-to-time)
+         expr-str->date expr-str->datetime expr-str->time)
 
 (define-compat expr-str-contains/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -220,58 +220,58 @@
   (unless (boolean? cache)
     (error who "cache must be a boolean, got ~v" cache)))
 
-(define-compat expr-str-to-date/raw
+(define-compat expr-str->date/raw
   (_fun _Expr-ptr _string _uint8 _uint8 _uint8 _uint8 -> _Expr-ptr)
   #:c-id expr_str_to_date
   #:wrap (allocator expr-drop))
 
-(define (expr-str-to-date e
-                          #:format [format #f]
-                          #:strict [strict #t]
-                          #:exact [exact #t]
-                          #:cache [cache #t])
-  (check-strptime-options 'expr-str-to-date format strict exact cache)
-  (expr-str-to-date/raw e
-                        (or format "")
-                        (if format 1 0)
-                        (if strict 1 0)
-                        (if exact 1 0)
-                        (if cache 1 0)))
+(define (expr-str->date e
+                        #:format [format #f]
+                        #:strict [strict #t]
+                        #:exact [exact #t]
+                        #:cache [cache #t])
+  (check-strptime-options 'expr-str->date format strict exact cache)
+  (expr-str->date/raw e
+                      (or format "")
+                      (if format 1 0)
+                      (if strict 1 0)
+                      (if exact 1 0)
+                      (if cache 1 0)))
 
-(define-compat expr-str-to-datetime/raw
+(define-compat expr-str->datetime/raw
   (_fun _Expr-ptr _string _uint8 _int32 _uint8 _uint8 _uint8 -> _Expr-ptr)
   #:c-id expr_str_to_datetime
   #:wrap (allocator expr-drop))
 
-(define (expr-str-to-datetime e
-                              #:format [format #f]
-                              #:unit [unit 'microseconds]
-                              #:strict [strict #t]
-                              #:exact [exact #t]
-                              #:cache [cache #t])
-  (check-strptime-options 'expr-str-to-datetime format strict exact cache)
-  (expr-str-to-datetime/raw e
-                            (or format "")
-                            (if format 1 0)
-                            (time-unit-symbol->code 'expr-str-to-datetime unit)
-                            (if strict 1 0)
-                            (if exact 1 0)
-                            (if cache 1 0)))
+(define (expr-str->datetime e
+                            #:format [format #f]
+                            #:unit [unit 'microseconds]
+                            #:strict [strict #t]
+                            #:exact [exact #t]
+                            #:cache [cache #t])
+  (check-strptime-options 'expr-str->datetime format strict exact cache)
+  (expr-str->datetime/raw e
+                          (or format "")
+                          (if format 1 0)
+                          (time-unit-symbol->code 'expr-str->datetime unit)
+                          (if strict 1 0)
+                          (if exact 1 0)
+                          (if cache 1 0)))
 
-(define-compat expr-str-to-time/raw
+(define-compat expr-str->time/raw
   (_fun _Expr-ptr _string _uint8 _uint8 _uint8 _uint8 -> _Expr-ptr)
   #:c-id expr_str_to_time
   #:wrap (allocator expr-drop))
 
-(define (expr-str-to-time e
-                          #:format [format #f]
-                          #:strict [strict #t]
-                          #:exact [exact #t]
-                          #:cache [cache #t])
-  (check-strptime-options 'expr-str-to-time format strict exact cache)
-  (expr-str-to-time/raw e
-                        (or format "")
-                        (if format 1 0)
-                        (if strict 1 0)
-                        (if exact 1 0)
-                        (if cache 1 0)))
+(define (expr-str->time e
+                        #:format [format #f]
+                        #:strict [strict #t]
+                        #:exact [exact #t]
+                        #:cache [cache #t])
+  (check-strptime-options 'expr-str->time format strict exact cache)
+  (expr-str->time/raw e
+                      (or format "")
+                      (if format 1 0)
+                      (if strict 1 0)
+                      (if exact 1 0)
+                      (if cache 1 0)))

@@ -63,4 +63,4 @@
 
 ;; API gaps: null_values takes no per-column mapping (#101); no columns,
 ;; new_columns, eol_char, row_index_name, truncate_ragged_lines or
-;; decimal_comma; a 'time override is rejected (Polars 0.41.3).
+;; decimal_comma.

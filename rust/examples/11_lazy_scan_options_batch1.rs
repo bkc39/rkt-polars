@@ -15,7 +15,7 @@ fn main() -> PolarsResult<()> {
         writeln!(file, "b;30")?;
     }
 
-    let csv_out = LazyCsvReader::new(&csv_path)
+    let csv_out = LazyCsvReader::new(PlRefPath::try_from_path(&csv_path)?)
         .with_has_header(true)
         .with_separator(b';')
         .with_skip_rows(1)
@@ -39,8 +39,11 @@ fn main() -> PolarsResult<()> {
         n_rows: Some(2),
         ..Default::default()
     };
-    let parquet_out =
-        LazyFrame::scan_parquet(&parquet_path, parquet_args)?.collect()?;
+    let parquet_out = LazyFrame::scan_parquet(
+        PlRefPath::try_from_path(&parquet_path)?,
+        parquet_args,
+    )?
+    .collect()?;
 
     println!("csv scan options shape={:?}", csv_out.shape());
     println!("{csv_out}");

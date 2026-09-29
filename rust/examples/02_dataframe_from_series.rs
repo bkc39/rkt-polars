@@ -2,11 +2,11 @@ use chrono::NaiveDate;
 use polars::prelude::*;
 
 fn main() -> PolarsResult<()> {
-    let users = Series::new("user", ["alice", "bob", "carol", "dora"]);
-    let scores = Series::new("score", [10i32, 25, 18, 41]);
-    let costs = Series::new("cost", [1.2f64, 3.5, 2.0, 8.4]);
+    let users = Series::new("user".into(), ["alice", "bob", "carol", "dora"]);
+    let scores = Series::new("score".into(), [10i32, 25, 18, 41]);
+    let costs = Series::new("cost".into(), [1.2f64, 3.5, 2.0, 8.4]);
     let created_at = Series::new(
-        "created_at",
+        "created_at".into(),
         [
             NaiveDate::from_ymd_opt(2024, 1, 1)
                 .unwrap()
@@ -27,14 +27,19 @@ fn main() -> PolarsResult<()> {
         ],
     );
 
-    let df = DataFrame::new(vec![users, scores, costs, created_at])?;
+    let df = DataFrame::new_infer_height(vec![
+        users.into_column(),
+        scores.into_column(),
+        costs.into_column(),
+        created_at.into_column(),
+    ])?;
 
     println!("shape={:?}", df.shape());
     println!("height={} width={}", df.height(), df.width());
     println!("column names={:?}", df.get_column_names());
 
     for field in df.schema().iter_fields() {
-        println!("schema {} => {:?}", field.name(), field.data_type());
+        println!("schema {} => {:?}", field.name(), field.dtype());
     }
 
     let score = df.column("score")?;

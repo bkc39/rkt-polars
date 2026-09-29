@@ -93,6 +93,25 @@ fn unpivot_melts_wide_to_long() {
 }
 
 #[test]
+fn unpivot_with_no_on_melts_every_non_index_column() {
+    let id = make_i32("id", &[1, 2]);
+    let a = make_i32("a", &[10, 20]);
+    let b = make_i32("b", &[100, 200]);
+    let df = make_df(&[id, a, b]);
+    let id_n = cstr("id");
+    let idx: [*const c_char; 1] = [id_n.as_ptr()];
+    let out = dataframe_unpivot(df, ptr::null(), 0, idx.as_ptr(), idx.len());
+    assert!(!out.is_null());
+    assert_eq!(dataframe_height(out), 4);
+    assert_eq!(read_column_names(out), vec!["id", "variable", "value"]);
+    dataframe_drop(out);
+    dataframe_drop(df);
+    series_drop(id);
+    series_drop(a);
+    series_drop(b);
+}
+
+#[test]
 fn unpivot_unknown_column_returns_null() {
     let (df, id, ty, v) = make_long();
     let bad = cstr("nope");

@@ -39,5 +39,5 @@ pub extern "C" fn expr_diff(
     } else {
         polars::series::ops::NullBehavior::Ignore
     };
-    Box::into_raw(Box::new(ee.diff(n, nb)))
+    Box::into_raw(Box::new(ee.diff(lit(n), nb)))
 }

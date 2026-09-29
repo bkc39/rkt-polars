@@ -105,6 +105,10 @@
             src = pkgs.lib.cleanSource ./rust;
             cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
 
+            # polars' `nightly` feature (std::simd) on the pinned stable rustc,
+            # as nixpkgs builds Python polars; scripts/build-so.sh matches it.
+            RUSTC_BOOTSTRAP = "1";
+
             doCheck = true;
 
             installPhase =
@@ -377,6 +381,8 @@
               pkgs.nixfmt-rfc-style
               (python pkgs)
             ];
+
+            RUSTC_BOOTSTRAP = "1";
 
             shellHook = devSetup pkgs rust + lintSetup pkgs;
           };

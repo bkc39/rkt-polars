@@ -16,7 +16,7 @@
          str-replace str-replace-all str-extract
          str-len-bytes str-len-chars str-slice str-head str-tail
          str-find str-find-literal str-count-matches
-         str-to-date str-to-datetime str-to-time)
+         str->date str->datetime str->time)
 
 (define-expr-unop str-to-lowercase 'str-to-lowercase expr-str-to-lowercase)
 (define-expr-unop str-to-uppercase 'str-to-uppercase expr-str-to-uppercase)
@@ -66,20 +66,20 @@
 ;; parse strings to Date / Datetime / Time.  #:strict #f turns unparseable
 ;; values into null instead of raising; #:format is a chrono strptime pattern
 ;; (inferred when omitted); #:exact #f allows surrounding text;
-;; str-to-datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
-(define (str-to-date x #:format [format #f] #:strict [strict #t]
-                     #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-date (->col-expr 'str-to-date x)
-                    #:format format #:strict strict #:exact exact #:cache cache))
-(define (str-to-datetime x #:format [format #f] #:unit [unit 'microseconds]
-                         #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-datetime (->col-expr 'str-to-datetime x)
-                        #:format format #:unit unit
-                        #:strict strict #:exact exact #:cache cache))
-(define (str-to-time x #:format [format #f] #:strict [strict #t]
-                     #:exact [exact #t] #:cache [cache #t])
-  (expr-str-to-time (->col-expr 'str-to-time x)
-                    #:format format #:strict strict #:exact exact #:cache cache))
+;; str->datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
+(define (str->date x #:format [format #f] #:strict [strict #t]
+                   #:exact [exact #t] #:cache [cache #t])
+  (expr-str->date (->col-expr 'str->date x)
+                  #:format format #:strict strict #:exact exact #:cache cache))
+(define (str->datetime x #:format [format #f] #:unit [unit 'microseconds]
+                       #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
+  (expr-str->datetime (->col-expr 'str->datetime x)
+                      #:format format #:unit unit
+                      #:strict strict #:exact exact #:cache cache))
+(define (str->time x #:format [format #f] #:strict [strict #t]
+                   #:exact [exact #t] #:cache [cache #t])
+  (expr-str->time (->col-expr 'str->time x)
+                  #:format format #:strict strict #:exact exact #:cache cache))
 
 (module+ test
   (require rackunit (only-in threading ~>)
@@ -156,11 +156,11 @@
                      (series '("03:04:05.123456789" "bad" "x") #:name "time_s"))))
   (define out4
     (~> p (with-columns
-            (alias (str-to-date "date_s" #:strict #f) "d_infer")
-            (alias (str-to-date "date_s" #:format "%Y-%m-%d" #:strict #f #:exact #f) "d_embed")
-            (alias (str-to-datetime "dt_s" #:format "%Y-%m-%d %H:%M:%S"
-                                    #:unit 'milliseconds #:strict #f) "dt")
-            (alias (str-to-time "time_s" #:format "%H:%M:%S%.f" #:strict #f) "tm"))))
+            (alias (str->date "date_s" #:strict #f) "d_infer")
+            (alias (str->date "date_s" #:format "%Y-%m-%d" #:strict #f #:exact #f) "d_embed")
+            (alias (str->datetime "dt_s" #:format "%Y-%m-%d %H:%M:%S"
+                                  #:unit 'milliseconds #:strict #f) "dt")
+            (alias (str->time "time_s" #:format "%H:%M:%S%.f" #:strict #f) "tm"))))
   (check-equal? (ref (ref out4 #:columns "d_infer") 0) (date 2024 1 2))
   (check-equal? (ref (ref out4 #:columns "d_infer") 1) polars-null)
   (check-equal? (ref (ref out4 #:columns "d_embed") 2) (date 2024 5 9)) ; #:exact #f

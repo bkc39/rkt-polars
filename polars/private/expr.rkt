@@ -86,7 +86,7 @@
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
-         expr-str-to-date expr-str-to-datetime expr-str-to-time
+         expr-str->date expr-str->datetime expr-str->time
          expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
          expr-dt-iso-year expr-dt-quarter expr-dt-week
@@ -1154,21 +1154,21 @@
   (define str-temporal
     (dataframe-with-columns
      str-temporal-df
-     (list (expr-alias (expr-str-to-date (col "date_s") #:strict #f)
+     (list (expr-alias (expr-str->date (col "date_s") #:strict #f)
                        "date_infer")
-           (expr-alias (expr-str-to-date (col "date_s")
-                                         #:format "%Y-%m-%d"
-                                         #:strict #f
-                                         #:exact #f)
+           (expr-alias (expr-str->date (col "date_s")
+                                       #:format "%Y-%m-%d"
+                                       #:strict #f
+                                       #:exact #f)
                        "date_embedded")
-           (expr-alias (expr-str-to-datetime (col "dt_s")
-                                             #:format "%Y-%m-%d %H:%M:%S"
-                                             #:unit 'milliseconds
-                                             #:strict #f)
+           (expr-alias (expr-str->datetime (col "dt_s")
+                                           #:format "%Y-%m-%d %H:%M:%S"
+                                           #:unit 'milliseconds
+                                           #:strict #f)
                        "parsed_dt")
-           (expr-alias (expr-str-to-time (col "time_s")
-                                         #:format "%H:%M:%S%.f"
-                                         #:strict #f)
+           (expr-alias (expr-str->time (col "time_s")
+                                       #:format "%H:%M:%S%.f"
+                                       #:strict #f)
                        "parsed_time"))))
   (check-equal? (series-dtype (dataframe-column str-temporal "date_infer")) 'date)
   (check-equal? (series-ref (dataframe-column str-temporal "date_infer") 0)
@@ -1717,7 +1717,7 @@
            (expr-alias (expr-pow (expr-abs (col "x")) 2) "sq")
            (expr-alias (expr-log (expr-abs (col "x")) #:base 2) "log2"))))
   (check-equal? (col->list m "abs") '(2.4 1.0 0.0 1.6 4.0))
-  (check-equal? (col->list m "sign") '(-1 -1 0 1 1))
+  (check-equal? (col->list m "sign") '(-1.0 -1.0 0.0 1.0 1.0))
   (check-equal? (col->list m "r0") '(-2.0 -1.0 0.0 2.0 4.0))
   (check-equal? (col->list m "fl") '(-3.0 -1.0 0.0 1.0 4.0))
   (check-equal? (col->list m "ce") '(-2.0 -1.0 0.0 2.0 4.0))
@@ -1863,11 +1863,10 @@
   (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
              (lambda () (lazyframe-collect deferred)))
 
-  (define bad-glob-message
-    (with-handlers ([exn:fail? exn-message])
-      (lazyframe-scan-csv "/tmp/[.csv")))
-  (check-regexp-match #rx"^lazyframe-scan-csv: failed to scan /tmp/\\[\\.csv: .+" bad-glob-message)
-  (check-equal? (length (regexp-match* #rx"\\[\\.csv" bad-glob-message)) 1))
+  (define bad-glob (lazyframe-scan-csv "/tmp/[.csv"))
+  (check-pred LazyFrame-ptr? bad-glob)
+  (check-exn #rx"^lazyframe-collect: .*glob"
+             (lambda () (lazyframe-collect bad-glob))))
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)

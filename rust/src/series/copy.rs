@@ -1,7 +1,4 @@
 use crate::prelude::*;
-use polars::export::arrow::array::Array;
-use polars::export::arrow::bitmap::Bitmap;
-use polars::export::num::AsPrimitive;
 
 pub const COPY_BAD_ARGUMENTS: i64 = -1;
 pub const COPY_WRONG_DTYPE: i64 = -2;
@@ -23,11 +20,15 @@ fn room_for(
         && (valid.is_null() || count <= valid_len)
 }
 
-unsafe fn write_bits(bits: Option<&Bitmap>, out: *mut u8, len: usize) {
+unsafe fn write_bits(
+    bits: Option<impl IntoIterator<Item = bool>>,
+    out: *mut u8,
+    len: usize,
+) {
     let out = std::slice::from_raw_parts_mut(out, len);
     match bits {
         Some(bits) => {
-            for (slot, bit) in out.iter_mut().zip(bits.iter()) {
+            for (slot, bit) in out.iter_mut().zip(bits) {
                 *slot = bit as u8;
             }
         }
@@ -138,7 +139,7 @@ pub extern "C" fn series_copy_bool(
 }
 
 fn str_byte_len(ca: &StringChunked) -> usize {
-    ca.into_iter().flatten().map(str::len).sum()
+    ca.iter().flatten().map(str::len).sum()
 }
 
 #[no_mangle]
@@ -198,7 +199,7 @@ pub extern "C" fn series_copy_str(
     let offsets = unsafe { std::slice::from_raw_parts_mut(offsets, count + 1) };
     let mut end = 0;
     offsets[0] = 0;
-    for (row, value) in ca.into_iter().enumerate() {
+    for (row, value) in ca.iter().enumerate() {
         if let Some(text) = value.filter(|text| !text.is_empty()) {
             unsafe {
                 ptr::copy_nonoverlapping(
@@ -230,11 +231,14 @@ impl Strided {
     }
 }
 
-unsafe fn copy_as_f64<T>(ca: &ChunkedArray<T>, out: &Strided)
-where
-    T: PolarsNumericType,
-    T::Native: AsPrimitive<f64>,
-{
+fn to_f64<N: NumericNative>(v: N) -> f64 {
+    v.as_()
+}
+
+unsafe fn copy_as_f64<T: PolarsNumericType>(
+    ca: &ChunkedArray<T>,
+    out: &Strided,
+) {
     let mut row = 0;
     for arr in ca.downcast_iter() {
         let values = arr.values().as_slice();
@@ -244,14 +248,15 @@ where
                 values.len(),
             );
             for (slot, v) in dst.iter_mut().zip(values) {
-                *slot = v.as_();
+                *slot = to_f64(*v);
             }
         } else {
             for (k, v) in values.iter().enumerate() {
-                out.put(row + k, v.as_());
+                out.put(row + k, to_f64(*v));
             }
         }
-        if let Some(bits) = arr.validity().filter(|_| arr.null_count() > 0) {
+        if let Some(bits) = arr.validity().filter(|bits| bits.unset_bits() > 0)
+        {
             for (k, ok) in bits.iter().enumerate() {
                 if !ok {
                     out.put(row + k, out.null_value);
@@ -263,7 +268,7 @@ where
 }
 
 unsafe fn copy_bool_as_f64(ca: &BooleanChunked, out: &Strided) {
-    for (row, value) in ca.into_iter().enumerate() {
+    for (row, value) in ca.iter().enumerate() {
         out.put(row, value.map_or(out.null_value, f64::from));
     }
 }

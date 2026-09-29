@@ -4,8 +4,15 @@
 
 `polars` is a Racket binding to the [Polars](https://pola.rs) DataFrame
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
-**0.41.3**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
-macOS arm64 ship with the package, so users need no Rust toolchain.
+**0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
+macOS arm64 ship with the package, so users need no Rust toolchain. The
+`dtype-decimal` feature is on only because polars' `sign` does not compile
+without it (#106); Decimal is not surfaced. polars' `nightly` feature is on,
+as in Python polars' own wheels: its `std::simd` code carries the CSV reader
+(a stable build scans nycflights at 2.5× Python). It compiles on the pinned
+stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
+the flake's build and dev shell and `scripts/build-so.sh` set; the release
+build uses that same rustc version.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -26,7 +33,7 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
-   `expr-str-to-date`: one binding per operation and dtype, documented in the
+   `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
 3. **Generic / fluent** — `polars/private/generic/*.rkt`, aggregated by
    `generic.rkt`, re-exported by `main.rkt`. This is the surface: `series` and
@@ -105,8 +112,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
-  unwinds out of an `extern "C"` function aborts the Racket process, and crate
-  0.41.3 panics on some inputs where later versions return an error (#108).
+  unwinds out of an `extern "C"` function aborts the Racket process, and
+  polars panics on some inputs where it could return an error (crate 0.41.3
+  did so on a nulls-last boolean sort and a null-dtype `arg_sort`; 0.55.2
+  does neither, `rust/src/tests/crate_sort.rs`, and #108 removes the
+  routing around them).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
@@ -142,31 +152,51 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
-- `read-csv` is `(collect (scan-csv ...))` with the same keywords: one Rust
-  entry point, `dataframe_read_csv_with_options`, builds the scan and
-  collects it. The one difference is the separator guard: when
+- `read-csv` returns what `(collect (scan-csv ...))` returns for the same
+  keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
+  reads a glob pattern by scan and collect, and a single file with 0.55's
+  eager `CsvReader`, which is about three times faster on nycflights. Both
+  are built from one decoded request, and a table-driven Rust test holds
+  the eager, one-file-glob and scan reads to identical frames and error
+  texts, with three listed exceptions (a malformed-quote error's chunk
+  locator; an `#:n-rows 0` read of invalid UTF-8 fails eagerly). The one
+  deliberate difference is the separator guard: when
   `#:separator` is not given, a one-column result whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
   a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
   of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file is reported at `collect`. Reported at scan instead: a glob that
-  matches no file, and, with `#:schema-overrides`, an override naming a
-  column the header lacks. That check reads the header because 0.41.3
-  applies a full-length override list by position and would silently rename
-  the column.
+  file, an invalid glob pattern, or one that matches no file is reported at
+  `collect`, as in Python (0.55 expands a pattern at collect). Reported at
+  scan instead: with `#:schema-overrides`, an override naming a column the
+  header lacks. That check reads the header because 0.55 applies overrides
+  by name and ignores an absent one, as Python 1.42.1 does; a misspelt
+  override would otherwise do nothing. `call/foreign-error` respells 0.55's
+  empty-expansion reason, which carries the pattern, as `no files match the
+  pattern`.
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
-  never for a single file or a glob, matching Python (0.41.3's
-  `HiveOptions { enabled: None }`).
+  never for a single file or a glob, matching Python (`HiveOptions {
+  enabled: None }`, which 0.55 resolves at collect).
 - The separator guard is stricter than Python, whose `read_csv` returns the
   one column; the #86 scoreboard (check C1) requires the error.
-- A `'time` schema override is a contract error: 0.41.3 cannot parse a
-  `Time` column from CSV, though `#:try-parse-dates` infers one.
+- A duration schema override is a contract error: polars cannot parse a
+  `Duration` column from CSV, in Python either.
+- `round` rounds ties to even, as Python Polars and `racket/base` do.
+- `sign` keeps the column's dtype: a float column gives `-1.0` / `0.0` / `1.0`.
+- A `join` promises no row order except `'cross`, as Python's default
+  `maintain_order='none'`; sort the result when order matters.
+- `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
+  aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
+- `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
+- A polars deprecation prints a warning to stderr: replace the spelling it
+  names (a string cast to `'date` is `str->date`).
+- Error wording follows the crate version. A test matches our `who:` prefix
+  and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - `series` infers int64 / float64 / string / datetime / bool. It cannot build a

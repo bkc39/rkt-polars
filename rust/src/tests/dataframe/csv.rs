@@ -2,7 +2,7 @@ use super::test_util::*;
 use super::*;
 use std::path::{Path, PathBuf};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Csv {
     options: CompatCsvOptions,
     comment_prefix: Option<CString>,
@@ -152,6 +152,180 @@ fn eager_read_matches_scan_then_collect() {
     }
 }
 
+type Outcome = Result<DataFrame, String>;
+
+impl Csv {
+    fn read_outcome(&self, path: &Path) -> Outcome {
+        let out = self.call(path, dataframe_read_csv_with_options);
+        if out.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        Ok(unsafe { *Box::from_raw(out) })
+    }
+
+    fn scan_outcome(&self, path: &Path) -> Outcome {
+        let lf = self.call(path, lazyframe_scan_csv_with_options);
+        if lf.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        let out = lazyframe_collect(lf);
+        lazyframe_drop(lf);
+        if out.is_null() {
+            return Err(recorded_error().expect("a reason"));
+        }
+        Ok(unsafe { *Box::from_raw(out) })
+    }
+}
+
+fn same_outcome(a: &Outcome, b: &Outcome) -> bool {
+    match (a, b) {
+        (Ok(a), Ok(b)) => a.schema() == b.schema() && a.equals_missing(b),
+        (Err(a), Err(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn one_file_pattern(path: &Path) -> PathBuf {
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    path.with_file_name(format!("[{}]{}", first, chars.as_str()))
+}
+
+const OPTION_FIXTURES: &[(&str, &[u8])] = &[
+    ("a.csv", b"a,b,d\n1,x,2024-01-01\n2,NA,2024-01-02\n-,y,\n"),
+    ("late-float.csv", b"a\n1\n2\n3\n4.5\n"),
+    ("semi.txt", b"# note\na;b\n'x;y';1\n# mid\nz;2\n"),
+    ("slashed.csv", b"a,b\n//skip\n1,2\n3,4\n"),
+    (
+        "times.csv",
+        b"t,d,a\n05:00:00,2020-01-02,2013-01-01 05:00:00\n",
+    ),
+    ("latin.csv", b"a\ncaf\xe9\n"),
+    ("tabs.tsv", b"a\tb\nNA\t2\n3\t-\n"),
+];
+
+fn option_cases() -> Vec<(&'static str, Csv)> {
+    let case = |label, set: fn(&mut Csv)| {
+        let mut csv = Csv::default();
+        set(&mut csv);
+        (label, csv)
+    };
+    let int32 = dtype(CompatDTypeTag::Int32, CompatTimeUnit::None);
+    let float64 = dtype(CompatDTypeTag::Float64, CompatTimeUnit::None);
+    let time = dtype(CompatDTypeTag::Time, CompatTimeUnit::None);
+    let mut cases = vec![
+        case("defaults", |_| {}),
+        case("no header", |c| c.options.has_header = false),
+        case("separator ;", |c| c.options.separator = b';'),
+        case("separator tab", |c| c.options.separator = b'\t'),
+        case("quote '", |c| c.options.quote_char = b'\''),
+        case("no quoting", |c| c.options.has_quote_char = false),
+        case("comment #", |c| c.comment_prefix = Some(cstr("#"))),
+        case("comment //", |c| c.comment_prefix = Some(cstr("//"))),
+        case("skip rows", |c| c.options.skip_rows = 1),
+        case("n rows 2", |c| {
+            c.options.has_n_rows = true;
+            c.options.n_rows = 2;
+        }),
+        case("n rows 0", |c| {
+            c.options.has_n_rows = true;
+            c.options.n_rows = 0;
+        }),
+        case("null NA", |c| c.null_values = vec![cstr("NA")]),
+        case("null NA and -", |c| {
+            c.null_values = vec![cstr("NA"), cstr("-")]
+        }),
+        case("infer every row", |c| {
+            c.options.has_infer_schema_length = false
+        }),
+        case("infer 0", |c| c.options.infer_schema_length = 0),
+        case("infer 1", |c| c.options.infer_schema_length = 1),
+        case("ignore errors", |c| c.options.ignore_errors = true),
+        case("try parse dates", |c| c.options.try_parse_dates = true),
+        case("lossy utf8", |c| c.options.lossy_utf8 = true),
+        case("glob off", |c| c.options.glob = false),
+        case("; ' # together", |c| {
+            c.options.separator = b';';
+            c.options.quote_char = b'\'';
+            c.comment_prefix = Some(cstr("#"));
+        }),
+        case("NA, skip and n rows together", |c| {
+            c.null_values = vec![cstr("NA"), cstr("-")];
+            c.options.skip_rows = 1;
+            c.options.has_header = false;
+            c.options.has_n_rows = true;
+            c.options.n_rows = 1;
+        }),
+    ];
+    for (label, overrides) in [
+        ("override a int32", vec![(cstr("a"), int32)]),
+        ("override a float64", vec![(cstr("a"), float64)]),
+        (
+            "override a and t time",
+            vec![(cstr("a"), float64), (cstr("t"), time)],
+        ),
+        ("override an absent column", vec![(cstr("zzz"), float64)]),
+    ] {
+        cases.push((
+            label,
+            Csv {
+                overrides,
+                ..Default::default()
+            },
+        ));
+    }
+    cases
+}
+
+const EAGER_ONLY_OUTCOMES: &[(&str, &str)] = &[
+    ("separator ;", "quoted.csv"),
+    ("separator tab", "quoted.csv"),
+    ("n rows 0", "latin.csv"),
+];
+
+#[test]
+fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures = FIXTURES
+        .iter()
+        .map(|(name, text)| (*name, text.as_bytes()))
+        .chain(OPTION_FIXTURES.iter().copied());
+    let paths: Vec<PathBuf> = fixtures
+        .map(|(name, contents)| write(dir.path(), name, contents))
+        .collect();
+    let mut outcomes = (0, 0);
+    let mut mismatches = Vec::new();
+    for (label, csv) in option_cases() {
+        let mut globbed = csv.clone();
+        globbed.options.glob = true;
+        for path in &paths {
+            let eager = csv.read_outcome(path);
+            let glob = globbed.read_outcome(&one_file_pattern(path));
+            let scan = csv.scan_outcome(path);
+            let name = path.file_name().unwrap().to_str().unwrap();
+            let agree =
+                same_outcome(&eager, &glob) && same_outcome(&eager, &scan);
+            let expected = EAGER_ONLY_OUTCOMES.contains(&(label, name));
+            if agree == expected {
+                mismatches.push(format!(
+                    "{} on {}: eager {:?}, glob {:?}, scan {:?}",
+                    label, name, eager, glob, scan
+                ));
+            }
+            if expected {
+                assert!(eager.is_err() && same_outcome(&glob, &scan));
+            }
+            match eager {
+                Ok(_) => outcomes.0 += 1,
+                Err(_) => outcomes.1 += 1,
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    assert!(outcomes.0 > 300 && outcomes.1 > 50, "{:?}", outcomes);
+}
+
 #[test]
 fn null_values_turn_a_late_marker_into_a_null() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -226,6 +400,38 @@ fn schema_overrides_set_the_named_columns_only() {
     assert_eq!(df.column("a").unwrap().dtype(), &DataType::Int32);
     assert_eq!(df.column("b").unwrap().dtype(), &DataType::Date);
     assert_eq!(df.column("c").unwrap().dtype(), &DataType::String);
+}
+
+#[test]
+fn a_time_override_parses_times_of_day() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "t.csv", b"t,d\n05:00:00,1h\n06:30:15,2h\n");
+    let time = Csv {
+        overrides: vec![(
+            cstr("t"),
+            dtype(CompatDTypeTag::Time, CompatTimeUnit::None),
+        )],
+        ..Default::default()
+    };
+    let df = time.read(&path);
+    let t = df.column("t").unwrap();
+    assert_eq!(t.dtype(), &DataType::Time);
+    assert_eq!(t.null_count(), 0);
+    let nanos = t.cast(&DataType::Int64).unwrap();
+    assert_eq!(
+        nanos.i64().unwrap().get(1),
+        Some((6 * 3600 + 30 * 60 + 15) * 1_000_000_000)
+    );
+
+    let duration = Csv {
+        overrides: vec![(
+            cstr("d"),
+            dtype(CompatDTypeTag::Duration, CompatTimeUnit::Microseconds),
+        )],
+        ..Default::default()
+    };
+    let msg = duration.read_err(&path);
+    assert!(msg.contains("duration"), "{:?}", msg);
 }
 
 #[test]
@@ -350,26 +556,34 @@ fn a_glob_reads_every_match_in_sorted_order() {
     assert!(eager.equals_missing(&lazy));
 }
 
+fn empty_expansion(msg: &str) -> bool {
+    msg.starts_with("failed to retrieve ")
+        && msg.contains(": expanded paths were empty (path expansion input: ")
+}
+
 #[test]
-fn a_glob_matching_nothing_says_so_at_scan() {
+fn a_glob_matching_nothing_says_so_at_collect() {
     let dir = tempfile::tempdir().expect("tempdir");
     let pattern = dir.path().join("*.csv");
     let msg = Csv::default().read_err(&pattern);
-    assert_eq!(msg, "no files match the pattern");
-    let msg = Csv::default().scan_err(&pattern);
-    assert_eq!(msg, "no files match the pattern");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    let lf = Csv::default().call(&pattern, lazyframe_scan_csv_with_options);
+    assert!(!lf.is_null(), "{:?}", recorded_error());
+    assert!(lazyframe_collect(lf).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    lazyframe_drop(lf);
 
     let p = cstr(dir.path().join("*.parquet").to_str().unwrap());
     assert!(dataframe_read_parquet(p.as_ptr()).is_null());
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("no files match the pattern")
-    );
-    assert!(lazyframe_scan_parquet_options(p.as_ptr(), 0, 0).is_null());
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("no files match the pattern")
-    );
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    let lf = lazyframe_scan_parquet_options(p.as_ptr(), 0, 0);
+    assert!(!lf.is_null(), "{:?}", recorded_error());
+    assert!(lazyframe_collect(lf).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert!(empty_expansion(&msg), "{:?}", msg);
+    lazyframe_drop(lf);
 }
 
 #[test]
@@ -398,7 +612,7 @@ fn a_missing_file_keeps_the_os_reason_without_the_path() {
 }
 
 #[test]
-fn an_override_for_an_absent_column_is_an_error_not_a_rename() {
+fn an_override_for_an_absent_column_is_an_error() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "ab.csv", b"a,b\n1,2\n");
     let csv = Csv {
@@ -468,10 +682,10 @@ fn parquet_reads_a_glob_in_sorted_order() {
 fn parquet_single_file_read_matches_the_reader_it_replaced() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("one.parquet");
-    let mut expected = DataFrame::new(vec![
-        Series::new("i", [Some(1i64), None, Some(3)]),
-        Series::new("s", [Some("a"), Some("b"), None]),
-        Series::new("f", [1.5f64, 2.5, 3.5]),
+    let mut expected = DataFrame::new_infer_height(vec![
+        Column::new("i".into(), [Some(1i64), None, Some(3)]),
+        Column::new("s".into(), [Some("a"), Some("b"), None]),
+        Column::new("f".into(), [1.5f64, 2.5, 3.5]),
     ])
     .unwrap();
     let file = std::fs::File::create(&path).unwrap();
@@ -494,7 +708,9 @@ fn a_single_parquet_file_under_a_hive_directory_gains_no_columns() {
     let hive = dir.path().join("year=2013");
     std::fs::create_dir(&hive).unwrap();
     let path = hive.join("one.parquet");
-    let mut df = DataFrame::new(vec![Series::new("x", [1i64, 2])]).unwrap();
+    let mut df =
+        DataFrame::new_infer_height(vec![Column::new("x".into(), [1i64, 2])])
+            .unwrap();
     let file = std::fs::File::create(&path).unwrap();
     ParquetWriter::new(file).finish(&mut df).unwrap();
 
@@ -541,7 +757,7 @@ fn strings(df: &DataFrame, name: &str) -> Vec<String> {
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .map(|v| v.expect("no nulls").to_string())
         .collect()
 }

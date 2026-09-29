@@ -1,18 +1,18 @@
 use polars::prelude::*;
 
 fn main() -> PolarsResult<()> {
-    let i8s = Series::new("i8s", [Some(-8i8), None, Some(12)]);
-    let i16s = Series::new("i16s", [Some(-300i16), None, Some(1200)]);
-    let u8s = Series::new("u8s", [Some(0u8), None, Some(255)]);
-    let u16s = Series::new("u16s", [Some(0u16), None, Some(65_535)]);
-    let f32s = Series::new("f32s", [Some(1.5f32), None, Some(2.25)]);
+    let i8s = Series::new("i8s".into(), [Some(-8i8), None, Some(12)]);
+    let i16s = Series::new("i16s".into(), [Some(-300i16), None, Some(1200)]);
+    let u8s = Series::new("u8s".into(), [Some(0u8), None, Some(255)]);
+    let u16s = Series::new("u16s".into(), [Some(0u16), None, Some(65_535)]);
+    let f32s = Series::new("f32s".into(), [Some(1.5f32), None, Some(2.25)]);
 
-    let df = DataFrame::new(vec![
-        i8s.clone(),
-        i16s.clone(),
-        u8s.clone(),
-        u16s.clone(),
-        f32s.clone(),
+    let df = DataFrame::new_infer_height(vec![
+        i8s.clone().into_column(),
+        i16s.clone().into_column(),
+        u8s.clone().into_column(),
+        u16s.clone().into_column(),
+        f32s.clone().into_column(),
     ])?;
 
     println!("primitive dtype shape={:?}", df.shape());

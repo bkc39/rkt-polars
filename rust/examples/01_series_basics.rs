@@ -12,11 +12,12 @@ fn describe_series(series: &Series) {
 }
 
 fn main() -> PolarsResult<()> {
-    let ints = Series::new("ints", [1i32, 2, 3, 4]);
-    let floats = Series::new("floats", [1.5f64, 2.0, 4.25, 8.0]);
-    let strings = Series::new("strings", ["alpha", "beta", "gamma", "delta"]);
+    let ints = Series::new("ints".into(), [1i32, 2, 3, 4]);
+    let floats = Series::new("floats".into(), [1.5f64, 2.0, 4.25, 8.0]);
+    let strings =
+        Series::new("strings".into(), ["alpha", "beta", "gamma", "delta"]);
     let datetimes = Series::new(
-        "timestamps",
+        "timestamps".into(),
         [
             NaiveDate::from_ymd_opt(2024, 1, 1)
                 .unwrap()
@@ -43,7 +44,7 @@ fn main() -> PolarsResult<()> {
     describe_series(&datetimes);
 
     let mut renamed = ints.clone();
-    renamed.rename("ints_renamed");
+    renamed.rename("ints_renamed".into());
     describe_series(&renamed);
 
     let int_sum = ints.i32()?.sum();

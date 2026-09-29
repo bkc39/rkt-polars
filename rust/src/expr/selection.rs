@@ -5,7 +5,7 @@ use crate::*;
 
 expr_unop!(expr_reverse, |e| e.reverse());
 expr_binop!(expr_filter, |a, b| a.filter(b));
-expr_binop!(expr_gather, |a, b| a.gather(b));
+expr_binop!(expr_gather, |a, b| a.gather(b, false));
 
 #[no_mangle]
 pub extern "C" fn expr_sort_by_with_options(
@@ -114,7 +114,9 @@ pub extern "C" fn expr_forward_fill(
     }
     let ee = unsafe { (*e).clone() };
     let lim = if has_limit != 0 { Some(limit) } else { None };
-    Box::into_raw(Box::new(ee.forward_fill(lim)))
+    Box::into_raw(Box::new(
+        ee.fill_null_with_strategy(FillNullStrategy::Forward(lim)),
+    ))
 }
 
 #[no_mangle]
@@ -128,7 +130,9 @@ pub extern "C" fn expr_backward_fill(
     }
     let ee = unsafe { (*e).clone() };
     let lim = if has_limit != 0 { Some(limit) } else { None };
-    Box::into_raw(Box::new(ee.backward_fill(lim)))
+    Box::into_raw(Box::new(
+        ee.fill_null_with_strategy(FillNullStrategy::Backward(lim)),
+    ))
 }
 
 #[no_mangle]
@@ -145,7 +149,10 @@ pub extern "C" fn expr_over(
         None => return ptr::null_mut(),
     };
     let inner = unsafe { (*e).clone() };
-    Box::into_raw(Box::new(inner.over(parts)))
+    match inner.over(parts) {
+        Ok(out) => Box::into_raw(Box::new(out)),
+        Err(_) => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]
@@ -165,8 +172,10 @@ pub extern "C" fn expr_sort_with_options(
     // around the `sort_with` defects; the default sort has none of them.
     let sorted = if opts.descending || opts.nulls_last {
         inner.apply(
-            move |s| sort_series(&s, opts).map(Some),
-            GetOutput::same_type(),
+            move |c| {
+                sort_series(c.as_materialized_series(), opts).map(Column::from)
+            },
+            |_, field| Ok(field.clone()),
         )
     } else {
         inner.sort(opts)

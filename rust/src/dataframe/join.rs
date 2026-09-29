@@ -7,7 +7,11 @@ pub extern "C" fn dataframe_unique(df_ptr: *mut DataFrame) -> *mut DataFrame {
         return ptr::null_mut();
     }
     let df = unsafe { &*df_ptr };
-    match df.unique(None, polars::prelude::UniqueKeepStrategy::Any, None) {
+    match df.unique::<String, String>(
+        None,
+        polars::prelude::UniqueKeepStrategy::Any,
+        None,
+    ) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }
@@ -56,7 +60,12 @@ pub extern "C" fn dataframe_join(
     let right = unsafe { &*right_ptr };
     if how == CompatJoinKind::Cross as i32 {
         use polars::prelude::CrossJoin;
-        return match left.cross_join(right, None, None) {
+        return match left.cross_join(
+            right,
+            None,
+            None,
+            polars::prelude::MaintainOrderJoin::LeftRight,
+        ) {
             Ok(out) => Box::into_raw(Box::new(out)),
             Err(_) => ptr::null_mut(),
         };
@@ -92,7 +101,7 @@ pub extern "C" fn dataframe_join(
         return ptr::null_mut();
     }
     let args = polars::prelude::JoinArgs::new(join_type);
-    match left.join(right, &left_on, &right_on, args) {
+    match left.join(right, &left_on, &right_on, args, None) {
         Ok(out) => Box::into_raw(Box::new(out)),
         Err(_) => ptr::null_mut(),
     }

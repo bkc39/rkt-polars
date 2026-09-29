@@ -18,6 +18,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The flake's rustc (nixpkgs at flake.lock), so the shipped library is built
+# by the compiler the tests ran on.  polars' `nightly` feature needs
+# RUSTC_BOOTSTRAP=1 on it, as the flake's build sets.
+RUST_TOOLCHAIN=1.98.1
+export RUSTC_BOOTSTRAP=1
+
 platform="${1:-}"
 if [[ -z "$platform" ]]; then
   case "$(uname -s)" in
@@ -43,12 +49,14 @@ if [[ "$platform" == "linux" ]]; then
   # the .so out to the mounted candidate directory.
   echo ">> building $lib inside manylinux2014 (glibc 2.17)"
   docker run --rm \
+    -e RUSTC_BOOTSTRAP \
+    -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
     -v "$ROOT:/src:ro" \
     -v "$dest:/out" \
     quay.io/pypa/manylinux2014_x86_64 bash -ec '
       set -euo pipefail
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --profile minimal
+        | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
       cargo build --release --locked \
         --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
@@ -56,8 +64,12 @@ if [[ "$platform" == "linux" ]]; then
     '
   echo ">> staged $dest/$lib"
 else
-  echo ">> cargo build --release (manifest: rust/Cargo.toml)"
-  cargo build --release --manifest-path "$ROOT/rust/Cargo.toml"
+  cargo=(cargo)
+  if command -v rustup >/dev/null 2>&1; then
+    cargo+=("+$RUST_TOOLCHAIN")
+  fi
+  echo ">> ${cargo[*]} build --release (manifest: rust/Cargo.toml)"
+  "${cargo[@]}" build --release --manifest-path "$ROOT/rust/Cargo.toml"
 
   built="$ROOT/rust/target/release/$lib"
   if [[ ! -f "$built" ]]; then

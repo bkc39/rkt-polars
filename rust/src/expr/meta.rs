@@ -1,6 +1,5 @@
 use crate::prelude::*;
 use crate::rust_string_to_ptr;
-use std::sync::Arc;
 
 #[no_mangle]
 pub extern "C" fn expr_meta_output_name(e: *const Expr) -> *const c_char {
@@ -14,7 +13,7 @@ pub extern "C" fn expr_meta_output_name(e: *const Expr) -> *const c_char {
     }
 }
 
-fn root_names(e: *const Expr) -> Vec<Arc<str>> {
+fn root_names(e: *const Expr) -> Vec<PlSmallStr> {
     unsafe { (*e).clone() }.meta().root_names()
 }
 
