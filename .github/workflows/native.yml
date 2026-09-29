@@ -29,7 +29,10 @@ jobs:
       # only needs docker there.
       - name: Install Rust toolchain
         if: matrix.platform == 'darwin'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          # scripts/build-so.sh RUST_TOOLCHAIN: the flake's rustc.
+          toolchain: 1.98.1
 
       - name: Cache cargo build
         if: matrix.platform == 'darwin'

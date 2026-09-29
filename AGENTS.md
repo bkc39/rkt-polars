@@ -7,7 +7,12 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 **0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
 macOS arm64 ship with the package, so users need no Rust toolchain. The
 `dtype-decimal` feature is on only because polars' `sign` does not compile
-without it (#106); Decimal is not surfaced.
+without it (#106); Decimal is not surfaced. polars' `nightly` feature is on,
+as in Python polars' own wheels: its `std::simd` code carries the CSV reader
+(a stable build scans nycflights at 2.5× Python). It compiles on the pinned
+stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
+the flake's build and dev shell and `scripts/build-so.sh` set; the release
+build uses that same rustc version.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
