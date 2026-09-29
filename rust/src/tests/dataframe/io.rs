@@ -285,3 +285,39 @@ fn an_invalid_glob_fails_at_collect() {
     assert!(msg.to_lowercase().contains("glob"), "{:?}", msg);
     lazyframe_drop(lf);
 }
+
+#[test]
+fn parquet_round_trips_categorical_enum_and_decimal() {
+    let strings = Series::new("s".into(), &[Some("b"), None, Some("a")]);
+    let decimals = Series::new("d".into(), &[Some(125i64), Some(-350), None])
+        .cast(&DataType::Int128)
+        .unwrap()
+        .into_decimal(10, 2)
+        .unwrap();
+    let levels = FrozenCategories::new(["a", "b"]).unwrap();
+    let columns: Vec<Column> = vec![
+        strings
+            .cast(&DataType::from_categories(Categories::global()))
+            .unwrap()
+            .with_name("cat".into())
+            .into(),
+        strings
+            .strict_cast(&DataType::from_frozen_categories(levels))
+            .unwrap()
+            .with_name("enum".into())
+            .into(),
+        decimals.into(),
+    ];
+    let df = Box::into_raw(Box::new(DataFrame::new(3, columns).unwrap()));
+    let back = write_round_trip(
+        df,
+        "parquet",
+        dataframe_write_parquet,
+        dataframe_read_parquet,
+    );
+    let (out, original) = unsafe { (&*back, &*df) };
+    assert_eq!(out.schema(), original.schema());
+    assert!(out.equals_missing(original));
+    dataframe_drop(df);
+    dataframe_drop(back);
+}

@@ -92,7 +92,13 @@ Dtype spellings accepted by @racket[series]' @racket[#:dtype]:
         (list @racket['date] "Date")
         (list @racket['time] "Time")
         (list @elem{@racket['datetime] or @racket['(datetime milliseconds)]} "Datetime")
-        (list "—" "Decimal, Binary, Duration, Array, List, Categorical, Enum, Struct"))]
+        (list @racket['categorical] "Categorical")
+        (list @racket['(enum low mid high)] "Enum")
+        (list "—" "Decimal, Binary, Duration, Array, List, Struct"))]
+
+Categorical and Enum values read back as symbols (@secref["ref-categorical"]).
+A Decimal column, read from Parquet, has dtype @racket['(decimal precision scale)]
+and exact rational values, but no @racket[#:dtype] spelling.
 
 Long spellings (@racket['int32], @racket['float64], @racket['string], …)
 are accepted too. Values that mix ints and floats promote to

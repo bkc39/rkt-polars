@@ -194,6 +194,14 @@ pub extern "C" fn series_ref_str(
         return ptr::null();
     }
     let s = unsafe { &*s_ptr };
+    if s.dtype().is_categorical() || s.dtype().is_enum() {
+        return match s.get(index) {
+            Ok(value) => {
+                value.get_str().map_or(ptr::null(), rust_string_to_ptr)
+            }
+            Err(_) => ptr::null(),
+        };
+    }
     match s.str() {
         Ok(ca) => ca.get(index).map(rust_string_to_ptr).unwrap_or(ptr::null()),
         Err(_) => ptr::null(),

@@ -218,6 +218,94 @@ pub extern "C" fn series_copy_str(
     ca.null_count() as i64
 }
 
+#[no_mangle]
+pub extern "C" fn series_copy_cat(
+    s_ptr: *const Series,
+    start: usize,
+    count: usize,
+    dst: *mut u32,
+    dst_len: usize,
+    valid: *mut u8,
+    valid_len: usize,
+) -> *mut Series {
+    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
+        return ptr::null_mut();
+    };
+    let Ok(mapping) = s.dtype().cat_mapping() else {
+        return ptr::null_mut();
+    };
+    let Some(rows) = row_range(s, start, count) else {
+        return ptr::null_mut();
+    };
+    if !room_for(count, dst as *const u8, dst_len, valid, valid_len) {
+        return ptr::null_mut();
+    }
+    let Ok(codes) = rows.to_physical_repr().cast(&DataType::UInt32) else {
+        return ptr::null_mut();
+    };
+    let Ok(codes) = codes.u32() else {
+        return ptr::null_mut();
+    };
+    let mut local = PlHashMap::<u32, u32>::new();
+    let mut table = Vec::new();
+    for (row, code) in codes.iter().enumerate() {
+        let index = code.map_or(0, |code| {
+            *local.entry(code).or_insert_with(|| {
+                table.push(mapping.cat_to_str(code).unwrap_or_default());
+                (table.len() - 1) as u32
+            })
+        });
+        unsafe {
+            *dst.add(row) = index;
+            if !valid.is_null() {
+                *valid.add(row) = code.is_some() as u8;
+            }
+        }
+    }
+    Box::into_raw(Box::new(Series::new(PlSmallStr::EMPTY, table)))
+}
+
+#[no_mangle]
+pub extern "C" fn series_copy_decimal(
+    s_ptr: *const Series,
+    start: usize,
+    count: usize,
+    dst: *mut u64,
+    dst_len: usize,
+    valid: *mut u8,
+    valid_len: usize,
+) -> i64 {
+    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
+        return COPY_BAD_ARGUMENTS;
+    };
+    if s.decimal().is_err() {
+        return COPY_WRONG_DTYPE;
+    }
+    let Some(rows) = row_range(s, start, count) else {
+        return COPY_BAD_ARGUMENTS;
+    };
+    let words = count.checked_mul(2).unwrap_or(usize::MAX);
+    if !room_for(words, dst as *const u8, dst_len, ptr::null(), 0)
+        || !(valid.is_null() || count <= valid_len)
+    {
+        return COPY_BAD_ARGUMENTS;
+    }
+    let Ok(ca) = rows.decimal() else {
+        return COPY_WRONG_DTYPE;
+    };
+    for (row, value) in ca.physical().iter().enumerate() {
+        let bits = value.unwrap_or(0) as u128;
+        unsafe {
+            *dst.add(2 * row) = bits as u64;
+            *dst.add(2 * row + 1) = (bits >> 64) as u64;
+            if !valid.is_null() {
+                *valid.add(row) = value.is_some() as u8;
+            }
+        }
+    }
+    ca.null_count() as i64
+}
+
 struct Strided {
     dst: *mut f64,
     offset: usize,

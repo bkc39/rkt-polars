@@ -6,11 +6,25 @@
 (require racket/match
          (only-in gregor datetime?)
          polars/private/foreign
-         polars/private/series)
+         polars/private/series
+         syntax/parse/define
+         (for-syntax racket/base syntax/parse))
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec?)
+         dtype-spec? define-enum)
+
+(begin-for-syntax
+  (define-syntax-class enum-category
+    #:description "an enum category (an identifier or a string)"
+    (pattern name:id #:with symbol #'name)
+    (pattern text:str
+             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text))))
+
+(define-syntax-parse-rule (define-enum name:id category:enum-category ...+)
+  #:fail-when (check-duplicate-identifier (syntax->list #'(category.symbol ...)))
+              "duplicate enum category"
+  (define name '(enum category.symbol ...)))
 
 ;; Accept both the short constructor spellings (i32, f64, str, bool) and the
 ;; canonical symbols returned by series-dtype (int32, float64, string,
@@ -30,7 +44,8 @@
         'str 'string   'string 'string
         'date 'date
         'time 'time
-        'datetime 'datetime))
+        'datetime 'datetime
+        'categorical 'categorical))
 
 (define (dtype-spec? v)
   (match v
@@ -39,7 +54,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ #f]))
+    [_ (enum-dtype? v)]))
 
 (define (normalize-dtype dt)
   (cond
@@ -62,6 +77,7 @@
     [(andmap exact-integer? vals) 'int64]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
+    [(andmap symbol? vals) 'categorical]
     [(andmap datetime? vals) 'datetime]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
@@ -84,20 +100,29 @@
      (match canonical
        [(or 'datetime `(datetime . ,_))
         (if vec? series-new-datetime/vec series-new-datetime)]
+       [(or 'categorical (? enum-dtype?))
+        (define strings (if vec? series-new-str/vec series-new-str))
+        (lambda (name elements)
+          (define s (strings name elements))
+          (begin0 (if (eq? canonical 'categorical)
+                      (series-cast s 'categorical)
+                      (series-cast-enum 'series s canonical))
+                  (series-drop s)))]
        [_ (error 'series "no constructor for dtype ~v" canonical)])]))
 
 ;; The float constructors want flonums; accept exact reals too by coercing,
 ;; so (series '(1 2 3) #:dtype 'f64) does what the user means.
 (define (coerce-elements canonical elements)
-  (case canonical
-    [(float32 float64)
-     (define (->fl x) (if (and (not (polars-null? x)) (exact? x))
-                          (exact->inexact x)
-                          x))
-     (if (vector? elements)
-         (for/vector #:length (vector-length elements) ([x (in-vector elements)]) (->fl x))
-         (map ->fl elements))]
-    [else elements]))
+  (define (coerce convert)
+    (if (vector? elements)
+        (for/vector #:length (vector-length elements) ([x (in-vector elements)]) (convert x))
+        (map convert elements)))
+  (match canonical
+    [(or 'float32 'float64)
+     (coerce (lambda (x) (if (and (not (polars-null? x)) (exact? x)) (exact->inexact x) x)))]
+    [(or 'categorical (? enum-dtype?))
+     (coerce (lambda (x) (if (symbol? x) (symbol->string x) x)))]
+    [_ elements]))
 
 (define numeric-dtypes
   '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 float32 float64))
@@ -108,3 +133,21 @@
   (match dt
     [(or 'date 'time (list 'datetime _ _) (list 'duration _)) #t]
     [_ #f]))
+
+(module+ test
+  (require rackunit
+           syntax/macro-testing)
+
+  (define-enum log-levels debug info warning error)
+  (check-equal? log-levels '(enum debug info warning error))
+  (check-true (enum-dtype? log-levels))
+
+  (define-enum sizes small "Very High")
+  (check-equal? sizes '(enum small |Very High|))
+
+  (check-exn #rx"duplicate enum category"
+             (lambda () (convert-compile-time-error (let () (define-enum twice a b a) twice))))
+  (check-exn #rx"duplicate enum category"
+             (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
+  (check-exn #rx"expected more terms"
+             (lambda () (convert-compile-time-error (let () (define-enum none) none)))))

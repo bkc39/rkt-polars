@@ -41,6 +41,8 @@ pub enum CompatTimeUnit {
     Milliseconds = 3,
 }
 
+/// A Decimal carries its scale in `time_unit` and its precision in
+/// `array_width`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CompatDType {
@@ -95,6 +97,9 @@ pub(crate) fn polars_dtype_from_compat(c: &CompatDType) -> Option<DataType> {
         x if x == Tag::Duration as i32 => DataType::Duration(tu),
         x if x == Tag::Time as i32 => DataType::Time,
         x if x == Tag::Null as i32 => DataType::Null,
+        x if x == Tag::Categorical as i32 => {
+            DataType::from_categories(Categories::global())
+        }
         _ => return None,
     })
 }
@@ -243,12 +248,27 @@ pub(crate) fn compat_dtype_from_polars(dtype: &DataType) -> CompatDType {
             flags: 0,
             array_width: 0,
         },
+        DataType::Categorical(..) => CompatDType {
+            tag: Tag::Categorical as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Enum(..) => CompatDType {
+            tag: Tag::Enum as i32,
+            time_unit: CompatTimeUnit::None as i32,
+            flags: 0,
+            array_width: 0,
+        },
+        DataType::Decimal(precision, scale) => CompatDType {
+            tag: Tag::Decimal as i32,
+            time_unit: *scale as i32,
+            flags: 0,
+            array_width: *precision,
+        },
         DataType::Int128
         | DataType::UInt128
         | DataType::Float16
-        | DataType::Decimal(..)
-        | DataType::Categorical(..)
-        | DataType::Enum(..)
         | DataType::Unknown(_) => CompatDType {
             tag: Tag::Unknown as i32,
             time_unit: CompatTimeUnit::None as i32,

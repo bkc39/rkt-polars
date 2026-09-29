@@ -1,6 +1,7 @@
 use super::test_util;
 use super::*;
 
+mod categorical;
 mod constructor_smoke;
 mod copy;
 mod ctors;

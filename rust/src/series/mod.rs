@@ -1,5 +1,6 @@
 mod access;
 mod cast;
+mod categorical;
 mod constructors;
 mod copy;
 mod core;
@@ -9,6 +10,8 @@ mod reshape;
 
 pub use self::access::*;
 pub use self::cast::*;
+pub(crate) use self::categorical::enum_dtype;
+pub use self::categorical::*;
 pub(crate) use self::constructors::name_from_ptr;
 #[cfg(test)]
 pub(crate) use self::constructors::ymdhms_to_naive_datetime;

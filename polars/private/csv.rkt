@@ -39,7 +39,7 @@
    (lambda (v)
      (and (dtype-spec? v)
           (match v
-            [(cons 'duration _) #f]
+            [(cons (or 'duration 'enum) _) #f]
             [_ #t])))))
 
 (define (distinct-names? overrides)

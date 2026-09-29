@@ -49,6 +49,7 @@
            (prefix-in raw: polars/private/csv)
            (only-in polars/private/generic/core
                     column-names dataframe dtype height null-count ref series shape)
+           (only-in polars/private/generic/printing series->string)
            (only-in polars/private/generic/reshape collect)
            polars/private/generic/test-fixtures)
 
@@ -98,6 +99,7 @@
       (#:null-values . ("NA" 1)) (#:infer-schema-length . -1) (#:infer-schema-length . 1.5)
       (#:schema-overrides . ((a . int32))) (#:schema-overrides . (("a" . bogus)))
       (#:schema-overrides . (("a" . (duration microseconds))))
+      (#:schema-overrides . (("a" . (enum x y))))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
       (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)
 ))
@@ -428,5 +430,22 @@
   (define frame-ndjson (build-path scratch "frame.ndjson"))
   (write-ndjson frame frame-ndjson)
   (check-equal? (shape (read-ndjson frame-ndjson)) '(3 3))
+
+  (define produce (read-parquet (build-path data-dir "produce.parquet")))
+  (check-equal? (for/list ([name (column-names produce)]) (dtype (ref produce name)))
+                '(categorical (enum low mid high) (decimal 10 2)))
+  (check-equal? (column produce "item") '(apple pear apple fig))
+  (check-equal? (series->list (ref produce "grade")) (list 'high 'low polars-null 'mid))
+  (check-equal? (column produce "price") (list 5/4 4/5 polars-null 12))
+  (check-regexp-match #rx"\\[decimal\\[10,2\\]\\]\n\\[\n\t1.25\n\t0.80\n\tnull\n\t12.00\n\\]"
+                      (series->string (ref produce "price")))
+  (define produce-copy (build-path scratch "produce.parquet"))
+  (write-parquet produce produce-copy)
+  (check-true (frame=? (read-parquet produce-copy) produce))
+
+  (define levels (scratch-file "levels.csv" "level,n" "info,1" "debug,2" "info,3"))
+  (define as-categorical (read-csv levels #:schema-overrides '(("level" . categorical))))
+  (check-equal? (dtype (ref as-categorical "level")) 'categorical)
+  (check-equal? (column as-categorical "level") '(info debug info))
 
   (delete-directory/files scratch))

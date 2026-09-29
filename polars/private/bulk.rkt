@@ -2,8 +2,8 @@
 
 (require (only-in ffi/unsafe
                   -> _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
-                  _uint16 _uint32 _uint64 _uint8 free malloc ptr-ref)
-         (only-in ffi/unsafe/alloc allocator deallocator)
+                  _uint16 _uint32 _uint64 _uint8 ptr-ref)
+         (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
          (only-in gregor jdn->date posix->datetime)
          (only-in gregor/time time)
@@ -12,9 +12,11 @@
          (for-syntax (only-in syntax/parse expr id))
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr dataframe-column dataframe-column-names dataframe-height
-                  define-compat duration-value->period polars-null series-drop
-                  series-dtype series-len series-name series-null-count))
+                  _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
+                  dataframe-height decimal-ref define-compat duration-value->period
+                  polars-null series-copy-decimal series-drop series-dtype series-len
+                  series-name series-null-count)
+         (only-in polars/private/resource with-raw-buffer with-release))
 
 (provide check-column-names
          dataframe->columns
@@ -26,10 +28,6 @@
          series->vector)
 
 ;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
-(define free-buffer ((deallocator) free))
-(define alloc-buffer
-  ((allocator free-buffer) (lambda (count ctype) (malloc (max count 1) ctype 'raw))))
-
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
     (define-compat name
@@ -46,6 +44,10 @@
 
 (define-compat series-copy-str
   (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
+
+(define-compat series-copy-cat
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
+  #:wrap (allocator series-drop))
 
 (define-compat series-copy-as-f64
   (_fun (s dst offset stride null-value) ::
@@ -78,8 +80,8 @@
 (define (convertible? dtype)
   (match dtype
     [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64 'float32 'float64
-         'boolean 'string 'date 'time 'null
-         `(datetime ,_ ,_) `(duration ,_))
+         'boolean 'string 'date 'time 'null 'categorical
+         `(datetime ,_ ,_) `(duration ,_) `(decimal ,_ ,_) `(enum . ,_))
      #t]
     [_ #f]))
 
@@ -120,10 +122,9 @@
 
 (define-syntax-parse-rule (define-physical-rows name:id ctype:id copy!:id convert:expr)
   (define (name shape who s dtype arg start count valid null-value)
-    (define dst (alloc-buffer count ctype))
-    (checked who dtype (copy! s start count dst count valid (valid-len valid)))
-    (begin0 (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i)))
-            (free-buffer dst))))
+    (with-raw-buffer ([dst count ctype])
+      (checked who dtype (copy! s start count dst count valid (valid-len valid)))
+      (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i))))))
 
 (define-physical-rows int8-rows _int8 series-copy-i8 (lambda (_ v) v))
 (define-physical-rows int16-rows _int16 series-copy-i16 (lambda (_ v) v))
@@ -143,14 +144,29 @@
 
 (define (string-rows shape who s dtype start count valid null-value)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
-  (define offsets (alloc-buffer (add1 count) _int64))
-  (checked who dtype (series-copy-str s start count buf (bytes-length buf)
-                                      offsets (add1 count) valid (valid-len valid)))
-  (begin0 (collect shape count valid null-value i
-                   (bytes->string/utf-8 buf #f
-                                        (ptr-ref offsets _int64 i)
-                                        (ptr-ref offsets _int64 (add1 i))))
-          (free-buffer offsets)))
+  (with-raw-buffer ([offsets (add1 count) _int64])
+    (checked who dtype (series-copy-str s start count buf (bytes-length buf)
+                                        offsets (add1 count) valid (valid-len valid)))
+    (collect shape count valid null-value i
+             (bytes->string/utf-8 buf #f
+                                  (ptr-ref offsets _int64 i)
+                                  (ptr-ref offsets _int64 (add1 i))))))
+
+(define (categorical-rows shape who s dtype start count valid null-value)
+  (with-raw-buffer ([codes count _uint32])
+    (with-release ([table (series-copy-cat s start count codes count valid (valid-len valid))
+                          series-drop])
+      (unless table
+        (checked who dtype -1))
+      (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null))
+      (define symbols (for/vector #:length (vector-length names) ([name (in-vector names)])
+                        (string->symbol name)))
+      (collect shape count valid null-value i (vector-ref symbols (ptr-ref codes _uint32 i))))))
+
+(define (decimal-rows shape who s dtype scale start count valid null-value)
+  (with-raw-buffer ([words (* 2 count) _uint64])
+    (checked who dtype (series-copy-decimal s start count words (* 2 count) valid (valid-len valid)))
+    (collect shape count valid null-value i (decimal-ref words i scale))))
 
 (define (rows shape who s dtype start count null-value)
   (define valid (validity s count))
@@ -173,6 +189,9 @@
     [`(datetime ,unit ,_) (physical datetime-rows unit)]
     [`(duration ,_) (physical duration-rows dtype)]
     ['string (string-rows shape who s dtype start count valid null-value)]
+    [(or 'categorical `(enum . ,_))
+     (categorical-rows shape who s dtype start count valid null-value)]
+    [`(decimal ,_ ,scale) (decimal-rows shape who s dtype scale start count valid null-value)]
     ['null (if (eq? shape 'list)
                (for/list ([_ (in-range count)]) null-value)
                (make-vector count null-value))]))
@@ -289,7 +308,9 @@
 (module+ test
   (require rackunit
            (only-in racket/sequence sequence->list)
-           (only-in polars/private/foreign series-head series-new-i64 series-new-str series-ref))
+           (only-in polars/private/foreign
+                    series-cast series-drop-count series-head series-new-i64 series-new-str
+                    series-ref))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -301,7 +322,20 @@
   (for* ([chunk-rows '(1 2 3 7)]
          [n (list 0 (sub1 chunk-rows) chunk-rows (add1 chunk-rows) (* 2 chunk-rows)
                   (add1 (* 2 chunk-rows)))]
-         [s (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
-                  (series-head (series-new-str "x" (gappy-strs (add1 n))) n))])
-    (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows))
-                  (for/list ([i (in-range n)]) (series-ref s i)))))
+         [s (let ([strs (series-head (series-new-str "x" (gappy-strs (add1 n))) n)])
+              (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
+                    strs
+                    (series-cast strs 'categorical)
+                    (series-cast strs '(enum yyy || yy y))))])
+    (define refs (for/list ([i (in-range n)]) (series-ref s i)))
+    (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
+    (check-equal? (series->list s) refs))
+
+  (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
+  (define (released-by thunk)
+    (for ([_ (in-range 4)]) (collect-garbage))
+    (define before (series-drop-count))
+    (for ([_ (in-range 20)]) (thunk))
+    (for ([_ (in-range 4)]) (collect-garbage) (sleep 0.1))
+    (- (series-drop-count) before))
+  (check >= (released-by (lambda () (series->list carriers))) 20))

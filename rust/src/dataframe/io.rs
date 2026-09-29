@@ -29,7 +29,7 @@ fn read_frame(
     clear_last_error();
     decode_path(path)
         .and_then(open_file)
-        .and_then(|file| record(read(file)))
+        .and_then(|file| guard_panic(|| record(read(file))))
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 
@@ -64,7 +64,9 @@ pub(crate) fn read_path(
     clear_last_error();
     decode_path(path)
         .and_then(|path| {
-            record(require_path(path, &rules).and_then(|()| read(path)))
+            guard_panic(|| {
+                record(require_path(path, &rules).and_then(|()| read(path)))
+            })
         })
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
@@ -98,7 +100,7 @@ fn write_frame(
         return IO_OPEN_FAILED;
     };
     let df = unsafe { &mut *df_ptr };
-    match record(write(&mut file, df)) {
+    match guard_panic(|| record(write(&mut file, df))) {
         Some(()) => IO_OK,
         None => IO_WRITE_FAILED,
     }
