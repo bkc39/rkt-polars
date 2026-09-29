@@ -12,7 +12,8 @@
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring sort-flags-mismatch sort-flags/c)
+                  ->compat-dtype _CompatDType _rsstring owned-pointer-arg sort-flags-mismatch
+                  sort-flags/c)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
@@ -65,7 +66,7 @@
 
 (define-compat lazyframe-drop
   (_fun _LazyFrame-ptr -> _void)
-  #:wrap (deallocator))
+  #:wrap (deallocator owned-pointer-arg))
 
 (define-compat expr->string
   (_fun _Expr-ptr -> _rsstring)
