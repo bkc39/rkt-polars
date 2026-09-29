@@ -46,8 +46,12 @@ cand=polars/native-libs/candidates
 if [[ -n "$pr" ]]; then
   sha="$(gh pr view "$pr" --json headRefOid -q .headRefOid)"
   run="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$sha" \
-           --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")][0].id // empty')"
-  [[ -n "$run" ]] || die "no CI run for ${sha:0:7}, the head of #$pr"
+           --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")]
+                 | sort_by(.event != "pull_request") | .[0].id // empty')"
+  [[ -n "$run" ]] \
+    || die "no CI run for ${sha:0:7}, the head of #$pr: a PR that conflicts with its" \
+           "base gets none; merge the base and push, or run" \
+           "\`gh workflow run ci.yml --ref <branch>\` and pass --run"
 fi
 IFS=$'\t' read -r sha event < <(gh api "repos/{owner}/{repo}/actions/runs/$run" --jq '[.head_sha, .event] | @tsv')
 [[ -n "$pr" ]] || pr="$(gh api "repos/{owner}/{repo}/commits/$sha/pulls" --jq '.[0].number // empty')"
@@ -88,8 +92,8 @@ linux="$out/linux/libcompat.so"
 darwin="$out/darwin/libcompat.dylib"
 
 # A pull_request run builds the head's merge with its base branch, so the
-# rust/ tree its build recorded must be HEAD's.  A push run from before the
-# build recorded one built the head itself, checked above.
+# rust/ tree its build recorded must be HEAD's.  A push run older than the
+# record built the head itself, which the check above covers.
 for platform in linux darwin; do
   if [[ -f "$out/$platform/rust-tree" ]]; then
     [[ "$(< "$out/$platform/rust-tree")" == "$tree" ]] \
@@ -98,7 +102,8 @@ for platform in linux darwin; do
              "push, and refresh from the new commit's run"
   else
     [[ "$event" == push ]] \
-      || die "run $run does not record which rust/ it built libcompat-$platform from"
+      || die "run $run does not record which rust/ it built libcompat-$platform from;" \
+             "pass --run with the push run for ${sha:0:7}, if it has one"
   fi
 done
 
