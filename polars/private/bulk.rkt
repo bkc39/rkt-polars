@@ -317,7 +317,8 @@
   (require rackunit
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    series-cast series-head series-new-i64 series-new-str series-ref))
+                    series-cast series-drop-count series-head series-new-i64 series-new-str
+                    series-ref))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -336,4 +337,13 @@
                     (series-cast strs '(enum yyy || yy y))))])
     (define refs (for/list ([i (in-range n)]) (series-ref s i)))
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
-    (check-equal? (series->list s) refs)))
+    (check-equal? (series->list s) refs))
+
+  (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
+  (define (released-by thunk)
+    (for ([_ (in-range 4)]) (collect-garbage))
+    (define before (series-drop-count))
+    (for ([_ (in-range 20)]) (thunk))
+    (for ([_ (in-range 4)]) (collect-garbage) (sleep 0.1))
+    (- (series-drop-count) before))
+  (check >= (released-by (lambda () (series->list carriers))) 20))

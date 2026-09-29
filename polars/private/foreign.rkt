@@ -83,6 +83,14 @@
     [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
 
+;; only for entry points that record no reason; the others go through call/foreign-error
+(define ((allocator/or-fail drop who) proc)
+  (define allocate ((allocator drop) proc))
+  (procedure-reduce-arity-mask
+   (lambda args (or (apply allocate args) (error who "operation failed")))
+   (procedure-arity-mask allocate)
+   who))
+
 (struct polars-null-sentinel ()
   #:property prop:custom-write
   (lambda (_ out mode)
@@ -294,11 +302,23 @@
   (and (not (zero? (CompatOptYMD-valid o)))
        (ymd->date (CompatOptYMD-value o))))
 
+;; allocator registers the release on the pointer a wrapper holds, not on the wrapper
+(define-values (prop:owned-pointer owned-pointer? owned-pointer-accessor)
+  (make-struct-type-property
+   'owned-pointer
+   (lambda (index info)
+     (define field-ref (list-ref info 3))
+     (lambda (v) (field-ref v index)))))
+
+(define (owned-pointer-arg args)
+  (let unwrap ([v (car args)])
+    (if (owned-pointer? v) (unwrap ((owned-pointer-accessor v) v)) v)))
+
 (define-cpointer-type _Series-ptr)
 
 (define-compat series-drop
   (_fun _Series-ptr -> _void)
-  #:wrap (deallocator))
+  #:wrap (deallocator owned-pointer-arg))
 
 (define-compat series-drop-count
   (_fun -> _size))
@@ -323,7 +343,7 @@
 (define-compat series-enum-categories/raw
   (_fun _Series-ptr -> _Series-ptr/null)
   #:c-id series_enum_categories
-  #:wrap (allocator series-drop))
+  #:wrap (allocator/or-fail series-drop 'series-enum-categories))
 
 (define (series-enum-categories s)
   (define names (series-enum-categories/raw s))
@@ -526,22 +546,28 @@
   (_fun _Series-ptr -> _size))
 
 (define-compat series-head
-  (_fun _Series-ptr _size -> _Series-ptr))
+  (_fun _Series-ptr _size -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-tail
-  (_fun _Series-ptr _size -> _Series-ptr))
+  (_fun _Series-ptr _size -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-slice
-  (_fun _Series-ptr _int64 _size -> _Series-ptr))
+  (_fun _Series-ptr _int64 _size -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-reverse
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-drop-nulls
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-unique
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr/null)
+  #:wrap (allocator/or-fail series-drop 'series-unique))
 
 (define-compat series-sort/raw
   (_fun _Series-ptr _stdbool _stdbool -> _Series-ptr/null)
@@ -667,21 +693,24 @@
       (_fun _string
             (v : (_list i ctype))
             (_size = (length v))
-            -> _Series-ptr)
-      #:c-id rust-id)
+            -> _Series-ptr/null)
+      #:c-id rust-id
+      #:wrap (allocator/or-fail series-drop 'list-constructor-name))
     (define-compat vector-constructor-raw-name
       (_fun _string
             (v : (_vector i ctype))
             (_size = (vector-length v))
-            -> _Series-ptr)
-      #:c-id rust-id)
+            -> _Series-ptr/null)
+      #:c-id rust-id
+      #:wrap (allocator/or-fail series-drop 'vector-constructor-name))
     (define-compat opt-constructor-name
       (_fun _string
             (v : (_list i ctype))
             (valid : (_list i _uint8))
             (_size = (length v))
-            -> _Series-ptr)
-      #:c-id rust-opt-id)
+            -> _Series-ptr/null)
+      #:c-id rust-opt-id
+      #:wrap (allocator/or-fail series-drop 'list-constructor-name))
     (define (list-constructor-name name values)
       (if (contains-polars-null? values)
           (let-values ([(clean-values valid) (values+valid values default-value)])
@@ -714,7 +743,7 @@
   (check-false
    (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))) ;; wrong dtype
   (check-exn
-   #rx"argument is not non-null"
+   #rx"^series-new-i32: operation failed$"
    (lambda ()
      (series-new-i32 "example" '())))
 
@@ -753,7 +782,7 @@
    (series-max-f64 (series-new-f64 "" '(1.5 2.0 4.25 8.0)))
    8.0)
   (check-exn
-   #rx"argument is not non-null"
+   #rx"^series-new-f64: operation failed$"
    (lambda ()
      (series-new-f64 "example" '())))
   (check-exn
@@ -812,23 +841,26 @@
   (_fun _string
         (v : (_list i _uint8))
         (_size = (length v))
-        -> _Series-ptr)
-  #:c-id series_new_bool)
+        -> _Series-ptr/null)
+  #:c-id series_new_bool
+  #:wrap (allocator/or-fail series-drop 'series-new-bool))
 
 (define-compat series-new-bool/vec/raw
   (_fun _string
         (v : (_vector i _uint8))
         (_size = (vector-length v))
-        -> _Series-ptr)
-  #:c-id series_new_bool)
+        -> _Series-ptr/null)
+  #:c-id series_new_bool
+  #:wrap (allocator/or-fail series-drop 'series-new-bool/vec))
 
 (define-compat series-new-bool/opt/raw
   (_fun _string
         (v : (_list i _uint8))
         (valid : (_list i _uint8))
         (_size = (length v))
-        -> _Series-ptr)
-  #:c-id series_new_opt_bool)
+        -> _Series-ptr/null)
+  #:c-id series_new_opt_bool
+  #:wrap (allocator/or-fail series-drop 'series-new-bool))
 
 (define (bool->u8 b) (if b 1 0))
 
@@ -865,7 +897,7 @@
    (series-len (series-new-str "str" '("" "")))
    2)
   (check-exn
-   #rx"argument is not non-null"
+   #rx"^series-new-str: operation failed$"
    (lambda ()
      (series-new-str "example" '())))
   (check-exn
@@ -1201,14 +1233,10 @@
   (check-exn #rx"out of bounds"
              (lambda () (series-ref ref-i32 3))))
 
-(define (require-series-result who result)
-  (unless result
-    (error who "operation failed"))
-  (cast result _pointer _Series-ptr))
-
 (define-compat series-cast/c
-  (_fun _Series-ptr _CompatDType -> _pointer)
-  #:c-id series_cast)
+  (_fun _Series-ptr _CompatDType -> _Series-ptr/null)
+  #:c-id series_cast
+  #:wrap (allocator/or-fail series-drop 'series-cast))
 
 (define-compat series-cast-enum/raw
   (_fun _Series-ptr
@@ -1226,8 +1254,7 @@
 (define (series-cast s dtype)
   (if (enum-dtype? dtype)
       (series-cast-enum 'series-cast s dtype)
-      (require-series-result 'series-cast
-                             (series-cast/c s (->compat-dtype dtype)))))
+      (series-cast/c s (->compat-dtype dtype))))
 
 (define-compat series-std/raw
   (_fun _Series-ptr _uint8 -> _CompatOptF64)
@@ -1269,12 +1296,10 @@
                         (quantile-interpolation->code 'series-quantile interpolation))))
 
 (define-syntax-parse-rule (define-series-series-op public-name:id rust-id:id)
-  (begin
-    (define-compat public-name/c
-      (_fun _Series-ptr _Series-ptr -> _pointer)
-      #:c-id rust-id)
-    (define (public-name left right)
-      (require-series-result 'public-name (public-name/c left right)))))
+  (define-compat public-name
+    (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
+    #:c-id rust-id
+    #:wrap (allocator/or-fail series-drop 'public-name)))
 
 (define-series-series-op series-eq series_eq)
 (define-series-series-op series-ne series_ne)
@@ -1290,12 +1315,10 @@
 (define-series-series-op series-mod series_mod)
 
 (define-syntax-parse-rule (define-series-scalar-op public-name:id rust-id:id ctype:id)
-  (begin
-    (define-compat public-name/c
-      (_fun _Series-ptr ctype -> _pointer)
-      #:c-id rust-id)
-    (define (public-name s rhs)
-      (require-series-result 'public-name (public-name/c s rhs)))))
+  (define-compat public-name
+    (_fun _Series-ptr ctype -> _Series-ptr/null)
+    #:c-id rust-id
+    #:wrap (allocator/or-fail series-drop 'public-name)))
 
 (define-series-scalar-op series-add-i32 series_add_i32 _int32)
 (define-series-scalar-op series-sub-i32 series_sub_i32 _int32)
@@ -1428,7 +1451,7 @@
 
 (define-compat dataframe-drop
   (_fun _DataFrame-ptr -> _void)
-  #:wrap (deallocator))
+  #:wrap (deallocator owned-pointer-arg))
 
 (define-compat dataframe-drop-count
   (_fun -> _size))
@@ -1440,13 +1463,6 @@
 (define-compat dataframe-empty
   (_fun -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
-
-(define (require-dataframe-result who result)
-  (unless result
-    (error who "operation failed"))
-  (define df (cast result _pointer _DataFrame-ptr))
-  (register-finalizer df dataframe-drop)
-  df)
 
 (define-cstruct _Shape
   ([rows _size]
@@ -1483,9 +1499,9 @@
   (_fun _DataFrame-ptr
         (names : (_list i _string))
         (_size = (length names))
-        -> _DataFrame-ptr)
+        -> _DataFrame-ptr/null)
   #:c-id dataframe_select
-  #:wrap (allocator dataframe-drop))
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-select))
 
 (define (dataframe-select df cols)
   (dataframe-select/c df cols))
@@ -1494,38 +1510,34 @@
   (_fun _DataFrame-ptr
         (names : (_list i _string))
         (_size = (length names))
-        -> _DataFrame-ptr)
+        -> _DataFrame-ptr/null)
   #:c-id dataframe_drop_columns
-  #:wrap (allocator dataframe-drop))
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-columns))
 
 (define (dataframe-drop-columns df cols)
   (dataframe-drop-columns/c df cols))
 
 (define-compat dataframe-rename
-  (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-rename))
 
 (define-compat dataframe-with-column
-  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-with-column))
 
-(define-compat dataframe-hstack/raw
+(define-compat dataframe-hstack
   (_fun _DataFrame-ptr
         (v : (_list i _Series-ptr))
         (_size = (length v))
-        -> _pointer)
-  #:c-id dataframe_hstack)
-
-(define (dataframe-hstack df series-list)
-  (require-dataframe-result 'dataframe-hstack
-                            (dataframe-hstack/raw df series-list)))
+        -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-hstack))
 
 (define-compat dataframe-new/raw
   (_fun (v : (_list i _Series-ptr))
         (_size = (length v))
-        -> _DataFrame-ptr)
+        -> _DataFrame-ptr/null)
   #:c-id dataframe_new
-  #:wrap (allocator dataframe-drop))
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-new))
 
 (define (dataframe-new series-list)
   (dataframe-new/raw series-list))
@@ -1615,7 +1627,8 @@
 
 (define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
   (define-compat name
-    (_fun _Series-ptr ctype -> _Series-ptr)))
+    (_fun _Series-ptr ctype -> _Series-ptr/null)
+    #:wrap (allocator/or-fail series-drop 'name)))
 
 (define-cmp-scalar series-lt-i32 _int32)
 (define-cmp-scalar series-le-i32 _int32)
@@ -1663,22 +1676,28 @@
   (check-equal? (count-where (series-ne-str (dataframe-column cmp-df "s") "a")) 3))
 
 (define-compat series-is-null
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-is-not-null
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr)
+  #:wrap (allocator series-drop))
 
 (define-compat series-and
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
+  #:wrap (allocator/or-fail series-drop 'series-and))
 
 (define-compat series-or
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
+  #:wrap (allocator/or-fail series-drop 'series-or))
 
 (define-compat series-xor
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
+  #:wrap (allocator/or-fail series-drop 'series-xor))
 
 (define-compat series-not
-  (_fun _Series-ptr -> _Series-ptr))
+  (_fun _Series-ptr -> _Series-ptr/null)
+  #:wrap (allocator/or-fail series-drop 'series-not))
 
 (module+ test
   (define bool-df
@@ -1704,8 +1723,8 @@
   (check-equal? (dataframe-height (dataframe-filter bool-df null-mask)) 0))
 
 (define-compat dataframe-filter
-  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-filter))
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
@@ -1760,22 +1779,22 @@
                       (lambda () (dataframe-sort/raw df names flags nulls maintain-order))
                       "failed to sort by ~v" names))
 
-(define-syntax-parse-rule (define-group-by-agg name:id rust-id:id)
+(define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
   (define-compat name
     (_fun _DataFrame-ptr
           (by : (_list i _string))
           (_size = (length by))
           (agg : (_list i _string))
           (_size = (length agg))
-          -> _DataFrame-ptr)
+          -> _DataFrame-ptr/null)
     #:c-id rust-id
-    #:wrap (allocator dataframe-drop)))
+    #:wrap (allocator/or-fail dataframe-drop 'who)))
 
-(define-group-by-agg dataframe-group-by-sum/c   dataframe_group_by_sum)
-(define-group-by-agg dataframe-group-by-mean/c  dataframe_group_by_mean)
-(define-group-by-agg dataframe-group-by-min/c   dataframe_group_by_min)
-(define-group-by-agg dataframe-group-by-max/c   dataframe_group_by_max)
-(define-group-by-agg dataframe-group-by-count/c dataframe_group_by_count)
+(define-group-by-agg dataframe-group-by-sum/c   dataframe-group-by-sum   dataframe_group_by_sum)
+(define-group-by-agg dataframe-group-by-mean/c  dataframe-group-by-mean  dataframe_group_by_mean)
+(define-group-by-agg dataframe-group-by-min/c   dataframe-group-by-min   dataframe_group_by_min)
+(define-group-by-agg dataframe-group-by-max/c   dataframe-group-by-max   dataframe_group_by_max)
+(define-group-by-agg dataframe-group-by-count/c dataframe-group-by-count dataframe_group_by_count)
 
 (define (dataframe-group-by-sum df #:by by #:agg agg)
   (dataframe-group-by-sum/c df by agg))
@@ -1789,12 +1808,12 @@
   (dataframe-group-by-count/c df by agg))
 
 (define-compat dataframe-unique
-  (_fun _DataFrame-ptr -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-unique))
 
 (define-compat dataframe-drop-nulls
-  (_fun _DataFrame-ptr -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-nulls))
 
 (define compat-join-kind/inner 1)
 (define compat-join-kind/left  2)
@@ -1822,9 +1841,9 @@
         (right-on : (_list i _string))
         (_size = (length right-on))
         _int32
-        -> _DataFrame-ptr)
+        -> _DataFrame-ptr/null)
   #:c-id dataframe_join
-  #:wrap (allocator dataframe-drop))
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join))
 
 (define (dataframe-join left right
                         #:on [on #f]
@@ -1858,8 +1877,9 @@
                  sym)]))
 
 (define-compat dataframe-join-asof/raw
-  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _pointer)
-  #:c-id dataframe_join_asof)
+  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _DataFrame-ptr/null)
+  #:c-id dataframe_join_asof
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join-asof))
 
 (define-compat dataframe-join-asof-options/raw
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
@@ -1870,8 +1890,9 @@
         _int32
         _int64
         _double
-        -> _pointer)
-  #:c-id dataframe_join_asof_options)
+        -> _DataFrame-ptr/null)
+  #:c-id dataframe_join_asof_options
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join-asof))
 
 (define (asof-tolerance->parts tolerance)
   (cond
@@ -1922,18 +1943,16 @@
   (define-values (lby rby) (asof-by-values by left-by right-by))
   (define-values (tolerance-kind tolerance-integer tolerance-float)
     (asof-tolerance->parts tolerance))
-  (require-dataframe-result
-   'dataframe-join-asof
-   (dataframe-join-asof-options/raw left right lon ron
-                                    (asof-strategy-symbol->code strategy)
-                                    lby rby
-                                    tolerance-kind
-                                    tolerance-integer
-                                    tolerance-float)))
+  (dataframe-join-asof-options/raw left right lon ron
+                                   (asof-strategy-symbol->code strategy)
+                                   lby rby
+                                   tolerance-kind
+                                   tolerance-integer
+                                   tolerance-float))
 
 (define-compat dataframe-vstack
-  (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr/null)
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-vstack))
 
 (define compat-pivot-agg/none  0)
 (define compat-pivot-agg/first 1)
@@ -1965,14 +1984,13 @@
         (values : (_list i _string))
         (_size = (length values))
         _int32
-        -> _pointer)
-  #:c-id dataframe_pivot)
+        -> _DataFrame-ptr/null)
+  #:c-id dataframe_pivot
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-pivot))
 
 (define (dataframe-pivot df #:on on #:index index #:values values
                          #:agg [agg 'first])
-  (require-dataframe-result
-   'dataframe-pivot
-   (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg))))
+  (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg)))
 
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr
@@ -1980,13 +1998,12 @@
         (_size = (length on))
         (index : (_list i _string))
         (_size = (length index))
-        -> _pointer)
-  #:c-id dataframe_unpivot)
+        -> _DataFrame-ptr/null)
+  #:c-id dataframe_unpivot
+  #:wrap (allocator/or-fail dataframe-drop 'dataframe-unpivot))
 
 (define (dataframe-unpivot df #:on on #:index index)
-  (require-dataframe-result
-   'dataframe-unpivot
-   (dataframe-unpivot/raw df on index)))
+  (dataframe-unpivot/raw df on index))
 
 (define (display-dataframe df [out (current-output-port)])
   (display (dataframe->string df) out)
@@ -2370,3 +2387,248 @@
       (contracted:dataframe-sort sort-src '("x" "y") #:nulls-last '(#t #f)))
     (settle!)
     (check >= (- (dataframe-drop-count) before) 10)))
+
+(module+ test
+  (define (releases count thunk)
+    (define before (count))
+    (for ([_ (in-range 20)])
+      (thunk))
+    (let wait ([tries 0])
+      (collect-garbage (if (< tries 4) 'minor 'major))
+      (sleep 0.001)
+      (when (and (< (- (count) before) 20) (< tries 12))
+        (wait (add1 tries))))
+    (- (count) before))
+
+  (define (drops-once count drop make)
+    (settle!)
+    (define before (count))
+    (drop (make))
+    (settle!)
+    (- (count) before))
+
+  (define owned-i32 (series-new-i32 "x" '(3 1 4 1 5)))
+  (define owned-i64 (series-new-i64 "w" '(3 1 4 1 5)))
+  (define owned-u32 (series-new-u32 "u" '(3 1 4 1 5)))
+  (define owned-u64 (series-new-u64 "v" '(3 1 4 1 5)))
+  (define owned-f64 (series-new-f64 "f" '(3.0 1.0 4.0 1.0 5.0)))
+  (define owned-str (series-new-str "s" '("a" "b" "a" "c" "b")))
+  (define owned-bool (series-new-bool "b" '(#t #f #t #t #f)))
+  (define owned-enum (series-cast owned-str '(enum a b c)))
+  (define owned-stamp (make-YMDHMS 2024 1 2 3 4 5))
+  (define owned-frame
+    (dataframe-new (list (series-new-i32 "x" '(1 2 1))
+                         (series-new-str "k" '("p" "q" "p"))
+                         (series-new-i32 "v" '(10 20 30)))))
+  (define owned-mask (series-new-bool "m" '(#t #f #t)))
+  (define owned-extra (series-new-i32 "e" '(7 8 9)))
+
+  (define series-cases
+    (list (list 'series-empty series-empty)
+          (list 'series-sort (lambda () (series-sort owned-i32 #:descending #t)))
+          (list 'dataframe-column (lambda () (dataframe-column owned-frame "x")))
+          (list 'series-head (lambda () (series-head owned-i32 2)))
+          (list 'series-tail (lambda () (series-tail owned-i32 2)))
+          (list 'series-slice (lambda () (series-slice owned-i32 1 2)))
+          (list 'series-reverse (lambda () (series-reverse owned-i32)))
+          (list 'series-drop-nulls (lambda () (series-drop-nulls owned-i32)))
+          (list 'series-unique (lambda () (series-unique owned-i32)))
+          (list 'series-is-null (lambda () (series-is-null owned-i32)))
+          (list 'series-is-not-null (lambda () (series-is-not-null owned-i32)))
+          (list 'series-and (lambda () (series-and owned-bool owned-bool)))
+          (list 'series-or (lambda () (series-or owned-bool owned-bool)))
+          (list 'series-xor (lambda () (series-xor owned-bool owned-bool)))
+          (list 'series-not (lambda () (series-not owned-bool)))
+          (list 'series-lt-i32 (lambda () (series-lt-i32 owned-i32 3)))
+          (list 'series-le-i32 (lambda () (series-le-i32 owned-i32 3)))
+          (list 'series-gt-i32 (lambda () (series-gt-i32 owned-i32 3)))
+          (list 'series-ge-i32 (lambda () (series-ge-i32 owned-i32 3)))
+          (list 'series-eq-i32 (lambda () (series-eq-i32 owned-i32 3)))
+          (list 'series-ne-i32 (lambda () (series-ne-i32 owned-i32 3)))
+          (list 'series-lt-f64 (lambda () (series-lt-f64 owned-f64 3.0)))
+          (list 'series-le-f64 (lambda () (series-le-f64 owned-f64 3.0)))
+          (list 'series-gt-f64 (lambda () (series-gt-f64 owned-f64 3.0)))
+          (list 'series-ge-f64 (lambda () (series-ge-f64 owned-f64 3.0)))
+          (list 'series-eq-f64 (lambda () (series-eq-f64 owned-f64 3.0)))
+          (list 'series-ne-f64 (lambda () (series-ne-f64 owned-f64 3.0)))
+          (list 'series-eq-str (lambda () (series-eq-str owned-str "a")))
+          (list 'series-ne-str (lambda () (series-ne-str owned-str "a")))
+          (list 'series-cast (lambda () (series-cast owned-i32 'float64)))
+          (list 'series-cast/categorical (lambda () (series-cast owned-str 'categorical)))
+          (list 'series-cast-enum/raw (lambda () (series-cast owned-str '(enum a b c))))
+          (list 'series-enum-categories/raw
+                (lambda () (series-enum-categories/raw owned-enum)))
+          (list 'series-new-bool (lambda () (series-new-bool "b" '(#t #f))))
+          (list 'series-new-bool/opt (lambda () (series-new-bool "b" (list #t polars-null))))
+          (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))))
+
+  (define series-op-cases
+    (for/list ([op (in-list (list series-eq series-ne series-gt series-ge series-lt series-le
+                                  series-add series-sub series-mul series-div series-mod))])
+      (list (object-name op) (lambda () (op owned-i32 owned-i32)))))
+
+  (define scalar-op-cases
+    (for*/list ([family (in-list
+                         (list (list owned-i32 1 series-add-i32 series-sub-i32 series-mul-i32
+                                     series-div-i32 series-mod-i32)
+                               (list owned-i64 1 series-add-i64 series-sub-i64 series-mul-i64
+                                     series-div-i64 series-mod-i64)
+                               (list owned-u32 1 series-add-u32 series-sub-u32 series-mul-u32
+                                     series-div-u32 series-mod-u32)
+                               (list owned-u64 1 series-add-u64 series-sub-u64 series-mul-u64
+                                     series-div-u64 series-mod-u64)
+                               (list owned-f64 1.0 series-add-f64 series-sub-f64 series-mul-f64
+                                     series-div-f64 series-mod-f64)))]
+                [op (in-list (cddr family))])
+      (list (object-name op) (lambda () (op (car family) (cadr family))))))
+
+  (define constructor-cases
+    (for*/list ([ctor (in-list (list (list series-new-i8 series-new-i8/vec 1)
+                                     (list series-new-i16 series-new-i16/vec 1)
+                                     (list series-new-i32 series-new-i32/vec 1)
+                                     (list series-new-i64 series-new-i64/vec 1)
+                                     (list series-new-u8 series-new-u8/vec 1)
+                                     (list series-new-u16 series-new-u16/vec 1)
+                                     (list series-new-u32 series-new-u32/vec 1)
+                                     (list series-new-u64 series-new-u64/vec 1)
+                                     (list series-new-f32 series-new-f32/vec 1.0)
+                                     (list series-new-f64 series-new-f64/vec 1.0)
+                                     (list series-new-str series-new-str/vec "a")
+                                     (list series-new-ymdhms series-new-ymdhms/vec owned-stamp)))]
+                [shape (in-list '(list opt vec))])
+      (define-values (from-list from-vector value) (apply values ctor))
+      (list (format "~a ~a" (object-name from-list) shape)
+            (case shape
+              [(list) (lambda () (from-list "c" (list value value)))]
+              [(opt) (lambda () (from-list "c" (list value polars-null)))]
+              [(vec) (lambda () (from-vector "c" (vector value value)))]))))
+
+  (define dataframe-cases
+    (list (list 'dataframe-make dataframe-make)
+          (list 'dataframe-empty dataframe-empty)
+          (list 'dataframe-head (lambda () (dataframe-head owned-frame 2)))
+          (list 'dataframe-tail (lambda () (dataframe-tail owned-frame 2)))
+          (list 'dataframe-slice (lambda () (dataframe-slice owned-frame 1 2)))
+          (list 'dataframe-sort (lambda () (dataframe-sort owned-frame '("v"))))
+          (list 'dataframe-new (lambda () (dataframe-new (list owned-i32 owned-str))))
+          (list 'dataframe-select (lambda () (dataframe-select owned-frame '("x"))))
+          (list 'dataframe-drop-columns (lambda () (dataframe-drop-columns owned-frame '("x"))))
+          (list 'dataframe-rename (lambda () (dataframe-rename owned-frame "x" "y")))
+          (list 'dataframe-with-column (lambda () (dataframe-with-column owned-frame owned-extra)))
+          (list 'dataframe-hstack (lambda () (dataframe-hstack owned-frame (list owned-extra))))
+          (list 'dataframe-filter (lambda () (dataframe-filter owned-frame owned-mask)))
+          (list 'dataframe-unique (lambda () (dataframe-unique owned-frame)))
+          (list 'dataframe-drop-nulls (lambda () (dataframe-drop-nulls owned-frame)))
+          (list 'dataframe-vstack (lambda () (dataframe-vstack owned-frame owned-frame)))
+          (list 'dataframe-join (lambda () (dataframe-join owned-frame owned-frame #:on '("x"))))
+          (list 'dataframe-join-asof
+                (lambda () (dataframe-join-asof owned-frame owned-frame #:on "v")))
+          (list 'dataframe-join-asof/raw
+                (lambda () (dataframe-join-asof/raw owned-frame owned-frame "v" "v" 1)))
+          (list 'dataframe-pivot
+                (lambda () (dataframe-pivot owned-frame #:on '("k") #:index '("x")
+                                            #:values '("v") #:agg 'sum)))
+          (list 'dataframe-unpivot
+                (lambda () (dataframe-unpivot owned-frame #:on '("v") #:index '("x"))))
+          (list 'dataframe-group-by-sum
+                (lambda () (dataframe-group-by-sum owned-frame #:by '("k") #:agg '("v"))))
+          (list 'dataframe-group-by-mean
+                (lambda () (dataframe-group-by-mean owned-frame #:by '("k") #:agg '("v"))))
+          (list 'dataframe-group-by-min
+                (lambda () (dataframe-group-by-min owned-frame #:by '("k") #:agg '("v"))))
+          (list 'dataframe-group-by-max
+                (lambda () (dataframe-group-by-max owned-frame #:by '("k") #:agg '("v"))))
+          (list 'dataframe-group-by-count
+                (lambda () (dataframe-group-by-count owned-frame #:by '("k") #:agg '("v"))))))
+
+  (settle!)
+  (for ([owned (in-list (append series-cases series-op-cases scalar-op-cases constructor-cases))])
+    (check >= (releases series-drop-count (cadr owned)) 10 (format "~a" (car owned))))
+  (for ([owned (in-list dataframe-cases)])
+    (check >= (releases dataframe-drop-count (cadr owned)) 10 (format "~a" (car owned))))
+
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-head owned-i32 2)))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-cast owned-i32 'float64)))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-new-i32 "c" '(1 2))))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-cast owned-str '(enum a b c))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count dataframe-drop
+                            (lambda () (dataframe-hstack owned-frame (list owned-extra))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count dataframe-drop
+                            (lambda () (dataframe-pivot owned-frame #:on '("k") #:index '("x")
+                                                        #:values '("v"))))
+                1)
+
+  (check-exn #rx"^series-not: operation failed$" (lambda () (series-not owned-i32)))
+  (check-exn #rx"^series-and: operation failed$" (lambda () (series-and owned-i32 owned-bool)))
+  (check-exn #rx"^series-lt-i32: operation failed$" (lambda () (series-lt-i32 owned-f64 1)))
+  (check-exn #rx"^series-eq-str: operation failed$" (lambda () (series-eq-str owned-i32 "a")))
+  (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
+  (check-exn #rx"^series-new-i32/vec: operation failed$"
+             (lambda () (series-new-i32/vec "c" (vector))))
+  (check-exn #rx"^dataframe-new: operation failed$"
+             (lambda () (dataframe-new (list owned-i32 (series-head owned-i32 2)))))
+  (check-exn #rx"^dataframe-drop-columns: operation failed$"
+             (lambda () (dataframe-drop-columns owned-frame '("nope"))))
+  (check-exn #rx"^dataframe-vstack: operation failed$"
+             (lambda () (dataframe-vstack owned-frame (dataframe-select owned-frame '("x")))))
+  (check-exn #rx"^dataframe-filter: operation failed$"
+             (lambda () (dataframe-filter owned-frame owned-i32)))
+  (check-exn #rx"^dataframe-join-asof: operation failed$"
+             (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope"))))
+
+(module+ test
+  (require (only-in racket/path path-has-extension?))
+  (define-runtime-path private-dir ".")
+
+  (define owned-drops
+    (hash '_Series-ptr 'series-drop '_Series-ptr/null 'series-drop
+          '_DataFrame-ptr 'dataframe-drop '_DataFrame-ptr/null 'dataframe-drop
+          '_Expr-ptr 'expr-drop '_Expr-ptr/null 'expr-drop
+          '_LazyFrame-ptr 'lazyframe-drop '_LazyFrame-ptr/null 'lazyframe-drop))
+
+  (define (compat-forms v)
+    (cond
+      [(and (pair? v) (eq? (car v) 'define-compat)) (list v)]
+      [(pair? v) (append (compat-forms (car v)) (compat-forms (cdr v)))]
+      [else '()]))
+
+  (define (result-type signature)
+    (match (memq '-> signature)
+      [(list* '-> (list _ ': type) _) type]
+      [(list* '-> type _) type]
+      [_ #f]))
+
+  (define (releases-result? form)
+    (match form
+      [(list* 'define-compat _ (list* '_fun signature) options)
+       (define type (result-type signature))
+       (define drop (hash-ref owned-drops type #f))
+       (cond
+         [(eq? type '_pointer) #f]
+         [drop (match (memq '#:wrap options)
+                 [(list* _ (list* (or 'allocator 'allocator/or-fail) (== drop) _) _) #t]
+                 [_ #f])]
+         [else #t])]
+      [_ #t]))
+
+  (define bindings
+    (for*/list ([file (in-directory private-dir)]
+                #:when (path-has-extension? file #".rkt")
+                [form (in-list (compat-forms
+                                (parameterize ([read-accept-reader #t] [read-accept-lang #t])
+                                  (call-with-input-file file read))))])
+      form))
+  (check > (length bindings) 200)
+  (check-equal? (for/list ([form (in-list bindings)]
+                           #:unless (releases-result? form))
+                  (cadr form))
+                '()))

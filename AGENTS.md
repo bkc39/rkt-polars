@@ -96,8 +96,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
   `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
-  (#47). `require-series-result` and `require-dataframe-result` are the
-  remaining hand-written copies (#72).
+  (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
+  <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
+  `who: operation failed` itself, so no wrapper is needed. A test in
+  `foreign.rkt` reads every `define-compat` under `polars/private` and fails
+  on one of these four result types without its allocator, or on a
+  `_pointer` result.
+- The `series`, `dataframe` and `lazyframe` wrappers carry
+  `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
+  release the pointer the allocator registered, once. A new wrapper struct
+  around an allocated pointer needs the property too.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
@@ -110,8 +118,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
   `dataframe_sort_with_options`, `series_sort_with_options` and the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) — or it
-  attaches a stale reason from an unrelated call. `call/foreign-error`
+  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
+  call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
@@ -129,13 +137,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free, and a pairing test checks that an explicit
-  drop releases a frame exactly once.
+  otherwise observe a native free (`foreign.rkt` has a case for each Series-
+  and DataFrame-returning binding but the file readers, and `bulk.rkt` one for
+  `series_copy_cat`), and pairing tests
+  check that an explicit drop, of a pointer or a wrapper, releases it exactly
+  once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated (`series_copy_cat` also returns the category strings as a
-  new series, `allocator`-wrapped and dropped by the caller): a raw buffer of the column's native type (`malloc 'raw`,
+  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
   paired `allocator`/`deallocator`, freed as soon as the conversion returns),
-  byte strings, and the `f64vector` a caller gets back. The last two may move:
+  byte strings, and the `f64vector` a caller gets back. `series_copy_cat`
+  also returns the copy's category strings as a new series, which the
+  caller drops once it has read them. The last two may move:
   those bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
