@@ -149,7 +149,6 @@ fn rejected_input_tags_return_none() {
         CompatDTypeTag::List,
         CompatDTypeTag::Array,
         CompatDTypeTag::Struct,
-        CompatDTypeTag::Categorical,
         CompatDTypeTag::Enum,
         CompatDTypeTag::Decimal,
         CompatDTypeTag::Object,

@@ -51,4 +51,11 @@
   (check-equal? (c "first" 1) #t)   ; first 2
   (check-equal? (c "first" 2) #f)   ; second 2
   (check-equal? (c "last" 1) #f)
-  (check-equal? (c "last" 2) #t))   ; last 2
+  (check-equal? (c "last" 2) #t)    ; last 2
+
+  (define carriers (dataframe (list (series '(UA AA UA B6) #:name "carrier"))))
+  (check-equal? (for/list ([x (~> carriers
+                                  (with-columns (alias (is-in "carrier" '(AA B6)) "in"))
+                                  (ref "in"))])
+                  x)
+                '(#f #t #f #t)))

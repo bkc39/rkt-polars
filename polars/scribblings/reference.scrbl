@@ -72,7 +72,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string?)]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?)]) Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
   column or to several at once, by the shape of @racket[spec]:
@@ -86,7 +86,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
       alike. A bare @racket['datetime] means microseconds, so match a
       column @racket[series] built from gregor datetimes with
-      @racket['(datetime milliseconds)] or with its @racket[dtype].}
+      @racket['(datetime milliseconds)] or with its @racket[dtype].
+      @racket['categorical] is every categorical column, and an
+      @racket['(enum ....)] dtype the columns of exactly that Enum
+      (@secref["ref-categorical"]).}
     @item{A regexp is every column whose name matches
       (@tt{pl.col("^sepal_.*$")}), keeping the regexp's Racket meaning:
       @racket[(col rx)] selects exactly the names
@@ -107,7 +110,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
   exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
-  @racket['float64]) and strings. Every operator below lifts a
+  @racket['float64]) and strings. A symbol is the string of its name, so a
+  categorical column compares with the symbols it reads back as. Every
+  operator below lifts a
   non-expression operand with @racket[lit] automatically, so it is rarely
   needed explicitly.
 
@@ -368,12 +373,17 @@ total
   only the canonical names (@racket['float64], @racket['int32],
   @racket['string], ...) are accepted, not the short ones (@racket['f64],
   @racket['i32], @racket['str]); given a short name the
-  @exnraise[exn:fail].
+  @exnraise[exn:fail]. A value that does not convert becomes null, except
+  in a cast to an Enum, which raises naming the values outside its
+  categories, as Python's default @tt{strict=True} does (on an expression,
+  when the plan runs).
 
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
-(eval:error (cast (series '(1 2 3)) 'f64))]}
+(cast (series '("UA" "AA" "UA")) 'categorical)
+(eval:error (cast (series '(1 2 3)) 'f64))
+(eval:error (cast (series '("UA" "B6")) '(enum UA AA)))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
@@ -444,7 +454,9 @@ total
   reads every row, and @racket[0] makes every column a string.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
-  accepts except a duration, which Polars cannot parse from CSV. Each column
+  accepts except a duration, which Polars cannot parse from CSV, and an
+  Enum; API gap: read the column as @racket['categorical] or
+  @racket['string] and @racket[cast] it. Each column
   appears at most once (@racket[distinct-names?]), and naming a column the
   file lacks is an error, where Python ignores the override. With
   @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
@@ -588,6 +600,10 @@ total
   literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
   @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
 
+  Categorical, Enum and Decimal columns keep their dtypes
+  (@secref["ref-categorical"]). A file Polars cannot read raises
+  @racket[exn:fail] with Polars' reason, even where Polars itself panics.
+
   @examples[#:eval ev #:hidden
 (require racket/file)
 (define parquet-dir (make-temporary-directory "polars-doc-~a"))
@@ -596,7 +612,8 @@ total
                  (build-path parquet-dir (format "part-~a.parquet" i))))]
   @examples[#:eval ev
 (read-parquet (build-path parquet-dir "*.parquet"))
-(collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))]}
+(collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))
+(read-parquet "produce.parquet")]}
 
 @deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
               @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
@@ -767,7 +784,9 @@ total
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
   lifted with @racket[lit], which has no date spelling; parse a string instead:
-  @racket[(str->date (lit "1982-12-31"))].}
+  @racket[(str->date (lit "1982-12-31"))]. A list @racket[rhs] holds integers,
+  reals, strings, symbols (read as strings, as @racket[lit] reads them) or
+  booleans, all of one kind.}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -854,12 +873,18 @@ an implementation detail and not part of the public series API.)
   @racket['str], @racket['bool]) and canonical symbols (@racket['int32],
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
   @racket[polars-null] for missing values. Exact integers are coerced to
-  flonums when the target dtype is floating point.
+  flonums when the target dtype is floating point. Symbols infer
+  @racket['categorical]; a @racket['categorical] or @racket['(enum ....)]
+  series is built from strings or symbols alike, and an Enum raises on a
+  value outside its categories (@secref["ref-categorical"]).
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
-(series (list 1 polars-null 3) #:name "with-null")]}
+(series (list 1 polars-null 3) #:name "with-null")
+(series '(IAH ATL IAH) #:name "dest")
+(series '("debug" "error") #:dtype '(enum debug info error))
+(eval:error (series '(debug fatal) #:dtype '(enum debug info error)))]}
 
 @defproc[(series->string [s series?]) string?]{
   Renders @racket[s] in Polars' series format (a @tt{shape} line, a
@@ -879,7 +904,9 @@ an implementation detail and not part of the public series API.)
               @defproc[(len [x sized?]) exact-nonnegative-integer?]
               @defproc[(null-count [s has-null-count?]) exact-nonnegative-integer?])]{
   Generic series accessors. @racket[dtype] returns the canonical dtype symbol
-  (e.g. @racket['int32], @racket['float64], @racket['(datetime milliseconds #f)]).
+  (e.g. @racket['int32], @racket['float64], @racket['categorical]) or list
+  (@racket['(datetime milliseconds #f)], @racket['(enum low mid high)],
+  @racket['(decimal 10 2)]).
   @racket[len] returns the number of elements (and, on a dataframe, the number of
   rows). @racket[null-count] returns the number of null entries.}
 
@@ -916,6 +943,8 @@ it:
        (list @elem{@racket['float32], @racket['float64]} @racket[flonum?])
        (list @racket['boolean] @racket[boolean?])
        (list @racket['string] @racket[string?])
+       (list @elem{@racket['categorical], @racket['(enum cat ...)]} @racket[symbol?])
+       (list @racket['(decimal precision scale)] @elem{an exact rational, as @racket[exact?]})
        (list @racket['date] @elem{a gregor @tt{date}})
        (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, floored to the second})
        (list @racket['(duration unit)] @elem{a gregor @tt{period} in that unit})
@@ -937,6 +966,8 @@ chapter of the guide walks through all of them.
 (series->list (cast (series '(19724) #:dtype 'i32) 'date))
 (series->list (cast (series '(11045000000000) #:dtype 'i64) 'time))
 (series->list (cast (series '(1500) #:dtype 'i64) '(duration milliseconds)))
+(series->list (cast (series (list "UA" polars-null "UA")) 'categorical))
+(series->list (ref (read-parquet "produce.parquet") "price"))
 (eval:error (series->list (cast (series '("a") #:name "b") 'binary)))]
 
 @deftogether[(@defproc[(series->list [s series?] [#:null null-value any/c polars-null]) list?]
@@ -990,6 +1021,53 @@ chapter of the guide walks through all of them.
 (for/first ([x (in-series (series (build-list 100000 values)))]
             #:when (> x 41))
   x)]}
+
+@subsection[#:tag "ref-categorical"]{Categorical, Enum and Decimal}
+
+A @racket['categorical] column stores each distinct string once and a code
+per row, as Polars' @tt{Categorical}; an @racket['(enum cat ...)] column
+does the same over categories declared up front, in order, as
+@tt{pl.Enum}. Both read back as symbols, which Racket interns: a symbol is
+already the dictionary encoding. The codes stay inside Polars. Every
+categorical column in the process shares them, and they restart once the
+last one is dropped, so each conversion fetches the strings afresh.
+
+@itemlist[
+  @item{Build one with @racket[series] (a list of symbols infers
+    @racket['categorical]), @racket[cast], or
+    @racket[read-csv]'s @racket[#:schema-overrides] (@racket['categorical]
+    only).}
+  @item{A categorical sorts and compares by its strings; an Enum by the
+    declared order of its categories.}
+  @item{A value outside an Enum's categories raises, whether it is built,
+    cast or compared; a categorical takes any string.}
+  @item{Two categorical columns share one encoding, so they join, stack
+    and compare without re-encoding; two Enums with the same categories
+    are the same dtype.}
+  @item{@racket[describe] gives a categorical or Enum column
+    @tt{count} and @tt{null_count} only, as Python does.}]
+
+A @racket['(decimal precision scale)] column holds exact decimals, which
+@racket[ref] and the conversions read as exact rationals. Decimal columns
+come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
+@racket[#:dtype] or @racket[cast] to a Decimal.
+
+@examples[#:eval ev #:label #f
+(define logs
+  (dataframe
+   (list (series '(debug info debug error) #:name "level"
+                 #:dtype '(enum debug info warning error))
+         (series '(api db api db) #:name "source"))))
+(for/list ([name (column-names logs)]) (dtype (ref logs name)))
+(filter logs (> (col "level") 'info))
+(sort logs "level")
+(sort logs "source")
+(ref (ref logs "source") 1)
+(select logs (col 'categorical))
+(eval:error (select logs (> (col "level") 'fatal)))
+(define produce (read-parquet "produce.parquet"))
+(dtype (ref produce "price"))
+(for/sum ([price (ref produce "price")] #:unless (polars-null? price)) price)]
 
 @subsection[#:tag "promotion"]{dtype promotion}
 
@@ -1065,7 +1143,9 @@ dtype or a specific typed result.
   dtype symbol (@racket['int8] through @racket['int64], @racket['uint8] through
   @racket['uint64], @racket['float32], @racket['float64], @racket['boolean],
   @racket['string], @racket['binary], @racket['date], @racket['time],
-  @racket['datetime], @racket['duration], @racket['null]) or, for the two
+  @racket['datetime], @racket['duration], @racket['null],
+  @racket['categorical]), as @racket['(enum cat ...)] with distinct symbols
+  for the categories, or, for the two
   temporal dtypes with a time unit, as a list —
   @racket['(datetime milliseconds)], @racket['(duration nanoseconds)] — where
   the unit is one of @racket['nanoseconds], @racket['microseconds] or

@@ -9,20 +9,21 @@
 
 (require polars)
 
-;; The first rows of upstream's Pokémon table.
-;; API gap: no Enum dtype, so the types stay strings.
+;; The first rows of upstream's Pokémon table, with its types as an Enum.
+(define types
+  '(enum Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
+         Flying Dragon Dark Ghost Poison Rock Ice Fairy))
 (define pokemon
   (dataframe
    (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
                    "Charizard" "Mega Charizard X" "Squirtle"
                    "Wartortle" "Blastoise")
                  #:name "Name")
-         (series '("Grass" "Grass" "Grass" "Fire" "Fire" "Fire" "Fire"
-                   "Water" "Water" "Water")
-                 #:name "Type 1")
-         (series (list "Poison" "Poison" "Poison" polars-null polars-null
-                       "Flying" "Dragon" polars-null polars-null polars-null)
-                 #:name "Type 2")
+         (series '(Grass Grass Grass Fire Fire Fire Fire Water Water Water)
+                 #:name "Type 1" #:dtype types)
+         (series (list 'Poison 'Poison 'Poison polars-null polars-null
+                       'Flying 'Dragon polars-null polars-null polars-null)
+                 #:name "Type 2" #:dtype types)
          (series '(49 62 82 52 64 84 130 48 63 83) #:name "Attack")
          (series '(45 60 80 65 80 100 100 43 58 78) #:name "Speed"))))
 

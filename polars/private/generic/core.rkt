@@ -205,6 +205,20 @@
   (check-equal? (series-name (series '(1 2 3) #:name "xs")) "xs")
   (check-equal? (series-dtype (series (list (expt 2 40)))) 'int64)
 
+  ;; symbols infer a categorical and read back as symbols; strings need #:dtype
+  (define dests (series (list 'IAH polars-null 'ATL 'IAH) #:name "dest"))
+  (check-equal? (series-dtype dests) 'categorical)
+  (check-equal? (for/list ([x dests]) x) (list 'IAH polars-null 'ATL 'IAH))
+  (check-equal? (series-dtype (series (vector "a" 'b) #:dtype 'categorical)) 'categorical)
+  (check-exn #rx"cannot infer a dtype" (lambda () (series (list 'a "b"))))
+  (define levels (series '("info" debug) #:dtype '(enum debug info)))
+  (check-equal? (dtype levels) '(enum debug info))
+  (check-equal? (ref levels 0) 'info)
+  (check-exn #rx"^series: cannot convert to '\\(enum debug info\\): .*\\[\"error\"\\]"
+             (lambda () (series '(info error) #:dtype '(enum debug info))))
+  (check-exn #rx"unsupported dtype '\\(enum debug debug\\)"
+             (lambda () (series '(debug) #:dtype '(enum debug debug))))
+
   ;; ref on series and dataframe; df ref returns a wrapped series
   (check-equal? (ref withnull 0) 10)
   (check-equal? (ref withnull 1) polars-null)

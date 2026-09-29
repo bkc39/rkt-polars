@@ -12,6 +12,7 @@
                   rename-contract)
          racket/match
          (only-in racket/dict in-dict)
+         (only-in racket/list check-duplicates)
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
@@ -171,11 +172,21 @@
     [(20) '(todo nested-dtype-support list)]
     [(21) (list 'todo 'nested-dtype-support 'array array-width)]
     [(22) '(todo nested-dtype-support struct)]
-    [(23) '(todo parameterized-dtype-support categorical)]
-    [(24) '(todo parameterized-dtype-support enum)]
-    [(25) '(todo parameterized-dtype-support decimal)]
+    [(23) 'categorical]
+    [(24) 'enum]
+    [(25) (list 'decimal array-width (CompatDType-dtype-time-unit dtype))]
     [(26) '(todo parameterized-dtype-support object)]
     [else 'unknown]))
+
+(define (enum-dtype? v)
+  (match v
+    [(cons 'enum (and (list (? symbol?) ...) categories)) (not (check-duplicates categories))]
+    [_ #f]))
+
+(define (decimal-dtype? v)
+  (match v
+    [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
+    [_ #f]))
 
 (define-cstruct _CompatOptI32
   ([valid _int32]
@@ -309,8 +320,21 @@
   (_fun _Series-ptr -> _CompatDType)
   #:c-id series_dtype)
 
+(define-compat series-enum-categories/raw
+  (_fun _Series-ptr -> _Series-ptr/null)
+  #:c-id series_enum_categories
+  #:wrap (allocator series-drop))
+
+(define (series-enum-categories s)
+  (define names (series-enum-categories/raw s))
+  (begin0 (for/list ([i (in-range (series-len names))])
+            (string->symbol (series-ref-str/raw names i)))
+          (series-drop names)))
+
 (define (series-dtype series)
-  (compat-dtype->datum (series-dtype/raw series)))
+  (match (compat-dtype->datum (series-dtype/raw series))
+    ['enum (cons 'enum (series-enum-categories series))]
+    [dtype dtype]))
 
 (define (time-unit-symbol->code tu)
   (case tu
@@ -338,6 +362,7 @@
     [(date)      compat-dtype-tag/date]
     [(time)      compat-dtype-tag/time]
     [(null)      compat-dtype-tag/null]
+    [(categorical) compat-dtype-tag/categorical]
     [else        #f]))
 
 (define (->compat-dtype dtype)
@@ -990,6 +1015,20 @@
     [`(duration ,_) (microseconds value)]
     [_ (error 'series-ref "expected duration dtype, got ~v" dtype)]))
 
+(define-compat series-copy-decimal
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
+(define (decimal-ref words i scale)
+  (/ (+ (ptr-ref words _uint64 (* 2 i))
+        (arithmetic-shift (ptr-ref words _int64 (add1 (* 2 i))) 64))
+     (expt 10 scale)))
+
+(define (series-ref-decimal s index scale)
+  (define words (malloc 2 _uint64 'raw))
+  (begin0 (and (zero? (series-copy-decimal s index 1 words 2 #f 0))
+               (decimal-ref words 0 scale))
+          (free words)))
+
 (define (series-ref s index)
   (unless (exact-nonnegative-integer? index)
     (error 'series-ref "index must be an exact nonnegative integer, got ~v" index))
@@ -999,7 +1038,7 @@
   (case (series-ref-is-null s index)
     [(1) polars-null]
     [(0)
-     (define dtype (series-dtype s))
+     (define dtype (compat-dtype->datum (series-dtype/raw s)))
      (case dtype
        [(int8) (require-ref-value dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
        [(int16) (require-ref-value dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
@@ -1017,6 +1056,8 @@
           (error 'series-ref "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
        [(string) (require-ref-value dtype (series-ref-str/raw s index))]
+       [(categorical enum)
+        (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
        [(date)
         (require-ref-value dtype
                            (compat-opt-ymd->datum (series-ref-date/raw s index)))]
@@ -1033,6 +1074,7 @@
           [`(datetime ,_ ,_)
            (require-ref-value dtype
                               (compat-opt-ymdhms->datum (series-ref-ymdhms/raw s index)))]
+          [`(decimal ,_ ,scale) (require-ref-value dtype (series-ref-decimal s index scale))]
           [_ (series-ref-unsupported dtype)])])]
     [else (error 'series-ref "could not read null state at index ~a" index)]))
 
@@ -1168,9 +1210,24 @@
   (_fun _Series-ptr _CompatDType -> _pointer)
   #:c-id series_cast)
 
+(define-compat series-cast-enum/raw
+  (_fun _Series-ptr
+        (categories : (_list i _string/utf-8))
+        (_size = (length categories))
+        -> _Series-ptr/null)
+  #:c-id series_cast_enum
+  #:wrap (allocator series-drop))
+
+(define (series-cast-enum who s dtype)
+  (call/foreign-error who
+                      (lambda () (series-cast-enum/raw s (map symbol->string (cdr dtype))))
+                      "cannot convert to ~v" dtype))
+
 (define (series-cast s dtype)
-  (require-series-result 'series-cast
-                         (series-cast/c s (->compat-dtype dtype))))
+  (if (enum-dtype? dtype)
+      (series-cast-enum 'series-cast s dtype)
+      (require-series-result 'series-cast
+                             (series-cast/c s (->compat-dtype dtype)))))
 
 (define-compat series-std/raw
   (_fun _Series-ptr _uint8 -> _CompatOptF64)
@@ -1288,6 +1345,24 @@
     (check-equal? (series-ref casted 1) (if (eq? dtype 'float32) 2.0 2)))
   (check-exn #rx"unsupported cast target"
              (lambda () (series-cast batch2-x '(list int32))))
+
+  (define bears (series-new-str "bears" (list "Polar" polars-null "Brown" "Polar")))
+  (define bears/cat (series-cast bears 'categorical))
+  (check-equal? (series-dtype bears/cat) 'categorical)
+  (check-equal? (for/list ([i 4]) (series-ref bears/cat i)) (list 'Polar polars-null 'Brown 'Polar))
+  (define bears/enum (series-cast bears '(enum Polar Panda Brown)))
+  (check-equal? (series-dtype bears/enum) '(enum Polar Panda Brown))
+  (check-equal? (series-ref bears/enum 2) 'Brown)
+  (check-equal? (series-dtype (series-cast (series-head bears 0) '(enum))) '(enum))
+  (check-equal? (series-ref (series-cast bears/enum 'string) 0) "Polar")
+  (check-exn #rx"^series-cast: cannot convert to '\\(enum Polar Panda\\): .*\\[\"Brown\"\\]"
+             (lambda () (series-cast bears '(enum Polar Panda))))
+  (check-exn #rx"unsupported cast target '\\(enum Polar Polar\\)"
+             (lambda () (series-cast bears '(enum Polar Polar))))
+  (check-exn #rx"unsupported cast target '\\(enum \"Polar\"\\)"
+             (lambda () (series-cast bears '(enum "Polar"))))
+  (check-true (enum-dtype? '(enum)))
+  (check-false (enum-dtype? '(enum a . b)))
 
   ;; reductions
   (define stats (series-new-f64 "s" '(1.0 2.0 3.0 4.0)))

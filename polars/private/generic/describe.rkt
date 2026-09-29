@@ -7,8 +7,8 @@
          (only-in threading ~>)
          (only-in polars/private/expr col expr-sort lit)
          (only-in polars/private/foreign
-                  dataframe-column dataframe-column-names dataframe-height polars-null
-                  polars-null? series-dtype series-null-count series-rename)
+                  dataframe-column dataframe-column-names dataframe-height decimal-dtype?
+                  polars-null polars-null? series-dtype series-null-count series-rename)
          (only-in polars/private/generic/core dataframe dataframe? ref series series?)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
          (only-in polars/private/generic/ordering gather)
@@ -28,11 +28,11 @@
 (define (float-valued? dt)
   (match dt
     [(or 'boolean 'null (list* 'todo 'nested-dtype-support _)) #t]
-    [_ (numeric-dtype? dt)]))
+    [_ (or (numeric-dtype? dt) (decimal-dtype? dt))]))
 
 (define (dtype-statistics dt)
   (cond
-    [(numeric-dtype? dt) statistics]
+    [(or (numeric-dtype? dt) (decimal-dtype? dt)) statistics]
     [(eq? dt 'boolean) '("count" "null_count" "mean" "min" "max")]
     [(temporal-dtype? dt) (remove "std" statistics)]
     [(eq? dt 'string) '("count" "null_count" "min" "max")]
@@ -210,8 +210,10 @@
   (check-pred polars-null? (ref (ref fr-desc #:columns "user") 2)) ; mean -> null
   (check-equal? (ref (ref fr-desc #:columns "score") 4) 10.0)     ; numeric min
 
-  (require (only-in racket/list make-list)
+  (require racket/runtime-path
+           (only-in racket/list make-list)
            (only-in racket/math nan?)
+           (only-in polars/private/generic/io read-parquet)
            (only-in polars/private/foreign series-quantile)
            (only-in polars/private/generic/math p-abs)
            (only-in polars/private/generic/reshape agg group-by head)
@@ -314,6 +316,13 @@
                 '("count" "null_count" "mean" "min" "max"))
   (check-equal? (~> mixed (ref "none") describe (column "statistic"))
                 '("count" "null_count" "mean" "std" "min" "25%" "50%" "75%" "max"))
+
+  (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
+  (define produce-desc (describe (read-parquet produce-parquet)))
+  (check-column produce-desc "item" (list* "4" "0" (nulls 7)))
+  (check-column produce-desc "grade" (list* "3" "1" (nulls 7)))
+  (check-column produce-desc "price"
+                '(3.0 1.0 4.683333333333334 6.3404127100160705 0.8 1.25 1.25 12.0 12.0))
 
   (define empty-desc (describe (head frame 0)))
   (check-column empty-desc "user" (list* "0" "0" (nulls 7)))

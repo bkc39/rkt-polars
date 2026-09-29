@@ -24,21 +24,7 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   frame-sort/c sort-flags
-                  _CompatDType make-CompatDType
-                  compat-dtype-tag/boolean
-                  compat-dtype-tag/uint8 compat-dtype-tag/uint16
-                  compat-dtype-tag/uint32 compat-dtype-tag/uint64
-                  compat-dtype-tag/int8 compat-dtype-tag/int16
-                  compat-dtype-tag/int32 compat-dtype-tag/int64
-                  compat-dtype-tag/float32 compat-dtype-tag/float64
-                  compat-dtype-tag/string compat-dtype-tag/binary
-                  compat-dtype-tag/date compat-dtype-tag/datetime
-                  compat-dtype-tag/duration compat-dtype-tag/time
-                  compat-dtype-tag/null
-                  compat-time-unit/none
-                  compat-time-unit/nanoseconds
-                  compat-time-unit/microseconds
-                  compat-time-unit/milliseconds)
+                  _CompatDType ->compat-dtype enum-dtype?)
          syntax/parse/define)
 
 (module+ test
@@ -437,7 +423,7 @@
   #:wrap (allocator expr-drop))
 
 ;; The right-hand side may be an Expr, a Series, or a Racket list of
-;; homogeneous scalars (ints / reals / strings / booleans).
+;; homogeneous scalars (ints / reals / strings / symbols / booleans).
 (define (->membership-expr who rhs)
   (cond
     [(Expr-ptr? rhs) rhs]
@@ -449,8 +435,9 @@
          [(andmap exact-integer? rhs) (series-new-i64 "" rhs)]
          [(andmap real? rhs) (series-new-f64 "" (map exact->inexact rhs))]
          [(andmap string? rhs) (series-new-str "" rhs)]
+         [(andmap symbol? rhs) (series-new-str "" (map symbol->string rhs))]
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
-         [else (error who "is-in list must be homogeneous ints/reals/strings/booleans, got ~v" rhs)]))
+         [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
 
@@ -881,71 +868,26 @@
   (lazyframe-join/c left right lon ron (lazyframe-join-symbol->code how)))
 
 ;; --- Phase A9: expr cast ---
-;;
-;; Reuses the existing CompatDType cstruct (input side mirror of
-;; series-dtype output).  Accepts the symbols emitted by series-dtype
-;; for the simple scalars; datetime/duration accept either the bare
-;; symbol (defaults to microseconds) or `(datetime <time-unit>)` /
-;; `(duration <time-unit>)` for explicit time units.
-
-(define (time-unit-symbol->code tu)
-  (case tu
-    [(#f none) compat-time-unit/none]
-    [(nanoseconds) compat-time-unit/nanoseconds]
-    [(microseconds) compat-time-unit/microseconds]
-    [(milliseconds) compat-time-unit/milliseconds]
-    [else (error '->compat-dtype "unknown time unit ~v" tu)]))
-
-(define (simple-dtype-tag sym)
-  (case sym
-    [(boolean)   compat-dtype-tag/boolean]
-    [(uint8)     compat-dtype-tag/uint8]
-    [(uint16)    compat-dtype-tag/uint16]
-    [(uint32)    compat-dtype-tag/uint32]
-    [(uint64)    compat-dtype-tag/uint64]
-    [(int8)      compat-dtype-tag/int8]
-    [(int16)     compat-dtype-tag/int16]
-    [(int32)     compat-dtype-tag/int32]
-    [(int64)     compat-dtype-tag/int64]
-    [(float32)   compat-dtype-tag/float32]
-    [(float64)   compat-dtype-tag/float64]
-    [(string)    compat-dtype-tag/string]
-    [(binary)    compat-dtype-tag/binary]
-    [(date)      compat-dtype-tag/date]
-    [(time)      compat-dtype-tag/time]
-    [(null)      compat-dtype-tag/null]
-    [else        #f]))
-
-(define (->compat-dtype dtype)
-  (cond
-    [(symbol? dtype)
-     (define tag (simple-dtype-tag dtype))
-     (case dtype
-       [(datetime)
-        (make-CompatDType compat-dtype-tag/datetime
-                          compat-time-unit/microseconds 0 0)]
-       [(duration)
-        (make-CompatDType compat-dtype-tag/duration
-                          compat-time-unit/microseconds 0 0)]
-       [else
-        (unless tag
-          (error '->compat-dtype "unsupported cast target ~v" dtype))
-        (make-CompatDType tag compat-time-unit/none 0 0)])]
-    [(and (pair? dtype) (eq? (car dtype) 'datetime))
-     (make-CompatDType compat-dtype-tag/datetime
-                       (time-unit-symbol->code (cadr dtype)) 0 0)]
-    [(and (pair? dtype) (eq? (car dtype) 'duration))
-     (make-CompatDType compat-dtype-tag/duration
-                       (time-unit-symbol->code (cadr dtype)) 0 0)]
-    [else (error '->compat-dtype "unsupported cast target ~v" dtype)]))
 
 (define-compat expr-cast/c
   (_fun _Expr-ptr _CompatDType -> _Expr-ptr)
   #:c-id expr_cast
   #:wrap (allocator expr-drop))
 
+(define-compat expr-cast-enum/raw
+  (_fun _Expr-ptr
+        (categories : (_list i _string/utf-8))
+        (_size = (length categories))
+        -> _Expr-ptr/null)
+  #:c-id expr_cast_enum
+  #:wrap (allocator expr-drop))
+
 (define (expr-cast e dtype)
-  (expr-cast/c e (->compat-dtype dtype)))
+  (if (enum-dtype? dtype)
+      (call/foreign-error 'expr-cast
+                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
+                          "cannot convert to ~v" dtype)
+      (expr-cast/c e (->compat-dtype dtype))))
 
 (module+ test
   (define df

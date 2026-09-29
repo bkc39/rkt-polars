@@ -6,8 +6,9 @@
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 **0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
 macOS arm64 ship with the package, so users need no Rust toolchain. The
-`dtype-decimal` feature is on only because polars' `sign` does not compile
-without it (#106); Decimal is not surfaced. polars' `nightly` feature is on,
+`dtype-decimal` feature is on because polars' `sign` does not compile
+without it (#106); Decimal columns are read (from Parquet), not built.
+`dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
 as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
@@ -107,7 +108,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options` and `series_sort_with_options` — or it
+  `dataframe_sort_with_options`, `series_sort_with_options` and the three
+  Enum entry points (`series_cast_enum`, `expr_cast_enum`,
+  `expr_dtype_col_enum`) — or it
   attaches a stale reason from an unrelated call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
@@ -120,14 +123,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `dataframe_sort_with_options` and
-  `series_sort_with_options` do.
+  `lazyframe_collect`, `dataframe_sort_with_options`,
+  `series_sort_with_options`, `series_cast_enum` and the IO helpers
+  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
   otherwise observe a native free, and a pairing test checks that an explicit
   drop releases a frame exactly once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
+  Racket allocated (`series_copy_cat` also returns the category strings as a
+  new series, `allocator`-wrapped and dropped by the caller): a raw buffer of the column's native type (`malloc 'raw`,
   paired `allocator`/`deallocator`, freed as soon as the conversion returns),
   byte strings, and the `f64vector` a caller gets back. The last two may move:
   those bindings are never `#:blocking?`. Every destination travels with its
@@ -199,8 +205,20 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
-- `series` infers int64 / float64 / string / datetime / bool. It cannot build a
-  `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
+- `series` infers int64 / float64 / string / datetime / bool, and a list of
+  symbols infers `'categorical`. It cannot build a `date` column from gregor
+  `date`s (#63), and `lit` rejects gregor values.
+- Categorical and Enum values surface as symbols (`ref`, every conversion);
+  `lit` and `is-in` read a symbol as its name's string. An Enum is spelled
+  `'(enum sym ...)`, as `dtype` prints it. Every categorical shares polars'
+  one global mapping (no named `Categories`), whose codes restart when the
+  last categorical column drops: the codes never leave Rust, and
+  `series_copy_cat` re-encodes each copy densely with its own category table.
+  A cast to an Enum is strict, as Python's default is; every other `cast`
+  stays non-strict (a value that does not convert becomes null).
+- A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
+  `array_width` and `time_unit`; its values read as exact rationals. It has no
+  `#:dtype` or cast-target spelling.
 - `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
   datetimes to whole seconds (#100); the conversions raise on an unsupported
   dtype, `binary` included (#99), even when every entry is null.

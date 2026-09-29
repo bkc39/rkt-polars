@@ -12,9 +12,10 @@
          (for-syntax (only-in syntax/parse expr id))
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr dataframe-column dataframe-column-names dataframe-height
-                  define-compat duration-value->period polars-null series-drop
-                  series-dtype series-len series-name series-null-count))
+                  _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
+                  dataframe-height decimal-ref define-compat duration-value->period
+                  polars-null series-copy-decimal series-drop series-dtype series-len
+                  series-name series-null-count))
 
 (provide check-column-names
          dataframe->columns
@@ -47,6 +48,10 @@
 (define-compat series-copy-str
   (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
 
+(define-compat series-copy-cat
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
+  #:wrap (allocator series-drop))
+
 (define-compat series-copy-as-f64
   (_fun (s dst offset stride null-value) ::
         (s : _Series-ptr)
@@ -78,8 +83,8 @@
 (define (convertible? dtype)
   (match dtype
     [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64 'float32 'float64
-         'boolean 'string 'date 'time 'null
-         `(datetime ,_ ,_) `(duration ,_))
+         'boolean 'string 'date 'time 'null 'categorical
+         `(datetime ,_ ,_) `(duration ,_) `(decimal ,_ ,_) `(enum . ,_))
      #t]
     [_ #f]))
 
@@ -152,6 +157,25 @@
                                         (ptr-ref offsets _int64 (add1 i))))
           (free-buffer offsets)))
 
+(define (categorical-rows shape who s dtype start count valid null-value)
+  (define codes (alloc-buffer count _uint32))
+  (define table (series-copy-cat s start count codes count valid (valid-len valid)))
+  (unless table
+    (free-buffer codes)
+    (checked who dtype -1))
+  (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null))
+  (series-drop table)
+  (define symbols (for/vector #:length (vector-length names) ([name (in-vector names)])
+                    (string->symbol name)))
+  (begin0 (collect shape count valid null-value i (vector-ref symbols (ptr-ref codes _uint32 i)))
+          (free-buffer codes)))
+
+(define (decimal-rows shape who s dtype scale start count valid null-value)
+  (define words (alloc-buffer (* 2 count) _uint64))
+  (checked who dtype (series-copy-decimal s start count words (* 2 count) valid (valid-len valid)))
+  (begin0 (collect shape count valid null-value i (decimal-ref words i scale))
+          (free-buffer words)))
+
 (define (rows shape who s dtype start count null-value)
   (define valid (validity s count))
   (define (physical typed-rows [arg #f])
@@ -173,6 +197,9 @@
     [`(datetime ,unit ,_) (physical datetime-rows unit)]
     [`(duration ,_) (physical duration-rows dtype)]
     ['string (string-rows shape who s dtype start count valid null-value)]
+    [(or 'categorical `(enum . ,_))
+     (categorical-rows shape who s dtype start count valid null-value)]
+    [`(decimal ,_ ,scale) (decimal-rows shape who s dtype scale start count valid null-value)]
     ['null (if (eq? shape 'list)
                (for/list ([_ (in-range count)]) null-value)
                (make-vector count null-value))]))
@@ -289,7 +316,8 @@
 (module+ test
   (require rackunit
            (only-in racket/sequence sequence->list)
-           (only-in polars/private/foreign series-head series-new-i64 series-new-str series-ref))
+           (only-in polars/private/foreign
+                    series-cast series-head series-new-i64 series-new-str series-ref))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -301,7 +329,11 @@
   (for* ([chunk-rows '(1 2 3 7)]
          [n (list 0 (sub1 chunk-rows) chunk-rows (add1 chunk-rows) (* 2 chunk-rows)
                   (add1 (* 2 chunk-rows)))]
-         [s (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
-                  (series-head (series-new-str "x" (gappy-strs (add1 n))) n))])
-    (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows))
-                  (for/list ([i (in-range n)]) (series-ref s i)))))
+         [s (let ([strs (series-head (series-new-str "x" (gappy-strs (add1 n))) n)])
+              (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
+                    strs
+                    (series-cast strs 'categorical)
+                    (series-cast strs '(enum yyy || yy y))))])
+    (define refs (for/list ([i (in-range n)]) (series-ref s i)))
+    (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
+    (check-equal? (series->list s) refs)))

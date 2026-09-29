@@ -30,7 +30,8 @@
         'str 'string   'string 'string
         'date 'date
         'time 'time
-        'datetime 'datetime))
+        'datetime 'datetime
+        'categorical 'categorical))
 
 (define (dtype-spec? v)
   (match v
@@ -39,7 +40,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ #f]))
+    [_ (enum-dtype? v)]))
 
 (define (normalize-dtype dt)
   (cond
@@ -62,6 +63,7 @@
     [(andmap exact-integer? vals) 'int64]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
+    [(andmap symbol? vals) 'categorical]
     [(andmap datetime? vals) 'datetime]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
@@ -84,20 +86,29 @@
      (match canonical
        [(or 'datetime `(datetime . ,_))
         (if vec? series-new-datetime/vec series-new-datetime)]
+       [(or 'categorical (? enum-dtype?))
+        (define strings (if vec? series-new-str/vec series-new-str))
+        (lambda (name elements)
+          (define s (strings name elements))
+          (begin0 (if (eq? canonical 'categorical)
+                      (series-cast s 'categorical)
+                      (series-cast-enum 'series s canonical))
+                  (series-drop s)))]
        [_ (error 'series "no constructor for dtype ~v" canonical)])]))
 
 ;; The float constructors want flonums; accept exact reals too by coercing,
 ;; so (series '(1 2 3) #:dtype 'f64) does what the user means.
 (define (coerce-elements canonical elements)
-  (case canonical
-    [(float32 float64)
-     (define (->fl x) (if (and (not (polars-null? x)) (exact? x))
-                          (exact->inexact x)
-                          x))
-     (if (vector? elements)
-         (for/vector #:length (vector-length elements) ([x (in-vector elements)]) (->fl x))
-         (map ->fl elements))]
-    [else elements]))
+  (define (coerce convert)
+    (if (vector? elements)
+        (for/vector #:length (vector-length elements) ([x (in-vector elements)]) (convert x))
+        (map convert elements)))
+  (match canonical
+    [(or 'float32 'float64)
+     (coerce (lambda (x) (if (and (not (polars-null? x)) (exact? x)) (exact->inexact x) x)))]
+    [(or 'categorical (? enum-dtype?))
+     (coerce (lambda (x) (if (symbol? x) (symbol->string x) x)))]
+    [_ elements]))
 
 (define numeric-dtypes
   '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 float32 float64))

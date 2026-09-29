@@ -49,6 +49,7 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Topic | Racket | Python |
 | --- | --- | --- |
 | Expression expansion | `expression-expansion.rkt` | `expression_expansion.py` |
+| Categorical data and enums | `categorical-data-and-enums.rkt` | `categorical_data_and_enums.py` |
 | Window functions | `window-functions.rkt` | `window_functions.py` |
 
 `io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and

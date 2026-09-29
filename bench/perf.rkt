@@ -32,6 +32,13 @@
 
 (define (operations df source)
   (define series->list (polars-export 'series->list (lambda () #f)))
+  (define categorical-frame
+    (with-handlers ([exn:fail? values])
+      (with-columns df (cast "dest" 'categorical))))
+  (define ((on-categorical proc))
+    (if (exn? categorical-frame)
+        (raise categorical-frame)
+        (proc categorical-frame)))
   (list
    (op "load-tsv" "load TSV" (lambda () (read-frame source "tsv")))
    (op "load-csv" "load CSV" (lambda () (read-frame source "csv")))
@@ -57,7 +64,19 @@
            #:note "ref per element: polars has no series->list"))
    (op "f64-matrix" "dataframe -> f64 matrix"
        (lambda ()
-         ((polars-export 'dataframe->f64vector) (select df numeric-columns) #:null +nan.0)))))
+         ((polars-export 'dataframe->f64vector) (select df numeric-columns) #:null +nan.0)))
+   (op "cast-categorical" "cast 3 to categorical"
+       (lambda ()
+         (with-columns df (cast "carrier" 'categorical) (cast "dest" 'categorical)
+           (cast "origin" 'categorical))))
+   (op "group-by-categorical" "group-by on categorical"
+       (on-categorical
+        (lambda (frame)
+          (~> frame
+              (group-by "dest")
+              (agg (alias (count "dest") "n") (alias (mean "dep_delay") "mean_delay"))))))
+   (op "categorical-list" "categorical -> list"
+       (on-categorical (lambda (frame) (series->list (ref frame #:columns "dest")))))))
 
 (struct timing (ms note))
 

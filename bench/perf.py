@@ -41,6 +41,7 @@ def operations(source):
     tsv, csv = DATA / f"{stem}.tsv", DATA / f"{stem}.csv"
     na = {"null_values": "NA"} if source == "original" else {}
     df = pl.read_csv(tsv, separator="\t", **na) if source == "original" else pl.read_csv(csv)
+    cat = df.with_columns(pl.col("dest").cast(pl.Categorical))
     return {
         "load-tsv": lambda: pl.read_csv(tsv, separator="\t", **na),
         "load-csv": lambda: pl.read_csv(csv, **na),
@@ -55,6 +56,13 @@ def operations(source):
         "describe": lambda: df.describe(),
         "column-list": lambda: df["dep_delay"].to_list(),
         "f64-matrix": lambda: df.select(NUMERIC).to_numpy(),
+        "cast-categorical": lambda: df.with_columns(
+            pl.col("carrier", "dest", "origin").cast(pl.Categorical)
+        ),
+        "group-by-categorical": lambda: cat.group_by("dest").agg(
+            pl.col("dest").count().alias("n"), pl.col("dep_delay").mean().alias("mean_delay")
+        ),
+        "categorical-list": lambda: cat["dest"].to_list(),
     }
 
 
