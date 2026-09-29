@@ -1,0 +1,79 @@
+name: Install Racket (cached)
+description: >-
+  Bogdanp/setup-racket with the installation cached per OS and architecture,
+  and download.racket-lang.org dropped from the package catalogs, so a warm
+  run never contacts that host (#124).
+inputs:
+  version:
+    description: A Racket release, or `stable`.
+    required: true
+  architecture:
+    description: The architecture of the Racket VM (x64, arm64).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Cache key and directory
+      id: where
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ARCH: ${{ inputs.architecture }}
+      run: |
+        # setup-racket resolves `stable` at download.racket-lang.org, so its
+        # key rolls weekly instead of naming a release.
+        if [ "$VERSION" = stable ]; then
+          release="stable-$(date -u +%G-W%V)"
+        else
+          release="$VERSION"
+        fi
+        # setup-racket ignores `dest` on macOS.
+        if [ "$RUNNER_OS" = macOS ]; then
+          dir=/Applications/Racket
+        else
+          dir="$HOME/racket"
+        fi
+        echo "key=racket-$release-cs-full-$RUNNER_OS-$ARCH" >> "$GITHUB_OUTPUT"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+    - name: Restore Racket
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ steps.where.outputs.dir }}
+        key: ${{ steps.where.outputs.key }}
+
+    - name: Install Racket
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: Bogdanp/setup-racket@v1.15
+      with:
+        version: ${{ inputs.version }}
+        architecture: ${{ inputs.architecture }}
+        dest: ${{ steps.where.outputs.dir }}
+        sudo: never
+
+    # Saved before the job's own steps run, so the cache holds the
+    # installation exactly as the installer left it.
+    - name: Save Racket
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ steps.where.outputs.dir }}
+        key: ${{ steps.where.outputs.key }}
+
+    # The release catalog lists only main-distribution packages, which the
+    # full installation already has; every dependency polars pulls resolves
+    # at pkgs.racket-lang.org either way.
+    - name: Put Racket on PATH and drop the release catalog
+      shell: bash
+      env:
+        DIR: ${{ steps.where.outputs.dir }}
+      run: |
+        echo "$DIR/bin" >> "$GITHUB_PATH"
+        export PATH="$DIR/bin:$PATH"
+        command -v racket
+        racket --version
+        raco pkg config catalogs \
+          | grep -v '^https://download\.racket-lang\.org/' \
+          | xargs raco pkg config --set catalogs
+        raco pkg config catalogs

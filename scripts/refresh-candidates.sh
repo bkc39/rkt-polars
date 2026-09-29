@@ -45,21 +45,19 @@ cand=polars/native-libs/candidates
 
 if [[ -n "$pr" ]]; then
   sha="$(gh pr view "$pr" --json headRefOid -q .headRefOid)"
-  run="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$sha&event=push" \
+  run="$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$sha" \
            --jq '[.workflow_runs[] | select(.path == ".github/workflows/ci.yml")][0].id // empty')"
-  [[ -n "$run" ]] || die "no push-event CI run for ${sha:0:7}, the head of #$pr"
-else
-  IFS=$'\t' read -r sha event < <(gh api "repos/{owner}/{repo}/actions/runs/$run" --jq '[.head_sha, .event] | @tsv')
-  [[ "$event" == push ]] \
-    || die "run $run is a $event run, which builds the merge with master; pass the push run for ${sha:0:7}"
-  pr="$(gh api "repos/{owner}/{repo}/commits/$sha/pulls" --jq '.[0].number // empty')"
+  [[ -n "$run" ]] || die "no CI run for ${sha:0:7}, the head of #$pr"
 fi
+IFS=$'\t' read -r sha event < <(gh api "repos/{owner}/{repo}/actions/runs/$run" --jq '[.head_sha, .event] | @tsv')
+[[ -n "$pr" ]] || pr="$(gh api "repos/{owner}/{repo}/commits/$sha/pulls" --jq '.[0].number // empty')"
 if [[ -n "$pr" ]]; then ref="#$pr"; else ref="run $run"; fi
-echo ">> run $run built ${sha:0:7} ($ref)"
+echo ">> run $run is the $event run for ${sha:0:7} ($ref)"
 
 git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch --quiet origin "$sha"
-[[ "$(git rev-parse "$sha:rust")" == "$(git rev-parse HEAD:rust)" ]] \
-  || die "${sha:0:7}'s rust/ differs from HEAD's; check out the commit the run built"
+tree="$(git rev-parse HEAD:rust)"
+[[ "$(git rev-parse "$sha:rust")" == "$tree" ]] \
+  || die "${sha:0:7}'s rust/ differs from HEAD's; check out ${sha:0:7}"
 [[ -z "$(git status --porcelain -- rust)" ]] || die "rust/ has uncommitted changes"
 
 artifacts() {
@@ -88,6 +86,21 @@ for platform in linux darwin; do
 done
 linux="$out/linux/libcompat.so"
 darwin="$out/darwin/libcompat.dylib"
+
+# A pull_request run builds the head's merge with its base branch, so the
+# rust/ tree its build recorded must be HEAD's.  A push run from before the
+# build recorded one built the head itself, checked above.
+for platform in linux darwin; do
+  if [[ -f "$out/$platform/rust-tree" ]]; then
+    [[ "$(< "$out/$platform/rust-tree")" == "$tree" ]] \
+      || die "run $run built libcompat-$platform from a rust/ other than HEAD's" \
+             "(a $event run of ${sha:0:7}); merge the base branch into this one," \
+             "push, and refresh from the new commit's run"
+  else
+    [[ "$event" == push ]] \
+      || die "run $run does not record which rust/ it built libcompat-$platform from"
+  fi
+done
 
 if cmp -s "$linux" "$cand/linux/libcompat.so" && cmp -s "$darwin" "$cand/darwin/libcompat.dylib"; then
   echo ">> the committed candidates are already run $run's; nothing to do"
@@ -118,8 +131,9 @@ msg="$out/commit-msg.txt"
 cat > "$msg" <<EOF
 native: refresh both libcompat candidates ($ref)
 
-Both are CI's artifacts from run $run on ${sha:0:7}, built by
-scripts/build-so.sh.  scripts/refresh-candidates.sh checked them:
+Both are CI's artifacts from run $run (the $event run for ${sha:0:7}),
+built by scripts/build-so.sh from this commit's rust/.
+scripts/refresh-candidates.sh checked them:
 
 $bullets
 - Every module under polars/private instantiates against the $host
