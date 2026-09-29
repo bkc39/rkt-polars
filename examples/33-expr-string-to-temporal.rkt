@@ -2,7 +2,7 @@
 
 ;; Expr string-to-temporal parsing: Date, Datetime, and Time.
 ;;
-;; str-to-date / str-to-datetime / str-to-time parse strings to temporal
+;; str->date / str->datetime / str->time parse strings to temporal
 ;; columns; #:strict #f turns unparseable values into null instead of raising.
 ;;
 ;; Inside `nix develop`:
@@ -19,13 +19,13 @@
 (define out
   (~> df
       (with-columns
-        (alias (str-to-date "date_s" #:strict #f) "date_infer")
-        (alias (str-to-date "date_s" #:format "%Y-%m-%d" #:strict #f #:exact #f)
+        (alias (str->date "date_s" #:strict #f) "date_infer")
+        (alias (str->date "date_s" #:format "%Y-%m-%d" #:strict #f #:exact #f)
                "date_embedded")
-        (alias (str-to-datetime "dt_s" #:format "%Y-%m-%d %H:%M:%S"
-                                #:unit 'milliseconds #:strict #f)
+        (alias (str->datetime "dt_s" #:format "%Y-%m-%d %H:%M:%S"
+                              #:unit 'milliseconds #:strict #f)
                "parsed_dt")
-        (alias (str-to-time "time_s" #:format "%H:%M:%S%.f" #:strict #f)
+        (alias (str->time "time_s" #:format "%H:%M:%S%.f" #:strict #f)
                "parsed_time"))))
 
 (displayln out)

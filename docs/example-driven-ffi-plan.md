@@ -85,7 +85,7 @@ Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Membership / distinct: `expr-is-in` (RHS = Expr, Series, or homogeneous Racket list), `expr-lit-series` (Series → literal Expr), `expr-is-between` (`#:closed` `'both|'left|'right|'none`), `expr-{is-unique,is-duplicated,is-first-distinct,is-last-distinct}`
 - Cumulative / shift: `expr-{cum-sum,cum-prod,cum-min,cum-max,cum-count}` (each `#:reverse`), `expr-shift` (`#:n`, default 1; `#:fill-value` routes to `shift_and_fill`), `expr-diff` (`#:n`, `#:null-behavior` `'ignore|'drop`)
 - Sort / select: `expr-reverse`, `expr-filter` (predicate Expr), `expr-gather` (indices = Expr / Series / int list), `expr-sort-by` (`#:by` string|Expr|list, `#:descending` bool|list), `expr-rank` (`#:method` `'average|'min|'max|'dense|'ordinal`, `#:descending`, `#:seed`), `expr-head` / `expr-tail` (`#:n`, default 10, `#f` = all), `expr-slice` (positional `offset` `length`, i64)
-- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str-to-date`, `expr-str-to-datetime`, `expr-str-to-time`
+- String namespace: `expr-str-contains`, `expr-str-starts-with`, `expr-str-ends-with`, `expr-str-to-lowercase`, `expr-str-to-uppercase`, `expr-str-replace`, `expr-str-replace-all`, `expr-str-extract`, `expr-str-strip-chars`, `expr-str-strip-chars-start`, `expr-str-strip-chars-end`, `expr-str-strip-prefix`, `expr-str-strip-suffix`, `expr-str-len-bytes`, `expr-str-len-chars`, `expr-str-slice`, `expr-str-head`, `expr-str-tail`, `expr-str-find`, `expr-str-find-literal`, `expr-str-count-matches`, `expr-str->date`, `expr-str->datetime`, `expr-str->time`
 - Datetime namespace: `expr-dt-year`, `expr-dt-month`, `expr-dt-day`, `expr-dt-hour`, `expr-dt-minute`, `expr-dt-second`, `expr-dt-iso-year`, `expr-dt-quarter`, `expr-dt-week`, `expr-dt-weekday`, `expr-dt-ordinal-day`, `expr-dt-is-leap-year`, `expr-dt-date`, `expr-dt-time`, `expr-dt-millisecond`, `expr-dt-microsecond`, `expr-dt-nanosecond`, `expr-dt-timestamp`, `expr-dt-strftime`, `expr-dt-truncate`
 - Type conversion: `expr-cast` (accepts symbol or `(datetime <unit>)` / `(duration <unit>)`; lifts via `->compat-dtype`)
 - Aggregations: `expr-{sum,mean,min,max,count,n-unique,first,last,median}`, `expr-{std,var}` (with `#:ddof`, default 1)
@@ -304,11 +304,11 @@ Expr string batch 3 is shipped:
 - `expr-str-count-matches`
 
 Expr string-to-temporal is shipped:
-- `expr-str-to-date`
-- `expr-str-to-datetime`
-- `expr-str-to-time`
+- `expr-str->date`
+- `expr-str->datetime`
+- `expr-str->time`
 - Parsing wrappers accept `#:format`, `#:strict`, `#:exact`, and `#:cache`.
-  `expr-str-to-datetime` also accepts `#:unit` (`'nanoseconds`,
+  `expr-str->datetime` also accepts `#:unit` (`'nanoseconds`,
   `'microseconds`, or `'milliseconds`).
 
 Expr datetime batch 1 is shipped:
@@ -462,7 +462,7 @@ clash. Some also collide with other modules a user co-requires (`dt-date` vs
 gregor's `date`, `dt-time` vs `racket/base`'s `time`). Collision-free
 top-level verbs stay bare (`with-columns`, `group-by`, `agg`, `pivot`,
 `vstack`, `scan-csv`, …). So: example 31 uses `str-head` / `str-slice`,
-example 32 uses `dt-date` / `dt-time`, example 33 uses `str-to-date`.
+example 32 uses `dt-date` / `dt-time`, example 33 uses `str->date`.
 
 ## Development Rule
 

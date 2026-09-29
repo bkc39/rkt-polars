@@ -46,13 +46,13 @@
 (displayln
  (~> df (filter (< (dt-year "birthdate") 1990))))
 
-;; API gaps: no date literals (parse a string with str-to-date), and filter
+;; API gaps: no date literals (parse a string with str->date), and filter
 ;; takes a single predicate, so the two conditions are joined with `and`.
 (displayln
  (~> df
      (filter (and (is-between "birthdate"
-                              (str-to-date (lit "1982-12-31"))
-                              (str-to-date (lit "1996-01-01")))
+                              (str->date (lit "1982-12-31"))
+                              (str->date (lit "1996-01-01")))
                   (> (col "height") 1.7)))))
 
 ;; --- group-by ------------------------------------------------------------

@@ -86,7 +86,7 @@
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
-         expr-str-to-date expr-str-to-datetime expr-str-to-time
+         expr-str->date expr-str->datetime expr-str->time
          expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
          expr-dt-iso-year expr-dt-quarter expr-dt-week
@@ -1154,21 +1154,21 @@
   (define str-temporal
     (dataframe-with-columns
      str-temporal-df
-     (list (expr-alias (expr-str-to-date (col "date_s") #:strict #f)
+     (list (expr-alias (expr-str->date (col "date_s") #:strict #f)
                        "date_infer")
-           (expr-alias (expr-str-to-date (col "date_s")
-                                         #:format "%Y-%m-%d"
-                                         #:strict #f
-                                         #:exact #f)
+           (expr-alias (expr-str->date (col "date_s")
+                                       #:format "%Y-%m-%d"
+                                       #:strict #f
+                                       #:exact #f)
                        "date_embedded")
-           (expr-alias (expr-str-to-datetime (col "dt_s")
-                                             #:format "%Y-%m-%d %H:%M:%S"
-                                             #:unit 'milliseconds
-                                             #:strict #f)
+           (expr-alias (expr-str->datetime (col "dt_s")
+                                           #:format "%Y-%m-%d %H:%M:%S"
+                                           #:unit 'milliseconds
+                                           #:strict #f)
                        "parsed_dt")
-           (expr-alias (expr-str-to-time (col "time_s")
-                                         #:format "%H:%M:%S%.f"
-                                         #:strict #f)
+           (expr-alias (expr-str->time (col "time_s")
+                                       #:format "%H:%M:%S%.f"
+                                       #:strict #f)
                        "parsed_time"))))
   (check-equal? (series-dtype (dataframe-column str-temporal "date_infer")) 'date)
   (check-equal? (series-ref (dataframe-column str-temporal "date_infer") 0)

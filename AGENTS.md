@@ -33,7 +33,7 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
-   `expr-str-to-date`: one binding per operation and dtype, documented in the
+   `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
 3. **Generic / fluent** — `polars/private/generic/*.rkt`, aggregated by
    `generic.rkt`, re-exported by `main.rkt`. This is the surface: `series` and
@@ -194,7 +194,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
 - A polars deprecation prints a warning to stderr: replace the spelling it
-  names (a string cast to `'date` is `str-to-date`).
+  names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a

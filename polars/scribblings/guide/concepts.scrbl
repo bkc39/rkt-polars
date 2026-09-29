@@ -152,13 +152,13 @@ binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}
 @examples[#:eval ev #:label #f
 (~> df
     (filter (and (is-between "birthdate"
-                             (str-to-date (lit "1982-12-31"))
-                             (str-to-date (lit "1996-01-01")))
+                             (str->date (lit "1982-12-31"))
+                             (str->date (lit "1996-01-01")))
                  (> (col "height") 1.7))))
 ]
 
 API gaps: no date literals, so the bounds parse a string with
-@racket[str-to-date]; @racket[filter] takes one predicate, so combine with
+@racket[str->date]; @racket[filter] takes one predicate, so combine with
 @racket[and].
 
 @subsubsection[#:tag "concepts-group-by"]{group-by and aggregations}

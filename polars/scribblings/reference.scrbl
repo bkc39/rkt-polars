@@ -767,7 +767,7 @@ total
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
   lifted with @racket[lit], which has no date spelling; parse a string instead:
-  @racket[(str-to-date (lit "1982-12-31"))].}
+  @racket[(str->date (lit "1982-12-31"))].}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -786,22 +786,22 @@ total
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
                                     [#:group-index group-index exact-nonnegative-integer? 1])
                        Expr-ptr?]
-              @defproc[(str-to-date [x (or/c Expr-ptr? string?)]
-                                    [#:format format (or/c string? #f) #f]
-                                    [#:strict strict boolean? #t]
-                                    [#:exact exact boolean? #t]
-                                    [#:cache cache boolean? #t])
+              @defproc[(str->date [x (or/c Expr-ptr? string?)]
+                                  [#:format format (or/c string? #f) #f]
+                                  [#:strict strict boolean? #t]
+                                  [#:exact exact boolean? #t]
+                                  [#:cache cache boolean? #t])
                        Expr-ptr?]
-              @defproc[(str-to-datetime [x (or/c Expr-ptr? string?)]
-                                        [#:format format (or/c string? #f) #f]
-                                        [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
-                                        [#:strict strict boolean? #t]
-                                        [#:exact exact boolean? #t]
-                                        [#:cache cache boolean? #t])
+              @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
+                                      [#:format format (or/c string? #f) #f]
+                                      [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
+                                      [#:strict strict boolean? #t]
+                                      [#:exact exact boolean? #t]
+                                      [#:cache cache boolean? #t])
                        Expr-ptr?])]{
   @racket[str-extract] returns capture group @racket[#:group-index] of the
-  first regex match (@tt{.str.extract}). @racket[str-to-date] and
-  @racket[str-to-datetime] parse strings with a chrono @tt{strptime}
+  first regex match (@tt{.str.extract}). @racket[str->date] and
+  @racket[str->datetime] parse strings with a chrono @tt{strptime}
   @racket[#:format], inferred when omitted (@tt{.str.to_date},
   @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
   on unparseable values.}
