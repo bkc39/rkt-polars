@@ -13,6 +13,10 @@ inputs:
 runs:
   using: composite
   steps:
+    # setup-racket resolves `stable` at download.racket-lang.org, so its key
+    # rolls weekly instead of naming a release; and it ignores `dest` on
+    # macOS.  Comments stay out of `run`, whose text the log echoes, so the
+    # host's name appears in a warm run's log only if the run contacts it.
     - name: Cache key and directory
       id: where
       shell: bash
@@ -20,14 +24,11 @@ runs:
         VERSION: ${{ inputs.version }}
         ARCH: ${{ inputs.architecture }}
       run: |
-        # setup-racket resolves `stable` at download.racket-lang.org, so its
-        # key rolls weekly instead of naming a release.
         if [ "$VERSION" = stable ]; then
           release="stable-$(date -u +%G-W%V)"
         else
           release="$VERSION"
         fi
-        # setup-racket ignores `dest` on macOS.
         if [ "$RUNNER_OS" = macOS ]; then
           dir=/Applications/Racket
         else
