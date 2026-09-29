@@ -18,3 +18,8 @@ polars = { version = "0.55.2", features = ["lazy", "parquet", "json", "cross_joi
 
 [profile.release]
 strip = "symbols"
+# Thin LTO keeps the committed Linux candidate under GitHub's 100 MiB file
+# limit (#125). guard_panic catches polars panics, so panics must unwind.
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
