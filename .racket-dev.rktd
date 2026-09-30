@@ -42,5 +42,9 @@
   (check         "nix flake check")
   ;; The nycflights scoreboard and ratio table (#86).  Red only when the
   ;; harness itself breaks; a FAIL line or a slow ratio is the arc's to fix.
-  (bench         "nix run .#bench"))
+  (bench         "nix run .#bench")
+  ;; The nycflights arc's exit gate (#88, #90): the same run, red on any FAIL
+  ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
+  ;; mean something only on a quiet host.
+  (bench-strict  "nix run .#bench -- --strict"))
  (push-gates (no-syntax-rule compile test examples fmt)))
