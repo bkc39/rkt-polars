@@ -95,9 +95,9 @@ Dtype spellings accepted by @racket[series]' @racket[#:dtype]:
         (list @racket['(enum low mid high)] "Enum")
         (list "—" "Decimal, Binary, Array, List, Struct"))]
 
-The temporal dtypes are built from gregor @tt{date}, @tt{time},
-@tt{datetime} and @tt{period} values, which @racket[series] also infers them
-from (@secref["ref-temporal-values"]).
+@racket[series] builds the temporal dtypes from gregor @tt{date}, @tt{time},
+@tt{datetime} and @tt{period} values, and infers them from those values too
+(@secref["ref-temporal-values"]).
 
 Categorical and Enum values read back as symbols (@secref["ref-categorical"]).
 A Decimal column, read from Parquet, has dtype @racket['(decimal precision scale)]

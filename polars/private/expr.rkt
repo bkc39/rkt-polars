@@ -26,7 +26,8 @@
                   frame-sort/c sort-flags
                   _CompatDType ->compat-dtype enum-dtype?)
          (only-in polars/private/series series-new-temporal)
-         (only-in polars/private/temporal temporal-values-dtype)
+         (only-in polars/private/temporal reject-moment temporal-values-dtype)
+         (only-in gregor moment?)
          syntax/parse/define)
 
 (module+ test
@@ -441,6 +442,7 @@
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
          [(temporal-values-dtype rhs)
           => (lambda (dtype) (series-new-temporal who "" rhs dtype))]
+         [(findf moment? rhs) => (lambda (m) (reject-moment who m))]
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))

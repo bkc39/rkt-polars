@@ -1,8 +1,8 @@
 #lang racket/base
 
 (require (only-in gregor
-                  ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date? datetime?
-                  jdn->date moment? posix->datetime)
+                  ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date date?
+                  datetime? jdn->date moment? posix->datetime)
          (only-in gregor/period period? period-ref)
          (only-in gregor/time time time?)
          racket/match)
@@ -59,9 +59,15 @@
   (for/sum ([field (in-list period-field-nanoseconds)])
     (* (cdr field) (period-ref p (car field)))))
 
-(define (nanoseconds->unit ns unit)
-  (define k (quotient ns/second (per-second unit)))
+(define (ticks/unit unit)
+  (quotient ns/second (per-second unit)))
+
+(define (floor-nanoseconds->unit ns unit)
+  (define k (ticks/unit unit))
   (quotient (- ns (modulo ns k)) k))
+
+(define (truncate-nanoseconds->unit ns unit)
+  (quotient ns (ticks/unit unit)))
 
 (define (whole-microseconds? ns)
   (zero? (remainder ns 1000)))
@@ -96,33 +102,39 @@
                   " supported; convert it with ->datetime/utc or ->datetime/local")
    "value" v))
 
-(define int32-range (cons (- (expt 2 31)) (sub1 (expt 2 31))))
-(define int64-range (cons (- (expt 2 63)) (sub1 (expt 2 63))))
+(define (int64? n)
+  (<= (- (expt 2 63)) n (sub1 (expt 2 63))))
+
+;; chrono's NaiveDate::MIN and MAX: polars formats every date and datetime
+;; through chrono, which panics outside them.
+(define chrono-jdn-range (cons (->jdn (date -262143 1 1)) (->jdn (date 262142 12 31))))
+
+(define (printable? v)
+  (<= (car chrono-jdn-range) (->jdn v) (cdr chrono-jdn-range)))
 
 (define (temporal-encoder who dtype)
-  (define (encoder accepts? what ->physical range)
-    (lambda (v)
-      (unless (accepts? v)
-        (if (moment? v)
-            (reject-moment who v)
-            (raise-arguments-error who (format "expected ~a for this dtype" what)
-                                   "dtype" dtype "value" v)))
-      (define physical (->physical v))
-      (unless (<= (car range) physical (cdr range))
-        (raise-arguments-error who "value out of range for this dtype" "dtype" dtype "value" v))
-      physical))
+  (define ((encoder accepts? what ->physical in-range?) v)
+    (unless (accepts? v)
+      (if (moment? v)
+          (reject-moment who v)
+          (raise-arguments-error who (format "expected ~a for this dtype" what)
+                                 "dtype" dtype "value" v)))
+    (define physical (->physical v))
+    (unless (in-range? v physical)
+      (raise-arguments-error who "value out of range for this dtype" "dtype" dtype "value" v))
+    physical)
   (match dtype
-    ['date (encoder date? "a gregor date" date->days int32-range)]
-    ['time (encoder time? "a gregor time" time->nanoseconds int64-range)]
+    ['date (encoder date? "a gregor date" date->days (lambda (d _) (printable? d)))]
+    ['time (encoder time? "a gregor time" time->nanoseconds (lambda (_t _ns) #t))]
     [(or 'datetime (list* 'datetime _))
      (define unit (if (pair? dtype) (cadr dtype) 'microseconds))
      (encoder datetime? "a gregor datetime"
-              (lambda (dt) (nanoseconds->unit (datetime->nanoseconds dt) unit))
-              int64-range)]
+              (lambda (dt) (floor-nanoseconds->unit (datetime->nanoseconds dt) unit))
+              (lambda (dt ticks) (and (printable? dt) (int64? ticks))))]
     [(list* 'duration unit _)
      (encoder fixed-length-period? "a gregor period without years or months"
-              (lambda (p) (nanoseconds->unit (period->nanoseconds p) unit))
-              int64-range)]))
+              (lambda (p) (truncate-nanoseconds->unit (period->nanoseconds p) unit))
+              (lambda (_p ticks) (int64? ticks)))]))
 
 (module+ test
   (require rackunit
@@ -134,7 +146,8 @@
   (for ([ns (list 0 1 86399999999999 11045123456789)])
     (check-equal? ((temporal-encoder 'test 'time) (nanoseconds->time ns)) ns))
   (for* ([unit '(milliseconds microseconds nanoseconds)]
-         [value (list 0 -1 1 -1500 1500 1356998400123 (- (expt 2 62)) (expt 2 62))])
+         [value (list* 0 -1 1 -1500 1500 1356998400123
+                       (if (eq? unit 'nanoseconds) (list (- (expt 2 63)) (sub1 (expt 2 63))) '()))])
     (define encode (temporal-encoder 'test (list 'datetime unit #f)))
     (check-equal? (encode (epoch->datetime unit value)) value))
   (check-equal? (epoch->datetime 'milliseconds -1)
@@ -149,7 +162,8 @@
   (check-equal? ((temporal-encoder 'test '(duration milliseconds))
                  (period (weeks 1) (days 1) (hours 1) (milliseconds 5)))
                 (+ (* 8 86400000) 3600000 5))
-  (check-equal? ((temporal-encoder 'test '(duration microseconds)) (nanoseconds -1500)) -2)
+  (check-equal? ((temporal-encoder 'test '(duration microseconds)) (nanoseconds -1500)) -1)
+  (check-equal? ((temporal-encoder 'test '(duration milliseconds)) (nanoseconds 1999999)) 1)
 
   (check-equal? (temporal-value-dtype (date 2024 1 2)) 'date)
   (check-equal? (temporal-value-dtype (nanoseconds->time 5)) 'time)
@@ -179,5 +193,13 @@
              (lambda () ((temporal-encoder 'test '(duration microseconds)) (months 1))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"
              (lambda () ((temporal-encoder 'test 'date) (date 6000000 1 1))))
+  (for ([edge (list (date 262142 12 31) (date -262143 1 1))])
+    (check-equal? (days->date ((temporal-encoder 'test 'date) edge)) edge))
+  (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"
+             (lambda () ((temporal-encoder 'test 'date) (date 262143 1 1))))
+  (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"
+             (lambda () ((temporal-encoder 'test 'date) (date -262144 12 31))))
+  (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime milliseconds #f\\)"
+             (lambda () ((temporal-encoder 'test '(datetime milliseconds #f)) (datetime 270000))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime nanoseconds #f\\)"
              (lambda () ((temporal-encoder 'test '(datetime nanoseconds #f)) (datetime 1500)))))

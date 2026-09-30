@@ -1062,8 +1062,10 @@ value with a nonzero sub-microsecond part makes the column (or the literal)
 nanoseconds, so nothing is lost. A period's weeks, days, hours and smaller
 fields add up to one fixed length (a day is 24 hours, as in Polars); years
 and months have no fixed length and are refused. With @racket[#:dtype], a
-value is converted to the dtype's unit, a finer part floored as Polars' own
-casts floor it, and a value outside the dtype's range raises.
+value is converted to the dtype's unit and a finer part dropped as Polars'
+own casts drop it: a datetime is floored, a duration truncated toward zero.
+A value the dtype cannot hold raises, and so does a date or datetime outside
+the years -262143 to 262142, which Polars cannot print.
 
 A gregor @tt{moment} carries a time zone, and time-zone-aware datetimes are
 not supported yet: @racket[series] and @racket[lit] raise on one, where

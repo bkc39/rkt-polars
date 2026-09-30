@@ -229,8 +229,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
   a `period` without years or months (a day is 24 hours). A datetime or period
   that carries nanoseconds makes the column nanoseconds instead, where
-  Python's `datetime` stops at microseconds; `#:dtype` floors a finer part, as
-  a polars cast does. `lit`, and so every comparison, `is-between` and
+  Python's `datetime` stops at microseconds. `#:dtype` drops a finer part as a
+  polars cast does: a datetime floors, a duration truncates toward zero. A date
+  or datetime outside chrono's years (-262143 to 262142) is refused, since
+  polars panics printing one. `lit`, and so every comparison, `is-between` and
   `is-in`, takes the same values as literals of the same dtypes
   (`expr_lit_temporal`). Both refuse a gregor `moment`: time-zone-aware
   datetimes have no surface yet (polars' `timezones` feature is off, and a

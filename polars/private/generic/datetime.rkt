@@ -145,6 +145,19 @@
   (check-equal? (rows (is-in "t" (list (time 23) (time 2)))) 1)
   (check-equal? (for/list ([x (p:> (ref calendar "d") (date 2013 6 1))]) x) '(#f #f #t))
   (check-equal? (for/list ([x (p:!= (date 2013 6 1) (ref calendar "d"))]) x) '(#t #f #t))
+  (check-equal? (for/list ([x (p:> (ref calendar "d") (datetime 2013 6 1 12))]) x) '(#f #f #t))
+  (check-equal? (for/list ([x (p:< (ref calendar "dur") (nanoseconds 7200000000001))]) x)
+                '(#t #t #t))
+  (check-exn #rx"^expr-is-in: a moment carries a time zone"
+             (lambda () (is-in "dt" (list (datetime 2013 6 1) (moment 2013 6 1 #:tz "UTC")))))
+  (check-equal? (for/list ([x (series (list (nanoseconds -1500) (nanoseconds 1500))
+                                      #:dtype '(duration microseconds))])
+                  x)
+                (list (microseconds -1) (microseconds 1)))
+  (check-exn #rx"^series: value out of range for this dtype"
+             (lambda () (series (list (date 300000 1 1)))))
+  (check-exn #rx"^lit: value out of range for this dtype"
+             (lambda () (lit (datetime 270000 1 1))))
 
   (define (literal v)
     (define s (ref (select calendar (alias (lit v) "v")) "v"))
