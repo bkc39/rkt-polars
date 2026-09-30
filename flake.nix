@@ -237,6 +237,7 @@
               raco test -x -c polars
               raco test user-guide
               raco test -e -Q --empty-stdin -j 4 examples
+              raco test -x bench
               runHook postCheck
             '';
 
