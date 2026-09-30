@@ -81,4 +81,6 @@
   (check-equal? (series->string (series-cast bears 'categorical))
                 "shape: (2,)\nSeries: 'bears' [cat]\n[\n\t\"Polar\"\n\t\"Brown\"\n]")
   (check-true (regexp-match? #rx"\\[enum\\]"
-                             (series->string (series-cast bears '(enum Brown Polar))))))
+                             (series->string (series-cast bears '(enum Brown Polar)))))
+  (check-true (regexp-match? (regexp-quote "\t\"a\\u0000b\"\n")
+                             (series->string (series-new-str "nul" '("a\u0000b"))))))

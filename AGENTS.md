@@ -123,10 +123,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options`, `series_sort_with_options` and the three
-  Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
-  call. `call/foreign-error`
+  `dataframe_sort_with_options`, `series_sort_with_options`,
+  `series_new_str_packed` and the three Enum entry points
+  (`series_cast_enum`, `expr_cast_enum`, `expr_dtype_col_enum`) — or it
+  attaches a stale reason from an unrelated call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
@@ -139,8 +139,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum` and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`
+  and the IO helpers (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
@@ -158,6 +158,28 @@ it. Racket side: `define-compat` with `#:c-id`.
   bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
+- **Strings cross into Rust in one allocation, never as `(_list i _string)`.**
+  That type turns each element into a fresh byte string and stores its
+  address in an array the collector does not trace, so a collection while the
+  array fills moves or frees the strings already stored, and Rust reads stale
+  memory (#143: wrong values from about 300,000 strings, an abort at a
+  million). A string series is the bulk copy in reverse: `series-new-str`
+  passes one UTF-8 byte string, row offsets in a `with-raw-buffer` and a
+  validity byte string to `series_new_str_packed`, which checks every offset
+  against the buffer and a character boundary. The byte strings may move, so
+  the binding is never `#:blocking?`. A list of names (`by`, `on`,
+  `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
+  `const char **` table and every NUL-terminated string share one
+  `'atomic-interior` block, which the collector never moves. `_string-list` is
+  a `_fun` argument syntax, not a ctype, because a callout retains the values
+  it is given and not what a ctype converts them to: as a ctype the block
+  could be freed by a collection during a `#:blocking?` call or a callback.
+  `series-ref` reads a String value by length, through `series_copy_str`,
+  since a C string ends at a NUL the value may hold (Categorical and Enum
+  values still cross as C strings). A test in `resource.rkt` fails on `_string`, `_bytes`, `_path` or `_symbol`
+  as the element of a `_list`, `_vector`, `_array`, `_ptr` or `_box` type, as
+  a cstruct field, or in `define-series-constructors`, under
+  `polars/private`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which

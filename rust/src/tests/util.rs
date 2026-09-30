@@ -46,15 +46,41 @@ pub(super) fn make_bool(name: &str, values: &[u8]) -> *mut Series {
     s
 }
 
-pub(super) fn make_str(name: &str, values: &[&str]) -> *mut Series {
-    // series_new_str takes an array of `*const c_char`; keep the
-    // CStrings alive for the duration of the call.
-    let owned: Vec<CString> = values.iter().map(|v| cstr(v)).collect();
-    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
+/// Pack `values` as the Racket side does for `series_new_str_packed`: the
+/// UTF-8 back to back, one more offset than rows, one validity byte per row.
+pub(super) fn pack_strs(
+    values: &[Option<&str>],
+) -> (Vec<u8>, Vec<i64>, Vec<u8>) {
+    let mut buf = Vec::new();
+    let mut offsets = vec![0i64];
+    let mut valid = Vec::with_capacity(values.len());
+    for value in values {
+        buf.extend_from_slice(value.unwrap_or_default().as_bytes());
+        offsets.push(buf.len() as i64);
+        valid.push(value.is_some() as u8);
+    }
+    (buf, offsets, valid)
+}
+
+pub(super) fn make_opt_str(name: &str, values: &[Option<&str>]) -> *mut Series {
+    let (buf, offsets, valid) = pack_strs(values);
     let n = cstr(name);
-    let s = series_new_str(n.as_ptr(), ptrs.as_ptr(), ptrs.len());
-    assert!(!s.is_null());
+    let s = series_new_str_packed(
+        n.as_ptr(),
+        buf.as_ptr(),
+        buf.len(),
+        offsets.as_ptr(),
+        offsets.len(),
+        valid.as_ptr(),
+        valid.len(),
+    );
+    assert!(!s.is_null(), "series_new_str_packed returned null");
     s
+}
+
+pub(super) fn make_str(name: &str, values: &[&str]) -> *mut Series {
+    let values: Vec<Option<&str>> = values.iter().copied().map(Some).collect();
+    make_opt_str(name, &values)
 }
 
 pub(super) fn make_i64(name: &str, values: &[i64]) -> *mut Series {

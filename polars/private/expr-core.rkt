@@ -14,7 +14,8 @@
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring call/foreign-error enum-dtype?
                   owned-pointer-arg sort-flags-mismatch sort-flags/c)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/resource _string-list))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
@@ -129,7 +130,7 @@
 
 (define-compat expr-exclude/raw
   (_fun _Expr-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _Expr-ptr/null)
   #:c-id expr_exclude
@@ -145,7 +146,7 @@
       (error 'expr-exclude "operation failed")))
 
 (define-compat expr-dtype-col-enum/raw
-  (_fun (categories : (_list i _string/utf-8))
+  (_fun (categories : _string-list)
         (_size = (length categories))
         -> _Expr-ptr/null)
   #:c-id expr_dtype_col_enum
