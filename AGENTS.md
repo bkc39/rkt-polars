@@ -13,12 +13,14 @@ as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
 the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. `[profile.release]` in `rust/Cargo.toml`
-takes thin LTO with one codegen unit (#125), which keeps the committed Linux
-`.so` well under GitHub's 104,857,600-byte file limit (102.2 MB without it);
-the nix `rust` build's check phase runs `cargo test --profile release`, so its
-test binary and `rust/examples` are LTO-linked too. `panic` stays `unwind`:
-`guard_panic` depends on it.
+build uses that same rustc version. The committed candidates are built with
+`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
+unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
+104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
+uses it. The nix build, `cargo test` and the bench stay on `release`, because
+under LTO every test and example binary links on one core (the nix check went
+from 30 to 145 minutes on CI), so the bench measures the release build, not
+the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,

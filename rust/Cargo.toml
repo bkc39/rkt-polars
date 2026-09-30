@@ -18,8 +18,13 @@ polars = { version = "0.55.2", features = ["lazy", "parquet", "json", "cross_joi
 
 [profile.release]
 strip = "symbols"
-# Thin LTO keeps the committed Linux candidate under GitHub's 100 MiB file
-# limit (#125). guard_panic catches polars panics, so panics must unwind.
+# guard_panic catches polars panics, so panics must unwind.
+panic = "unwind"
+
+# The committed candidates (scripts/build-so.sh). Thin LTO keeps the Linux one
+# under GitHub's 100 MiB file limit (#125); nix and cargo test stay on release,
+# where LTO would link every test and example binary on one core.
+[profile.dist]
+inherits = "release"
 lto = "thin"
 codegen-units = 1
-panic = "unwind"

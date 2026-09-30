@@ -58,9 +58,9 @@ if [[ "$platform" == "linux" ]]; then
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
-      cargo build --release --locked \
+      cargo build --profile dist --locked \
         --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
-      cp /tmp/target/release/libcompat.so /out/
+      cp /tmp/target/dist/libcompat.so /out/
     '
   echo ">> staged $dest/$lib"
 else
@@ -68,10 +68,10 @@ else
   if command -v rustup >/dev/null 2>&1; then
     cargo+=("+$RUST_TOOLCHAIN")
   fi
-  echo ">> ${cargo[*]} build --release (manifest: rust/Cargo.toml)"
-  "${cargo[@]}" build --release --manifest-path "$ROOT/rust/Cargo.toml"
+  echo ">> ${cargo[*]} build --profile dist (manifest: rust/Cargo.toml)"
+  "${cargo[@]}" build --profile dist --manifest-path "$ROOT/rust/Cargo.toml"
 
-  built="$ROOT/rust/target/release/$lib"
+  built="$ROOT/rust/target/dist/$lib"
   if [[ ! -f "$built" ]]; then
     echo "error: expected build output not found: $built" >&2
     exit 1
