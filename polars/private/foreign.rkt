@@ -16,13 +16,14 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
-         (only-in polars/private/resource with-raw-buffer)
+         (only-in polars/private/resource _string-list with-raw-buffer)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
   (require rackunit))
 
-(provide (except-out (all-defined-out) series-sort dataframe-sort)
+(provide (except-out (all-defined-out)
+                     series-sort dataframe-sort series-ref-string strings->series)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -890,7 +891,43 @@
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
   (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t))))
 
-(define-series-constructors str _string "")
+;; The buffer and validity are GC memory the collector may move: never #:blocking?.
+(define-compat series-new-str/raw
+  (_fun _string _bytes _size _pointer _size _bytes _size -> _Series-ptr/null)
+  #:c-id series_new_str_packed
+  #:wrap (allocator series-drop))
+
+;; One UTF-8 buffer and row offsets, not a list of C strings: the collector
+;; moves strings while such a list is filled (#143).
+(define (strings->series who name strings)
+  (define count (length strings))
+  (define valid (and (contains-polars-null? strings) (make-bytes count 1)))
+  (with-raw-buffer ([offsets (add1 count) _int64])
+    (ptr-set! offsets _int64 0 0)
+    (define size
+      (for/fold ([end 0]) ([s (in-list strings)] [row (in-naturals)])
+        (define next
+          (cond
+            [(string? s) (+ end (string-utf-8-length s))]
+            [(polars-null? s) (bytes-set! valid row 0) end]
+            [else (raise-argument-error who "(or/c string? polars-null?)" s)]))
+        (ptr-set! offsets _int64 (add1 row) next)
+        next))
+    (define buf (make-bytes size))
+    (for/fold ([end 0]) ([s (in-list strings)] #:when (string? s))
+      (define utf-8 (string->bytes/utf-8 s))
+      (bytes-copy! buf end utf-8)
+      (+ end (bytes-length utf-8)))
+    (call/foreign-error
+     who
+     (lambda () (series-new-str/raw name buf size offsets (add1 count) valid (if valid count 0)))
+     "operation failed")))
+
+(define (series-new-str name strings)
+  (strings->series 'series-new-str name strings))
+
+(define (series-new-str/vec name strings)
+  (strings->series 'series-new-str/vec name (vector->list strings)))
 
 (module+ test
   (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
@@ -905,6 +942,16 @@
    #rx"contract violation"
    (λ ()
      (series-new-str "" '(symbol))))
+  (check-exn #rx"^series-new-str/vec: contract violation.*given: #f"
+             (lambda () (series-new-str/vec "" (vector "a" #f))))
+
+  (define mixed-strings
+    (list "héllo" polars-null "" "東京 😀" polars-null "a string past twelve bytes" "a\u0000b"))
+  (define mixed-series (series-new-str "mixed" mixed-strings))
+  (check-equal? (series-null-count mixed-series) 2)
+  (check-equal? (for/list ([i (in-range (series-len mixed-series))]) (series-ref mixed-series i))
+                mixed-strings)
+  (check-equal? (series-ref (series-new-str/vec "v" (list->vector mixed-strings)) 3) "東京 😀")
 
   (check-pred Series-ptr? (series-new-str/vec "" (vector "foo" "bar" "baz" "")))
   (check-equal?
@@ -1051,6 +1098,24 @@
 (define-compat series-copy-decimal
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
 
+(define-compat series-str-byte-len
+  (_fun _Series-ptr _size _size -> _int64))
+
+;; The buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-str
+  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
+
+;; By length, not as a C string, which would end at a NUL the value holds.
+(define (series-ref-string s index)
+  (define size (series-str-byte-len s index 1))
+  (cond
+    [(negative? size) #f]
+    [else
+     (define buf (make-bytes size))
+     (with-raw-buffer ([offsets 2 _int64])
+       (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
+            (bytes->string/utf-8 buf)))]))
+
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
         (arithmetic-shift (ptr-ref words _int64 (add1 (* 2 i))) 64))
@@ -1087,7 +1152,7 @@
         (when (zero? (CompatOptBool-valid value))
           (error 'series-ref "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
-       [(string) (require-ref-value dtype (series-ref-str/raw s index))]
+       [(string) (require-ref-value dtype (series-ref-string s index))]
        [(categorical enum)
         (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
        [(date)
@@ -1240,7 +1305,7 @@
 
 (define-compat series-cast-enum/raw
   (_fun _Series-ptr
-        (categories : (_list i _string/utf-8))
+        (categories : _string-list)
         (_size = (length categories))
         -> _Series-ptr/null)
   #:c-id series_cast_enum
@@ -1497,7 +1562,7 @@
 
 (define-compat dataframe-select/c
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_select
@@ -1508,7 +1573,7 @@
 
 (define-compat dataframe-drop-columns/c
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_drop_columns
@@ -1728,7 +1793,7 @@
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
@@ -1782,9 +1847,9 @@
 (define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
   (define-compat name
     (_fun _DataFrame-ptr
-          (by : (_list i _string))
+          (by : _string-list)
           (_size = (length by))
-          (agg : (_list i _string))
+          (agg : _string-list)
           (_size = (length agg))
           -> _DataFrame-ptr/null)
     #:c-id rust-id
@@ -1836,9 +1901,9 @@
 
 (define-compat dataframe-join/c
   (_fun _DataFrame-ptr _DataFrame-ptr
-        (left-on : (_list i _string))
+        (left-on : _string-list)
         (_size = (length left-on))
-        (right-on : (_list i _string))
+        (right-on : _string-list)
         (_size = (length right-on))
         _int32
         -> _DataFrame-ptr/null)
@@ -1883,9 +1948,9 @@
 
 (define-compat dataframe-join-asof-options/raw
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
-        (left-by : (_list i _string))
+        (left-by : _string-list)
         (_size = (length left-by))
-        (right-by : (_list i _string))
+        (right-by : _string-list)
         (_size = (length right-by))
         _int32
         _int64
@@ -1977,11 +2042,11 @@
 
 (define-compat dataframe-pivot/raw
   (_fun _DataFrame-ptr
-        (on : (_list i _string))
+        (on : _string-list)
         (_size = (length on))
-        (index : (_list i _string))
+        (index : _string-list)
         (_size = (length index))
-        (values : (_list i _string))
+        (values : _string-list)
         (_size = (length values))
         _int32
         -> _DataFrame-ptr/null)
@@ -1994,9 +2059,9 @@
 
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr
-        (on : (_list i _string))
+        (on : _string-list)
         (_size = (length on))
-        (index : (_list i _string))
+        (index : _string-list)
         (_size = (length index))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_unpivot

@@ -25,6 +25,7 @@
                   dataframe-drop
                   frame-sort/c sort-flags
                   _CompatDType ->compat-dtype enum-dtype?)
+         (only-in polars/private/resource _string-list)
          syntax/parse/define)
 
 (module+ test
@@ -767,7 +768,7 @@
 
 (define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
@@ -844,9 +845,9 @@
 
 (define-compat lazyframe-join/c
   (_fun _LazyFrame-ptr _LazyFrame-ptr
-        (left-on : (_list i _string))
+        (left-on : _string-list)
         (_size = (length left-on))
-        (right-on : (_list i _string))
+        (right-on : _string-list)
         (_size = (length right-on))
         _int32
         -> _LazyFrame-ptr)
@@ -876,7 +877,7 @@
 
 (define-compat expr-cast-enum/raw
   (_fun _Expr-ptr
-        (categories : (_list i _string/utf-8))
+        (categories : _string-list)
         (_size = (length categories))
         -> _Expr-ptr/null)
   #:c-id expr_cast_enum

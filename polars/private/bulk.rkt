@@ -14,8 +14,8 @@
          (only-in polars/private/foreign
                   _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
                   dataframe-height decimal-ref define-compat duration-value->period
-                  polars-null series-copy-decimal series-drop series-dtype series-len
-                  series-name series-null-count)
+                  polars-null series-copy-decimal series-copy-str series-drop series-dtype
+                  series-len series-name series-null-count series-str-byte-len)
          (only-in polars/private/resource with-raw-buffer with-release))
 
 (provide check-column-names
@@ -38,12 +38,6 @@
   series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
-
-(define-compat series-str-byte-len
-  (_fun _Series-ptr _size _size -> _int64))
-
-(define-compat series-copy-str
-  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
 
 (define-compat series-copy-cat
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
@@ -310,7 +304,8 @@
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
                     series-cast series-drop-count series-head series-new-i64 series-new-str
-                    series-ref))
+                    series-new-str/vec series-ref)
+           (only-in polars/private/gc-pressure call-with-collections))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -330,6 +325,21 @@
     (define refs (for/list ([i (in-range n)]) (series-ref s i)))
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
     (check-equal? (series->list s) refs))
+
+  (define many-strings
+    (for/list ([i (in-range 300000)])
+      (case (modulo i 5)
+        [(0) polars-null]
+        [(1) ""]
+        [(2) (format "ünïcödé ~a 東京 😀" i)]
+        [(3) (string #\a #\nul #\b)]
+        [else (number->string i)])))
+  (for ([build (list series-new-str
+                     (lambda (name strings) (series-new-str/vec name (list->vector strings))))])
+    (define-values (many-series collections)
+      (call-with-collections (lambda () (build "many" many-strings))))
+    (check > collections 1)
+    (check-equal? (series->list many-series) many-strings))
 
   (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
   (define (released-by thunk)

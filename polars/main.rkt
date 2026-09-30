@@ -27,7 +27,8 @@
                      allocator/or-fail call/foreign-error dataframe-drop-count
                      last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
                      prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
-                     series-sort/raw sort-flags sort-flags/c sort-flags-mismatch)
+                     series-copy-str series-sort/raw series-str-byte-len sort-flags sort-flags/c
+                     sort-flags-mismatch)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
