@@ -411,6 +411,25 @@ total
 (head nums 2)
 (tail nums 2)]}
 
+@deftogether[(@defproc[(unique [x (or/c series? dataframe?)]) (or/c series? dataframe?)]
+              @defproc[(drop-nulls [x (or/c series? dataframe? Expr-ptr?)]) any/c])]{
+  @racket[unique] keeps one of each distinct value of a series, or one of each
+  distinct row of a frame, in no promised order (Polars' @tt{unique} with its
+  defaults). @racket[drop-nulls] removes a series' nulls, or every row of a
+  frame that holds a null (@tt{drop_nulls}); on an expression it changes the
+  length and belongs inside @racket[select]. API gap: @racket[unique] takes
+  no @tt{subset}, @tt{keep} or @tt{maintain_order}, and @racket[drop-nulls]
+  no @tt{subset} (#134).
+
+  @examples[#:eval ev
+(define dups
+  (dataframe (list (series (list 1 1 2 polars-null) #:name "v")
+                   (series '("a" "a" "b" "c") #:name "w"))))
+(sort (unique dups) "v")
+(series->list (drop-nulls (ref dups "v")))
+(drop-nulls dups)
+(eval:error (unique '(1 1 2)))]}
+
 @defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
   Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
   to @racketmodname[racket/list]'s @racketid[drop].}

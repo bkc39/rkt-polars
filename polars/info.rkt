@@ -8,7 +8,7 @@
 
 (define deps '("base" "gregor-lib" "threading-lib"))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"
-                      "sandbox-lib"))
+                      "sandbox-lib" "plot-lib" "plot-gui-lib" "plot-doc"))
 
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 

@@ -11,6 +11,10 @@ the project repository, paired with the equivalent Python program:
   python user-guide/getting-started/expressions_and_contexts.py
 }|
 
+The exception is the closing case study, @secref["nycflights"], which replays
+a blog post rather than an upstream page; @tt{examples/68-nycflights-replay.rkt}
+runs its main steps as a script.
+
 Snippets use the fluent, thread-first style: each verb takes the frame --- or
 the expression --- as its first argument, and @racket[~>] (re-provided by
 @racketmodname[polars]) chains them, within an expression as much as across
@@ -23,3 +27,4 @@ mentioned, see the @secref["reference"].
 @include-section["guide/expressions.scrbl"]
 @include-section["guide/io.scrbl"]
 @include-section["guide/interop.scrbl"]
+@include-section["guide/nycflights.scrbl"]
