@@ -168,19 +168,7 @@ pub extern "C" fn expr_sort_with_options(
     let opts = SortOptions::default()
         .with_order_descending(descending != 0)
         .with_nulls_last(nulls_last != 0);
-    // A group-wise `apply` sees each group's dtype, so `sort_series` can route
-    // around the `sort_with` defects; the default sort has none of them.
-    let sorted = if opts.descending || opts.nulls_last {
-        inner.apply(
-            move |c| {
-                sort_series(c.as_materialized_series(), opts).map(Column::from)
-            },
-            |_, field| Ok(field.clone()),
-        )
-    } else {
-        inner.sort(opts)
-    };
-    Box::into_raw(Box::new(sorted))
+    Box::into_raw(Box::new(inner.sort(opts)))
 }
 
 // LazyGroupBy::agg consumes self and LazyGroupBy is not Clone, which

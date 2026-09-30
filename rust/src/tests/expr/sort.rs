@@ -51,6 +51,59 @@ fn expr_sort_places_nulls_by_flag() {
 }
 
 #[test]
+fn expr_sort_prints_as_the_crate_sort() {
+    let cases = [(0, 0, "asc"), (0, 1, "asc"), (1, 0, "desc"), (1, 1, "desc")];
+    for (descending, nulls_last, order) in cases {
+        let b = column("b");
+        let sorted = expr_sort_with_options(b, descending, nulls_last);
+        assert_eq!(
+            take_cstring(expr_to_string(sorted)),
+            format!("col(\"b\").sort({order})")
+        );
+        expr_drop(sorted);
+        expr_drop(b);
+    }
+}
+
+#[test]
+fn expr_sort_of_an_aggregated_input_keeps_one_value_per_group() {
+    let g = make_str("g", &["a", "b", "a", "b", "b"]);
+    let v = make_i64("v", &[1, 10, 2, 20, 30]);
+    let df = make_df(&[g, v]);
+    let (key, value) = (column("g"), column("v"));
+    let total = expr_sum(value);
+    let sorted = expr_sort_with_options(total, 1, 1);
+    let named = aliased(sorted, "s");
+    let keys: [*const Expr; 1] = [key];
+    let aggs: [*const Expr; 1] = [named];
+    let lf = dataframe_lazy(df);
+    let grouped =
+        lazyframe_group_by_agg(lf, keys.as_ptr(), 1, aggs.as_ptr(), 1);
+    let g_name = cstr("g");
+    let by: [*const c_char; 1] = [g_name.as_ptr()];
+    let out = collect_plan(lazyframe_sort_with_options(
+        grouped,
+        by.as_ptr(),
+        [0].as_ptr(),
+        [0].as_ptr(),
+        1,
+        0,
+    ));
+    let s = unsafe { &*out }.column("s").unwrap();
+    assert_eq!(s.dtype(), &DataType::Int64);
+    assert_eq!(read_i64_col(out, "s"), vec![3, 60]);
+    dataframe_drop(out);
+    lazyframe_drop(grouped);
+    lazyframe_drop(lf);
+    for e in [named, sorted, total, value, key] {
+        expr_drop(e);
+    }
+    dataframe_drop(df);
+    series_drop(g);
+    series_drop(v);
+}
+
+#[test]
 fn expr_sort_by_places_nulls_per_key() {
     let (df, cols) = frame();
     let (a, b) = (column("a"), column("b"));

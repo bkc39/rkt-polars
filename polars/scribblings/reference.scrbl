@@ -320,6 +320,7 @@ total
       #:descending '(#f #t) #:nulls-last '(#f #t) #:maintain-order #t)
 (~> flights lazy (sort "delay" #:nulls-last #t) collect)
 (sort (ref flights #:columns "delay") #:descending #t #:nulls-last #t)
+(sort "delay" #:descending #t #:nulls-last #t)
 (select flights (sort "delay" #:nulls-last #t))
 (sort '(3 1 2) <)
 (eval:error (sort '(3 1 2) < #:descending #t))]}

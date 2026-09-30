@@ -133,8 +133,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
   did so on a nulls-last boolean sort and a null-dtype `arg_sort`; 0.55.2
-  does neither, `rust/src/tests/crate_sort.rs`, and #108 removes the
-  routing around them).
+  does neither, and `rust/src/tests/crate_sort.rs` pins that, so the sorts
+  call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
