@@ -4,7 +4,12 @@
 ;; prop:custom-write).  Operates on the raw FFI series (a wrapped series marshals
 ;; through), so this is a leaf with no dependency on the wrapper core.
 
-(require racket/list
+(require (only-in gregor
+                  ->date ->nanoseconds ->time date->iso8601 date? datetime?)
+         (only-in gregor/period period-ref)
+         (only-in gregor/time time? time->iso8601)
+         (only-in racket/format ~r)
+         racket/list
          racket/string
          polars/private/foreign)
 
@@ -35,9 +40,51 @@
      (format "duration[~a]" (tu->label (cadr dt)))]
     [else (format "~a" dt)]))
 
+(define (clock->cell t)
+  (define ns (->nanoseconds t))
+  (define whole (car (string-split (time->iso8601 t) ".")))
+  (define digits
+    (cond [(zero? ns) 0]
+          [(zero? (remainder ns 1000000)) 3]
+          [(zero? (remainder ns 1000)) 6]
+          [else 9]))
+  (if (zero? digits)
+      whole
+      (string-append whole "." (substring (~r ns #:min-width 9 #:pad-string "0") 0 digits))))
+
+(define (duration->cell v unit)
+  (define-values (sizes zero fraction-labels)
+    (case unit
+      [(nanoseconds) (values '(86400000000000 3600000000000 60000000000 1000000000)
+                             "0ns" '("ns" "µs" "ms"))]
+      [(milliseconds) (values '(86400000 3600000 60000 1000) "0ms" '("ms" "" ""))]
+      [else (values '(86400000000 3600000000 60000000 1000000) "0µs" '("µs" "ms" ""))]))
+  (define (whole-parts)
+    (for/list ([size (in-list sizes)]
+               [above (in-list (cons #f sizes))]
+               [label (in-list '("d" "h" "m" "s"))]
+               #:unless (zero? (quotient (if above (remainder v above) v) size)))
+      (string-append (number->string (quotient (if above (remainder v above) v) size))
+                     label
+                     (if (zero? (remainder v size)) "" " "))))
+  (define (fraction-part)
+    (define f (remainder v (last sizes)))
+    (cond
+      [(zero? f) ""]
+      [(not (zero? (remainder f 1000))) (format "~a~a" f (first fraction-labels))]
+      [(not (zero? (remainder f 1000000))) (format "~a~a" (quotient f 1000) (second fraction-labels))]
+      [else (format "~a~a" (quotient f 1000000) (third fraction-labels))]))
+  (if (zero? v)
+      zero
+      (string-append (string-append* (whole-parts)) (fraction-part))))
+
 (define (value->cell v dt)
   (cond
     [(polars-null? v) "null"]
+    [(and (pair? dt) (eq? (car dt) 'duration)) (duration->cell (period-ref v (cadr dt)) (cadr dt))]
+    [(date? v) (date->iso8601 v)]
+    [(time? v) (clock->cell v)]
+    [(datetime? v) (string-append (date->iso8601 (->date v)) " " (clock->cell (->time v)))]
     [(string? v) (format "~s" v)]      ; quoted, like Polars
     [(symbol? v) (format "~s" (symbol->string v))]
     [(and (decimal-dtype? dt) (positive? (caddr dt))) (real->decimal-string v (caddr dt))]
@@ -81,4 +128,20 @@
   (check-equal? (series->string (series-cast bears 'categorical))
                 "shape: (2,)\nSeries: 'bears' [cat]\n[\n\t\"Polar\"\n\t\"Brown\"\n]")
   (check-true (regexp-match? #rx"\\[enum\\]"
-                             (series->string (series-cast bears '(enum Brown Polar))))))
+                             (series->string (series-cast bears '(enum Brown Polar)))))
+  (define (cells s) (cdddr (string-split (series->string s) #rx"\n\t?")))
+  (check-equal? (cells (series-cast (series-new-i32 "d" '(15706 -1)) 'date))
+                '("2013-01-01" "1969-12-31" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "t" '(0 1500000000 1000 1)) 'time))
+                '("00:00:00" "00:00:01.500" "00:00:00.000001" "00:00:00.000000001" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "dt" (list 1500 -1 polars-null))
+                                    '(datetime milliseconds)))
+                '("1970-01-01 00:00:01.500" "1969-12-31 23:59:59.999" "null" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "d" (list 0 5400000000 129600000000 -1500
+                                                              86400000001 polars-null))
+                                    '(duration microseconds)))
+                '("0µs" "1h 30m" "1d 12h" "-1500µs" "1d 1µs" "null" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "d" '(1500 61000000000)) '(duration nanoseconds)))
+                '("1500ns" "1m 1s" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "d" '(1500 0)) '(duration milliseconds)))
+                '("1s 500ms" "0ms" "]")))

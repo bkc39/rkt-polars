@@ -26,7 +26,7 @@ print(gappy.fill_null(0).to_list())
 people = pl.DataFrame(
     {
         "name": ["Alice Archer", "Ben Brown"],
-        "birthdate": [dt.datetime(1997, 1, 10, 8, 30), dt.datetime(1985, 2, 15, 17, 0)],
+        "birthdate": [dt.datetime(1997, 1, 10, 8, 30, 0, 250000), dt.datetime(1985, 2, 15, 17, 0)],
         "weight": [57.9, 72.5],
         "parent": [True, False],
     }

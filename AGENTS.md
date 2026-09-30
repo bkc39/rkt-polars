@@ -224,9 +224,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
-- `series` infers int64 / float64 / string / datetime / bool, and a list of
-  symbols infers `'categorical`. It cannot build a `date` column from gregor
-  `date`s (#63), and `lit` rejects gregor values.
+- `series` infers int64 / float64 / string / bool, `'categorical` from a list
+  of symbols, and the temporal dtypes from gregor values (#63): `'date`,
+  `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
+  a `period` without years or months (a day is 24 hours). A datetime or period
+  that carries nanoseconds makes the column nanoseconds instead, where
+  Python's `datetime` stops at microseconds; `#:dtype` floors a finer part, as
+  a polars cast does. `lit`, and so every comparison, `is-between` and
+  `is-in`, takes the same values as literals of the same dtypes
+  (`expr_lit_temporal`). Both refuse a gregor `moment`: time-zone-aware
+  datetimes have no surface yet (polars' `timezones` feature is off, and a
+  zoned column's dtype prints `todo-timezone`).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
   `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
   datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define
@@ -240,9 +248,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.
-- `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
-  datetimes to whole seconds (#100); the conversions raise on an unsupported
-  dtype, `binary` included (#99), even when every entry is null.
+- `ref` and the bulk conversions (`series->list`, `in-series`, …) return a
+  datetime with its column's full precision (#100), as the gregor `datetime`
+  of that instant, where Python's `to_list` stops at microseconds; `ref` reads
+  the physical value through the bulk copy, so the two cannot disagree. The
+  conversions raise on an unsupported dtype, `binary` included (#99), even
+  when every entry is null.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks

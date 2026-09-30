@@ -5,8 +5,6 @@
                   _uint16 _uint32 _uint64 _uint8 ptr-ref)
          (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
-         (only-in gregor jdn->date posix->datetime)
-         (only-in gregor/time time)
          (only-in racket/match match)
          (only-in syntax/parse/define define-syntax-parse-rule)
          (for-syntax (only-in syntax/parse expr id))
@@ -14,9 +12,10 @@
          (only-in polars/private/foreign
                   _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
                   dataframe-height decimal-ref define-compat duration-value->period
-                  polars-null series-copy-decimal series-drop series-dtype series-len
-                  series-name series-null-count)
-         (only-in polars/private/resource with-raw-buffer with-release))
+                  polars-null series-copy-decimal series-copy-i64 series-drop series-dtype
+                  series-len series-name series-null-count)
+         (only-in polars/private/resource with-raw-buffer with-release)
+         (only-in polars/private/temporal days->date epoch->datetime nanoseconds->time))
 
 (provide check-column-names
          dataframe->columns
@@ -35,7 +34,7 @@
     ...))
 
 (define-copies
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
+  series-copy-i8 series-copy-i16 series-copy-i32
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
 
@@ -55,27 +54,6 @@
         (dst : _f64vector) (_size = (f64vector-length dst))
         (offset : _size) (stride : _size) (null-value : _double)
         -> _int64))
-
-(define unix-epoch-jdn 2440588)
-
-(define (days->date days)
-  (jdn->date (+ days unix-epoch-jdn)))
-
-(define (per-second unit)
-  (case unit
-    [(nanoseconds) 1000000000]
-    [(microseconds) 1000000]
-    [else 1000]))
-
-(define (epoch->datetime unit value)
-  (define k (per-second unit))
-  (posix->datetime (quotient (- value (modulo value k)) k)))
-
-(define (nanoseconds->time value)
-  (define-values (seconds nanosecond) (quotient/remainder value 1000000000))
-  (define-values (minutes second) (quotient/remainder seconds 60))
-  (define-values (hour minute) (quotient/remainder minutes 60))
-  (time hour minute second nanosecond))
 
 (define (convertible? dtype)
   (match dtype

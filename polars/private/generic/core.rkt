@@ -199,7 +199,7 @@
   (check-equal? (series-dtype (series '(1.0 2.0))) 'float64)
   (check-equal? (series-dtype (series '("a" "b"))) 'string)
   (check-equal? (series-dtype (series '(#t #f))) 'boolean)
-  (check-equal? (series-dtype (series (list (datetime 2024 1 1)))) '(datetime milliseconds #f))
+  (check-equal? (series-dtype (series (list (datetime 2024 1 1)))) '(datetime microseconds #f))
   (check-equal? (series-dtype (series (vector 1 2 3) #:dtype 'f64)) 'float64)
   (check-exn #rx"series: unsupported dtype '\\(datetime weeks\\)"
              (lambda () (series '(1) #:dtype '(datetime weeks))))
@@ -292,3 +292,48 @@
                 1)
   (check-pred void? (begin (lazyframe-drop (wrap-lazyframe (dataframe-lazy frame)))
                            (settle!))))
+
+(module+ test
+  (require (only-in gregor date moment)
+           (only-in gregor/period days hours microseconds milliseconds months nanoseconds)
+           (only-in gregor/time time))
+  (define (round-trip elements [dtype #f])
+    (define s (if dtype (series elements #:dtype dtype) (series elements)))
+    (list (series-dtype s) (for/list ([x s]) x)))
+
+  (define ymds (list (date 2013 1 1) polars-null (date -1300 5 23) (date 1969 12 31)))
+  (check-equal? (round-trip ymds) (list 'date ymds))
+  (check-equal? (round-trip (list->vector ymds)) (list 'date ymds))
+  (check-equal? (round-trip ymds 'date) (list 'date ymds))
+  (define clocks (list (time 5 6 7 123456789) polars-null (time 0)))
+  (check-equal? (round-trip clocks) (list 'time clocks))
+  (define stamps (list (datetime 2013 1 1 5 6 7 123456000) polars-null (datetime 1969 12 31 23 59 59)))
+  (check-equal? (round-trip stamps) (list '(datetime microseconds #f) stamps))
+  (check-equal? (round-trip (list (datetime 2024 1 1 0 0 0 1) (datetime 2024)))
+                (list '(datetime nanoseconds #f) (list (datetime 2024 1 1 0 0 0 1) (datetime 2024))))
+  (check-equal? (round-trip stamps 'datetime) (list '(datetime microseconds #f) stamps))
+  (check-equal? (round-trip (list (datetime 1969 12 31 23 59 59 999500000))
+                            '(datetime milliseconds))
+                (list '(datetime milliseconds #f) (list (datetime 1969 12 31 23 59 59 999000000))))
+  (check-equal? (round-trip (list (hours 1) polars-null (milliseconds -1500)))
+                (list '(duration microseconds)
+                      (list (microseconds 3600000000) polars-null (microseconds -1500000))))
+  (check-equal? (round-trip (list (nanoseconds 1500) (days 1)))
+                (list '(duration nanoseconds)
+                      (list (nanoseconds 1500) (nanoseconds 86400000000000))))
+  (check-equal? (round-trip (list (milliseconds 1500)) '(duration milliseconds))
+                (list '(duration milliseconds) (list (milliseconds 1500))))
+  (check-equal? (round-trip (list polars-null) 'date) (list 'date (list polars-null)))
+
+  (check-exn #rx"cannot infer a dtype" (lambda () (series (list (date 2024 1 2) (datetime 2024)))))
+  (check-exn #rx"cannot infer a dtype" (lambda () (series (list (months 1)))))
+  (check-exn #rx"^series: a moment carries a time zone"
+             (lambda () (series (list (moment 2024 1 2 #:tz "Europe/Paris")))))
+  (check-exn #rx"^series: a moment carries a time zone"
+             (lambda () (series (list (moment 2024 1 2 #:tz "UTC")) #:dtype 'datetime)))
+  (check-exn #rx"^series: expected a gregor date for this dtype\n  dtype: 'date\n  value: \"2024-01-02\""
+             (lambda () (series '("2024-01-02") #:dtype 'date)))
+  (check-exn #rx"^series: expected a gregor period without years or months"
+             (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
+  (check-exn #rx"^series: value out of range for this dtype"
+             (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f)))))

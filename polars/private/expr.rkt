@@ -25,6 +25,8 @@
                   dataframe-drop
                   frame-sort/c sort-flags
                   _CompatDType ->compat-dtype enum-dtype?)
+         (only-in polars/private/series series-new-temporal)
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define)
 
 (module+ test
@@ -423,7 +425,7 @@
   #:wrap (allocator expr-drop))
 
 ;; The right-hand side may be an Expr, a Series, or a Racket list of
-;; homogeneous scalars (ints / reals / strings / symbols / booleans).
+;; homogeneous scalars (ints / reals / strings / symbols / booleans / gregor values).
 (define (->membership-expr who rhs)
   (cond
     [(Expr-ptr? rhs) rhs]
@@ -437,7 +439,9 @@
          [(andmap string? rhs) (series-new-str "" rhs)]
          [(andmap symbol? rhs) (series-new-str "" (map symbol->string rhs))]
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
-         [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans, got ~v" rhs)]))
+         [(temporal-values-dtype rhs)
+          => (lambda (dtype) (series-new-temporal who "" rhs dtype))]
+         [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
 
