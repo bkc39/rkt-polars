@@ -224,6 +224,127 @@ selector, by regexp or by dtype, nothing.
 (eval:error (meta-output-name (col 'bool)))
 ]
 
+@section[#:tag "expressions-categoricals"]{Categorical data and enums}
+
+A column of strings drawn from a small set can be stored as a dictionary:
+each distinct string once, a code per row. An Enum declares its categories,
+in order, up front; a categorical infers them as data arrives. Prefer an
+Enum when the categories are known. Both read back as symbols. See
+@secref["ref-categorical"].
+
+@subsection[#:tag "categoricals-enum"]{Data type Enum}
+
+@subsubsection[#:tag "categoricals-enum-creating"]{Creating an Enum}
+
+@examples[#:eval ev #:label #f
+(define-enum bears-enum Polar Panda Brown)
+(define bears (series '(Polar Panda Brown Brown Polar) #:dtype bears-enum))
+bears
+]
+
+@subsubsection[#:tag "categoricals-enum-invalid"]{Invalid values}
+
+@examples[#:eval ev #:label #f
+(eval:error (series '(Polar Panda Brown Polar Shark) #:dtype bears-enum))
+]
+
+@subsubsection[#:tag "categoricals-enum-order"]{Category ordering and comparison}
+
+An Enum sorts and compares in the order of its categories.
+
+@examples[#:eval ev #:label #f
+(define-enum log-levels debug info warning error)
+(define logs
+  (dataframe
+   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
+         (series '("process id: 525" "Service started correctly"
+                   "startup time: 67ms" "Cannot connect to DB!")
+                 #:name "message"))))
+(define non-debug-logs (filter logs (> (col "level") 'debug)))
+non-debug-logs
+]
+
+A value outside the categories is an error:
+
+@examples[#:eval ev #:label #f
+(eval:error (select logs (> (col "level") "Pretty bad")))
+]
+
+An Enum compares with an Enum, or with strings that are its categories:
+
+@examples[#:eval ev #:label #f
+(define str-series (series '("info" "debug" "debug" "error")))
+(= (ref logs "level") str-series)
+]
+
+@subsection[#:tag "categoricals-categorical"]{Data type Categorical}
+
+@subsubsection[#:tag "categoricals-categorical-creating"]{Creating a Categorical series}
+
+@examples[#:eval ev #:label #f
+(define bears-cat (series '(Polar Panda Brown Brown Polar) #:dtype 'categorical))
+bears-cat
+(dtype (series '(Polar Panda)))
+]
+
+@subsubsection[#:tag "categoricals-categories"]{Using Categories objects}
+
+API gap: no @tt{pl.Categories}. Every categorical column shares Polars' one
+global mapping.
+
+@subsubsection[#:tag "categoricals-lexical"]{Lexical comparison with strings}
+
+A categorical compares with strings by the strings, not by the codes:
+
+@examples[#:eval ev #:label #f
+(~> (dataframe (list (rename bears-cat "categorical")))
+    (with-columns (alias (< (col "categorical") "Cat") "categorical < \"Cat\"")))
+(~> (dataframe (list (rename bears-cat "categorical")
+                     (series '("Panda" "Brown" "Brown" "Polar" "Polar") #:name "string")))
+    (with-columns (alias (= (col "categorical") (col "string")) "categorical == string")))
+]
+
+@subsubsection[#:tag "categoricals-combining"]{Combining categorical columns}
+
+Categorical columns share the global mapping, so they stack with no
+re-encoding:
+
+@examples[#:eval ev #:label #f
+(define male-bears
+  (dataframe (list (series '(Polar Brown Panda) #:name "species")
+                   (series '(450 500 110) #:name "weight"))))
+(define female-bears
+  (dataframe (list (series '(Brown Polar Panda) #:name "species")
+                   (series '(340 200 90) #:name "weight"))))
+(vstack male-bears female-bears)
+]
+
+@subsection[#:tag "categoricals-performance"]{Performance considerations}
+
+@subsubsection[#:tag "categoricals-encodings"]{Encodings}
+
+The codes are small integers, so grouping, joining and comparing work on
+integers, not strings. They stay inside Polars: Racket sees symbols, which
+Racket interns, so a conversion builds one symbol per distinct string.
+
+@subsubsection[#:tag "categoricals-enum-encodings"]{Enum encodings are fixed}
+
+An Enum's codes follow its declared categories, so two columns of one Enum
+share an encoding and need no re-encoding.
+
+@subsubsection[#:tag "categoricals-categorical-encodings"]{Categorical encodings}
+
+A categorical's codes come from the global mapping in order of first
+appearance, across every categorical column in the process; the mapping
+restarts once the last categorical column is gone. API gap: no
+@tt{Series.extend}, so stack one-column frames:
+
+@examples[#:eval ev #:label #f
+(define cat-bears (series '(Polar Panda Brown Brown Polar) #:dtype 'categorical))
+(define cat2-series (series '(Panda Brown Brown Polar Polar) #:dtype 'categorical))
+(ref (vstack (dataframe (list cat-bears)) (dataframe (list cat2-series))) 0)
+]
+
 @section[#:tag "expressions-window"]{Window functions}
 
 A window function computes an expression within groups and maps the result
@@ -231,24 +352,24 @@ back onto the rows, so the frame keeps its height. The Pokémon below are the
 first rows of upstream's table.
 
 @examples[#:eval ev #:label #f
+(define-enum types
+  Grass Water Fire Normal Ground Electric Psychic Fighting Bug Steel
+  Flying Dragon Dark Ghost Poison Rock Ice Fairy)
 (define pokemon
   (dataframe
    (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
                    "Charizard" "Mega Charizard X" "Squirtle"
                    "Wartortle" "Blastoise")
                  #:name "Name")
-         (series '("Grass" "Grass" "Grass" "Fire" "Fire" "Fire" "Fire"
-                   "Water" "Water" "Water")
-                 #:name "Type 1")
-         (series (list "Poison" "Poison" "Poison" polars-null polars-null
-                       "Flying" "Dragon" polars-null polars-null polars-null)
-                 #:name "Type 2")
+         (series '(Grass Grass Grass Fire Fire Fire Fire Water Water Water)
+                 #:name "Type 1" #:dtype types)
+         (series (list 'Poison 'Poison 'Poison polars-null polars-null
+                       'Flying 'Dragon polars-null polars-null polars-null)
+                 #:name "Type 2" #:dtype types)
          (series '(49 62 82 52 64 84 130 48 63 83) #:name "Attack")
          (series '(45 60 80 65 80 100 100 43 58 78) #:name "Speed"))))
 pokemon
 ]
-
-API gap: no @tt{Enum} dtype, so the types are strings.
 
 @subsection[#:tag "window-per-group"]{Operations per group}
 

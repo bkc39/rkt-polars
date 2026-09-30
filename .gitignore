@@ -13,6 +13,8 @@ polars/private/compat/target/
 # per-platform prebuilt candidates that pkgs.rkt-lang.org installs from.
 polars/native-libs/libcompat.*
 !polars/native-libs/candidates/
+# CI's record of the rust/ tree a candidate artifact was built from.
+polars/native-libs/candidates/*/rust-tree
 result
 .racket-user/
 

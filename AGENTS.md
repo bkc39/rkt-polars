@@ -6,8 +6,9 @@
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 **0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
 macOS arm64 ship with the package, so users need no Rust toolchain. The
-`dtype-decimal` feature is on only because polars' `sign` does not compile
-without it (#106); Decimal is not surfaced. polars' `nightly` feature is on,
+`dtype-decimal` feature is on because polars' `sign` does not compile
+without it (#106); Decimal columns are read (from Parquet), not built.
+`dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
 as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
@@ -100,8 +101,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
   `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
-  (#47). `require-series-result` and `require-dataframe-result` are the
-  remaining hand-written copies (#72).
+  (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
+  <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
+  `who: operation failed` itself, so no wrapper is needed. A test in
+  `foreign.rkt` reads every `define-compat` under `polars/private` and fails
+  on one of these four result types without its allocator, or on a
+  `_pointer` result.
+- The `series`, `dataframe` and `lazyframe` wrappers carry
+  `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
+  release the pointer the allocator registered, once. A new wrapper struct
+  around an allocated pointer needs the property too.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
@@ -112,8 +121,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options` and `series_sort_with_options` — or it
-  attaches a stale reason from an unrelated call. `call/foreign-error`
+  `dataframe_sort_with_options`, `series_sort_with_options` and the three
+  Enum entry points (`series_cast_enum`, `expr_cast_enum`,
+  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
+  call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, ...).
 - **A polars panic becomes the failure reason, not an abort.** A panic that
@@ -125,19 +136,33 @@ it. Racket side: `define-compat` with `#:c-id`.
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `dataframe_sort_with_options` and
-  `series_sort_with_options` do.
+  `lazyframe_collect`, `dataframe_sort_with_options`,
+  `series_sort_with_options`, `series_cast_enum` and the IO helpers
+  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free, and a pairing test checks that an explicit
-  drop releases a frame exactly once.
+  otherwise observe a native free (`foreign.rkt` has a case for each Series-
+  and DataFrame-returning binding but the file readers, and `bulk.rkt` one for
+  `series_copy_cat`), and pairing tests
+  check that an explicit drop, of a pointer or a wrapper, releases it exactly
+  once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
-  Racket allocated: a raw buffer of the column's native type (`malloc 'raw`,
-  paired `allocator`/`deallocator`, freed as soon as the conversion returns),
-  byte strings, and the `f64vector` a caller gets back. The last two may move:
-  those bindings are never `#:blocking?`. Every destination travels with its
+  Racket allocated: a raw buffer of the column's native type (bound with
+  `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
+  and the `f64vector` a caller gets back. `series_copy_cat` also returns the
+  copy's category strings as a new series, held with `with-release` while the
+  conversion reads them. The byte strings and the `f64vector` may move: those
+  bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
+- **A scoped native resource is never paired by hand.** A buffer or owned
+  result used only for the length of a computation is bound with
+  `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
+  expand into `dynamic-wind`, so the release runs on return, raise and
+  escape; the buffer's finalizer backs up a thread killed inside the extent.
+  No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
+  fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`), so a stale library fails at load, when
@@ -204,8 +229,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
-- `series` infers int64 / float64 / string / datetime / bool. It cannot build a
-  `date` column from gregor `date`s (#63), and `lit` rejects gregor values.
+- `series` infers int64 / float64 / string / datetime / bool, and a list of
+  symbols infers `'categorical`. It cannot build a `date` column from gregor
+  `date`s (#63), and `lit` rejects gregor values.
+- Categorical and Enum values surface as symbols (`ref`, every conversion);
+  `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
+  datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define
+  one with `(define-enum id category ...)`, which checks the categories at
+  compile time and binds that datum. Every categorical shares polars'
+  one global mapping (no named `Categories`), whose codes restart when the
+  last categorical column drops: the codes never leave Rust, and
+  `series_copy_cat` re-encodes each copy densely with its own category table.
+  A cast to an Enum is strict, as Python's default is; every other `cast`
+  stays non-strict (a value that does not convert becomes null).
+- A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
+  `array_width` and `time_unit`; its values read as exact rationals. It has no
+  `#:dtype` or cast-target spelling.
 - `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
   datetimes to whole seconds (#100); the conversions raise on an unsupported
   dtype, `binary` included (#99), even when every entry is null.

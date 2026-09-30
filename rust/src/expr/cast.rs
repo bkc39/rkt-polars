@@ -13,3 +13,19 @@ pub extern "C" fn expr_cast(e: *mut Expr, target: CompatDType) -> *mut Expr {
     let e_ref = unsafe { (*e).clone() };
     Box::into_raw(Box::new(e_ref.cast(dt)))
 }
+
+#[no_mangle]
+pub extern "C" fn expr_cast_enum(
+    e: *const Expr,
+    categories: *const *const c_char,
+    n: usize,
+) -> *mut Expr {
+    clear_last_error();
+    let Some(e) = (unsafe { e.as_ref() }) else {
+        set_last_error("expression is null");
+        return ptr::null_mut();
+    };
+    enum_dtype(categories, n).map_or(ptr::null_mut(), |dtype| {
+        Box::into_raw(Box::new(e.clone().strict_cast(dtype)))
+    })
+}

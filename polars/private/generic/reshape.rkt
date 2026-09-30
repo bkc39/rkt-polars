@@ -320,6 +320,33 @@
   (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
     (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
 
+  ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
+  (define flights
+    (dataframe (list (series '("UA" "AA" "UA" "B6") #:name "carrier")
+                     (series '("IAH" "MIA" "IAH" "JFK") #:name "dest")
+                     (series '(10 20 30 40) #:name "n"))))
+  (define coded (with-columns flights (cast "carrier" 'categorical)
+                  (cast "dest" '(enum JFK MIA IAH))))
+  (check-equal? (dtype (ref coded "carrier")) 'categorical)
+  (check-equal? (dtype (ref coded "dest")) '(enum JFK MIA IAH))
+  (check-equal? (series-cells (ref coded "carrier")) '(UA AA UA B6))
+  (check-equal? (column (sorted-by coded "carrier") "carrier") '(AA B6 UA UA))
+  (check-equal? (column (sorted-by coded "dest") "dest") '(JFK MIA IAH IAH))
+  (check-equal? (column (filter coded (= (col "carrier") 'UA)) "n") '(10 30))
+  (check-equal? (column (filter coded (> (col "dest") "MIA")) "n") '(10 30))
+  (check-equal? (~> coded (group-by "carrier") (agg (alias (sum "n") "n"))
+                    (sorted-by "carrier") (column "n"))
+                '(20 40 40))
+  (check-equal? (column-names (select coded (col 'categorical))) '("carrier"))
+  (check-equal? (column-names (select coded (col '(enum JFK MIA IAH)))) '("dest"))
+  (check-equal? (column-names (select coded (col '(enum JFK MIA)))) '())
+  (check-equal? (series-cells (= (ref coded "carrier") 'UA)) '(#t #f #t #f))
+  (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
+  (check-exn #rx"^series-cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
+             (lambda () (cast (ref flights "dest") '(enum JFK))))
+  (check-exn #rx"^lazyframe-collect: .*\"IAH\""
+             (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
+
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)
   (check-equal? (height (filter ops-df (p-and (> (col "value") 15) (= (col "group") "a")))) 1)

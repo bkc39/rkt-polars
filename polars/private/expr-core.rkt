@@ -12,7 +12,8 @@
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring sort-flags-mismatch sort-flags/c)
+                  ->compat-dtype _CompatDType _rsstring call/foreign-error enum-dtype?
+                  owned-pointer-arg sort-flags-mismatch sort-flags/c)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
@@ -65,7 +66,7 @@
 
 (define-compat lazyframe-drop
   (_fun _LazyFrame-ptr -> _void)
-  #:wrap (deallocator))
+  #:wrap (deallocator owned-pointer-arg))
 
 (define-compat expr->string
   (_fun _Expr-ptr -> _rsstring)
@@ -112,6 +113,7 @@
          (expr-lit-i64 v))]
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
+    [(symbol? v) (expr-lit-str (symbol->string v))]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
 (define-compat expr-all
@@ -142,9 +144,20 @@
   (or (expr-exclude/raw e (map ->column-pattern names))
       (error 'expr-exclude "operation failed")))
 
+(define-compat expr-dtype-col-enum/raw
+  (_fun (categories : (_list i _string/utf-8))
+        (_size = (length categories))
+        -> _Expr-ptr/null)
+  #:c-id expr_dtype_col_enum
+  #:wrap (allocator expr-drop))
+
 (define (expr-dtype-col dtype)
-  (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
-      (error 'expr-dtype-col "operation failed")))
+  (if (enum-dtype? dtype)
+      (call/foreign-error 'expr-dtype-col
+                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
+                          "cannot select ~v" dtype)
+      (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
+          (error 'expr-dtype-col "operation failed"))))
 
 (define (col spec)
   (if (dtype-spec? spec)

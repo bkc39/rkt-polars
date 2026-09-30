@@ -1,4 +1,11 @@
-on: [push, pull_request]
+# One run per commit: a PR commit runs only as pull_request (the merge with
+# its base), which is the run scripts/refresh-candidates.sh reads.  A branch
+# without a PR runs on demand (`gh workflow run ci.yml --ref <branch>`).
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
 name: CI
 
 # Cancel superseded runs for the same ref so rapid re-pushes don't pile up.

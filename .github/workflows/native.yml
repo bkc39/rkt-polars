@@ -43,6 +43,14 @@ jobs:
       - name: Build shared object
         run: scripts/build-so.sh ${{ matrix.platform }}
 
+      # A pull_request run builds the merge with the base branch, not the PR
+      # head: scripts/refresh-candidates.sh commits a candidate only where
+      # rust/ is the tree recorded here.
+      - name: Record the rust/ tree built
+        run: >-
+          git rev-parse HEAD:rust
+          > polars/native-libs/candidates/${{ matrix.platform }}/rust-tree
+
       # Guard the deploy requirement: the committed linux candidate must not
       # require glibc newer than 2.17 (pkg-build.racket-lang.org's test host is
       # older than 2.27).  This is the check that would have caught the
@@ -111,7 +119,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Racket
-        uses: Bogdanp/setup-racket@v1.15
+        uses: ./.github/actions/install-racket
         with:
           version: ${{ matrix.racket }}
           architecture: ${{ matrix.arch }}
@@ -167,7 +175,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Racket
-        uses: Bogdanp/setup-racket@v1.15
+        uses: ./.github/actions/install-racket
         with:
           version: "9.3"
           architecture: ${{ matrix.arch }}

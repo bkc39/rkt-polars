@@ -60,3 +60,14 @@ pub extern "C" fn expr_dtype_col(target: CompatDType) -> *mut Expr {
         None => ptr::null_mut(),
     }
 }
+
+#[no_mangle]
+pub extern "C" fn expr_dtype_col_enum(
+    categories: *const *const c_char,
+    n: usize,
+) -> *mut Expr {
+    clear_last_error();
+    enum_dtype(categories, n).map_or(ptr::null_mut(), |dt| {
+        Box::into_raw(Box::new(dtype_col(&dt).as_selector().as_expr()))
+    })
+}
