@@ -6,8 +6,10 @@
 ;;
 ;;   nix run .#bench                  ; fetches the data, then runs blog-test.rkt and this
 ;;   racket bench/perf.rkt            ; inside `nix develop`, once the data is fetched
+;;   racket bench/perf.rkt --strict   ; exits 1 unless every op is within its allowance
 
 (require racket/runtime-path
+         (only-in racket/cmdline command-line)
          (only-in racket/file file->string)
          (only-in racket/format ~a ~r)
          (only-in racket/future processor-count)
@@ -16,7 +18,8 @@
          (only-in racket/string string-join string-split)
          (only-in racket/system system*)
          polars
-         "harness.rkt")
+         "harness.rkt"
+         "strict.rkt")
 
 (define-runtime-path perf.py "perf.py")
 (define-runtime-path cargo-lock "../rust/Cargo.lock")
@@ -76,7 +79,17 @@
               (group-by "dest")
               (agg (alias (count "dest") "n") (alias (mean "dep_delay") "mean_delay"))))))
    (op "categorical-list" "categorical -> list"
-       (on-categorical (lambda (frame) (series->list (ref frame #:columns "dest")))))))
+       (on-categorical (lambda (frame) (series->list (ref frame #:columns "dest")))))
+   (iter-rows df "iter-rows" "iter rows" '() '())
+   (iter-rows df "iter-rows-named" "iter rows, named" '(#:named?) '(#t))
+   (iter-rows df "iter-rows-16" "iter rows, buffer 16" '(#:buffer-size) '(16))
+   (iter-rows df "iter-rows-65536" "iter rows, buffer 65536" '(#:buffer-size) '(65536))))
+
+(define (iter-rows df key label keywords arguments)
+  (op key label
+      (lambda ()
+        (for ([row (keyword-apply (polars-export 'in-dataframe-rows) keywords arguments (list df))])
+          row))))
 
 (struct timing (ms note))
 
@@ -84,11 +97,12 @@
   (with-handlers ([exn:fail? (lambda (e) (timing #f (first-line e)))])
     (timing (median-ms (operation-run o)) (operation-note o))))
 
-(define (python-timings source)
+(define (python-timings source [keys '()])
   (define python (find-executable-path "python3"))
   (define lines
     (if python
-        (~> (with-output-to-string (lambda () (system* python perf.py (symbol->string source))))
+        (~> (with-output-to-string
+              (lambda () (apply system* python perf.py (symbol->string source) keys)))
             (string-split "\n"))
         '()))
   (for/fold ([version "?"] [timings (hash)]) ([line (in-list lines)])
@@ -106,14 +120,45 @@
 (define (load-average)
   (match (and (file-exists? "/proc/loadavg") (file->string "/proc/loadavg"))
     [(pregexp #px"^(\\S+) (\\S+)" (list _ one-minute five-minutes))
-     (format ", load average ~a / ~a (1 / 5 min)" one-minute five-minutes)]
-    [_ ""]))
+     (format "load average ~a / ~a (1 / 5 min)" one-minute five-minutes)]
+    [_ #f]))
 
 (define (cell v width)
   (~a v #:min-width width #:align 'right))
 
 (define (ms->string ms)
   (if ms (~r ms #:precision '(= 1)) "n/a"))
+
+(define missing-python (timing #f "perf.py printed nothing"))
+
+(define (ratio-of rkt py)
+  (and (timing-ms rkt) (timing-ms py) (positive? (timing-ms py)) (/ (timing-ms rkt) (timing-ms py))))
+
+(define ((retime ops source) keys)
+  (define-values (_version py) (python-timings source keys))
+  (for/hash ([key (in-list keys)])
+    (define o (findf (lambda (o) (equal? (operation-key o) key)) ops))
+    (values key (ratio-of (measure o) (hash-ref py key missing-python)))))
+
+(define (strict-perf ops source reason outcomes load)
+  (define (label-of key)
+    (define o (findf (lambda (o) (equal? (operation-key o) key)) ops))
+    (if o (operation-label o) key))
+  (printf "strict: ~a\n" (allowance-line label-of))
+  (define settled (retime-over-allowance outcomes (retime ops source)))
+  (for ([o (in-list settled)]
+        #:when (pair? (cdr (op-outcome-ratios o))))
+    (printf "strict: re-timed ~a: ~a\n"
+            (op-outcome-label o)
+            (string-join (map ratio->string (op-outcome-ratios o)) " then ")))
+  (define inputs
+    (if (eq? source 'original)
+        '()
+        (list (format "inputs: the NA-stripped copies; the original file does not load: ~a (#79)"
+                      reason))))
+  (print-verdict (append inputs (op-violations settled))
+                 "every op is within its allowance"
+                 (format "~a on ~a cpus" (or load "load average unknown") (processor-count))))
 
 (define (row label rkt-ms py-ms ratio notes)
   (printf "~a ~a ~a ~a~a\n"
@@ -124,6 +169,12 @@
           (if (null? notes) "" (string-join notes "; " #:before-first "   "))))
 
 (module+ main
+  (define strict? (make-parameter #f))
+  (command-line
+   #:program "perf.rkt"
+   #:once-each
+   [("--strict") "Exit 1 unless every op's rkt/py ratio is within its allowance"
+                 (strict? #t)])
   (ensure-data)
   (match-define (loaded frame source reason) (load-frame))
   (unless frame
@@ -131,27 +182,36 @@
   (define ops (operations frame source))
   (define rkt (map measure ops))
   (define-values (py-version py) (python-timings source))
+  (define load (load-average))
   (printf "nycflights perf in ms, median of 5 runs after a warm-up: ~a vs ~a; ~a cpus~a\n"
           (format "rkt-polars (polars crate ~a, Racket ~a)" (crate-version) (version))
           (format "Python polars ~a" py-version)
           (processor-count)
-          (load-average))
+          (if load (string-append ", " load) ""))
   (printf "inputs: ~a\n"
           (if (eq? source 'original)
               "the original files"
               (format "the NA-stripped copies; the original file does not load: ~a" reason)))
   (row "op" "rkt ms" "py ms" "rkt/py" '())
-  (define within
+  (define outcomes
     (for/list ([o (in-list ops)] [measured (in-list rkt)])
       (match-define (timing rkt-ms rkt-note) measured)
-      (match-define (timing py-ms py-note)
-        (hash-ref py (operation-key o) (timing #f "perf.py printed nothing")))
-      (define ratio (and rkt-ms py-ms (/ rkt-ms py-ms)))
+      (define python (hash-ref py (operation-key o) missing-python))
+      (match-define (timing py-ms py-note) python)
+      (define ratio (ratio-of measured python))
       (row (operation-label o)
            (ms->string rkt-ms)
            (ms->string py-ms)
-           (if ratio (string-append (~r ratio #:precision '(= 2)) "×") "-")
+           (if ratio (ratio->string ratio) "-")
            (append (if rkt-note (list rkt-note) '())
                    (if py-ms '() (list (format "py: ~a" py-note)))))
-      (and ratio (<= ratio 1.2))))
-  (printf "ratio <= 1.2×: ~a of ~a ops\n" (length (filter values within)) (length within)))
+      (op-outcome (operation-key o)
+                  (operation-label o)
+                  (list ratio)
+                  (if rkt-ms (format "py: ~a" py-note) rkt-note))))
+  (define within
+    (for/list ([o (in-list outcomes)])
+      (ratio-within? (car (op-outcome-ratios o)) 1.2)))
+  (printf "ratio <= 1.2×: ~a of ~a ops\n" (length (filter values within)) (length within))
+  (when (and (strict?) (not (strict-perf ops source reason outcomes load)))
+    (exit 1)))

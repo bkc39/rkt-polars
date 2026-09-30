@@ -35,8 +35,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
 
 1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
-   lazyframes), `bulk.rkt` (whole-column copies into Racket-allocated
-   buffers, behind `series->list` and its siblings). `define-compat` binds a
+   lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
+   whole or a block of rows at a time, behind `series->list`,
+   `in-dataframe-rows` and their siblings). `define-compat` binds a
    C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
@@ -152,7 +153,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
   Racket allocated: a raw buffer of the column's native type (bound with
   `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
-  and the `f64vector` a caller gets back. `series_copy_cat` also returns the
+  and the `f64vector` a caller gets back. `in-dataframe-rows` binds one raw
+  scratch buffer per block of rows, 16 bytes a row, which holds what any dtype
+  needs, and each column's copy reuses it in turn: a `with-raw-buffer` costs a
+  finalizer registration, several microseconds, which a buffer per column
+  would pay for each column of each block. `series_copy_cat` also returns the
   copy's category strings as a new series, held with `with-release` while the
   conversion reads them. The byte strings and the `f64vector` may move: those
   bindings are never `#:blocking?`. Every destination travels with its
@@ -301,7 +306,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 ## Verification
 
 - **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
-  Racket build with docs, tests, guide scripts and examples,
+  Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
@@ -316,7 +321,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
-  paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+  paired scripts), `raco test -x bench` (strict mode's comparison),
+  `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
@@ -344,6 +350,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   package; nothing under `polars/` may depend on it. A check for API a leg
   has not landed yet resolves it at run time and reports FAIL with the
   reason, so the harness compiles against master.
+- `nix run .#bench -- --strict` (the `bench-strict` gate, not in the push
+  subset) is the exit gate of the nycflights arc (#88, #90). It exits 1 unless
+  every scoreboard check PASSes and every op's rkt/py ratio, as printed to
+  two decimals, is within its allowance, and it lists each violation with the
+  ratio, the allowance and the issue that owns it. The allowance is 1.2×
+  unless the one table in `bench/allowances.rkt` names the op, with its
+  issue and the measurement it was set from (today only the f64 matrix, #115).
+  An entry is tightened when a run on master moves its op's ratio, and
+  deleted once the op is within 1.2×. An op over its allowance is timed
+  again, on both sides, before it fails. Each ratio is a median of 5 runs,
+  so strict mode needs a quiet host even more than the table does; the
+  verdict repeats the load average, the first thing to read on a red run.
 
 ## Process
 

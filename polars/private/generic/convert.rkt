@@ -5,7 +5,8 @@
          (only-in racket/sequence sequence-map)
          (only-in polars/private/bulk
                   check-column-names dataframe->columns dataframe->f64vector dataframe->hash
-                  in-series series->f64vector series->list series->vector)
+                  dataframe->rows in-dataframe-rows in-series series->f64vector series->list
+                  series->vector)
          (only-in polars/private/foreign dataframe-column dataframe-column-names)
          (only-in polars/private/generic/core dataframe? series? wrap-series))
 
@@ -27,7 +28,18 @@
    (->* (dataframe?)
         (#:columns (listof string?) #:order (or/c 'fortran 'c) #:null (or/c real? 'error))
         (values f64vector? exact-nonnegative-integer? exact-nonnegative-integer?))]
-  [in-dataframe-columns (->* (dataframe?) (#:columns (listof string?)) sequence?)]))
+  [in-dataframe-columns (->* (dataframe?) (#:columns (listof string?)) sequence?)]
+  [in-dataframe-rows
+   (->* (dataframe?)
+        (#:columns (listof string?)
+         #:named? boolean?
+         #:null any/c
+         #:buffer-size exact-positive-integer?)
+        sequence?)]
+  [dataframe->rows
+   (->* (dataframe?)
+        (#:columns (listof string?) #:named? boolean? #:null any/c)
+        (listof (or/c vector? (and/c hash? immutable?))))]))
 
 (define (in-dataframe-columns d #:columns [names (dataframe-column-names d)])
   (check-column-names 'in-dataframe-columns d names)
@@ -37,6 +49,7 @@
   (require rackunit
            racket/match
            (only-in gregor datetime)
+           racket/runtime-path
            (only-in ffi/vector f64vector->list f64vector-length f64vector-ref)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/dict in-dict)
@@ -45,7 +58,8 @@
            (prefix-in contracted: (submod ".."))
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
-           (only-in polars/private/generic/reshape cast head rename slice vstack)
+           (only-in polars/private/generic/io read-parquet)
+           (only-in polars/private/generic/reshape cast head lazy rename slice vstack)
            (only-in polars/private/generic/test-fixtures frame withnull)
            (only-in threading ~>))
 
@@ -226,7 +240,16 @@
                      (lambda () (contracted:in-dataframe-columns frame #:columns "user"))
                      (lambda () (contracted:dataframe->f64vector frame #:order 'row))
                      (lambda () (contracted:dataframe->f64vector frame #:columns "a"))
-                     (lambda () (contracted:dataframe->f64vector frame #:null 'nan)))])
+                     (lambda () (contracted:dataframe->f64vector frame #:null 'nan))
+                     (lambda () (contracted:in-dataframe-rows withnull))
+                     (lambda () (contracted:in-dataframe-rows (lazy frame)))
+                     (lambda () (contracted:in-dataframe-rows frame #:columns "user"))
+                     (lambda () (contracted:in-dataframe-rows frame #:named? 'yes))
+                     (lambda () (contracted:in-dataframe-rows frame #:buffer-size 0))
+                     (lambda () (contracted:in-dataframe-rows frame #:buffer-size 1.5))
+                     (lambda () (contracted:dataframe->rows withnull))
+                     (lambda () (contracted:dataframe->rows frame #:columns '(user)))
+                     (lambda () (contracted:dataframe->rows frame #:named? 1)))])
     (check-exn exn:fail:contract:blame? thunk))
   (check-exn #rx"^series->list: contract violation\n  expected: series\\?\n  given: 5"
              (lambda () (contracted:series->list 5)))
@@ -286,7 +309,9 @@
   (for ([(who convert) (in-dict (list (cons "dataframe->f64vector" dataframe->f64vector)
                                       (cons "dataframe->columns" dataframe->columns)
                                       (cons "dataframe->hash" dataframe->hash)
-                                      (cons "in-dataframe-columns" in-dataframe-columns)))])
+                                      (cons "in-dataframe-columns" in-dataframe-columns)
+                                      (cons "in-dataframe-rows" in-dataframe-rows)
+                                      (cons "dataframe->rows" dataframe->rows)))])
     (define ((go cols)) (convert bad #:columns cols))
     (check-exn (frame-error who "no such column" "nope") (go '("a" "nope")))
     (check-exn (frame-error who "duplicate column" "a") (go '("a" "a")))
@@ -298,6 +323,11 @@
              (lambda () (dataframe->columns binary-frame)))
   (check-exn (frame-error "dataframe->hash" "unsupported dtype" "b")
              (lambda () (dataframe->hash binary-frame)))
+  (check-exn (frame-error "in-dataframe-rows" "unsupported dtype" "b")
+             (lambda () (in-dataframe-rows binary-frame)))
+  (check-exn (frame-error "dataframe->rows" "unsupported dtype" "b")
+             (lambda () (dataframe->rows (head binary-frame 0))))
+  (check-equal? (dataframe->rows binary-frame #:columns '("a")) (list (vector 1) (vector 2)))
   (for ([v (list polars-null 'missing)])
     (check-equal? (dataframe->columns mixed #:null v)
                   (for/list ([name (column-names mixed)])
@@ -376,4 +406,89 @@
   (let-values ([(m _nrows _ncols)
                 (dataframe->f64vector (dataframe (list (series '(#t #f) #:name "a")
                                                        (series '(0.5 1.5) #:name "b"))))])
-    (check-equal? (f64vector->list m) '(1.0 0.0 0.5 1.5))))
+    (check-equal? (f64vector->list m) '(1.0 0.0 0.5 1.5)))
+
+  (define row-length
+    (sub1 (apply min (for/list ([s (in-list base-series)] #:unless (eq? (dtype s) 'null))
+                       (len s)))))
+  (define (nulls dtype)
+    (~> (for/list ([_ row-length]) polars-null) (series #:dtype 'int64) (cast dtype)))
+  (define carrier-names
+    (sample (list "UA" "AA") (lambda () (if (< (random) 0.5) "DL" "B6"))))
+  (define wide
+    (dataframe
+     (append (for/list ([s (in-list base-series)]
+                        [k (in-naturals)]
+                        #:when (> (len s) row-length))
+               (rename (head s row-length) (format "c~a" k)))
+             (list (rename (nulls 'null) "nothing")
+                   (rename (nulls 'string) "no-strings")
+                   (~> carrier-names (series #:name "cat") (cast 'categorical) (head row-length))
+                   (~> carrier-names (series #:name "enum") (cast '(enum UA AA DL B6))
+                       (head row-length))))))
+  (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
+  (define produce (read-parquet produce-parquet))
+  (define (every-other names)
+    (for/list ([name (in-list names)] [i (in-naturals)] #:when (even? i)) name))
+  (define (ref-rows d names v)
+    (define columns (for/list ([name (in-list names)]) (ref d name)))
+    (for/list ([i (in-range (height d))])
+      (for/vector #:length (length names) ([s (in-list columns)])
+        (define x (ref s i))
+        (if (polars-null? x) v x))))
+  (define (named names rows)
+    (for/list ([row (in-list rows)])
+      (for/hash ([name (in-list names)] [x (in-vector row)]) (values name x))))
+  (define row-frames
+    (list wide (vstack wide wide) (slice (vstack wide wide) 5 (+ row-length 3)) (head wide 0)
+          produce))
+  (for* ([d (in-list row-frames)]
+         [names (list (column-names d) (reverse (every-other (column-names d))) '())]
+         [v (list polars-null 'missing)])
+    (define expected (ref-rows d names v))
+    (for ([size (list 1 2 3 7 row-length (add1 row-length) 512)])
+      (define (walk named?)
+        (sequence->list
+         (in-dataframe-rows d #:columns names #:named? named? #:null v #:buffer-size size)))
+      (check-equal? (walk #f) expected (format "~a rows by ~a" (height d) size))
+      (check-equal? (walk #t) (named names expected)))
+    (check-equal? (dataframe->rows d #:columns names #:null v) expected)
+    (check-equal? (dataframe->rows d #:columns names #:null v #:named? #t) (named names expected))
+    (check-equal? (for/list ([row (in-dataframe-rows d #:columns names #:null v)]) row) expected))
+  (check-equal? (dataframe->rows wide) (ref-rows wide (column-names wide) polars-null))
+  (check-equal? (for/first ([row (in-dataframe-rows wide #:named? #t)]) (hash-ref row "cat"))
+                (ref (ref wide "cat") 0))
+  (check-equal? (dataframe->rows frame #:columns '()) (list (vector) (vector) (vector)))
+  (check-equal? (dataframe->rows frame #:columns '() #:named? #t) (list (hash) (hash) (hash)))
+  (check-equal? (dataframe->rows (dataframe '())) '())
+  (check-equal? (dataframe->rows frame #:columns '("score" "user"))
+                (list (vector 10 "alice") (vector 25 "bob") (vector 18 "carol")))
+  (check-equal? (dataframe->rows frame #:columns '("user") #:named? #t)
+                (list (hash "user" "alice") (hash "user" "bob") (hash "user" "carol")))
+  (for ([row (in-dataframe-rows frame #:named? #t)])
+    (check-true (immutable? row))
+    (check-true (for/and ([key (in-hash-keys row)]) (immutable? key))))
+  (check-false (for/or ([row (in-dataframe-rows frame)]) (immutable? row)))
+  (let ([rows (in-dataframe-rows frame #:buffer-size 2)])
+    (check-equal? (sequence->list rows) (sequence->list rows)))
+
+  (define carriers
+    (dataframe (list (~> '("UA" "AA" "UA" "DL" "B6" "UA" "AA" "DL" "UA" "B6")
+                         (series #:name "carrier")
+                         (cast 'categorical)))))
+  (define ((take-through k))
+    (for/first ([row (in-dataframe-rows carriers #:buffer-size 3)]
+                [i (in-naturals)]
+                #:when (= i k))
+      row))
+  (for ([k '(0 2 3 5 6 9)])
+    (check-equal? (drops-during (take-through k)) (add1 (quotient k 3)) (format "through row ~a" k)))
+  (check-equal? (drops-during (lambda () (dataframe->rows carriers))) 1)
+  (check-equal? (drops-during (lambda () (in-dataframe-rows carriers))) 0)
+  (let ([wanted 20]
+        [before (begin (settle!) (series-drop-count))])
+    (for* ([_ (in-range wanted)]
+           [row (in-dataframe-rows mixed)])
+      row)
+    (settle!)
+    (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2))))
