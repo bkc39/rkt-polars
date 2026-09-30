@@ -44,6 +44,7 @@
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
          series->list series->vector series->f64vector in-series
          dataframe->columns dataframe->hash dataframe->f64vector in-dataframe-columns
+         in-dataframe-rows dataframe->rows
          gen:has-ref has-ref?
          gen:sized sized?
          gen:has-shape has-shape?
