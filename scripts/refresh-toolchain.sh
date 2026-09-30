@@ -78,7 +78,8 @@ rm scripts/build-so.sh.orig
 
 echo ">> cargo update"
 nix shell --inputs-from . nixpkgs#cargo nixpkgs#rustc \
-  --command cargo update --manifest-path rust/Cargo.toml
+  --command cargo update --manifest-path rust/Cargo.toml 2>&1 | tee "$out/cargo-update.txt"
+changes="$(grep -cE '^ *(Updating|Adding|Removing|Downgrading) [^ ]+ v' "$out/cargo-update.txt" || true)"
 
 # racket-deps is fixed-output: a store that already holds it never refetches,
 # so only a rebuild shows that the catalog still serves the pinned hash.
@@ -105,6 +106,7 @@ scripts/refresh-toolchain.sh moved nixpkgs, the release rustc, the
 manylinux2014 image and the crates within their semver ranges:
 
 $(awk -F'\t' '{ printf "- %s: %s -> %s\n", $1, $2, $3 }' <<< "$moved")
+- rust/Cargo.lock: $changes entries updated, added or removed
 EOF
 
 {
@@ -114,6 +116,13 @@ EOF
   echo "| | before | after |"
   echo "|---|---|---|"
   awk -F'\t' '{ printf "| %s | %s | %s |\n", $1, $2, $3 }' <<< "$moved"
+  echo
+  echo "<details><summary>cargo update: $changes entries updated, added or removed</summary>"
+  echo
+  echo '```'
+  cat "$out/cargo-update.txt"
+  echo '```'
+  echo "</details>"
   echo
   echo "\`nix flake check\` passed, and racket-deps still matches its pinned hash."
   if [[ -n "$bench" ]]; then

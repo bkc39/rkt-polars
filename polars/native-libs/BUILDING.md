@@ -107,7 +107,7 @@ It benches the tree (`nix run .#bench`), then:
 4. rebuilds `racket-deps`, whose pinned hash a store that already holds it
    never checks, and runs `nix flake check`;
 5. benches the result, and writes the commit message and a PR body (the
-   versions before and after, both bench tables) under
+   versions before and after, the `cargo update` log, both bench tables) under
    `~/rkt-polars-toolchain/<time>/` (`--dir` to change).
 
 Commit, push and open the PR as it prints; once the PR's CI has built both
