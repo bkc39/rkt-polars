@@ -107,6 +107,27 @@ for platform in linux darwin; do
   fi
 done
 
+# build-so.sh records the toolchain that built each candidate (a run older
+# than the record has none); rust/rust-toolchain.toml pins the flake's rustc,
+# which is this dev shell's.
+flake_rustc="$(rustc -vV | sed -n 's/^release: //p')"
+toolchains=()
+for platform in linux darwin; do
+  record="$out/$platform/toolchain"
+  if [[ -f "$record" ]]; then
+    release="$(sed -n 's/^release: //p' "$record")"
+    [[ "$release" == "$flake_rustc" ]] \
+      || die "run $run built libcompat-$platform with rustc ${release:-unknown}, the flake's" \
+             "is $flake_rustc; rust/rust-toolchain.toml must pin it (nix flake check)"
+    built="$(head -1 "$record"), LLVM $(sed -n 's/^LLVM version: //p' "$record")"
+    built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p' "$record")"
+  else
+    built="not recorded"
+  fi
+  echo ">> libcompat-$platform built by: $built"
+  toolchains+=("- $platform: $built")
+done
+
 if cmp -s "$linux" "$cand/linux/libcompat.so" && cmp -s "$darwin" "$cand/darwin/libcompat.dylib"; then
   echo ">> the committed candidates are already run $run's; nothing to do"
   exit 0
@@ -137,7 +158,10 @@ cat > "$msg" <<EOF
 native: refresh both libcompat candidates ($ref)
 
 Both are CI's artifacts from run $run (the $event run for ${sha:0:7}),
-built by scripts/build-so.sh from this commit's rust/.
+built by scripts/build-so.sh from this commit's rust/ with
+
+$(printf '%s\n' "${toolchains[@]}")
+
 scripts/refresh-candidates.sh checked them:
 
 $bullets

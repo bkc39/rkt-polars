@@ -24,16 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # darwin builds natively with cargo; the linux candidate is built inside
-      # the manylinux2014 container (glibc 2.17) by build-so.sh, so the host
-      # only needs docker there.
-      - name: Install Rust toolchain
-        if: matrix.platform == 'darwin'
-        uses: dtolnay/rust-toolchain@master
-        with:
-          # scripts/build-so.sh RUST_TOOLCHAIN: the flake's rustc.
-          toolchain: 1.98.1
-
+      # build-so.sh installs the rustc rust/rust-toolchain.toml pins: with the
+      # runner's rustup on darwin, inside the manylinux2014 container (glibc
+      # 2.17) on linux, where the host only needs docker.
       - name: Cache cargo build
         if: matrix.platform == 'darwin'
         uses: Swatinem/rust-cache@v2
@@ -45,7 +38,8 @@ jobs:
 
       # A pull_request run builds the merge with the base branch, not the PR
       # head: scripts/refresh-candidates.sh commits a candidate only where
-      # rust/ is the tree recorded here.
+      # rust/ is the tree recorded here.  build-so.sh has written `toolchain`
+      # beside it, which the script prints and checks against the flake's.
       - name: Record the rust/ tree built
         run: >-
           git rev-parse HEAD:rust
@@ -226,10 +220,16 @@ jobs:
           name: libcompat-linux
           path: cand
 
+      # In the pinned image that built it, as build-so.sh recorded.
       - name: dlopen libcompat.so under glibc 2.17
         run: |
           set -euo pipefail
-          docker run --rm -v "$PWD/cand:/cand:ro" quay.io/pypa/manylinux2014_x86_64 bash -c '
+          image=$(sed -n 's/^image: //p' cand/toolchain)
+          if [ -z "$image" ]; then
+            echo "error: cand/toolchain names no build image" >&2
+            exit 1
+          fi
+          docker run --rm -v "$PWD/cand:/cand:ro" "$image" bash -c '
             set -euo pipefail
             echo "container glibc: $(ldd --version | head -1)"
             cat > /tmp/probe.c <<EOF

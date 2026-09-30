@@ -13,7 +13,10 @@ as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
 the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. The committed candidates are built with
+build uses that same rustc version. `rust/rust-toolchain.toml` pins it for
+`scripts/build-so.sh`, the `release-toolchain` flake check fails when the pin
+and nixpkgs' rustc differ, and the Linux build's manylinux2014 image is pinned
+by digest in the script. The committed candidates are built with
 `[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
 unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
 104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
@@ -287,9 +290,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
   Racket build with docs, tests, guide scripts and examples,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
+  `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -342,3 +346,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `master` requires one review and the maintainer is the only reviewer, so
   merges are `gh pr merge --squash --admin` once the owner approves.
 - Follow-ups become issues, never TODO comments.
+- The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
+  crates within the polars minor) moves only in a refresh PR of its own,
+  `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
+  (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.

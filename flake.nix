@@ -353,9 +353,28 @@
             ${pkgs.bash}/bin/bash $src/scripts/no-syntax-rule.sh
             touch $out
           '';
+          # scripts/build-so.sh builds the committed candidates with the rustc
+          # rust/rust-toolchain.toml pins; this holds it to the rustc the
+          # flake's build, tests and dev shell use.
+          release-toolchain =
+            let
+              pinned = (builtins.fromTOML (builtins.readFile ./rust/rust-toolchain.toml)).toolchain.channel;
+            in
+            pkgs.runCommand "rkt-polars-release-toolchain" { } ''
+              pinned=${pkgs.lib.escapeShellArg pinned}
+              flake=${pkgs.rustc.version}
+              echo "rust/rust-toolchain.toml: $pinned; nixpkgs at flake.lock: rustc $flake"
+              if [ "$pinned" != "$flake" ]; then
+                echo "ERROR: the release toolchain is rustc $pinned, the flake's is $flake:" \
+                  "set channel = \"$flake\" in rust/rust-toolchain.toml" \
+                  "(scripts/refresh-toolchain.sh does)" >&2
+                exit 1
+              fi
+              touch $out
+            '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule;
+          inherit rustfmt racket-version no-syntax-rule release-toolchain;
           inherit (self.packages.${system}) rust racket;
         });
 
