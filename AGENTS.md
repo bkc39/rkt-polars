@@ -28,8 +28,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
 
 1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
-   lazyframes), `bulk.rkt` (whole-column copies into Racket-allocated
-   buffers, behind `series->list` and its siblings). `define-compat` binds a
+   lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
+   whole or a block of rows at a time, behind `series->list`,
+   `in-dataframe-rows` and their siblings). `define-compat` binds a
    C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
@@ -145,7 +146,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
   Racket allocated: a raw buffer of the column's native type (bound with
   `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
-  and the `f64vector` a caller gets back. `series_copy_cat` also returns the
+  and the `f64vector` a caller gets back. `in-dataframe-rows` binds one raw
+  scratch buffer per block of rows, 16 bytes a row, which holds what any dtype
+  needs, and each column's copy reuses it in turn: a `with-raw-buffer` costs a
+  finalizer registration, several microseconds, which a buffer per column
+  would pay for each column of each block. `series_copy_cat` also returns the
   copy's category strings as a new series, held with `with-release` while the
   conversion reads them. The byte strings and the `f64vector` may move: those
   bindings are never `#:blocking?`. Every destination travels with its

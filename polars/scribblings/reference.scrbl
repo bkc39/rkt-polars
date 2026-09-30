@@ -1349,6 +1349,69 @@ renders it with no separate display call.
 (for/first ([column (in-dataframe-columns kv)]) column)
 (eval:error (in-dataframe-columns kv #:columns '("k" "k")))]}
 
+@defproc[(in-dataframe-rows [d dataframe?]
+                            [#:columns columns (listof string?) (column-names d)]
+                            [#:named? named? boolean? #f]
+                            [#:null null-value any/c polars-null]
+                            [#:buffer-size buffer-size exact-positive-integer? 512])
+         sequence?]{
+  Returns a sequence of the rows of @racket[d], as Polars'
+  @tt{DataFrame.iter_rows()} does. Each row holds the selected columns in the
+  order of @racket[columns]: a fresh mutable vector of their values, or, when
+  @racket[named?] is true, an immutable hash from each column's name to its
+  value, as @tt{iter_rows(named=True)} gives a dict. A value is what
+  @racket[ref] returns, as in @secref["ref-series-convert"], with
+  @racket[null-value] in place of a null. With no columns, each row is empty.
+
+  The rows are converted @racket[buffer-size] at a time, as
+  @tt{buffer_size} does: each buffer is one bulk copy per column, never a
+  foreign call per value. A loop holds one buffer's values at a time, so memory
+  stays bounded for any height, and one that stops early converts at most one
+  buffer beyond the rows it reads. A larger buffer makes fewer calls and holds
+  more values.
+
+  The columns are fetched and checked when @racket[in-dataframe-rows] is
+  called: an unknown or repeated name, or a column of an unsupported dtype,
+  raises @racket[exn:fail:contract] naming the column. The sequence holds those
+  columns rather than @racket[d], and each iteration starts from the first row.
+  A lazyframe is not accepted; @racket[collect] it first. Python's
+  @tt{buffer_size=0}, a row at a time, has no counterpart.
+
+  @examples[#:eval ev #:label #f
+(define trips
+  (dataframe (list (series '(UA AA UA) #:name "carrier")
+                   (series (list 2 polars-null -3) #:name "delay")
+                   (cast (series (list (datetime 2013 1 1) (datetime 2013 1 1)
+                                       (datetime 2013 1 2))
+                                 #:name "day")
+                         'date))))
+(for/list ([row (in-dataframe-rows trips)]) row)
+(for/list ([row (in-dataframe-rows trips #:columns '("delay" "carrier") #:named? #t)])
+  row)
+(for/sum ([row (in-dataframe-rows trips #:columns '("delay") #:null 0)])
+  (vector-ref row 0))
+(for/list ([row (in-dataframe-rows trips #:buffer-size 2)])
+  (define-values (carrier delay day) (vector->values row))
+  (list carrier (date->iso8601 day)))
+(eval:error (in-dataframe-rows trips #:columns '("nope")))
+(eval:error (in-dataframe-rows trips #:buffer-size 0))]}
+
+@defproc[(dataframe->rows [d dataframe?]
+                          [#:columns columns (listof string?) (column-names d)]
+                          [#:named? named? boolean? #f]
+                          [#:null null-value any/c polars-null])
+         (listof (or/c vector? (and/c hash? immutable?)))]{
+  Returns every row of @racket[d] in a list, each as @racket[in-dataframe-rows]
+  gives it: Polars' @tt{DataFrame.rows()}, and with @racket[named?] true
+  @tt{DataFrame.rows(named=True)}, which is @tt{DataFrame.to_dicts()}. The same
+  names are checked and the same errors raised.
+
+  @examples[#:eval ev #:label #f
+(dataframe->rows trips)
+(dataframe->rows trips #:columns '("carrier") #:named? #t)
+(dataframe->rows (head trips 0))
+(eval:error (dataframe->rows trips #:columns '("day" "day")))]}
+
 @defproc[(dataframe->f64vector [d dataframe?]
                                [#:columns columns (listof string?) (column-names d)]
                                [#:order order (or/c 'fortran 'c) 'fortran]
@@ -1711,8 +1774,9 @@ A series is also a Racket sequence (through @racket[prop:sequence]): a
 @racket[for] clause, @racket[sequence?] and the @racketmodname[racket/sequence]
 operations see its elements, converted a block of rows at a time as by
 @racket[in-series], with @racket[polars-null] for a null entry. A dataframe is
-not a sequence; iterate over its columns with @racket[in-dataframe-columns], or
-convert them with @racket[dataframe->columns].
+not a sequence; iterate over its rows with @racket[in-dataframe-rows] or its
+columns with @racket[in-dataframe-columns], or convert them with
+@racket[dataframe->rows] or @racket[dataframe->columns].
 
 @examples[#:eval ev #:label #f
 (define ages (series (list 34 polars-null 51) #:name "age"))

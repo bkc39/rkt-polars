@@ -76,7 +76,17 @@
               (group-by "dest")
               (agg (alias (count "dest") "n") (alias (mean "dep_delay") "mean_delay"))))))
    (op "categorical-list" "categorical -> list"
-       (on-categorical (lambda (frame) (series->list (ref frame #:columns "dest")))))))
+       (on-categorical (lambda (frame) (series->list (ref frame #:columns "dest")))))
+   (iter-rows df "iter-rows" "iter rows" '() '())
+   (iter-rows df "iter-rows-named" "iter rows, named" '(#:named?) '(#t))
+   (iter-rows df "iter-rows-16" "iter rows, buffer 16" '(#:buffer-size) '(16))
+   (iter-rows df "iter-rows-65536" "iter rows, buffer 65536" '(#:buffer-size) '(65536))))
+
+(define (iter-rows df key label keywords arguments)
+  (op key label
+      (lambda ()
+        (for ([row (keyword-apply (polars-export 'in-dataframe-rows) keywords arguments (list df))])
+          row))))
 
 (struct timing (ms note))
 

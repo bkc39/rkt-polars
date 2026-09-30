@@ -36,6 +36,11 @@ def median_ms(fn, runs=5):
     return statistics.median(times)
 
 
+def walk(rows):
+    for _ in rows:
+        pass
+
+
 def operations(source):
     stem = "nycflights" if source == "original" else "nycflights-nona"
     tsv, csv = DATA / f"{stem}.tsv", DATA / f"{stem}.csv"
@@ -63,6 +68,10 @@ def operations(source):
             pl.col("dest").count().alias("n"), pl.col("dep_delay").mean().alias("mean_delay")
         ),
         "categorical-list": lambda: cat["dest"].to_list(),
+        "iter-rows": lambda: walk(df.iter_rows()),
+        "iter-rows-named": lambda: walk(df.iter_rows(named=True)),
+        "iter-rows-16": lambda: walk(df.iter_rows(buffer_size=16)),
+        "iter-rows-65536": lambda: walk(df.iter_rows(buffer_size=65536)),
     }
 
 
