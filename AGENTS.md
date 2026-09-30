@@ -224,6 +224,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   `maintain_order='none'`; sort the result when order matters.
 - `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
   aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
+- An expression `sort` is the crate's `Expr::sort`, except that an input the
+  structure shows is one value per group (an aggregation, `len`, a scalar
+  literal, or an alias, cast, operator or `when` over those alone) comes back
+  unsorted. Inside `agg` or `over`, the crate's `SortExpr` gathers such an
+  input's groups by row index from its one value per group, which can read
+  out of bounds. The read segfaults on a string or a large frame, and Python
+  1.42.1 segfaults on the same query. An elementwise function of one, such as
+  `(abs (sum "v"))` or `(- (sum "v"))`, is not recognised and still reaches
+  that read.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).

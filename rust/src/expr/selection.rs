@@ -168,7 +168,38 @@ pub extern "C" fn expr_sort_with_options(
     let opts = SortOptions::default()
         .with_order_descending(descending != 0)
         .with_nulls_last(nulls_last != 0);
-    Box::into_raw(Box::new(inner.sort(opts)))
+    let sorted = if is_scalar(&inner) {
+        inner
+    } else {
+        inner.sort(opts)
+    };
+    Box::into_raw(Box::new(sorted))
+}
+
+/// Whether `e` yields one value, per group in `agg` or `over`, from its
+/// structure alone. Polars 0.55.2's `SortExpr` sorts such an input by
+/// gathering each group's row indices from the one value per group, which
+/// reads out of bounds, so the sort of one is the input itself.
+fn is_scalar(e: &Expr) -> bool {
+    match e {
+        Expr::Agg(_) | Expr::Len => true,
+        Expr::Gather { returns_scalar, .. } => *returns_scalar,
+        Expr::Literal(value) => value.is_scalar(),
+        Expr::Alias(inner, _)
+        | Expr::KeepName(inner)
+        | Expr::RenameAlias { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::Sort { expr: inner, .. } => is_scalar(inner),
+        Expr::BinaryExpr { left, right, .. } => {
+            is_scalar(left) && is_scalar(right)
+        }
+        Expr::Ternary {
+            predicate,
+            truthy,
+            falsy,
+        } => is_scalar(predicate) && is_scalar(truthy) && is_scalar(falsy),
+        _ => false,
+    }
 }
 
 // LazyGroupBy::agg consumes self and LazyGroupBy is not Clone, which

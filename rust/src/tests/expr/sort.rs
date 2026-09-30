@@ -66,6 +66,34 @@ fn expr_sort_prints_as_the_crate_sort() {
 }
 
 #[test]
+fn expr_sort_of_a_scalar_input_is_the_input() {
+    let v = column("v");
+    let total = expr_sum(v);
+    let named = aliased(total, "s");
+    let one = expr_lit_i32(1);
+    let shifted = expr_add(total, one);
+    let per_row = expr_add(v, one);
+    for e in [total, named, one, shifted] {
+        for (descending, nulls_last) in [(0, 0), (1, 1)] {
+            let sorted = expr_sort_with_options(e, descending, nulls_last);
+            assert_eq!(
+                take_cstring(expr_to_string(sorted)),
+                take_cstring(expr_to_string(e))
+            );
+            expr_drop(sorted);
+        }
+    }
+    let sorted = expr_sort_with_options(per_row, 1, 1);
+    assert_eq!(
+        take_cstring(expr_to_string(sorted)),
+        "[(col(\"v\")) + (dyn int: 1)].sort(desc)"
+    );
+    for e in [sorted, per_row, shifted, one, named, total, v] {
+        expr_drop(e);
+    }
+}
+
+#[test]
 fn expr_sort_of_an_aggregated_input_keeps_one_value_per_group() {
     let g = make_str("g", &["a", "b", "a", "b", "b"]);
     let v = make_i64("v", &[1, 10, 2, 20, 30]);

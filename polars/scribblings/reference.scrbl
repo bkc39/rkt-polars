@@ -293,7 +293,14 @@ total
   Sorts a @tech{dataframe} or @tech{lazyframe} by the column or columns
   @racket[by] (@tt{df.sort}), or a series by its values (@tt{Series.sort}).
   Given an @tech{expression}, or a column name lifted with @racket[col], it
-  builds the expression that sorts that one column (@tt{Expr.sort}).
+  builds the expression that sorts that one column (@tt{Expr.sort}). An
+  expression whose form makes it one value, or one per group, comes back
+  unchanged, because sorting it changes nothing. Such a form is an
+  aggregation such as @racket[(sum "v")], a literal, or an operator or
+  @racketidfont{when} over those alone. Polars' own sort of such an input
+  can read out of bounds inside @racket[agg] or @racket[over]. A function
+  of one, such as @racketidfont{abs} of @racket[(sum "v")], is still sorted
+  by Polars, and can crash there as it does in Python.
 
   Nulls come first, whatever the direction, unless @racket[nulls-last] is
   true; NaN sorts above every other float. For a frame, @racket[descending]
@@ -321,6 +328,7 @@ total
 (~> flights lazy (sort "delay" #:nulls-last #t) collect)
 (sort (ref flights #:columns "delay") #:descending #t #:nulls-last #t)
 (sort "delay" #:descending #t #:nulls-last #t)
+(sort (max "delay") #:descending #t)
 (select flights (sort "delay" #:nulls-last #t))
 (sort '(3 1 2) <)
 (eval:error (sort '(3 1 2) < #:descending #t))]}
