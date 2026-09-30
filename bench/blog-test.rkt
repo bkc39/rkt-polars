@@ -4,14 +4,17 @@
 ;; https://aliquote.org/post/racket-data-frames/ as PASS/FAIL checks on its own
 ;; file, with no preprocessing.
 ;;
-;;   nix run .#bench                  ; fetches the data, then runs this and perf.rkt
-;;   racket bench/blog-test.rkt       ; inside `nix develop`, once the data is fetched
+;;   nix run .#bench                      ; fetches the data, then runs this and perf.rkt
+;;   racket bench/blog-test.rkt           ; inside `nix develop`, once the data is fetched
+;;   racket bench/blog-test.rkt --strict  ; exits 1 unless every check PASSes
 
 (require (only-in gregor [date gregor-date])
+         (only-in racket/cmdline command-line)
          (only-in racket/format ~a ~r)
          (only-in racket/match match match-define match-lambda)
          polars
-         "harness.rkt")
+         "harness.rkt"
+         "strict.rkt")
 
 (define (fail! fmt . args)
   (error (apply format fmt args)))
@@ -213,14 +216,21 @@
           (~a (check-label c) #:min-width 11)
           text
           (if pass? "" (format "  (#~a)" (check-issue c))))
-  pass?)
+  (check-outcome (check-id c) (check-label c) (check-issue c) pass? text))
 
 (module+ main
+  (define strict? (make-parameter #f))
+  (command-line
+   #:program "blog-test.rkt"
+   #:once-each
+   [("--strict") "Exit 1 unless every check PASSes" (strict? #t)])
   (ensure-data)
   (define data (load-frame))
   (printf "nycflights scoreboard: https://aliquote.org/post/racket-data-frames/ on ~a\n"
           (data-file 'original "tsv"))
-  (define passes
+  (define outcomes
     (for/list ([c (in-list checks)])
       (report c (run-check c data))))
-  (printf "~a of ~a PASS\n" (length (filter values passes)) (length checks)))
+  (printf "~a of ~a PASS\n" (length (filter check-outcome-pass? outcomes)) (length checks))
+  (when (and (strict?) (not (print-verdict (check-violations outcomes) "every check PASSes")))
+    (exit 1)))

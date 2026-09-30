@@ -13,7 +13,14 @@ as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
 the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version.
+build uses that same rustc version. The committed candidates are built with
+`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
+unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
+104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
+uses it. The nix build, `cargo test` and the bench stay on `release`, because
+under LTO every test and example binary links on one core (the nix check went
+from 30 to 145 minutes on CI), so the bench measures the release build, not
+the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -286,7 +293,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 ## Verification
 
 - **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
-  Racket build with docs, tests, guide scripts and examples,
+  Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
@@ -301,7 +308,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
-  paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+  paired scripts), `raco test -x bench` (strict mode's comparison),
+  `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
@@ -329,6 +337,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   package; nothing under `polars/` may depend on it. A check for API a leg
   has not landed yet resolves it at run time and reports FAIL with the
   reason, so the harness compiles against master.
+- `nix run .#bench -- --strict` (the `bench-strict` gate, not in the push
+  subset) is the exit gate of the nycflights arc (#88, #90). It exits 1 unless
+  every scoreboard check PASSes and every op's rkt/py ratio, as printed to
+  two decimals, is within its allowance, and it lists each violation with the
+  ratio, the allowance and the issue that owns it. The allowance is 1.2×
+  unless the one table in `bench/allowances.rkt` names the op, with its
+  issue and the measurement it was set from (today only the f64 matrix, #115).
+  An entry is tightened when a run on master moves its op's ratio, and
+  deleted once the op is within 1.2×. An op over its allowance is timed
+  again, on both sides, before it fails. Each ratio is a median of 5 runs,
+  so strict mode needs a quiet host even more than the table does; the
+  verdict repeats the load average, the first thing to read on a red run.
 
 ## Process
 
