@@ -355,8 +355,9 @@
             touch $out
           '';
           # scripts/build-so.sh builds the committed candidates with the rustc
-          # rust/rust-toolchain.toml pins; this holds it to the rustc the
-          # flake's build, tests and dev shell use.
+          # rust/rust-toolchain.toml pins; this holds it to the release of the
+          # rustc the flake's build, tests and dev shell use (rustup's build of
+          # that release carries its own LLVM).
           release-toolchain =
             let
               pinned = (builtins.fromTOML (builtins.readFile ./rust/rust-toolchain.toml)).toolchain.channel;

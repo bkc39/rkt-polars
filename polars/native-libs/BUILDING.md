@@ -18,16 +18,18 @@ Any other Rust change reaches catalog users only once they are refreshed.
 
 ## The toolchain
 
-The candidates are built by the rustc the tests run on:
+The candidates are built by the same rustc release as the tests run on, but
+not the same build of it:
 
 - `rust/rust-toolchain.toml` pins the release rustc. `scripts/build-so.sh`
   builds with it, and the `release-toolchain` flake check fails when it is not
-  nixpkgs' rustc at `flake.lock`, which builds and tests the library in
-  `nix flake check` and the dev shell. rustup also picks it for `cargo` run in
-  `rust/`. The release and commit match, but rustup's build of a release
-  carries its own LLVM, which can differ from nixpkgs' (22.1.8 against 21.1.8
-  for 1.98.1); the CI jobs that install the built candidates and run the tests
-  are what cover the shipped code.
+  the release of nixpkgs' rustc at `flake.lock`, which builds and tests the
+  library in `nix flake check` and the dev shell. rustup also picks it for
+  `cargo` run in `rust/`. The release and commit match, but rustup's build of
+  a release carries its own LLVM, which can differ from nixpkgs' (22.1.8
+  against 21.1.8 for 1.98.1), so `nix flake check` does not cover the shipped
+  code generation. The CI jobs that install the built candidates and run the
+  tests do.
 - `scripts/build-so.sh` names the manylinux2014 image, which supplies the
   Linux candidate's linker and glibc, by digest. The darwin linker is the CI
   runner's Xcode, which nothing pins.
@@ -35,7 +37,11 @@ The candidates are built by the rustc the tests run on:
   it, and the image (Linux) or the linker (darwin). CI uploads it in the
   artifact with `rust-tree`.
 
-The same rustc release, `rust/` and image give byte-identical candidates.
+The same rustc release, `rust/` and image give a byte-identical Linux
+candidate: a build on another host in the pinned image matched CI's. The
+darwin candidate also depends on the runner's Xcode, which nothing pins: CI
+runs on one runner image have matched, but a runner update can change its
+bytes.
 
 ## What CI checks
 

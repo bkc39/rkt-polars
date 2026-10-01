@@ -22,10 +22,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The release rustc, which rust/rust-toolchain.toml pins to the flake's
-# (nixpkgs at flake.lock), so the shipped library is built by the compiler the
-# tests ran on.  polars' `nightly` feature needs RUSTC_BOOTSTRAP=1 on it, as
-# the flake's build sets.
+# The release rustc, which rust/rust-toolchain.toml pins to the flake's rustc
+# release (nixpkgs at flake.lock).  This is rustup's build of that release,
+# whose LLVM can differ from nixpkgs', so the tests nix runs do not cover its
+# code generation; CI's jobs that install the built library do.  polars'
+# `nightly` feature needs RUSTC_BOOTSTRAP=1 on it, as the flake's build sets.
 RUST_TOOLCHAIN="$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' "$ROOT/rust/rust-toolchain.toml")"
 if [[ -z "$RUST_TOOLCHAIN" ]]; then
   echo "error: no channel = \"<version>\" line in rust/rust-toolchain.toml" >&2
