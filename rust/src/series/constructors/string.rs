@@ -11,9 +11,18 @@ pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
 }
 
 /// Row `i` is `buf[offsets[i]..offsets[i + 1]]`, null where `valid` (NULL
-/// when no row is null) holds 0. NULL on zero rows, which keeps an empty list
-/// an error in Racket, and on offsets that leave `buf` or split a character;
-/// only a polars panic records a reason.
+/// when no row is null) holds 0; a NULL or non-UTF-8 `name` is empty.
+///
+/// Returns NULL, recording no reason, when:
+/// - there are zero rows (`offsets_len < 2`), which keeps an empty list an
+///   error in Racket (#98);
+/// - `offsets` is NULL, or `buf` is NULL with `buf_len > 0`;
+/// - `valid` is not NULL and holds fewer than `offsets_len - 1` bytes;
+/// - `buf` is not UTF-8;
+/// - an offset is negative, below the one before it, past `buf_len`, or
+///   inside a character.
+///
+/// A polars panic also returns NULL, and records `polars panicked: <cause>`.
 #[no_mangle]
 pub extern "C" fn series_new_str_packed(
     name: *const c_char,
