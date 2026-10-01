@@ -52,6 +52,13 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Categorical data and enums | `categorical-data-and-enums.rkt` | `categorical_data_and_enums.py` |
 | Window functions | `window-functions.rkt` | `window_functions.py` |
 
+`time-series/` — upstream [Time series](https://docs.pola.rs/user-guide/transformations/time-series/parsing/)
+
+| Topic | Racket | Python |
+| --- | --- | --- |
+| Parsing | `parsing.rkt` | `parsing.py` |
+| Filtering | `filtering.rkt` | `filtering.py` |
+
 `io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
 [multiple files](https://docs.pola.rs/user-guide/io/multiple/)
 
@@ -68,5 +75,6 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Numeric buffers (`to_numpy`; the Python side needs numpy) | `numeric-buffers.rkt` | `numeric_buffers.py` |
 | Data for a plot | `visualization.rkt` | `visualization.py` |
 
-`data/` holds the small CSV inputs the scripts read; the `io/` scripts read
-the fixtures under `polars/scribblings/data/`, which the manual uses too.
+`data/` holds the small CSV inputs the scripts read; the `io/` and
+`time-series/` scripts read the fixtures under `polars/scribblings/data/`,
+which the manual uses too.

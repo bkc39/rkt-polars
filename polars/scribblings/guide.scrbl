@@ -21,5 +21,6 @@ mentioned, see the @secref["reference"].
 @include-section["guide/getting-started.scrbl"]
 @include-section["guide/concepts.scrbl"]
 @include-section["guide/expressions.scrbl"]
+@include-section["guide/time-series.scrbl"]
 @include-section["guide/io.scrbl"]
 @include-section["guide/interop.scrbl"]

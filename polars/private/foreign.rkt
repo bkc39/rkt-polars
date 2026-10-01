@@ -17,6 +17,7 @@
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/resource with-raw-buffer)
+         (only-in polars/private/temporal epoch->datetime nanoseconds->time)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
@@ -923,22 +924,6 @@
    [minute _uint32]
    [sescond _uint32]))
 
-(define-cstruct _CompatOptYMDHMS
-  ([valid _int32]
-   [value _YMDHMS]))
-
-(define (ymdhms->datetime value)
-  (datetime (YMDHMS-year value)
-            (YMDHMS-month value)
-            (YMDHMS-day value)
-            (YMDHMS-hour value)
-            (YMDHMS-minute value)
-            (YMDHMS-sescond value)))
-
-(define (compat-opt-ymdhms->datum o)
-  (and (not (zero? (CompatOptYMDHMS-valid o)))
-       (ymdhms->datetime (CompatOptYMDHMS-value o))))
-
 (module+ test
   (check-pred YMDHMS?
               (make-YMDHMS 2014 7 11 12 0 0)))
@@ -1010,35 +995,11 @@
   (_fun _Series-ptr _size -> _CompatOptI64)
   #:c-id series_ref_time)
 
-(define-compat series-ref-ymdhms/raw
-  (_fun _Series-ptr _size -> _CompatOptYMDHMS)
-  #:c-id series_ref_ymdhms)
-
 (define (series-ref-unsupported dtype)
   (error 'series-ref "unsupported dtype ~v" dtype))
 
 (define (require-ref-value dtype value)
   (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
-
-(define (left-pad-number value width)
-  (define s (number->string value))
-  (if (>= (string-length s) width)
-      s
-      (string-append (make-string (- width (string-length s)) #\0) s)))
-
-(define (nanoseconds->time value)
-  (define-values (total-seconds nanosecond) (quotient/remainder value 1000000000))
-  (define-values (total-minutes second) (quotient/remainder total-seconds 60))
-  (define-values (hour minute) (quotient/remainder total-minutes 60))
-  (define base
-    (format "~a:~a:~a"
-            (left-pad-number hour 2)
-            (left-pad-number minute 2)
-            (left-pad-number second 2)))
-  (iso8601->time
-   (if (zero? nanosecond)
-       base
-       (format "~a.~a" base (left-pad-number nanosecond 9)))))
 
 (define (duration-value->period dtype value)
   (match dtype
@@ -1050,6 +1011,15 @@
 
 (define-compat series-copy-decimal
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
+;; The validity buffer is GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-i64
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
+(define (series-ref-datetime s index unit)
+  (with-raw-buffer ([value 1 _int64])
+    (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
+         (epoch->datetime unit (ptr-ref value _int64 0)))))
 
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
@@ -1103,9 +1073,8 @@
            (require-ref-value
             dtype
             (and raw (duration-value->period dtype raw)))]
-          [`(datetime ,_ ,_)
-           (require-ref-value dtype
-                              (compat-opt-ymdhms->datum (series-ref-ymdhms/raw s index)))]
+          [`(datetime ,unit ,_)
+           (require-ref-value dtype (series-ref-datetime s index unit))]
           [`(decimal ,_ ,scale) (require-ref-value dtype (series-ref-decimal s index scale))]
           [_ (series-ref-unsupported dtype)])])]
     [else (error 'series-ref "could not read null state at index ~a" index)]))
@@ -1201,6 +1170,15 @@
            polars-null)))
   (check-equal? (series-ref ref-dt 0) (datetime 2024 1 2 3 4 5))
   (check-equal? (series-ref ref-dt 1) polars-null)
+  (for ([unit '(milliseconds microseconds nanoseconds)]
+        [k '(1000 1000000 1000000000)])
+    (define ticks (series-cast (series-new-i64 "t" (list 1500 -1 polars-null))
+                               (list 'datetime unit)))
+    (check-equal? (series-ref ticks 0) (posix->datetime (/ 1500 k)))
+    (check-equal? (series-ref ticks 1) (posix->datetime (/ -1 k)))
+    (check-equal? (series-ref ticks 2) polars-null))
+  (check-equal? (series-ref (series-cast (series-new-i64 "t" '(1500)) '(datetime milliseconds)) 0)
+                (datetime 1970 1 1 0 0 1 500000000))
 
   (define ref-date
     (series-cast (series-new-i32 "d" (list 19724 polars-null -1)) 'date))

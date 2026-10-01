@@ -11,10 +11,12 @@
                   rename-contract)
          racket/runtime-path
          polars/private/column-pattern
+         (only-in gregor moment?)
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring call/foreign-error enum-dtype?
-                  owned-pointer-arg sort-flags-mismatch sort-flags/c)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+                  ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
+                  enum-dtype? owned-pointer-arg sort-flags-mismatch sort-flags/c)
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/temporal reject-moment temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
@@ -104,6 +106,13 @@
   (_fun _Expr-ptr _string -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
+(define-compat expr-lit-temporal
+  (_fun _int64 _CompatDType -> _Expr-ptr/null)
+  #:wrap (allocator/or-fail expr-drop 'expr-lit-temporal))
+
+(define (temporal-lit v dtype)
+  (expr-lit-temporal ((temporal-encoder 'lit dtype) v) (->compat-dtype dtype)))
+
 (define (lit v)
   (cond
     [(boolean? v) (expr-lit-bool v)]
@@ -114,6 +123,8 @@
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
+    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit v dtype))]
+    [(moment? v) (reject-moment 'lit v)]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
 (define-compat expr-all

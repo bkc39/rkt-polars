@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::rust_string_to_ptr;
+use crate::{polars_dtype_from_compat, rust_string_to_ptr, CompatDType};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -67,6 +67,33 @@ pub extern "C" fn expr_lit_str(v: *const c_char) -> *mut Expr {
         Err(_) => return ptr::null_mut(),
     };
     Box::into_raw(Box::new(lit(s)))
+}
+
+const NS_IN_DAY: i64 = 86_400_000_000_000;
+
+/// A Date, naive Datetime, Duration or Time literal from its physical value
+/// (days, or the dtype's unit since the epoch or midnight). NULL for any
+/// other dtype, or a value outside the dtype's range.
+#[no_mangle]
+pub extern "C" fn expr_lit_temporal(
+    value: i64,
+    dtype: CompatDType,
+) -> *mut Expr {
+    let scalar = match polars_dtype_from_compat(&dtype) {
+        Some(DataType::Date) => match i32::try_from(value) {
+            Ok(days) => Scalar::new_date(days),
+            Err(_) => return ptr::null_mut(),
+        },
+        Some(DataType::Datetime(unit, None)) => {
+            Scalar::new_datetime(value, unit, None)
+        }
+        Some(DataType::Duration(unit)) => Scalar::new_duration(value, unit),
+        Some(DataType::Time) if (0..NS_IN_DAY).contains(&value) => {
+            Scalar::new_time(value)
+        }
+        _ => return ptr::null_mut(),
+    };
+    Box::into_raw(Box::new(lit(scalar)))
 }
 
 #[no_mangle]

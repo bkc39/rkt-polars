@@ -16,6 +16,8 @@
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
+         (only-in polars/private/series series-repeat-temporal)
+         (only-in polars/private/temporal temporal-value-dtype)
          syntax/parse/define
          (for-syntax racket/base))
 
@@ -23,12 +25,17 @@
 
 ;; A constant series of `dt`, length `n`, every slot = `value`.
 (define (const-series dt n value)
-  (define ctor (dtype->constructor dt #f))
-  (wrap-series (ctor "" (coerce-elements dt (make-list n value)))))
+  (wrap-series
+   (if (temporal-dtype? dt)
+       (series-repeat-temporal 'series "" value n dt)
+       ((dtype->constructor dt #f) "" (coerce-elements dt (make-list n value))))))
 
-;; The other operand of a series op, as a series matching `s`.
+;; The other operand of a series op, as a series matching `s`; a gregor value
+;; keeps the dtype `lit` gives it, as the expression path does.
 (define (cmp-other s other)
-  (if (series? other) other (const-series (series-dtype s) (series-len s) other)))
+  (if (series? other)
+      other
+      (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr

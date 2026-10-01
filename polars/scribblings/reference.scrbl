@@ -72,7 +72,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?)]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?
+                                     #,(tt "gregor-value"))])
+                       Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
   column or to several at once, by the shape of @racket[spec]:
@@ -84,9 +86,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     @item{A dtype is every column of that dtype (@tt{pl.col(pl.Float64)}).
       @racket[dtype-spec?] is any spelling @racket[series]'
       @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
-      alike. A bare @racket['datetime] means microseconds, so match a
-      column @racket[series] built from gregor datetimes with
-      @racket['(datetime milliseconds)] or with its @racket[dtype].
+      alike. A bare @racket['datetime] means microseconds: the unit
+      @racket[#:try-parse-dates] gives parsed datetimes, and the unit
+      @racket[series] gives gregor datetimes unless one carries a
+      sub-microsecond part and a nanosecond column holds them all, which
+      makes the column nanoseconds (@secref["ref-temporal-values"]). Match
+      another unit with its @racket[dtype].
       @racket['categorical] is every categorical column, and an
       @racket['(enum ....)] dtype the columns of exactly that Enum
       (@secref["ref-categorical"]).}
@@ -111,8 +116,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
   exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
   @racket['float64]) and strings. A symbol is the string of its name, so a
-  categorical column compares with the symbols it reads back as. Every
-  operator below lifts a
+  categorical column compares with the symbols it reads back as. A
+  @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime} or
+  @tt{period}, and becomes a literal of the dtype @racket[series] infers
+  for it (@secref["ref-temporal-values"]), so a temporal column compares
+  with gregor values as Python's compares with @tt{date}, @tt{time},
+  @tt{datetime} and @tt{timedelta}. Every operator below lifts a
   non-expression operand with @racket[lit] automatically, so it is rarely
   needed explicitly.
 
@@ -128,6 +137,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (select people (col #px"^\\w+t$"))
 (select people (~> (col "id") (* 10) (alias "id10"))
                (alias (lit 0) "zero"))
+(lit (date 2013 6 1))
+(select people (alias (lit (datetime 2013 6 1 12 30)) "noon"))
+(eval:error (lit (moment 2013 6 1 #:tz "Europe/Paris")))
 (eval:error (select people (col #px"^(?!id)")))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))]}
@@ -784,10 +796,10 @@ total
               @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
-  lifted with @racket[lit], which has no date spelling; parse a string instead:
-  @racket[(str->date (lit "1982-12-31"))]. A list @racket[rhs] holds integers,
-  reals, strings, symbols (read as strings, as @racket[lit] reads them) or
-  booleans, all of one kind.}
+  lifted with @racket[lit], so gregor dates and datetimes bound a temporal
+  column (@secref["ref-temporal-values"]). A list @racket[rhs] holds integers,
+  reals, strings, symbols (read as strings, as @racket[lit] reads them),
+  booleans or gregor values, all of one kind.}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -877,13 +889,18 @@ an implementation detail and not part of the public series API.)
   flonums when the target dtype is floating point. Symbols infer
   @racket['categorical]; a @racket['categorical] or Enum (@racket[define-enum])
   series is built from strings or symbols alike, and an Enum raises on a
-  value outside its categories (@secref["ref-categorical"]).
+  value outside its categories (@secref["ref-categorical"]). gregor dates,
+  times, datetimes and periods infer the temporal dtypes; a datetime or
+  duration column is microseconds, or nanoseconds when a value carries a
+  sub-microsecond part and a nanosecond column holds every value
+  (@secref["ref-temporal-values"]).
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")
+(series (list (date 1997 1 10) (date 1985 2 15)) #:name "birthdate")
 (define-enum severity debug info error)
 (series '("debug" "error") #:dtype severity)
 (eval:error (series '(debug fatal) #:dtype severity))]}
@@ -948,7 +965,7 @@ it:
        (list @elem{@racket['categorical], @racket['(enum cat ...)]} @racket[symbol?])
        (list @racket['(decimal precision scale)] @elem{an exact rational, as @racket[exact?]})
        (list @racket['date] @elem{a gregor @tt{date}})
-       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, floored to the second})
+       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, to the column's unit})
        (list @racket['(duration unit)] @elem{a gregor @tt{period} in that unit})
        (list @racket['time] @elem{a gregor @tt{time}})
        (list @racket['null] "the null value"))]
@@ -964,7 +981,7 @@ chapter of the guide walks through all of them.
 (series->list (series (list 1.5 polars-null)))
 (series->list (series (list "a" polars-null "")))
 (series->list (series (list #t #f polars-null)))
-(series->list (series (list (datetime 2024 1 2 3 4 5) polars-null)))
+(series->list (series (list (datetime 2024 1 2 3 4 5 678000000) polars-null)))
 (series->list (cast (series '(19724) #:dtype 'i32) 'date))
 (series->list (cast (series '(11045000000000) #:dtype 'i64) 'time))
 (series->list (cast (series '(1500) #:dtype 'i64) '(duration milliseconds)))
@@ -1023,6 +1040,81 @@ chapter of the guide walks through all of them.
 (for/first ([x (in-series (series (build-list 100000 values)))]
             #:when (> x 41))
   x)]}
+
+@subsection[#:tag "ref-temporal-values"]{Dates, times, datetimes and durations}
+
+The temporal dtypes cross the boundary as gregor values, both ways: a
+@racket['date] column holds gregor @tt{date}s, a @racket['time] column gregor
+@tt{time}s, a @racket['(datetime unit #f)] column gregor @tt{datetime}s and a
+@racket['(duration unit)] column gregor @tt{period}s. @racket[series] infers
+the dtype from the values, as Python's @tt{pl.Series} does from @tt{date},
+@tt{time}, @tt{datetime} and @tt{timedelta}, and @racket[lit] makes the
+literal of the same dtype:
+
+@tabular[#:style 'boxed #:sep @hspace[2]
+ (list (list @bold{gregor value} @bold{inferred dtype})
+       (list @tt{date} @racket['date])
+       (list @tt{time} @racket['time])
+       (list @tt{datetime} @elem{@racket['(datetime microseconds #f)], or
+                                 @racket['(datetime nanoseconds #f)]})
+       (list @elem{@tt{period} without years or months}
+             @elem{@racket['(duration microseconds)], or
+                   @racket['(duration nanoseconds)]}))]
+
+Python's @tt{datetime} and @tt{timedelta} stop at the microsecond, so
+Python's unit is always microseconds; gregor's go to the nanosecond. A column
+(or a literal) is nanoseconds, so nothing is lost, when a value has a nonzero
+sub-microsecond part and a nanosecond column holds every value: datetimes
+from 1677-09-21 00:12:43.145224192 to 2262-04-11 23:47:16.854775807,
+durations shorter than 2@superscript{63} nanoseconds (about 292 years) either
+way. Otherwise it is microseconds, which hold every datetime Polars can
+print, and the sub-microsecond part is dropped as @racket[#:dtype] drops it
+(below). gregor's @tt{now} reads a flonum clock and nearly always has a
+sub-microsecond part: a column of @tt{now}s alone is then nanoseconds, and
+one that also holds a datetime from 1600 is microseconds.
+
+A period's weeks, days, hours and smaller fields add up to one fixed length
+(a day is 24 hours, as in Polars); years and months have no fixed length and
+are refused. With @racket[#:dtype], a value is converted to the dtype's unit
+and a finer part dropped as Polars' own casts drop it: a datetime is floored,
+a duration truncated toward zero. A value the dtype cannot hold raises, and
+so does a date or datetime outside the years -262143 to 262142, which Polars
+cannot print.
+
+A gregor @tt{moment} carries a time zone, and time-zone-aware datetimes are
+not supported yet: @racket[series] and @racket[lit] raise on one, where
+Python makes a zoned @tt{Datetime}. Convert it first with gregor's
+@tt{->datetime/utc} (or @tt{->datetime/local}).
+
+Reading back, @racket[ref] and every conversion in
+@secref["ref-series-convert"] return each value with its column's full
+precision: a millisecond, microsecond or nanosecond datetime as the gregor
+@tt{datetime} of exactly that instant, where Python's @tt{to_list} stops at
+the microsecond. A date column's years may be negative, as gregor's and
+Polars' may.
+
+@examples[#:eval ev #:hidden (require gregor/period gregor/time)]
+
+@examples[#:eval ev #:label #f
+(series (list (date 2013 1 1) polars-null (date -1300 5 23)) #:name "d")
+(series (list (time 5 6 7 123456789)) #:name "t")
+(series (list (datetime 2013 1 1 5 6 7 123456000)) #:name "dt")
+(series (list (datetime 2013 1 1 5 6 7 123456789)) #:name "dt")
+(series (list (datetime 2013 1 1 5 6 7 123456789) (datetime 1600 1 1)) #:name "dt")
+(series (list (hours 36) (minutes 90)) #:name "wait")
+(series (list (datetime 2013 1 1 5 6 7 123456789))
+        #:name "dt" #:dtype '(datetime milliseconds))
+(series->list (cast (series '(1500 -1) #:dtype 'i64) '(datetime milliseconds)))
+(define calendar
+  (dataframe (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))
+                           #:name "d")
+                   (series '(1 2 3) #:name "v"))))
+(filter calendar (> (col "d") (date 2013 6 1)))
+(filter calendar (is-between "d" (date 2013 5 31) (datetime 2013 6 1 12)))
+(filter calendar (is-in "d" (list (date 2013 5 31) (date 2013 6 2))))
+(eval:error (series (list (moment 2013 1 1 #:tz "UTC"))))
+(eval:error (series (list (months 1))))
+(eval:error (series (list (datetime 1500 1 1)) #:dtype '(datetime nanoseconds)))]
 
 @subsection[#:tag "ref-categorical"]{Categorical, Enum and Decimal}
 
