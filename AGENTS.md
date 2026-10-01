@@ -134,8 +134,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
   did so on a nulls-last boolean sort and a null-dtype `arg_sort`; 0.55.2
-  does neither, `rust/src/tests/crate_sort.rs`, and #108 removes the
-  routing around them).
+  does neither, and `rust/src/tests/crate_sort.rs` pins that, so the sorts
+  call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
@@ -229,6 +229,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `maintain_order='none'`; sort the result when order matters.
 - `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
   aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
+- Inside `agg` or `over`, the crate's `SortExpr` reads out of bounds when its
+  input holds one value per group: it gathers each group's row indices from
+  that one value (#167). The read segfaults on a string or a large frame, and
+  Python 1.42.1 segfaults on the same query. `cargo test` builds with debug
+  assertions, where the read is a `check_bounds` panic instead, so a Rust
+  test catches it without needing a crash. So an expression `sort` is
+  decided by the input's structure. An input that is one value per group (an
+  aggregation, `len`, a scalar literal, or an alias, cast, operator or `when`
+  over those alone) comes back unsorted. An input that keeps a value per row
+  (a column or selector, or an alias, cast, sort, operator or `when` with one
+  among its operands) gets `Expr::sort`, because polars evaluates it per group
+  as a column or a list. Anything else, a function of one value per group
+  such as `(abs (sum "v"))` among them, becomes `e.sort_by([e])`.
+  `SortByExpr` repoints such groups at the values before it gathers. This
+  path evaluates the input twice and prints as `sort_by`. A new form goes
+  into the per-row set only after its evaluation in `polars-expr` has been
+  checked.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
