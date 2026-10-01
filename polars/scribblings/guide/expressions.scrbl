@@ -83,8 +83,8 @@ it says otherwise.
 (select df (col #px"^\\w+_high$"))
 ]
 
-Polars' engine has no lookaround or backreferences, so such a regexp fails
-when the query runs. Match the names in Racket instead.
+Polars' engine has no lookaround or backreferences, so @racket[col] rejects
+such a regexp. Match the names in Racket instead.
 
 @examples[#:eval ev #:label #f
 (define not-day #px"^(?!day_).*_(high|low)$")

@@ -11,7 +11,7 @@
           [meta-eq? (-> col-expr/c col-expr/c boolean?)]))
 
 (define (meta-output-name x)
-  (expr-meta-output-name (->col-expr 'meta-output-name x)))
+  (expr-meta-output-name (->col-expr 'meta-output-name x) #:who 'meta-output-name))
 
 (define (meta-root-names x)
   (expr-meta-root-names (->col-expr 'meta-root-names x)))
@@ -23,7 +23,7 @@
   (require rackunit
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in threading ~>)
-           (only-in polars/private/expr col expr-add lit)
+           (only-in polars/private/expr col expr-add expr-mul lit)
            (only-in polars/private/generic/reductions alias sum)
            (prefix-in contracted: (submod "..")))
   (define ab (expr-add (col "a") (col "b")))
@@ -46,8 +46,18 @@
   (check-false (meta-eq? (col "a") (alias (col "a") "a")))
   (check-false (meta-eq? ab (expr-add (col "b") (col "a"))))
   (check-true (meta-eq? "a" (col "a")))
-  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of "
+  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
              (lambda () (meta-output-name "*")))
+  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.matches\\("
+             (lambda () (meta-output-name (col #rx"^he"))))
+  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.by_dtype\\(\\[Float64\\]\\)$"
+             (lambda () (meta-output-name (col 'float64))))
+  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
+             (lambda () (expr-meta-output-name (col "*"))))
+  (check-equal? (meta-root-names (col #rx"^he")) '())
+  (check-equal? (meta-root-names (expr-mul (col 'float64) (lit 2))) '())
+  (check-true (meta-eq? (col 'float64) (col 'f64)))
+  (check-false (equal? (alias (col "a") "t") (alias (col "a") "t")))
   (check-exn exn:fail:contract:blame? (lambda () (contracted:meta-output-name 5)))
   (check-exn #rx"meta-output-name: contract violation.*expected: col-expr/c"
              (lambda () (contracted:meta-output-name 5)))

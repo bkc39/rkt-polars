@@ -141,7 +141,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-exclude e names)
-  (or (expr-exclude/raw e (map ->column-pattern names))
+  (or (expr-exclude/raw e (for/list ([name (in-list names)]) (->column-pattern 'expr-exclude name)))
       (error 'expr-exclude "operation failed")))
 
 (define-compat expr-dtype-col-enum/raw
@@ -162,7 +162,7 @@
 (define (col spec)
   (if (dtype-spec? spec)
       (expr-dtype-col spec)
-      (expr-col (->column-pattern spec))))
+      (expr-col (->column-pattern 'col spec))))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))

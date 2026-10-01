@@ -7,12 +7,35 @@
          racket/string
          threading)
 
-(provide ->column-pattern)
+(provide ->column-pattern check-column-pattern)
 
-(define (->column-pattern v)
+(define (->column-pattern who v)
+  (check-column-pattern who v)
   (if (regexp? v)
       (string-append "^(?s).*(?:" (regexp->rust v) ").*$")
       v))
+
+(define (check-column-pattern who v)
+  (define construct (and (regexp? v) (unsupported-construct (tokens v) (pregexp? v))))
+  (when construct
+    (raise-arguments-error
+     who
+     (format "Polars' regex engine has no ~a; to select by this regexp, match column-names with regexp-match? and select the names"
+             construct)
+     "regexp" v)))
+
+(define (unsupported-construct tokens px?)
+  (match tokens
+    ['() #f]
+    [(list* "(" "?" next _)
+     #:when (not (equal? next ":"))
+     (match next
+       [(or "=" "!") "lookahead"]
+       ["<" "lookbehind"]
+       [">" "atomic groups"]
+       [_ "conditionals"])]
+    [(cons (regexp #rx"^\\\\[0-9]$") _) #:when px? "backreferences"]
+    [(cons _ rest) (unsupported-construct rest px?)]))
 
 (define posix-classes
   (hash "alpha" "a-zA-Z" "upper" "A-Z" "lower" "a-z" "digit" "0-9" "xdigit" "0-9a-fA-F"
@@ -61,10 +84,13 @@
       (remove-duplicates (list ch (char-upcase ch) (char-downcase ch) (char-foldcase ch)))
       (list ch)))
 
+(define (tokens rx)
+  (regexp-match* (if (pregexp? rx) px-token rx-token) (object-name rx)))
+
 (define (regexp->rust rx)
   (define px? (pregexp? rx))
   (for/fold ([folds '(#f)] [out '()] #:result (string-append* (reverse out)))
-            ([token (in-list (regexp-match* (if px? px-token rx-token) (object-name rx)))])
+            ([token (in-list (tokens rx))])
     (match-define (cons fold? outer) folds)
     (match token
       [(regexp #rx"^\\(\\?([-ims]+):$" (list _ flags))

@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/contract
+         (only-in polars/private/column-pattern check-column-pattern)
          (only-in polars/private/expr Expr-ptr? expr-all expr-exclude multi-column-expr?))
 
 (provide (contract-out
@@ -13,6 +14,8 @@
 (define all expr-all)
 
 (define (exclude e name . names)
+  (for ([pattern (in-list (cons name names))])
+    (check-column-pattern 'exclude pattern))
   (expr-exclude e (cons name names)))
 
 (module+ test
@@ -101,14 +104,21 @@
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
   (check-exn #rx"^lazyframe-collect: .*duplicate.*'x'"
              (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
-  (check-pred Expr-ptr? (col #px"(?=a)"))
-  (check-exn #rx"^lazyframe-collect: .*\\(\\?=a\\)"
-             (lambda () (select iris (col #px"(?=a)"))))
-  (check-pred Expr-ptr? (exclude (all) #px"(?=a)"))
-  (check-exn #rx"^lazyframe-collect: .*\\(\\?=a\\)"
-             (lambda () (select iris (exclude (all) #px"(?=a)"))))
-  (check-exn #rx"^lazyframe-collect: .*\\(a\\)\\\\1"
-             (lambda () (select iris (col #px"(a)\\1"))))
+  (check-exn #rx"^col: Polars' regex engine has no lookahead; .*column-names.*\n  regexp: #px\"\\^\\(\\?!id\\)\"$"
+             (lambda () (col #px"^(?!id)")))
+  (check-equal? (column-names (select people (filter (lambda (name) (regexp-match? #px"^(?!b)" name))
+                                                     (column-names people))))
+                '("name" "weight" "height"))
+  (for ([rx (list #px"(?=a)" #rx"(?!a)" #px"(?<=a)b" #rx"(?<!a)b" #px"(?>a)" #rx"(a)?(?(1)b|c)"
+                  #px"(a)\\1")]
+        [construct '("lookahead" "lookahead" "lookbehind" "lookbehind" "atomic groups"
+                     "conditionals" "backreferences")])
+    (check-exn (regexp (string-append "^col: Polars' regex engine has no " construct ";"))
+               (lambda () (col rx)))
+    (check-exn (regexp (string-append "^exclude: Polars' regex engine has no " construct ";"))
+               (lambda () (contracted:exclude (all) "id" rx))))
+  (check-equal? (column-names (select people (col #px"(?:ei)"))) '("weight" "height"))
+  (check-equal? (column-names (select people (col #rx"(?i:NAME)"))) '("name"))
 
   (define odd-names
     '("d" "q1" "aa" "a" "a{2}" "w_x" "back\\slash" "br[ack]et" "amp&and" "tilde~x"

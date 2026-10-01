@@ -123,9 +123,9 @@
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_meta_output_name)
 
-(define (expr-meta-output-name e)
+(define (expr-meta-output-name e #:who [who 'expr-meta-output-name])
   (or (expr-meta-output-name/raw e)
-      (error 'expr-meta-output-name
+      (error who
              "cannot determine the output name of ~a" (expr->string e))))
 
 (define-compat expr-meta-root-names-len

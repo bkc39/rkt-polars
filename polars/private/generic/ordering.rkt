@@ -2,9 +2,9 @@
 
 (require (prefix-in base: (only-in racket/base sort))
          (only-in racket/contract/base
-                  ->i contract-out flat-named-contract non-empty-listof none/c or/c
-                  procedure-arity-includes/c rename-contract the-unsupplied-arg
-                  unsupplied-arg?)
+                  ->* ->i contract-out flat-named-contract
+                  non-empty-listof none/c or/c procedure-arity-includes/c
+                  rename-contract the-unsupplied-arg unsupplied-arg?)
          (only-in polars/private/expr
                   Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort)
          (only-in polars/private/expr-core sort-by/c)
@@ -14,8 +14,14 @@
                   dataframe? lazyframe? series? wrap-dataframe wrap-lazyframe wrap-series)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
-(provide (contract-out [sort sort/c] [sort-by (sort-by/c col-expr/c 'sort-by/c)])
-         rank gather)
+(provide (contract-out [sort sort/c]
+                       [sort-by (sort-by/c col-expr/c 'sort-by/c)]
+                       [rank (->* (col-expr/c)
+                                  (#:method (or/c 'average 'min 'max 'dense 'ordinal)
+                                   #:descending boolean?
+                                   #:seed (or/c #f exact-nonnegative-integer?))
+                                  Expr-ptr?)])
+         gather)
 
 (define (sort-frame? x) (or (dataframe? x) (lazyframe? x)))
 
@@ -42,7 +48,7 @@
         ([by (x) (cond [(sort-frame? x) sort-keys/c]
                        [(list? x) (procedure-arity-includes/c 2)]
                        [else frame-or-list-only/c])]
-         #:descending [descending (x) (polars-flag/c x)]
+         #:descending [descending (x) (if (list? x) boolean? (polars-flag/c x))]
          #:nulls-last [nulls-last (x) (polars-flag/c x)]
          #:maintain-order [maintain-order (x) (if (sort-frame? x) boolean? frame-only/c)]
          #:key [extract-key (x)
@@ -79,7 +85,9 @@
                       #:maintain-order maintain-order))]
     [(series? x)
      (wrap-series (series-sort x #:descending descending #:nulls-last nulls-last))]
-    [(list? x) (base:sort x by #:key extract-key #:cache-keys? cache-keys?)]
+    [(list? x)
+     (base:sort x (if descending (lambda (a b) (by b a)) by)
+                #:key extract-key #:cache-keys? cache-keys?)]
     [else
      (expr-sort (->col-expr 'sort x) #:descending descending #:nulls-last nulls-last)]))
 
@@ -102,7 +110,8 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
-           polars/private/generic/reshape)     ; with-columns / select
+           polars/private/generic/reshape      ; with-columns / select
+           (prefix-in contracted: (submod "..")))
   (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
                               (series '("b" "a" "b" "a" "b") #:name "g"))))
   ;; rank is length-preserving -> with-columns
@@ -116,7 +125,20 @@
                 '(10 20 30 40 50))
   (define gathered (select df (alias (gather "x" '(0 2 4)) "xg")))
   (check-equal? (for/list ([i (in-range 3)]) (ref (ref gathered #:columns "xg") i))
-                '(30 50 40)))
+                '(30 50 40))
+
+  (check-equal? (contracted:sort '(3 1 2) <) '(1 2 3))
+  (check-equal? (contracted:sort '(3 1 2) < #:descending #t) '(3 2 1))
+  (check-equal? (contracted:sort '((a . 1) (b . 2) (c . 1)) < #:key cdr #:descending #t)
+                '((b . 2) (a . 1) (c . 1)))
+  (check-equal? (contracted:sort '((a . 1) (b . 2) (c . 1) (d . 2)) < #:key cdr #:descending #t)
+                '((b . 2) (d . 2) (a . 1) (c . 1)))
+  (check-equal? (contracted:sort '("b" "c" "a") string<? #:descending #f) '("a" "b" "c"))
+  (check-exn #rx"^sort: contract violation\n  expected: boolean\\?\n  given: '\\(#t\\)"
+             (lambda () (contracted:sort '(3 1 2) < #:descending '(#t))))
+  (check-exn #rx"^rank: contract violation\n  expected: \\(or/c .*ordinal\\)+\n  given: 'first"
+             (lambda () (contracted:rank "x" #:method 'first)))
+  (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7)))
 
 (module+ test
   (require racket/match
@@ -372,8 +394,8 @@
   (check-blame #rx"^sort: contract violation.*expected: sortable/c" (contracted:sort 42))
   (check-blame #rx"^sort: contract violation.*racket/base sort needs a less-than\\? procedure"
                (contracted:sort '(3 1 2)))
-  (check-blame #rx"^sort: contract violation.*expected: polars-only/c"
-               (contracted:sort '(3 1 2) < #:descending #t))
+  (check-blame #rx"^sort: contract violation.*expected: boolean\\?"
+               (contracted:sort '(3 1 2) < #:descending 1))
   (check-blame #rx"^sort: contract violation.*expected: polars-only/c"
                (contracted:sort '(3 1 2) < #:nulls-last #t))
   (check-blame #rx"^sort: contract violation.*expected: frame-only/c"

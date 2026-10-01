@@ -12,7 +12,7 @@
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec? define-enum)
+         dtype-spec? cast-target? define-enum)
 
 (begin-for-syntax
   (define-syntax-class enum-category
@@ -30,22 +30,11 @@
 ;; canonical symbols returned by series-dtype (int32, float64, string,
 ;; boolean).  Maps everything to a canonical symbol.
 (define dtype-aliases
-  (hash 'i8 'int8    'int8 'int8
-        'i16 'int16   'int16 'int16
-        'i32 'int32   'int32 'int32
-        'i64 'int64   'int64 'int64
-        'u8 'uint8    'uint8 'uint8
-        'u16 'uint16  'uint16 'uint16
-        'u32 'uint32  'uint32 'uint32
-        'u64 'uint64  'uint64 'uint64
-        'f32 'float32 'float32 'float32
-        'f64 'float64 'float64 'float64
-        'bool 'boolean 'boolean 'boolean
-        'str 'string   'string 'string
-        'date 'date
-        'time 'time
-        'datetime 'datetime
-        'categorical 'categorical))
+  (for/fold ([aliases dtype-short-names])
+            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
+                                   float32 float64 boolean string
+                                   date time datetime categorical))])
+    (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
   (match v
@@ -55,6 +44,9 @@
             (or '() (list #f)))
      #t]
     [_ (enum-dtype? v)]))
+
+(define (cast-target? v)
+  (or (dtype-spec? v) (and (memq v '(binary null duration)) #t)))
 
 (define (normalize-dtype dt)
   (cond
@@ -150,4 +142,10 @@
   (check-exn #rx"duplicate enum category"
              (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
   (check-exn #rx"expected more terms"
-             (lambda () (convert-compile-time-error (let () (define-enum none) none)))))
+             (lambda () (convert-compile-time-error (let () (define-enum none) none))))
+
+  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
+                  datetime (datetime milliseconds) (duration nanoseconds) (enum a b))])
+    (check-true (cast-target? target) (format "~v" target)))
+  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64")])
+    (check-false (cast-target? target) (format "~v" target))))
