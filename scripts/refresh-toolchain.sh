@@ -27,6 +27,8 @@ while (( $# )); do
     *) usage ;;
   esac
 done
+mkdir -p "$dir"
+dir="$(cd "$dir" && pwd)"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -76,9 +78,12 @@ echo ">> manylinux2014 image: $dated ($digest)"
 sed -i.orig "s|^MANYLINUX_IMAGE=.*|MANYLINUX_IMAGE=$image_repo:$dated@$digest|" scripts/build-so.sh
 rm scripts/build-so.sh.orig
 
+# cargo update logs to stderr; nix's own stderr (the dirty-tree warning, with
+# this checkout's path) stays out of the log, which goes in the PR body.
 echo ">> cargo update"
 nix shell --inputs-from . nixpkgs#cargo nixpkgs#rustc \
-  --command cargo update --manifest-path rust/Cargo.toml 2>&1 | tee "$out/cargo-update.txt"
+  --command bash -c 'cargo update --manifest-path rust/Cargo.toml 2>&1' \
+  | tee "$out/cargo-update.txt"
 changes="$(grep -cE '^ *(Updating|Adding|Removing|Downgrading) [^ ]+ v' "$out/cargo-update.txt" || true)"
 
 # racket-deps is fixed-output: a store that already holds it never refetches,
@@ -141,12 +146,13 @@ EOF
 } > "$out/pr-body.md"
 
 git diff --stat
+q="$(printf '%q' "$out")"
 cat <<EOF
 
 >> the refresh is in the working tree; to open its PR:
-   git commit -a -F $out/commit-msg.txt
+   git commit -a -F $q/commit-msg.txt
    git push -u origin HEAD
-   gh pr create --title "$title" --body-file - < $out/pr-body.md
+   gh pr create --title "$title" --body-file - < $q/pr-body.md
 >> then, once the PR's CI has built both candidates:
    scripts/refresh-candidates.sh <PR>
 EOF

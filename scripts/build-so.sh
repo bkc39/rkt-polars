@@ -88,13 +88,13 @@ else
     cargo+=("+$RUST_TOOLCHAIN")
     rustc+=("+$RUST_TOOLCHAIN")
   fi
-  release="$("${rustc[@]}" -vV | sed -n 's/^release: //p')"
+  release="$("${rustc[@]}" -vV | sed -n 's/^release: //p')" || true
   if [[ "$release" != "$RUST_TOOLCHAIN" ]]; then
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
     exit 1
   fi
-  echo ">> ${cargo[*]} build --profile dist (manifest: rust/Cargo.toml)"
-  "${cargo[@]}" build --profile dist --manifest-path "$ROOT/rust/Cargo.toml"
+  echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
+  "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
 
   built="$ROOT/rust/target/dist/$lib"
   if [[ ! -f "$built" ]]; then

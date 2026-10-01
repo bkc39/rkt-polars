@@ -176,4 +176,4 @@ echo
 cat "$msg"
 echo
 echo ">> staged in $cand; to commit:"
-echo "   git add $cand && git commit -F $msg"
+echo "   git add $cand && git commit -F $(printf '%q' "$msg")"
