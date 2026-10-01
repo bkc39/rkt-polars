@@ -1,0 +1,9 @@
+# The release rustc: scripts/build-so.sh builds the committed candidates with
+# it, and rustup picks it for cargo run in rust/.  It is the flake's rustc
+# release (nixpkgs at flake.lock), which the release-toolchain flake check
+# enforces and scripts/refresh-toolchain.sh moves.  rustup's build of that
+# release carries its own LLVM, which can differ from nixpkgs', so nix flake
+# check does not test the shipped code generation: CI's jobs that install the
+# built candidates do.
+[toolchain]
+channel = "1.98.1"

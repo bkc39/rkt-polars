@@ -11,16 +11,21 @@ without it (#106); Decimal columns are read (from Parquet), not built.
 `dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
 as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
-stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
-the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. The committed candidates are built with
-`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
-unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
-104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
-uses it. The nix build, `cargo test` and the bench stay on `release`, because
-under LTO every test and example binary links on one core (the nix check went
-from 30 to 145 minutes on CI), so the bench measures the release build, not
-the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
+stable rustc, nixpkgs' at `flake.lock`, with `RUSTC_BOOTSTRAP=1`, which the
+flake's build and dev shell and `scripts/build-so.sh` set.
+`rust/rust-toolchain.toml` names that release for `scripts/build-so.sh`, and
+the `release-toolchain` flake check fails when the two differ. The release
+build is rustup's build of the release, whose LLVM can differ from nixpkgs',
+so `nix flake check` does not test the shipped code generation. The Linux
+build's manylinux2014 image is pinned by digest in the script. The committed
+candidates are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
+thin LTO and one codegen unit (#125), which keeps the Linux `.so` at 81.4 MB
+against GitHub's 104,857,600-byte file limit (102.2 MB without it). Only
+`scripts/build-so.sh` uses it. The nix build, `cargo test` and the bench stay
+on `release`, because under LTO every test and example binary links on one
+core (the nix check went from 30 to 145 minutes on CI), so the bench measures
+the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
+depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -292,9 +297,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
+  `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -360,3 +366,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `master` requires one review and the maintainer is the only reviewer, so
   merges are `gh pr merge --squash --admin` once the owner approves.
 - Follow-ups become issues, never TODO comments.
+- The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
+  crates within the polars minor) moves only in a refresh PR of its own,
+  `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
+  (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
