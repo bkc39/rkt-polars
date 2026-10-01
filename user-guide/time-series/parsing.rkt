@@ -30,6 +30,10 @@
 (define closes (series (list (date 1995 10 16) (date 1995 11 1)) #:name "Date"))
 (displayln closes)
 (writeln (series->list closes))
+(displayln (series (list (datetime 1995 10 16 9 30 0 123456789) (datetime 1995 11 1))
+                   #:name "precise"))
+(displayln (series (list (datetime 1995 10 16 9 30 0 123456789) (datetime 1600 1 1))
+                   #:name "wide"))
 
 ;; API gap: no time zones, so no mixed-offsets example: str->datetime drops an
 ;; offset parsed with %z where Python converts to UTC; no dt.convert_time_zone.

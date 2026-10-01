@@ -4,7 +4,6 @@
          polars/private/expr
          polars/private/foreign
          polars/private/generic
-         polars/private/series
          (only-in threading ~> ~>> lambda~> lambda~>>)
          ;; generic exports its dispatching and/or/not/xor via `rename-out`, and
          ;; `all-from-out` below silently drops those (they collide with this
@@ -29,7 +28,6 @@
                      prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
                      series-sort/raw sort-flags sort-flags/c sort-flags-mismatch)
          (all-from-out polars/private/generic)
-         (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
          (rename-out [polars:and and] [polars:or or]
                      [polars:not not] [polars:xor xor]

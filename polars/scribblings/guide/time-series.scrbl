@@ -80,6 +80,16 @@ closes
 (series->list closes)
 ]
 
+gregor datetimes make a microsecond column, as Python's @tt{datetime}s do.
+gregor's reach the nanosecond: a value with a sub-microsecond part makes the
+column nanoseconds when a nanosecond column, which spans 1677 to 2262, holds
+every value, and otherwise the part is floored:
+
+@examples[#:eval ev #:label #f
+(series (list (datetime 1995 10 16 9 30 0 123456789) (datetime 1995 11 1)) #:name "precise")
+(series (list (datetime 1995 10 16 9 30 0 123456789) (datetime 1600 1 1)) #:name "wide")
+]
+
 @section[#:tag "ts-filtering"]{Filtering}
 
 A date column filters like any other. Its comparisons take gregor values,

@@ -241,12 +241,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
   a `period` without years or months (a day is 24 hours). A datetime or period
   that carries nanoseconds makes the column nanoseconds instead, where
-  Python's `datetime` stops at microseconds. `#:dtype` drops a finer part as a
-  polars cast does: a datetime floors, a duration truncates toward zero. A date
-  or datetime outside chrono's years (-262143 to 262142) is refused, since
-  polars panics printing one. `lit`, and so every comparison, `is-between` and
-  `is-in`, takes the same values as literals of the same dtypes
-  (`expr_lit_temporal`). Both refuse a gregor `moment`: time-zone-aware
+  Python's `datetime` stops at microseconds, but only when a nanosecond column
+  holds every value (datetimes 1677-09-21 to 2262-04-11, durations under
+  2^63 ns); otherwise it stays microseconds and drops the finer part as
+  `#:dtype` does, so `(series (list (now) (datetime 1600 1 1)))` builds
+  although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
+  part as a polars cast does: a datetime floors, a duration truncates toward
+  zero. A date or datetime outside chrono's years (-262143 to 262142) is
+  refused, since polars panics printing one. `lit`, and so every comparison,
+  `is-between` and `is-in`, takes the same values as literals of the same
+  dtypes (`expr_lit_temporal`). Both refuse a gregor `moment`: time-zone-aware
   datetimes have no surface yet (polars' `timezones` feature is off, and a
   zoned column's dtype prints `todo-timezone`).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);

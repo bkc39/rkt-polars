@@ -112,9 +112,11 @@
   (check-not-eq? (c0 "bucket") polars-null))   ; truncated datetime[ms]
 
 (module+ test
-  (require (only-in gregor moment)
-           (only-in gregor/period hours microseconds nanoseconds)
+  (require (only-in racket/list make-list)
+           (only-in gregor moment)
+           (only-in gregor/period hours microseconds nanoseconds period weeks)
            (only-in gregor/time time)
+           (only-in polars/private/bulk series->list)
            (prefix-in p: polars/private/generic/operators)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/predicates is-between is-in))
@@ -182,4 +184,18 @@
   (check-exn #rx"^lit: a moment carries a time zone"
              (lambda () (p:> (col "dt") (moment 2013 6 1 #:tz "UTC"))))
   (check-exn #rx"^lit: value out of range for this dtype\n  dtype: 'date"
-             (lambda () (lit (date 6000000 1 1)))))
+             (lambda () (lit (date 6000000 1 1))))
+  (check-equal? (literal (datetime 1600 1 1 0 0 0 999))
+                (list '(datetime microseconds #f) (datetime 1600 1 1)))
+  (check-equal? (literal (period (weeks 20000) (nanoseconds 1)))
+                (list '(duration microseconds) (microseconds (* 20000 7 86400 1000000))))
+  (check-equal? (rows (p:< (col "dt") (datetime 1600 1 1 0 0 0 1))) 0)
+
+  (for ([value (list (date 2013 6 1) (time 5 6 7 123456789) (datetime 2013 6 1 5 6 7 123456789)
+                     (datetime 1969 12 31 23 59 59 999999999) (datetime 1600 1 1 0 0 0 1)
+                     (nanoseconds -1500) (period (hours 1) (nanoseconds 1)) polars-null)]
+        [dt (list 'date 'time '(datetime nanoseconds #f) '(datetime milliseconds #f)
+                  '(datetime microseconds #f) '(duration microseconds) '(duration nanoseconds)
+                  '(datetime microseconds #f))])
+    (check-equal? (series->list (p:const-series dt 3 value))
+                  (series->list (series (make-list 3 value) #:dtype dt)))))

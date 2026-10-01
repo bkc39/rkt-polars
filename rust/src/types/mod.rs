@@ -17,4 +17,4 @@ pub use self::optionals::{
     CompatOptU8,
 };
 pub use self::shape::Shape;
-pub use self::temporal::{CompatOptYMD, CompatOptYMDHMS, YMD, YMDHMS};
+pub use self::temporal::{CompatOptYMD, YMD, YMDHMS};

@@ -72,28 +72,38 @@
 (define (whole-microseconds? ns)
   (zero? (remainder ns 1000)))
 
-(define (temporal-value-dtype v)
+(define (temporal-kind v)
   (cond
     [(date? v) 'date]
     [(time? v) 'time]
-    [(datetime? v)
-     (list 'datetime
-           (if (whole-microseconds? (->nanoseconds v)) 'microseconds 'nanoseconds)
-           #f)]
-    [(fixed-length-period? v)
-     (list 'duration
-           (if (whole-microseconds? (period-ref v 'nanoseconds)) 'microseconds 'nanoseconds))]
+    [(datetime? v) 'datetime]
+    [(fixed-length-period? v) 'duration]
     [else #f]))
 
+(define (inferred-unit sub-microsecond? ->ns vals)
+  (if (and (ormap sub-microsecond? vals) (andmap (lambda (v) (int64? (->ns v))) vals))
+      'nanoseconds
+      'microseconds))
+
+(define (datetime-sub-microsecond? dt)
+  (not (whole-microseconds? (->nanoseconds dt))))
+
+(define (period-sub-microsecond? p)
+  (not (whole-microseconds? (period-ref p 'nanoseconds))))
+
 (define (temporal-values-dtype vals)
-  (define dtypes (map temporal-value-dtype vals))
-  (define (kind dtype) (if (pair? dtype) (car dtype) dtype))
-  (cond
-    [(or (null? vals) (not (andmap values dtypes))) #f]
-    [(not (andmap (lambda (d) (eq? (kind d) (kind (car dtypes)))) dtypes)) #f]
-    [(member '(datetime nanoseconds #f) dtypes) '(datetime nanoseconds #f)]
-    [(member '(duration nanoseconds) dtypes) '(duration nanoseconds)]
-    [else (car dtypes)]))
+  (define kind (and (pair? vals) (temporal-kind (car vals))))
+  (and kind
+       (andmap (lambda (v) (eq? (temporal-kind v) kind)) vals)
+       (case kind
+         [(datetime)
+          (list 'datetime (inferred-unit datetime-sub-microsecond? datetime->nanoseconds vals) #f)]
+         [(duration)
+          (list 'duration (inferred-unit period-sub-microsecond? period->nanoseconds vals))]
+         [else kind])))
+
+(define (temporal-value-dtype v)
+  (temporal-values-dtype (list v)))
 
 (define (reject-moment who v)
   (raise-arguments-error
@@ -180,6 +190,28 @@
                 '(datetime nanoseconds #f))
   (check-equal? (temporal-values-dtype (list (hours 1) (nanoseconds 1)))
                 '(duration nanoseconds))
+  (define ns-min (epoch->datetime 'nanoseconds (- (expt 2 63))))
+  (define ns-max (epoch->datetime 'nanoseconds (sub1 (expt 2 63))))
+  (check-equal? ns-min (datetime 1677 9 21 0 12 43 145224192))
+  (check-equal? ns-max (datetime 2262 4 11 23 47 16 854775807))
+  (for ([edge (list ns-min ns-max)])
+    (check-equal? (temporal-value-dtype edge) '(datetime nanoseconds #f)))
+  (for ([past (list (epoch->datetime 'nanoseconds (sub1 (- (expt 2 63))))
+                    (epoch->datetime 'nanoseconds (expt 2 63))
+                    (datetime 1600 1 1 0 0 0 1))])
+    (check-equal? (temporal-value-dtype past) '(datetime microseconds #f)))
+  (check-equal? (temporal-values-dtype (list (datetime 2024 1 1 0 0 0 1) ns-max))
+                '(datetime nanoseconds #f))
+  (check-equal? (temporal-values-dtype (list (datetime 2024 1 1 0 0 0 1) (datetime 1600 1 1)))
+                '(datetime microseconds #f))
+  (check-equal? (temporal-value-dtype (nanoseconds (sub1 (expt 2 63)))) '(duration nanoseconds))
+  (check-equal? (temporal-value-dtype (nanoseconds (expt 2 63))) '(duration microseconds))
+  (check-equal? (temporal-value-dtype (period (weeks 20000) (nanoseconds 1)))
+                '(duration microseconds))
+  (check-equal? (temporal-values-dtype (list (nanoseconds 1) (weeks 20000)))
+                '(duration microseconds))
+  (check-equal? ((temporal-encoder 'test '(datetime microseconds #f)) (datetime 1600 1 1 0 0 0 999))
+                ((temporal-encoder 'test '(datetime microseconds #f)) (datetime 1600 1 1)))
   (check-false (temporal-values-dtype (list (date 2024 1 2) (datetime 2024))))
   (check-false (temporal-values-dtype (list (date 2024 1 2) 5)))
   (check-false (temporal-values-dtype '()))

@@ -86,9 +86,12 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     @item{A dtype is every column of that dtype (@tt{pl.col(pl.Float64)}).
       @racket[dtype-spec?] is any spelling @racket[series]'
       @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
-      alike. A bare @racket['datetime] means microseconds, the unit
-      @racket[series] gives gregor datetimes and @racket[#:try-parse-dates]
-      gives parsed ones; match another unit with its @racket[dtype].
+      alike. A bare @racket['datetime] means microseconds: the unit
+      @racket[#:try-parse-dates] gives parsed datetimes, and the unit
+      @racket[series] gives gregor datetimes unless one carries a
+      sub-microsecond part and a nanosecond column holds them all, which
+      makes the column nanoseconds (@secref["ref-temporal-values"]). Match
+      another unit with its @racket[dtype].
       @racket['categorical] is every categorical column, and an
       @racket['(enum ....)] dtype the columns of exactly that Enum
       (@secref["ref-categorical"]).}
@@ -887,7 +890,9 @@ an implementation detail and not part of the public series API.)
   @racket['categorical]; a @racket['categorical] or Enum (@racket[define-enum])
   series is built from strings or symbols alike, and an Enum raises on a
   value outside its categories (@secref["ref-categorical"]). gregor dates,
-  times, datetimes and periods infer the temporal dtypes
+  times, datetimes and periods infer the temporal dtypes; a datetime or
+  duration column is microseconds, or nanoseconds when a value carries a
+  sub-microsecond part and a nanosecond column holds every value
   (@secref["ref-temporal-values"]).
 
   @examples[#:eval ev
@@ -1057,15 +1062,24 @@ literal of the same dtype:
                    @racket['(duration nanoseconds)]}))]
 
 Python's @tt{datetime} and @tt{timedelta} stop at the microsecond, so
-Python's unit is always microseconds; gregor's go to the nanosecond, and a
-value with a nonzero sub-microsecond part makes the column (or the literal)
-nanoseconds, so nothing is lost. A period's weeks, days, hours and smaller
-fields add up to one fixed length (a day is 24 hours, as in Polars); years
-and months have no fixed length and are refused. With @racket[#:dtype], a
-value is converted to the dtype's unit and a finer part dropped as Polars'
-own casts drop it: a datetime is floored, a duration truncated toward zero.
-A value the dtype cannot hold raises, and so does a date or datetime outside
-the years -262143 to 262142, which Polars cannot print.
+Python's unit is always microseconds; gregor's go to the nanosecond. A column
+(or a literal) is nanoseconds, so nothing is lost, when a value has a nonzero
+sub-microsecond part and a nanosecond column holds every value: datetimes
+from 1677-09-21 00:12:43.145224192 to 2262-04-11 23:47:16.854775807,
+durations shorter than 2@superscript{63} nanoseconds (about 292 years) either
+way. Otherwise it is microseconds, which hold every datetime Polars can
+print, and the sub-microsecond part is dropped as @racket[#:dtype] drops it
+(below). gregor's @tt{now} reads a flonum clock and nearly always has a
+sub-microsecond part: a column of @tt{now}s alone is then nanoseconds, and
+one that also holds a datetime from 1600 is microseconds.
+
+A period's weeks, days, hours and smaller fields add up to one fixed length
+(a day is 24 hours, as in Polars); years and months have no fixed length and
+are refused. With @racket[#:dtype], a value is converted to the dtype's unit
+and a finer part dropped as Polars' own casts drop it: a datetime is floored,
+a duration truncated toward zero. A value the dtype cannot hold raises, and
+so does a date or datetime outside the years -262143 to 262142, which Polars
+cannot print.
 
 A gregor @tt{moment} carries a time zone, and time-zone-aware datetimes are
 not supported yet: @racket[series] and @racket[lit] raise on one, where
@@ -1086,6 +1100,7 @@ Polars' may.
 (series (list (time 5 6 7 123456789)) #:name "t")
 (series (list (datetime 2013 1 1 5 6 7 123456000)) #:name "dt")
 (series (list (datetime 2013 1 1 5 6 7 123456789)) #:name "dt")
+(series (list (datetime 2013 1 1 5 6 7 123456789) (datetime 1600 1 1)) #:name "dt")
 (series (list (hours 36) (minutes 90)) #:name "wait")
 (series (list (datetime 2013 1 1 5 6 7 123456789))
         #:name "dt" #:dtype '(datetime milliseconds))

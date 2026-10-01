@@ -7,7 +7,7 @@ Inside `nix develop`:
     python user-guide/time-series/parsing.py
 """
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import polars as pl
@@ -30,6 +30,7 @@ print(df.with_columns(pl.col("Date").dt.year().alias("year")))
 closes = pl.Series("Date", [date(1995, 10, 16), date(1995, 11, 1)])
 print(closes)
 print(closes.to_list())
+print(pl.Series("wide", [datetime(1995, 10, 16, 9, 30, 0, 123456), datetime(1600, 1, 1)]))
 
 # --- mixed offsets -------------------------------------------------------
 data = [
