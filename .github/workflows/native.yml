@@ -39,7 +39,8 @@ jobs:
       # A pull_request run builds the merge with the base branch, not the PR
       # head: scripts/refresh-candidates.sh commits a candidate only where
       # rust/ is the tree recorded here.  build-so.sh has written `toolchain`
-      # beside it, which the script prints and checks against the flake's.
+      # beside it, which the script prints and checks against the flake's
+      # rustc release and, on Linux, build-so.sh's image.
       - name: Record the rust/ tree built
         run: >-
           git rev-parse HEAD:rust

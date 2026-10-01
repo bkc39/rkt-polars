@@ -73,11 +73,13 @@ The script re-runs itself inside `nix develop`, then:
    builds the merge with `master`);
 2. waits for the run's Build libcompat jobs and downloads both artifacts to
    `~/rkt-polars-candidates/<run-id>/` (`--dir` to change);
-3. refuses unless the `rust/` tree each build recorded is the checkout's, and
-   prints the toolchain each recorded, refusing a rustc release other than the
-   dev shell's (the flake's);
-4. stops if they already match the committed files: builds of the same Rust
-   source and toolchain are byte-identical;
+3. refuses unless each build recorded its `rust/` tree and toolchain, the tree
+   is the checkout's, the rustc release is the dev shell's (the flake's), and
+   the Linux image is the one the checkout's `scripts/build-so.sh` names (the
+   script lies outside `rust/`, so the tree check misses an image change); it
+   prints each toolchain;
+4. stops if they already match the committed files (see "The toolchain" for
+   when builds are byte-identical);
 5. checks them with `scripts/verify-candidates.py` (an x86-64 ELF needing
    glibc ≤ 2.17, an arm64 Mach-O with a code signature, the same exports on
    both) and with `scripts/check-bindings.rkt` (every module under
@@ -85,6 +87,10 @@ The script re-runs itself inside `nix develop`, then:
    place of the nix-built library);
 6. copies them into `candidates/` and writes the commit message, which lists
    the toolchains and the exports added and removed.
+
+A run from before the toolchain record (#138) records none and is refused, so
+a PR opened before #138 merged must merge `master`, push, and wait for the new
+CI run before its next refresh.
 
 ## Refreshing the toolchain
 
@@ -123,7 +129,8 @@ To move only the image, set `MANYLINUX_IMAGE` in `scripts/build-so.sh` to
 `quay.io/pypa/manylinux2014_x86_64:<tag>@<digest>`, a dated tag and its digest
 from [quay.io's tag list](https://quay.io/repository/pypa/manylinux2014_x86_64?tab=tags).
 A new image can change the Linux candidate's bytes; refresh the candidates
-from that PR's run.
+from that PR's run (`scripts/refresh-candidates.sh` refuses an older run,
+built in the old image).
 
 ## Building by hand
 

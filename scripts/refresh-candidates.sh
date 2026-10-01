@@ -62,7 +62,10 @@ git cat-file -e "$sha^{commit}" 2>/dev/null || git fetch --quiet origin "$sha"
 tree="$(git rev-parse HEAD:rust)"
 [[ "$(git rev-parse "$sha:rust")" == "$tree" ]] \
   || die "${sha:0:7}'s rust/ differs from HEAD's; check out ${sha:0:7}"
-[[ -z "$(git status --porcelain -- rust)" ]] || die "rust/ has uncommitted changes"
+[[ -z "$(git status --porcelain -- rust scripts/build-so.sh)" ]] \
+  || die "rust/ or scripts/build-so.sh has uncommitted changes"
+image="$(git show HEAD:scripts/build-so.sh | sed -n 's/^MANYLINUX_IMAGE=//p')"
+[[ -n "$image" ]] || die "HEAD's scripts/build-so.sh sets no MANYLINUX_IMAGE"
 
 artifacts() {
   gh api "repos/{owner}/{repo}/actions/runs/$run/artifacts" \
@@ -91,39 +94,40 @@ done
 linux="$out/linux/libcompat.so"
 darwin="$out/darwin/libcompat.dylib"
 
-# A pull_request run builds the head's merge with its base branch, so the
-# rust/ tree its build recorded must be HEAD's.  A push run older than the
-# record built the head itself, which the check above covers.
-for platform in linux darwin; do
-  if [[ -f "$out/$platform/rust-tree" ]]; then
-    [[ "$(< "$out/$platform/rust-tree")" == "$tree" ]] \
-      || die "run $run built libcompat-$platform from a rust/ other than HEAD's" \
-             "(a $event run of ${sha:0:7}); merge the base branch into this one," \
-             "push, and refresh from the new commit's run"
-  else
-    [[ "$event" == push ]] \
-      || die "run $run does not record which rust/ it built libcompat-$platform from;" \
-             "pass --run with the push run for ${sha:0:7}, if it has one"
-  fi
-done
-
-# build-so.sh records the toolchain that built each candidate (a run older
-# than the record has none); rust/rust-toolchain.toml pins the flake's rustc,
-# which is this dev shell's.
+# Each build recorded the rust/ tree it built (CI) and its toolchain
+# (build-so.sh).  A run from before the toolchain record (#138) cannot pass:
+# the rust/ it built lacks rust/rust-toolchain.toml.  A pull_request run
+# builds the head's merge with its base branch, so the tree must be HEAD's.
+# The rustc release must be the flake's, which is this dev shell's, and the
+# Linux image HEAD's scripts/build-so.sh's, which the rust/ tree omits.
 flake_rustc="$(rustc -vV | sed -n 's/^release: //p')"
 toolchains=()
 for platform in linux darwin; do
+  for file in rust-tree toolchain; do
+    [[ -f "$out/$platform/$file" ]] \
+      || die "run $run's libcompat-$platform records no $file: the run predates" \
+             "the record; merge the base branch into this one, push, and refresh" \
+             "from the new commit's run"
+  done
+  [[ "$(< "$out/$platform/rust-tree")" == "$tree" ]] \
+    || die "run $run built libcompat-$platform from a rust/ other than HEAD's" \
+           "(a $event run of ${sha:0:7}); merge the base branch into this one," \
+           "push, and refresh from the new commit's run"
   record="$out/$platform/toolchain"
-  if [[ -f "$record" ]]; then
-    release="$(sed -n 's/^release: //p' "$record")"
-    [[ "$release" == "$flake_rustc" ]] \
-      || die "run $run built libcompat-$platform with rustc ${release:-unknown}, the flake's" \
-             "is $flake_rustc; rust/rust-toolchain.toml must pin it (nix flake check)"
-    built="$(head -1 "$record"), LLVM $(sed -n 's/^LLVM version: //p' "$record")"
-    built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p' "$record")"
-  else
-    built="not recorded"
+  release="$(sed -n 's/^release: //p' "$record")"
+  [[ "$release" == "$flake_rustc" ]] \
+    || die "run $run built libcompat-$platform with rustc ${release:-unknown}, the flake's" \
+           "is $flake_rustc; rust/rust-toolchain.toml must pin it (nix flake check)"
+  if [[ "$platform" == linux ]]; then
+    built_in="$(sed -n 's/^image: //p' "$record")"
+    [[ "$built_in" == "$image" ]] \
+      || die "run $run built libcompat-linux in ${built_in:-an unrecorded image}," \
+             "but HEAD's scripts/build-so.sh names $image; refresh from the run" \
+             "of a commit that names it (merge the base branch first if it moved" \
+             "the image)"
   fi
+  built="$(head -1 "$record"), LLVM $(sed -n 's/^LLVM version: //p' "$record")"
+  built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p' "$record")"
   echo ">> libcompat-$platform built by: $built"
   toolchains+=("- $platform: $built")
 done
