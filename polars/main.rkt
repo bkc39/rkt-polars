@@ -22,7 +22,7 @@
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
 (provide dataframe-read-csv lazyframe-scan-csv
-         (all-from-out polars/private/expr)
+         (except-out (all-from-out polars/private/expr) expr-meta-output-name/raw)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error dataframe-drop-count
                      last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
@@ -48,6 +48,6 @@
                 [name (in-list (cdr phase+names))])
       (car name)))
   (check-not-false (memq 'cast exported))
-  (for ([internal '(dtype-short-names allocator/or-fail call/foreign-error prop:owned-pointer
-                    sort-flags-mismatch)])
+  (for ([internal '(dtype-short-names expr-meta-output-name/raw allocator/or-fail
+                    call/foreign-error prop:owned-pointer sort-flags-mismatch)])
     (check-false (memq internal exported) (format "~a is internal" internal))))

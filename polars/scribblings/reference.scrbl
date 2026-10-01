@@ -100,8 +100,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       containing characters above U+00FF; there the selection follows
       the class as written. The crate has no
       lookaround, backreferences, atomic groups or conditionals, so
-      @racket[col] (and @racket[exclude]) rejects a regexp using them,
-      naming the construct. To select by such a regexp, match
+      @racket[col] (and @racket[exclude]) rejects a regexp using them with
+      a contract violation naming the construct. To select by such a regexp, match
       @racket[column-names] in Racket and select the names, as in the
       last example below.}]
 
@@ -370,15 +370,19 @@ total
 (~> (dataframe (list (series '(1 2 3) #:name "a")))
     (with-columns (alias (* (col "a") 2) "double")))]}
 
-@defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
+@defproc[(cast [x (or/c Expr-ptr? series? string?)]
+               [dtype (or/c dtype-spec? 'binary 'null 'duration)])
          (or/c Expr-ptr? series?)]{
   Changes dtype. On an expression (or a column name, lifted with
   @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
   it converts eagerly and returns a series. @racket[dtype] takes the same
   spellings as @racket[series-cast], short (@racket['f64], @racket['i32],
   @racket['str]) or canonical (@racket['float64], @racket['int32],
-  @racket['string]), as @racket[series]' @racket[#:dtype] does; any other
-  value is a contract violation. A value that does not convert becomes null, except
+  @racket['string]), as @racket[series]' @racket[#:dtype] does
+  (@racket[dtype-spec?]), plus @racket['binary], @racket['null] and
+  @racket['duration]. Any other value is a contract violation, including a
+  time-zone-aware datetime dtype, since time zones have no surface yet. A
+  value that does not convert becomes null, except
   in a cast to an Enum, which raises naming the values outside its
   categories, as Python's default @tt{strict=True} does (on an expression,
   when the plan runs).
@@ -688,7 +692,7 @@ total
 @deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
-                             [#:seed seed (or/c exact-nonnegative-integer? #f) #f])
+                             [#:seed seed (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series? (listof exact-integer?))])

@@ -112,7 +112,7 @@
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         expr-meta-output-name expr-meta-root-names expr-meta-eq?
+         expr-meta-output-name expr-meta-output-name/raw expr-meta-root-names expr-meta-eq?
          (contract-out
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
           [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]
@@ -123,9 +123,9 @@
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_meta_output_name)
 
-(define (expr-meta-output-name e #:who [who 'expr-meta-output-name])
+(define (expr-meta-output-name e)
   (or (expr-meta-output-name/raw e)
-      (error who
+      (error 'expr-meta-output-name
              "cannot determine the output name of ~a" (expr->string e))))
 
 (define-compat expr-meta-root-names-len

@@ -12,7 +12,7 @@
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec? cast-target? define-enum)
+         dtype-spec? define-enum)
 
 (begin-for-syntax
   (define-syntax-class enum-category
@@ -44,9 +44,6 @@
             (or '() (list #f)))
      #t]
     [_ (enum-dtype? v)]))
-
-(define (cast-target? v)
-  (or (dtype-spec? v) (and (memq v '(binary null duration)) #t)))
 
 (define (normalize-dtype dt)
   (cond
@@ -142,10 +139,4 @@
   (check-exn #rx"duplicate enum category"
              (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
   (check-exn #rx"expected more terms"
-             (lambda () (convert-compile-time-error (let () (define-enum none) none))))
-
-  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
-                  datetime (datetime milliseconds) (duration nanoseconds) (enum a b))])
-    (check-true (cast-target? target) (format "~v" target)))
-  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64")])
-    (check-false (cast-target? target) (format "~v" target))))
+             (lambda () (convert-compile-time-error (let () (define-enum none) none)))))

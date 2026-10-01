@@ -1,18 +1,20 @@
 #lang racket/base
 
 (require racket/match
-         (only-in racket/contract/base -> contract-out or/c)
+         (only-in racket/contract/base -> contract-out flat-contract-predicate or/c)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
          (only-in racket/list [drop list-drop])
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
-         (only-in polars/private/generic/dtype cast-target?))
+         (only-in polars/private/generic/dtype dtype-spec?))
 
 (provide (except-out (all-defined-out) cast)
          (contract-out
-          [cast (-> (or/c Expr-ptr? series? string?) cast-target? (or/c Expr-ptr? series?))]))
+          [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]))
+
+(define cast-target/c (or/c dtype-spec? 'binary 'null 'duration))
 
 ;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
 ;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
@@ -324,8 +326,16 @@
   (check-equal? (series-cells (cast (series '(1 2 3)) 'str)) '("1" "2" "3"))
   (let ([d (with-columns frame (contracted:cast "score" 'f32))])
     (check-equal? (dtype (ref d #:columns "score")) 'float32))
-  (check-exn #rx"^cast: contract violation\n  expected: cast-target\\?\n  given: 'f65"
+  (check-exn #rx"^cast: contract violation\n  expected: \\(or/c dtype-spec\\? \\(quote binary\\)"
              (lambda () (contracted:cast (series '(1 2 3)) 'f65)))
+  (define cast-target? (flat-contract-predicate cast-target/c))
+  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
+                  datetime (datetime milliseconds) (datetime microseconds #f)
+                  (duration nanoseconds) (enum a b))])
+    (check-true (cast-target? target) (format "~v" target)))
+  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64"
+                  (datetime microseconds todo-timezone))])
+    (check-false (cast-target? target) (format "~v" target)))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
              (lambda () (contracted:cast 5 'f64)))
   (check-exn #rx"^series-cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"

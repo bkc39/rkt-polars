@@ -2,7 +2,7 @@
 
 (require (prefix-in base: (only-in racket/base sort))
          (only-in racket/contract/base
-                  ->* ->i contract-out flat-named-contract
+                  ->* ->i contract-out flat-named-contract integer-in
                   non-empty-listof none/c or/c procedure-arity-includes/c
                   rename-contract the-unsupplied-arg unsupplied-arg?)
          (only-in polars/private/expr
@@ -19,7 +19,7 @@
                        [rank (->* (col-expr/c)
                                   (#:method (or/c 'average 'min 'max 'dense 'ordinal)
                                    #:descending boolean?
-                                   #:seed (or/c #f exact-nonnegative-integer?))
+                                   #:seed (or/c #f (integer-in 0 (sub1 (expt 2 64)))))
                                   Expr-ptr?)])
          gather)
 
@@ -138,7 +138,10 @@
              (lambda () (contracted:sort '(3 1 2) < #:descending '(#t))))
   (check-exn #rx"^rank: contract violation\n  expected: \\(or/c .*ordinal\\)+\n  given: 'first"
              (lambda () (contracted:rank "x" #:method 'first)))
-  (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7)))
+  (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7))
+  (check-pred Expr-ptr? (contracted:rank "x" #:seed (sub1 (expt 2 64))))
+  (check-exn #rx"^rank: contract violation\n  expected: \\(or/c #f \\(integer-in 0 18446744073709551615\\)\\)\n  given: 18446744073709551616"
+             (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
 
 (module+ test
   (require racket/match

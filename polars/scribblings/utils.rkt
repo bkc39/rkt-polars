@@ -36,7 +36,8 @@
 (require (for-label polars
                     ffi/vector
                     (only-in racket/contract/base
-                             and/c any/c cons/c hash/c listof non-empty-listof or/c)
+                             -> and/c any/c cons/c hash/c integer-in listof non-empty-listof
+                             or/c)
                     (only-in racket/string non-empty-string?)
                     (only-in threading ~> ~>>)
                     (except-in racket/base

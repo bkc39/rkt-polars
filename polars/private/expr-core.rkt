@@ -27,12 +27,10 @@
          lit ->expr
          dtype-spec?
          (contract-out
-          [col (->/c (or/c string? regexp? dtype-spec?) Expr-ptr?)]
+          [col (->/c col-spec/c Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
           [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
-          [expr-exclude (->/c multi-column-expr?
-                              (non-empty-listof (or/c string? regexp?))
-                              Expr-ptr?)]
+          [expr-exclude (->/c multi-column-expr? (non-empty-listof column-pattern/c) Expr-ptr?)]
           [multi-column-expr? (->/c any/c boolean?)]))
 
 (define-runtime-path expr-native-libs-dir "../native-libs")
@@ -141,7 +139,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-exclude e names)
-  (or (expr-exclude/raw e (for/list ([name (in-list names)]) (->column-pattern 'expr-exclude name)))
+  (or (expr-exclude/raw e (map ->column-pattern names))
       (error 'expr-exclude "operation failed")))
 
 (define-compat expr-dtype-col-enum/raw
@@ -162,7 +160,11 @@
 (define (col spec)
   (if (dtype-spec? spec)
       (expr-dtype-col spec)
-      (expr-col (->column-pattern 'col spec))))
+      (expr-col (->column-pattern spec))))
+
+(define col-spec/c
+  (column-spec-contract '(or/c string? regexp? dtype-spec?)
+                        (lambda (v) (or (string? v) (regexp? v) (dtype-spec? v)))))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))

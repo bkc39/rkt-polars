@@ -1,21 +1,16 @@
 #lang racket/base
 
 (require racket/contract
-         (only-in polars/private/column-pattern check-column-pattern)
+         (only-in polars/private/column-pattern column-pattern/c)
          (only-in polars/private/expr Expr-ptr? expr-all expr-exclude multi-column-expr?))
 
 (provide (contract-out
           [all (-> Expr-ptr?)]
-          [exclude (-> multi-column-expr?
-                       (or/c string? regexp?)
-                       (or/c string? regexp?) ...
-                       Expr-ptr?)]))
+          [exclude (-> multi-column-expr? column-pattern/c column-pattern/c ... Expr-ptr?)]))
 
 (define all expr-all)
 
 (define (exclude e name . names)
-  (for ([pattern (in-list (cons name names))])
-    (check-column-pattern 'exclude pattern))
   (expr-exclude e (cons name names)))
 
 (module+ test
@@ -104,7 +99,7 @@
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
   (check-exn #rx"^lazyframe-collect: .*duplicate.*'x'"
              (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
-  (check-exn #rx"^col: Polars' regex engine has no lookahead; .*column-names.*\n  regexp: #px\"\\^\\(\\?!id\\)\"$"
+  (check-exn #rx"^col: contract violation;\n Polars' regex engine has no lookahead; .*column-names.*\n  given: #px\"\\^\\(\\?!id\\)\""
              (lambda () (col #px"^(?!id)")))
   (check-equal? (column-names (select people (filter (lambda (name) (regexp-match? #px"^(?!b)" name))
                                                      (column-names people))))
@@ -113,10 +108,14 @@
                   #px"(a)\\1")]
         [construct '("lookahead" "lookahead" "lookbehind" "lookbehind" "atomic groups"
                      "conditionals" "backreferences")])
-    (check-exn (regexp (string-append "^col: Polars' regex engine has no " construct ";"))
+    (check-exn (regexp (string-append "^col: contract violation;\n Polars' regex engine has no "
+                                      construct ";"))
                (lambda () (col rx)))
-    (check-exn (regexp (string-append "^exclude: Polars' regex engine has no " construct ";"))
+    (check-exn (regexp (string-append "^exclude: contract violation;\n Polars' regex engine has no "
+                                      construct ";"))
                (lambda () (contracted:exclude (all) "id" rx))))
+  (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 5"
+             (lambda () (col 5)))
   (check-equal? (column-names (select people (col #px"(?:ei)"))) '("weight" "height"))
   (check-equal? (column-names (select people (col #rx"(?i:NAME)"))) '("name"))
 

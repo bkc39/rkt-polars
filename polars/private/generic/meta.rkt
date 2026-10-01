@@ -2,7 +2,8 @@
 
 (require racket/contract/base
          (only-in polars/private/expr
-                  Expr-ptr? expr-meta-eq? expr-meta-output-name expr-meta-root-names)
+                  Expr-ptr? expr->string expr-meta-eq? expr-meta-output-name/raw
+                  expr-meta-root-names)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
 (provide (contract-out
@@ -11,7 +12,9 @@
           [meta-eq? (-> col-expr/c col-expr/c boolean?)]))
 
 (define (meta-output-name x)
-  (expr-meta-output-name (->col-expr 'meta-output-name x) #:who 'meta-output-name))
+  (define e (->col-expr 'meta-output-name x))
+  (or (expr-meta-output-name/raw e)
+      (error 'meta-output-name "cannot determine the output name of ~a" (expr->string e))))
 
 (define (meta-root-names x)
   (expr-meta-root-names (->col-expr 'meta-root-names x)))
@@ -23,7 +26,7 @@
   (require rackunit
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in threading ~>)
-           (only-in polars/private/expr col expr-add expr-mul lit)
+           (only-in polars/private/expr col expr-add expr-meta-output-name expr-mul lit)
            (only-in polars/private/generic/reductions alias sum)
            (prefix-in contracted: (submod "..")))
   (define ab (expr-add (col "a") (col "b")))
