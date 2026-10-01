@@ -9,7 +9,9 @@
 
 @title[#:tag "nycflights" #:style 'toc]{Case study: nycflights}
 
-@see-reference["ref-fluent"]{the definition of every verb used here}
+@see-reference["ref-fluent"]{the verbs used here, and @secref["ref-series"] and
+@secref["ref-dataframes"] for the conversions, @racket[define-enum],
+@racket[describe] and the accessors}
 
 @hyperlink["https://aliquote.org/post/racket-data-frames/"]{Data frames for Racket}
 (aliquote.org, July 2023) loads the 29 MB @tt{nycflights.tsv}, every flight
@@ -82,6 +84,9 @@ copy:
 (time (define data (call-with-input-file "nycflights.csv" table-read/csv))
       (void))
 ]
+
+API gap: @racket[read-csv] reads a local file, not a URL as the post's first
+reader does and Python's @tt{read_csv} can (#159); fetch the file first.
 
 @racket[read-csv] reads the TSV as it is: @racket[#:separator] names the
 tab, and @racket[#:null-values] the @litchar{NA} marker, which becomes a null
@@ -184,10 +189,14 @@ in one foreign call (the full file's 328,521 delays take about 3 ms), after
 The view stops at three hours; the sample's longest delay is 853 minutes.
 Plotting is client code, and a @tt{df.plot} namespace is a non-goal (#121,
 @secref["interop-visualization"]): take the columns out with
-@racket[series->list] or @racket[series->f64vector] and hand them to
-@racketmodname[plot]. The plot is drawn while the manual builds; the
-@tt{plot-lib}, @tt{plot-gui-lib} and @tt{plot-doc} packages are build
-dependencies of the documentation, not dependencies of the package.
+@racket[series->list] or @racket[series->vector] and hand them to
+@racketmodname[plot]. An @racket[f64vector] from @racket[series->f64vector] is
+not a sequence, so a renderer such as @racket[density] refuses it;
+@racket[f64vector->list] converts it. The plot is drawn while the manual
+builds, so @tt{plot-lib}, @tt{plot-gui-lib} and @tt{plot-doc} are among the
+package's @tt{build-deps}, which a source install pulls in and a binary
+package drops. They are not in its @tt{deps}: @racket[(require polars)] loads
+no plotting code.
 
 @section[#:tag "nycflights-filter"]{Filtering}
 

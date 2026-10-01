@@ -158,5 +158,7 @@ vectors, which is two conversions away.
 
 Plotting is a non-goal: rkt-polars will not bind a @tt{df.plot} namespace or
 ship a plotting adapter (#121). @racketmodname[plot] takes the lists and
-vectors the conversions return, so the step @tt{df.plot} hides is client code
-here, as above; @secref["nycflights"] plots a density the same way.
+vectors that @racket[series->list] and @racket[series->vector] return, so the
+step @tt{df.plot} hides is client code here, as above; @secref["nycflights"]
+plots a density the same way. An @racket[f64vector] is not a sequence: pass a
+@racket[series->f64vector] result through @racket[f64vector->list] first.
