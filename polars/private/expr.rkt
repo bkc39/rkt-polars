@@ -112,7 +112,7 @@
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         expr-meta-output-name expr-meta-root-names expr-meta-eq?
+         expr-meta-output-name expr-meta-output-name/raw expr-meta-root-names expr-meta-eq?
          (contract-out
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
           [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]

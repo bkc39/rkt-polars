@@ -99,10 +99,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       the Unicode tables. And Racket's own matcher misjudges some classes
       containing characters above U+00FF; there the selection follows
       the class as written. The crate has no
-      lookaround, backreferences, atomic groups or conditionals; a
-      regexp using them is rejected at @racket[collect]. To select by
-      such a regexp, match @racket[column-names] in Racket and select
-      the names, as in the last example below.}]
+      lookaround, backreferences, atomic groups or conditionals, so
+      @racket[col] (and @racket[exclude]) rejects a regexp using them with
+      a contract violation naming the construct. To select by such a regexp, match
+      @racket[column-names] in Racket and select the names, as in the
+      last example below.}]
 
   A multi-column @racket[col] expands inside any expression to one output
   per matched column, in the frame's column order, each keeping the
@@ -128,7 +129,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (select people (col #px"^\\w+t$"))
 (select people (~> (col "id") (* 10) (alias "id10"))
                (alias (lit 0) "zero"))
-(eval:error (select people (col #px"^(?!id)")))
+(eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))]}
 
@@ -287,6 +288,7 @@ total
                   [#:nulls-last nulls-last boolean? #f])
             Expr-ptr?]
            [(sort [lst list?] [less-than? (any/c any/c . -> . any/c)]
+                  [#:descending descending boolean? #f]
                   [#:key extract-key (or/c #f (any/c . -> . any/c)) #f]
                   [#:cache-keys? cache-keys? boolean? #f])
             list?])]{
@@ -307,8 +309,10 @@ total
   column by others. A frame sorts by column names only: sorting by an
   expression (@tt{df.sort(pl.col("a") * -1)}) has no spelling yet.
 
-  On a list, @racket[sort] is @racketmodname[racket/base]'s, and passing it
-  one of the Polars keywords is a contract violation.
+  On a list, @racket[sort] is @racketmodname[racket/base]'s, plus
+  @racket[descending], which reverses the order and keeps equal elements in
+  their input order, as Python's @tt{sorted(xs, reverse=True)} does. The
+  other Polars keywords are a contract violation there.
 
   @examples[#:eval ev
 (define flights
@@ -322,7 +326,9 @@ total
 (sort (ref flights #:columns "delay") #:descending #t #:nulls-last #t)
 (select flights (sort "delay" #:nulls-last #t))
 (sort '(3 1 2) <)
-(eval:error (sort '(3 1 2) < #:descending #t))]}
+(sort '(3 1 2) < #:descending #t)
+(sort '((a . 1) (b . 2) (c . 1)) < #:key cdr #:descending #t)
+(eval:error (sort '(3 1 2) < #:nulls-last #t))]}
 
 @defproc[(sort-by [x (or/c Expr-ptr? string?)]
                   [#:by by (or/c Expr-ptr? string? (non-empty-listof (or/c Expr-ptr? string?)))]
@@ -364,16 +370,19 @@ total
 (~> (dataframe (list (series '(1 2 3) #:name "a")))
     (with-columns (alias (* (col "a") 2) "double")))]}
 
-@defproc[(cast [x (or/c Expr-ptr? series? string?)] [dtype (or/c symbol? pair?)])
+@defproc[(cast [x (or/c Expr-ptr? series? string?)]
+               [dtype (or/c dtype-spec? 'binary 'null 'duration)])
          (or/c Expr-ptr? series?)]{
   Changes dtype. On an expression (or a column name, lifted with
   @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
   it converts eagerly and returns a series. @racket[dtype] takes the same
-  spellings as @racket[series-cast]: unlike @racket[series]' @racket[#:dtype],
-  only the canonical names (@racket['float64], @racket['int32],
-  @racket['string], ...) are accepted, not the short ones (@racket['f64],
-  @racket['i32], @racket['str]); given a short name the
-  @exnraise[exn:fail]. A value that does not convert becomes null, except
+  spellings as @racket[series-cast], short (@racket['f64], @racket['i32],
+  @racket['str]) or canonical (@racket['float64], @racket['int32],
+  @racket['string]), as @racket[series]' @racket[#:dtype] does
+  (@racket[dtype-spec?]), plus @racket['binary], @racket['null] and
+  @racket['duration]. Any other value is a contract violation, including a
+  time-zone-aware datetime dtype, since time zones have no surface yet. A
+  value that does not convert becomes null, except
   in a cast to an Enum, which raises naming the values outside its
   categories, as Python's default @tt{strict=True} does (on an expression,
   when the plan runs).
@@ -382,7 +391,7 @@ total
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
 (cast (series '("UA" "AA" "UA")) 'categorical)
-(eval:error (cast (series '(1 2 3)) 'f64))
+(cast (series '(1 2 3)) 'f64)
 (define-enum carriers UA AA)
 (eval:error (cast (series '("UA" "B6")) carriers))]}
 
@@ -683,7 +692,7 @@ total
 @deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
-                             [#:seed seed (or/c exact-nonnegative-integer? #f) #f])
+                             [#:seed seed (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series? (listof exact-integer?))])
@@ -1165,7 +1174,9 @@ dtype or a specific typed result.
   @racket['uint64], @racket['float32], @racket['float64], @racket['boolean],
   @racket['string], @racket['binary], @racket['date], @racket['time],
   @racket['datetime], @racket['duration], @racket['null],
-  @racket['categorical]), as @racket['(enum cat ...)] with distinct symbols
+  @racket['categorical]) or the short spelling of one (@racket['i8] through
+  @racket['u64], @racket['f32], @racket['f64], @racket['bool],
+  @racket['str]), as @racket['(enum cat ...)] with distinct symbols
   for the categories, or, for the two
   temporal dtypes with a time unit, as a list —
   @racket['(datetime milliseconds)], @racket['(duration nanoseconds)] — where

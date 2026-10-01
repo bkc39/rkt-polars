@@ -1,14 +1,20 @@
 #lang racket/base
 
 (require racket/match
+         (only-in racket/contract/base -> contract-out flat-contract-predicate or/c)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
          (only-in racket/list [drop list-drop])
          polars/private/foreign
          polars/private/expr
-         polars/private/generic/core)
+         polars/private/generic/core
+         (only-in polars/private/generic/dtype dtype-spec?))
 
-(provide (all-defined-out))
+(provide (except-out (all-defined-out) cast)
+         (contract-out
+          [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]))
+
+(define cast-target/c (or/c dtype-spec? 'binary 'null 'duration))
 
 ;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
 ;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
@@ -112,14 +118,10 @@
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
 
-;; cast: change dtype.  Expr -> cast Expr; series -> eager cast; a column name
-;; lifts to (col name).  `dtype` is a canonical symbol ('float64 / 'string /
-;; 'datetime / ...) or a list like '(datetime microseconds).
 (define (cast x dtype)
   (cond [(Expr-ptr? x) (expr-cast x dtype)]
         [(series? x)   (wrap-series (series-cast x dtype))]
-        [(string? x)   (expr-cast (col x) dtype)]
-        [else (error 'cast "expected an Expr, series, or column name, got ~v" x)]))
+        [else          (expr-cast (col x) dtype)]))
 
 ;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
 ;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
@@ -233,7 +235,8 @@
            polars/private/generic/operators
            (only-in polars/private/foreign dataframe-sort)
            polars/private/generic/reductions
-           polars/private/generic/test-fixtures)
+           polars/private/generic/test-fixtures
+           (prefix-in contracted: (submod "..")))
 
   (define (sorted-by d key) (wrap-dataframe (dataframe-sort d (list key))))
 
@@ -319,6 +322,24 @@
   (check-equal? (dtype (cast (series '(1 2 3) #:dtype 'i32) 'float64)) 'float64)
   (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
     (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
+  (check-equal? (dtype (contracted:cast (series '(1 2 3)) 'f64)) 'float64)
+  (check-equal? (series-cells (cast (series '(1 2 3)) 'str)) '("1" "2" "3"))
+  (let ([d (with-columns frame (contracted:cast "score" 'f32))])
+    (check-equal? (dtype (ref d #:columns "score")) 'float32))
+  (check-exn #rx"^cast: contract violation\n  expected: \\(or/c dtype-spec\\? \\(quote binary\\)"
+             (lambda () (contracted:cast (series '(1 2 3)) 'f65)))
+  (define cast-target? (flat-contract-predicate cast-target/c))
+  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
+                  datetime (datetime milliseconds) (datetime microseconds #f)
+                  (duration nanoseconds) (enum a b))])
+    (check-true (cast-target? target) (format "~v" target)))
+  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64"
+                  (datetime microseconds todo-timezone))])
+    (check-false (cast-target? target) (format "~v" target)))
+  (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
+             (lambda () (contracted:cast 5 'f64)))
+  (check-exn #rx"^series-cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"
+             (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
 
   ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
   (define flights

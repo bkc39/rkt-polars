@@ -186,8 +186,8 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Behavioural facts to know before changing semantics
 
-- `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
-  `cast` / `series-cast` accept only canonical (#64).
+- `series #:dtype`, `cast` and `series-cast` accept short and canonical
+  spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
   keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
@@ -263,7 +263,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   literals and ranges itself. `\p{...}` classes follow each side's Unicode
   tables, and Racket misjudges some classes above U+00FF (#85), so the
   oracle's names stay out of both. Lookaround, backreferences, atomic groups
-  and conditionals, which the crate lacks, fail at `collect`.
+  and conditionals, which the crate lacks, are rejected by `col` and
+  `exclude`, naming the construct (#151).
 
 ## Documentation
 
@@ -276,6 +277,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   never hand-pasted `@verbatim` output; `eval:error` for an expected failure;
   `#:hidden` for setup. A broken example fails the build, on the package
   server too.
+- **Every guide or reference example is a test case.** The PR that adds or
+  changes an example adds a test in the module's `test` submodule asserting
+  the same result, or, for an `eval:error`, the failure and its `who:` (#152
+  will run the examples themselves under `raco test`). An `eval:error` shows
+  a failure that is the behaviour being documented, with a message that names
+  the function the reader called; an example that errors because of a gap,
+  or blames an internal binding, is a bug (#151).
 - Every `@section` has an explicit `#:tag`. Guide chapters mirror the upstream
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than

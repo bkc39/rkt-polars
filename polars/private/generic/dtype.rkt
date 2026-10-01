@@ -30,22 +30,11 @@
 ;; canonical symbols returned by series-dtype (int32, float64, string,
 ;; boolean).  Maps everything to a canonical symbol.
 (define dtype-aliases
-  (hash 'i8 'int8    'int8 'int8
-        'i16 'int16   'int16 'int16
-        'i32 'int32   'int32 'int32
-        'i64 'int64   'int64 'int64
-        'u8 'uint8    'uint8 'uint8
-        'u16 'uint16  'uint16 'uint16
-        'u32 'uint32  'uint32 'uint32
-        'u64 'uint64  'uint64 'uint64
-        'f32 'float32 'float32 'float32
-        'f64 'float64 'float64 'float64
-        'bool 'boolean 'boolean 'boolean
-        'str 'string   'string 'string
-        'date 'date
-        'time 'time
-        'datetime 'datetime
-        'categorical 'categorical))
+  (for/fold ([aliases dtype-short-names])
+            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
+                                   float32 float64 boolean string
+                                   date time datetime categorical))])
+    (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
   (match v

@@ -102,15 +102,12 @@ and exact rational values, but no @racket[#:dtype] spelling.
 
 Long spellings (@racket['int32], @racket['float64], @racket['string], …)
 are accepted too. Values that mix ints and floats promote to
-@racket['f64]; see @secref["promotion"].
-
-API gap: @racket[cast] is asymmetric with @racket[series] here --- it accepts
-@emph{only} the long spellings, so @racket[(cast "v" 'f64)] is an error where
-@racket[(series '(1) #:dtype 'f64)] is fine.
+@racket['f64]; see @secref["promotion"]. @racket[cast] takes the same
+spellings.
 
 @examples[#:eval ev #:label #f
 (dtype (cast (series '(1 2 3)) 'float64))
-(eval:error (dtype (cast (series '(1 2 3)) 'f64)))
+(dtype (cast (series '(1 2 3)) 'f64))
 ]
 
 @section[#:tag "concepts-expressions-contexts"]{Expressions and contexts}
