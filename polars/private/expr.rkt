@@ -24,7 +24,7 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   frame-sort/c sort-flags
-                  _CompatDType ->compat-dtype enum-dtype?)
+                  _CompatDType ->compat-dtype check-enum-categories enum-dtype?)
          (only-in polars/private/resource _string-list)
          syntax/parse/define)
 
@@ -884,11 +884,13 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-cast e dtype)
-  (if (enum-dtype? dtype)
-      (call/foreign-error 'expr-cast
-                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
-                          "cannot convert to ~v" dtype)
-      (expr-cast/c e (->compat-dtype dtype))))
+  (cond
+    [(enum-dtype? dtype)
+     (check-enum-categories 'expr-cast dtype)
+     (call/foreign-error 'expr-cast
+                         (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
+                         "cannot convert to ~v" dtype)]
+    [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ test
   (define df
@@ -898,6 +900,8 @@
 
   (define lf (dataframe-lazy df))
   (check-pred LazyFrame-ptr? lf)
+  (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 
   (define tmp-scan-csv
     (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))

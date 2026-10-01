@@ -134,6 +134,7 @@
 ;; elements may be a list or a vector; nulls are polars-null.  Returns a series.
 (define (series elements #:name [name ""] #:dtype [dtype #f])
   (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
+  (check-categorical-values 'series canonical elements)
   (define ctor (dtype->constructor canonical (vector? elements)))
   (wrap-series (ctor name (coerce-elements canonical elements))))
 
@@ -221,6 +222,15 @@
              (lambda () (series '(info error) #:dtype '(enum debug info))))
   (check-exn #rx"unsupported dtype '\\(enum debug debug\\)"
              (lambda () (series '(debug) #:dtype '(enum debug debug))))
+  (define held-nul (string->symbol "a\u0000b"))
+  (define nul-value #rx"^series: contract violation\n  expected: a categorical or enum value without")
+  (for ([elements (list (list 'a held-nul) (vector 'a held-nul))])
+    (check-exn nul-value (lambda () (series elements)))
+    (check-exn nul-value (lambda () (series elements #:dtype '(enum a b)))))
+  (check-exn nul-value (lambda () (series (list "api" "d\u0000b") #:dtype 'categorical)))
+  (check-exn #rx"^series: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (series '(a) #:dtype (list 'enum 'a held-nul))))
+  (check-equal? (ref (series (list "a\u0000b")) 0) "a\u0000b")
 
   ;; ref on series and dataframe; df ref returns a wrapped series
   (check-equal? (ref withnull 0) 10)

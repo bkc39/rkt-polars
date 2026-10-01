@@ -12,8 +12,9 @@
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring call/foreign-error enum-dtype?
-                  owned-pointer-arg sort-flags-mismatch sort-flags/c)
+                  ->compat-dtype _CompatDType _rsstring call/foreign-error
+                  check-enum-categories enum-dtype? owned-pointer-arg sort-flags-mismatch
+                  sort-flags/c)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list))
 
@@ -153,17 +154,23 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-dtype-col dtype)
-  (if (enum-dtype? dtype)
-      (call/foreign-error 'expr-dtype-col
-                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
-                          "cannot select ~v" dtype)
-      (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
-          (error 'expr-dtype-col "operation failed"))))
+  (cond
+    [(enum-dtype? dtype)
+     (check-enum-categories 'expr-dtype-col dtype)
+     (call/foreign-error 'expr-dtype-col
+                         (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
+                         "cannot select ~v" dtype)]
+    [else
+     (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
+         (error 'expr-dtype-col "operation failed"))]))
 
 (define (col spec)
-  (if (dtype-spec? spec)
-      (expr-dtype-col spec)
-      (expr-col (->column-pattern spec))))
+  (cond
+    [(dtype-spec? spec)
+     (when (enum-dtype? spec)
+       (check-enum-categories 'col spec))
+     (expr-dtype-col spec)]
+    [else (expr-col (->column-pattern spec))]))
 
 (define (->expr v)
   (if (Expr-ptr? v) v (lit v)))
@@ -211,7 +218,12 @@
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
   (check-exn #rx"^col: contract violation"
-             (lambda () (contracted:col '(datetime microseconds "UTC")))))
+             (lambda () (contracted:col '(datetime microseconds "UTC"))))
+  (define nul-enum (list 'enum 'a (string->symbol "b\u0000c")))
+  (check-exn #rx"^col: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (contracted:col nul-enum)))
+  (check-exn #rx"^expr-dtype-col: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (contracted:expr-dtype-col nul-enum))))
 
 (module+ test
   (require rackunit)

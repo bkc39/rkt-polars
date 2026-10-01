@@ -24,11 +24,12 @@
 (provide dataframe-read-csv lazyframe-scan-csv
          (all-from-out polars/private/expr)
          (except-out (all-from-out polars/private/foreign)
-                     allocator/or-fail call/foreign-error dataframe-drop-count
-                     last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
-                     prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
-                     series-copy-str series-sort/raw series-str-byte-len sort-flags sort-flags/c
-                     sort-flags-mismatch)
+                     allocator/or-fail call/foreign-error check-enum-categories
+                     dataframe-drop-count decimal-ref last-error-message owned-pointer-accessor
+                     owned-pointer-arg owned-pointer? prop:owned-pointer series-drop-count
+                     dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
+                     series-new-str/raw series-sort/raw series-str-byte-len sort-flags
+                     sort-flags/c sort-flags-mismatch string-has-nul?)
          (all-from-out polars/private/generic)
          (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
@@ -38,3 +39,18 @@
                      [polars:when when]
                      [polars:abs abs] [polars:round round] [polars:floor floor]
                      [polars:sqrt sqrt] [polars:exp exp] [polars:log log]))
+
+(module+ test
+  (require rackunit)
+
+  (define exported
+    (let-values ([(variables syntaxes) (module->exports 'polars)])
+      (for*/list ([phase+names (in-list (append variables syntaxes))]
+                  #:when (eqv? (car phase+names) 0)
+                  [name+origins (in-list (cdr phase+names))])
+        (car name+origins))))
+  (check-not-false (memq 'series-new-str exported))
+  (for ([internal (in-list '(check-enum-categories decimal-ref series-copy-decimal
+                             series-copy-str series-new-str/raw series-str-byte-len
+                             string-has-nul?))])
+    (check-false (memq internal exported) (format "(require polars) exports ~a" internal))))

@@ -193,6 +193,16 @@
     [(cons 'enum (and (list (? symbol?) ...) categories)) (not (check-duplicates categories))]
     [_ #f]))
 
+(define (string-has-nul? s)
+  (for/or ([c (in-string s)])
+    (char=? c #\nul)))
+
+;; Categories cross into Rust as C strings, which end at a NUL (#165).
+(define (check-enum-categories who dtype)
+  (for ([category (in-list (cdr dtype))]
+        #:when (string-has-nul? (symbol->string category)))
+    (raise-argument-error who "an enum category without a NUL character" category)))
+
 (define (decimal-dtype? v)
   (match v
     [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
@@ -1312,6 +1322,7 @@
   #:wrap (allocator series-drop))
 
 (define (series-cast-enum who s dtype)
+  (check-enum-categories who dtype)
   (call/foreign-error who
                       (lambda () (series-cast-enum/raw s (map symbol->string (cdr dtype))))
                       "cannot convert to ~v" dtype))
@@ -1451,6 +1462,10 @@
              (lambda () (series-cast bears '(enum "Polar"))))
   (check-true (enum-dtype? '(enum)))
   (check-false (enum-dtype? '(enum a . b)))
+  (check-true (string-has-nul? "a\u0000b"))
+  (check-false (string-has-nul? "東京 😀"))
+  (check-exn #rx"^series-cast: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (series-cast bears (list 'enum 'Brown (string->symbol "Po\u0000lar")))))
 
   ;; reductions
   (define stats (series-new-f64 "s" '(1.0 2.0 3.0 4.0)))
@@ -2136,6 +2151,9 @@
   (define just-score (dataframe-select example-df '("score")))
   (check-equal? (dataframe-width just-score) 1)
   (check-equal? (dataframe-column-names just-score) '("score"))
+  (check-equal? (dataframe-column-names
+                 (dataframe-select example-df (list #"score" (string->path "cost") "user")))
+                '("score" "cost" "user"))
 
   (define no-cost (dataframe-drop-columns example-df '("cost")))
   (check-equal? (dataframe-column-names no-cost) '("user" "score"))

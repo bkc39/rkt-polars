@@ -116,6 +116,8 @@
 ;; lifts to (col name).  `dtype` is a canonical symbol ('float64 / 'string /
 ;; 'datetime / ...) or a list like '(datetime microseconds).
 (define (cast x dtype)
+  (when (enum-dtype? dtype)
+    (check-enum-categories 'cast dtype))
   (cond [(Expr-ptr? x) (expr-cast x dtype)]
         [(series? x)   (wrap-series (series-cast x dtype))]
         [(string? x)   (expr-cast (col x) dtype)]
@@ -346,6 +348,10 @@
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^lazyframe-collect: .*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
+  (define nul-dests (list 'enum 'JFK (string->symbol "MI\u0000A") 'IAH))
+  (for ([target (list (ref flights "dest") "dest")])
+    (check-exn #rx"^cast: contract violation\n  expected: an enum category without a NUL"
+               (lambda () (cast target nul-dests))))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)
