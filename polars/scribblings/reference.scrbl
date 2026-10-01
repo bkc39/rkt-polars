@@ -297,10 +297,17 @@ total
   expression whose form makes it one value, or one per group, comes back
   unchanged, because sorting it changes nothing. Such a form is an
   aggregation such as @racket[(sum "v")], a literal, or an operator or
-  @racketidfont{when} over those alone. Polars' own sort of such an input
-  can read out of bounds inside @racket[agg] or @racket[over]. A function
-  of one, such as @racketidfont{abs} of @racket[(sum "v")], is still sorted
-  by Polars, and can crash there as it does in Python.
+  @racketidfont{when} over those alone.
+
+  Inside @racket[agg] or @racket[over], Polars' own sort reads out of
+  bounds when its input holds one value per group, and Python crashes on
+  the same query. So @tt{Expr.sort} gets only an input whose form keeps a
+  value per row: a column, or an alias, cast, sort, operator or
+  @racketidfont{when} with one among its operands. Any other expression, a
+  function such as @racket[round] of @racket[(mean "delay")] among them, is
+  sorted by itself with @racket[sort-by] (@tt{Expr.sort_by}), which handles
+  one value per group. It evaluates the expression twice and prints as a
+  @tt{sort_by}.
 
   Nulls come first, whatever the direction, unless @racket[nulls-last] is
   true; NaN sorts above every other float. For a frame, @racket[descending]
@@ -329,6 +336,8 @@ total
 (sort (ref flights #:columns "delay") #:descending #t #:nulls-last #t)
 (sort "delay" #:descending #t #:nulls-last #t)
 (sort (max "delay") #:descending #t)
+(sort (round (mean "delay")) #:descending #t)
+(~> flights (group-by "carrier") (agg (sort (round (mean "delay")) #:descending #t)) (sort "carrier"))
 (select flights (sort "delay" #:nulls-last #t))
 (sort '(3 1 2) <)
 (eval:error (sort '(3 1 2) < #:descending #t))]}

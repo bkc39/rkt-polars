@@ -168,36 +168,64 @@ pub extern "C" fn expr_sort_with_options(
     let opts = SortOptions::default()
         .with_order_descending(descending != 0)
         .with_nulls_last(nulls_last != 0);
-    let sorted = if is_scalar(&inner) {
+    let sorted = if is_one_value(&inner) {
         inner
-    } else {
+    } else if is_per_row(&inner) {
         inner.sort(opts)
+    } else {
+        let by = [inner.clone()];
+        inner.sort_by(by, SortMultipleOptions::from(&opts))
     };
     Box::into_raw(Box::new(sorted))
 }
 
-/// Whether `e` yields one value, per group in `agg` or `over`, from its
-/// structure alone. Polars 0.55.2's `SortExpr` sorts such an input by
-/// gathering each group's row indices from the one value per group, which
-/// reads out of bounds, so the sort of one is the input itself.
-fn is_scalar(e: &Expr) -> bool {
+/// Whether `e` is one value, or one per group in `agg` or `over`, by its
+/// structure alone, so that sorting it changes nothing.
+fn is_one_value(e: &Expr) -> bool {
     match e {
         Expr::Agg(_) | Expr::Len => true,
-        Expr::Gather { returns_scalar, .. } => *returns_scalar,
         Expr::Literal(value) => value.is_scalar(),
         Expr::Alias(inner, _)
         | Expr::KeepName(inner)
         | Expr::RenameAlias { expr: inner, .. }
-        | Expr::Cast { expr: inner, .. }
-        | Expr::Sort { expr: inner, .. } => is_scalar(inner),
+        | Expr::Cast { expr: inner, .. } => is_one_value(inner),
         Expr::BinaryExpr { left, right, .. } => {
-            is_scalar(left) && is_scalar(right)
+            is_one_value(left) && is_one_value(right)
         }
         Expr::Ternary {
             predicate,
             truthy,
             falsy,
-        } => is_scalar(predicate) && is_scalar(truthy) && is_scalar(falsy),
+        } => {
+            is_one_value(predicate)
+                && is_one_value(truthy)
+                && is_one_value(falsy)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `e` keeps a value per row by its structure alone, which polars
+/// 0.55.2 evaluates per group as a column or a list per group: the two
+/// states its `SortExpr` gathers within bounds. Given one value per group,
+/// even a function of one, `SortExpr` gathers each group's row indices from
+/// it and reads out of bounds; `sort_by` fixes up such groups first.
+fn is_per_row(e: &Expr) -> bool {
+    match e {
+        Expr::Column(_) | Expr::Selector(_) => true,
+        Expr::Alias(inner, _)
+        | Expr::KeepName(inner)
+        | Expr::RenameAlias { expr: inner, .. }
+        | Expr::Cast { expr: inner, .. }
+        | Expr::Sort { expr: inner, .. } => is_per_row(inner),
+        Expr::BinaryExpr { left, right, .. } => {
+            is_per_row(left) || is_per_row(right)
+        }
+        Expr::Ternary {
+            predicate,
+            truthy,
+            falsy,
+        } => is_per_row(predicate) || is_per_row(truthy) || is_per_row(falsy),
         _ => false,
     }
 }
