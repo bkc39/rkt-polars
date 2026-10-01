@@ -1,6 +1,8 @@
 #lang scribble/manual
 @(require "../utils.rkt"
-          racket/runtime-path)
+          racket/runtime-path
+          (for-label (only-in plot/pict plot)
+                     (only-in plot points)))
 
 @(define ev (make-polars-eval))
 @(define-runtime-path iris-csv-path "iris.csv")
@@ -156,8 +158,8 @@ call that is not @racket[#:blocking?].
 @section[#:tag "interop-visualization"]{Data for a plot}
 
 Upstream's Visualization page hands two iris columns to a plotting library.
-The @tt{plot} library's @tt{points} renderer takes a list of vectors, which is
-two conversions away.
+The @racketmodname[plot] library's @racket[points] renderer takes a list of
+vectors, which is two conversions away.
 
 @examples[#:eval ev #:label #f
 (define iris (read-csv iris-csv))
@@ -167,9 +169,13 @@ two conversions away.
        (~> iris (ref "sepal_length") series->list)))
 (length sepals)
 (for/list ([p sepals] [_ 3]) p)
+(require plot/pict)
+(plot (points sepals) #:x-label "sepal_width" #:y-label "sepal_length")
 ]
 
-@tt{(plot (points sepals))} draws the scatter. @tt{plot} is not a dependency
-of this package, so the manual does not render it.
-
-API gap: no plotting namespace (@tt{df.plot}, hvPlot).
+Plotting is a non-goal: rkt-polars will not bind a @tt{df.plot} namespace or
+ship a plotting adapter (#121). @racketmodname[plot] takes the lists and
+vectors that @racket[series->list] and @racket[series->vector] return, so the
+step @tt{df.plot} hides is client code here, as above; @secref["nycflights"]
+plots a density the same way. An @racket[f64vector] is not a sequence: pass a
+@racket[series->f64vector] result through @racket[f64vector->list] first.

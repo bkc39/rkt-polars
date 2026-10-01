@@ -287,6 +287,19 @@
   (check-equal? (height (drop-nulls ops-df)) 5)
   (check-equal? (height (unique ops-df)) 5)
 
+  ;; the unique / drop-nulls reference entry
+  (define ref-dups
+    (dataframe (list (series (list 1 1 2 polars-null) #:name "v")
+                     (series '("a" "a" "b" "c") #:name "w"))))
+  (define ref-unique (sorted-by (unique ref-dups) "v"))
+  (check-equal? (column ref-unique "v") (list polars-null 1 2))
+  (check-equal? (column ref-unique "w") '("c" "a" "b"))
+  (check-equal? (series-cells (drop-nulls (ref ref-dups "v"))) '(1 1 2))
+  (check-equal? (column (drop-nulls ref-dups) "v") '(1 1 2))
+  (check-equal? (column (drop-nulls ref-dups) "w") '("a" "a" "b"))
+  (check-exn #rx"^unique: expected a series or dataframe, got '\\(1 1 2\\)$"
+             (lambda () (unique '(1 1 2))))
+
   ;; dataframe column ops: select / drop / rename / with-column
   (check-equal? (column-names (select frame '("user" "cost"))) '("user" "cost"))
   (check-equal? (column-names (select frame "score")) '("score"))
