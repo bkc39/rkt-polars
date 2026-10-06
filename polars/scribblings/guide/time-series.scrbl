@@ -33,15 +33,8 @@ value:
 
 @subsection[#:tag "ts-parsing-file"]{Parsing dates from a file}
 
-@racket[#:try-parse-dates] parses dates and times as a CSV file is read:
-
-@examples[#:eval ev #:label #f
-(read-csv "apple_stock.csv" #:try-parse-dates #t)
-]
-
-Inference reads the first @racket[#:infer-schema-length] rows, 100 by
-default. A binary format such as Parquet carries its schema, which is used
-as it is.
+Reading a CSV file with its dates parsed, @racket[#:try-parse-dates], is
+covered with the other reading options in @secref["io-csv-dates"].
 
 @subsection[#:tag "ts-parsing-cast"]{Casting strings to dates}
 

@@ -15,8 +15,7 @@ import polars as pl
 data_dir = Path(__file__).resolve().parent.parent.parent / "polars" / "scribblings" / "data"
 apple_stock = data_dir / "apple_stock.csv"
 
-# --- parsing dates from a file -------------------------------------------
-print(pl.read_csv(apple_stock, try_parse_dates=True))
+# --- parsing dates from a file: in io/csv.py -------------------------------
 
 # --- casting strings to dates --------------------------------------------
 df = pl.read_csv(apple_stock, try_parse_dates=False)

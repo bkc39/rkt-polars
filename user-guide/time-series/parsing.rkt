@@ -14,8 +14,7 @@
 (define-runtime-path data-dir "../../polars/scribblings/data")
 (define apple-stock (build-path data-dir "apple_stock.csv"))
 
-;; --- parsing dates from a file -------------------------------------------
-(displayln (read-csv apple-stock #:try-parse-dates #t))
+;; --- parsing dates from a file: in io/csv.rkt -----------------------------
 
 ;; --- casting strings to dates --------------------------------------------
 (define df

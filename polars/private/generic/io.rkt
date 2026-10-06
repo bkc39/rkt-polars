@@ -44,7 +44,7 @@
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk in-series series->list)
            (only-in threading ~>)
-           (only-in gregor datetime)
+           (only-in gregor date datetime)
            (prefix-in contracted: (submod ".."))
            (prefix-in raw: polars/private/csv)
            (only-in polars/private/generic/core
@@ -218,6 +218,12 @@
                     (ref #:columns "time_hour")
                     dtype)
                 '(datetime microseconds #f))
+  (define apple (read-csv (build-path data-dir "apple_stock.csv") #:try-parse-dates #t))
+  (check-equal? (shape apple) '(100 2))
+  (check-equal? (dtypes-of apple) '(date float64))
+  (check-equal? (ref (ref apple #:columns "Date") 0) (date 1981 2 23))
+  (check-equal? (ref (ref apple #:columns "Close") 99) 522.06)
+  (check-equal? (dtypes-of (read-csv (build-path data-dir "apple_stock.csv"))) '(string float64))
 
   (define quoted (scratch-file "quoted.csv" "a,b" "\"1,5\",x" "\"2\",y"))
   (check-equal? (column (read-csv quoted) "a") '("1,5" "2"))
