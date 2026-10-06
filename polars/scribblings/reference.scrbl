@@ -822,7 +822,10 @@ total
   lifted with @racket[lit], so gregor dates and datetimes bound a temporal
   column (@secref["ref-temporal-values"]). A list @racket[rhs] holds integers,
   reals, strings, symbols (read as strings, as @racket[lit] reads them),
-  booleans or gregor values, all of one kind.}
+  booleans or gregor values, all of one kind. Its datetimes share one zone, or
+  none: a list that mixes naive datetimes and moments, or moments in two
+  zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
+  a column from the same list.}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -870,7 +873,11 @@ total
   converts to it, and one without is read as a wall-clock time there, with
   @racket[#:ambiguous] as @racket[dt-replace-time-zone] takes it (a
   @racket['null] counts as a value that did not parse, so it needs
-  @racket[#:strict #f]).
+  @racket[#:strict #f]). A wall-clock time the zone skips raises when the
+  plan runs; Python's @tt{to_datetime} has no @tt{non_existent} either, so
+  parse without @racket[#:time-zone] and give the column to
+  @racket[dt-replace-time-zone] with @racket[#:non-existent] @racket['null]
+  to read it as null.
 
   @examples[#:eval ev
 (define stamps
@@ -881,6 +888,9 @@ total
 (select stamps
         (str->datetime "at" #:time-zone "Asia/Tokyo")
         (str->datetime "clock" #:time-zone "Europe/Brussels" #:ambiguous 'latest))
+(select (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock")))
+        (~> (str->datetime "clock")
+            (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 
 @deftogether[(@defproc[(dt-convert-time-zone [x (or/c series? Expr-ptr? string?)]
@@ -899,7 +909,11 @@ total
   instant and changes the clock it reads in; a naive datetime is read as
   UTC. @racket[dt-replace-time-zone] keeps each wall-clock time and changes
   the instant: @racket[zone] @racket[#f] makes the column naive, and a zone
-  sets one on a naive column or replaces a column's zone.
+  sets one on a naive column or replaces a column's zone. Polars computes
+  that wall clock without an overflow check, so on a nanosecond column a
+  value within a day of either end of the range (1677-09-21, 2262-04-11)
+  wraps around, as it does in Python; reading the zoned value itself, with
+  @racket[ref] or a conversion, does not.
 
   A wall-clock time can name two instants, when the clocks go back, or
   none, when they go forward. @racket[#:ambiguous] picks the
@@ -1231,6 +1245,7 @@ Polars' may.
 (filter calendar (> (col "d") (date 2013 6 1)))
 (filter calendar (is-between "d" (date 2013 5 31) (datetime 2013 6 1 12)))
 (filter calendar (is-in "d" (list (date 2013 5 31) (date 2013 6 2))))
+(eval:error (is-in "d" (list (datetime 2013 5 31) (moment 2013 6 2 #:tz "UTC"))))
 (series (list (moment 2021 3 27 #:tz "Europe/Brussels")
               (moment 2021 3 28 5 #:tz "Europe/Brussels")
               (moment 2021 3 27 #:tz "Asia/Kathmandu"))

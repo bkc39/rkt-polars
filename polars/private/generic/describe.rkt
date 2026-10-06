@@ -13,7 +13,7 @@
                   zoned-datetime-dtype?)
          (only-in polars/private/generic/core dataframe dataframe? ref series series?)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
-         (only-in polars/private/temporal per-second)
+         (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)
          (only-in polars/private/generic/reductions alias max mean min std)
          (only-in polars/private/generic/reshape cast collect lazy select with-columns))
@@ -90,10 +90,12 @@
         (cast-when (date-mean? dt stat) '(datetime microseconds))
         (reduce plan stat)))
   (cons (~> value (cast-when (temporal-dtype? dt) 'int64) (alias (cell-name plan stat)))
-        (if (zoned-datetime-dtype? dt)
-            (list (~> value (expr-dt-replace-time-zone #f) (cast 'int64)
-                      (alias (local-cell-name plan stat))))
-            '())))
+        (match dt
+          [(list 'datetime unit (? string? zone))
+           (list (~> value (cast (list 'datetime (offset-unit unit) zone))
+                     (expr-dt-replace-time-zone #f) (cast 'int64)
+                     (alias (local-cell-name plan stat))))]
+          [_ '()])))
 
 (define (statistics-row plans)
   (~> (map column-plan-series plans)
@@ -144,8 +146,10 @@
     ['time (~> v (/ 1000) floor clock->string)]
     [(list 'datetime unit (? string?))
      (match-define (cons instant clock) v)
-     (string-append (temporal->string (list 'datetime unit #f) clock)
-                    (offset->string (/ (- clock instant) (per-second unit))))]
+     (define offset (utc-offset unit instant clock))
+     (string-append (temporal->string (list 'datetime unit #f)
+                                      (+ instant (* offset (per-second unit))))
+                    (offset->string offset))]
     [(list 'datetime unit _)
      (define-values (days clock) (day-and-clock (->microseconds unit v floor)))
      (string-append (day->string days) " " (clock->string clock))]
@@ -380,6 +384,15 @@
                 (list "2" "0" "2021-05-14 06:30:00+02:00" "2021-03-27 12:00:00+01:00"
                       "2021-03-27 12:00:00+01:00" "2021-07-01 00:00:00+02:00"
                       "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"))
+  (define ns-edges
+    (dataframe
+     (list (cast (series (list 9223369200000000001 polars-null) #:name "east")
+                 '(datetime nanoseconds "Asia/Tokyo"))
+           (cast (series (list (+ (- (sub1 (expt 2 63))) 3600000000000) polars-null) #:name "west")
+                 '(datetime nanoseconds "America/New_York")))))
+  (for ([name '("east" "west")]
+        [shown '("2262-04-12 08:00:00+09:00" "1677-09-20 20:16:41.145224-04:56:02")])
+    (check-column (describe ns-edges) name (list* "1" "1" shown polars-null (make-list 5 shown))))
   (check-equal? (map offset->string '(0 3600 -18000 20700 1050 -1050))
                 '("+00:00" "+01:00" "-05:00" "+05:45" "+00:17:30" "-00:17:30"))
 

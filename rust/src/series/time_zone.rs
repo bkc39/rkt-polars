@@ -14,7 +14,12 @@ pub(crate) fn named_time_zone(name: *const c_char) -> Option<TimeZone> {
             .map_err(|err| format!("time zone is not valid UTF-8: {err}")),
     )?;
     match record(TimeZone::opt_try_new(Some(name)))? {
-        Some(tz) if tz.as_str() != "*" => Some(tz),
+        // opt_try_new accepts any name when POLARS_IGNORE_TIMEZONE_PARSE_ERROR
+        // is set; validate_time_zone does not read it.
+        Some(tz) if tz.as_str() != "*" => {
+            record(TimeZone::validate_time_zone(tz.as_str()))?;
+            Some(tz)
+        }
         _ => {
             set_last_error(format!("not a time zone: '{name}'"));
             None
@@ -39,6 +44,11 @@ fn c_str<'a>(p: *const c_char) -> Option<&'a str> {
     }
 }
 
+/// A resolution's name as a failure reason shows it.
+fn shown(name: Option<&str>) -> String {
+    name.map_or_else(|| "(null or not UTF-8)".to_string(), |s| format!("'{s}'"))
+}
+
 /// How a wall-clock time that names two instants resolves.
 pub(crate) fn ambiguous_name(name: *const c_char) -> Option<&'static str> {
     match c_str(name) {
@@ -48,8 +58,9 @@ pub(crate) fn ambiguous_name(name: *const c_char) -> Option<&'static str> {
         Some("null") => Some("null"),
         other => {
             set_last_error(format!(
-                "invalid ambiguous {other:?}, expected one of \"earliest\", \
-                 \"latest\", \"null\", \"raise\""
+                "invalid ambiguous {}, expected one of 'earliest', 'latest', \
+                 'null' or 'raise'",
+                shown(other)
             ));
             None
         }
@@ -63,7 +74,8 @@ pub(crate) fn non_existent(name: *const c_char) -> Option<NonExistent> {
         Some("null") => Some(NonExistent::Null),
         other => {
             set_last_error(format!(
-                "invalid non_existent {other:?}, expected \"null\" or \"raise\""
+                "invalid non-existent {}, expected 'null' or 'raise'",
+                shown(other)
             ));
             None
         }

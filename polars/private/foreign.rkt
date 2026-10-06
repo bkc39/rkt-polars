@@ -17,7 +17,8 @@
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/resource with-raw-buffer with-release)
-         (only-in polars/private/temporal epoch->datetime epoch->moment nanoseconds->time)
+         (only-in polars/private/temporal
+                  epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
@@ -63,7 +64,7 @@
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
     ("to the `null_values` list" . "to #:null-values")
     ("Please use `ambiguous` to tell" . "Please use #:ambiguous to tell")
-    ("use `non_existent='null'`" . "use #:non-existent 'null")
+    ("use `non_existent='null'`" . "use dt-replace-time-zone's #:non-existent 'null")
     (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
                      " set POLARS_IGNORE_TIMEZONE_PARSE_ERROR=1.")
      . "")))
@@ -1031,16 +1032,30 @@
 (define-compat series-copy-i64
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
 
+;; `count` rows of a zoned column from `start`: each UTC instant into
+;; `instants`, and into `walls` its wall clock in (offset-unit unit).
+(define (copy-zoned-datetimes who s dtype start count instants walls valid)
+  (match-define (list _ unit zone) dtype)
+  (define (copied status)
+    (when (negative? status)
+      (error who "could not copy a series of dtype ~v (status ~a)" dtype status)))
+  (with-release ([rows (series-slice s start count) series-drop]
+                 [view (series-cast-datetime-tz who rows (list 'datetime (offset-unit unit) zone))
+                       series-drop]
+                 [clocks (series-dt-replace-time-zone who view #f 'raise 'raise) series-drop])
+    (copied (series-copy-i64 rows 0 count instants count valid (if valid (bytes-length valid) 0)))
+    (copied (series-copy-i64 clocks 0 count walls count #f 0))))
+
 (define (series-ref-datetime s index unit zone)
   (with-raw-buffer ([value 2 _int64])
-    (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
-         (if zone
-             (with-release ([row (series-slice s index 1) series-drop]
-                            [clock (series-dt-replace-time-zone 'series-ref row #f 'raise 'raise)
-                                   series-drop])
-               (series-copy-i64 clock 0 1 (ptr-add value 1 _int64) 1 #f 0)
-               (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone))
-             (epoch->datetime unit (ptr-ref value _int64 0))))))
+    (cond
+      [zone
+       (copy-zoned-datetimes 'series-ref s (list 'datetime unit zone) index 1
+                             value (ptr-add value 1 _int64) #f)
+       (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone)]
+      [else
+       (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
+            (epoch->datetime unit (ptr-ref value _int64 0)))])))
 
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
@@ -1443,6 +1458,24 @@
                 (moment 2021 3 27 11 #:tz "UTC"))
   (check-equal? (series-ref (series-cast brussels '(datetime milliseconds #f)) 0)
                 (datetime 2021 3 27 11))
+  (define (wall-clock m) (list (->datetime/local m) (->utc-offset m) (->tzid m)))
+  (define ns-edges
+    (series-new-i64 "t" (list (+ (* (->posix (datetime 2262 4 11 23)) 1000000000) 1)
+                              (+ (- (sub1 (expt 2 63))) 3600000000000))))
+  (check-equal? (wall-clock (series-ref (series-cast ns-edges '(datetime nanoseconds "Asia/Tokyo"))
+                                        0))
+                (list (datetime 2262 4 12 8 0 0 1) 32400 "Asia/Tokyo"))
+  (check-equal? (wall-clock (series-ref (series-cast ns-edges
+                                                     '(datetime nanoseconds "America/New_York"))
+                                        1))
+                (list (datetime 1677 9 20 20 16 41 145224193) -17762 "America/New_York"))
+  (with-raw-buffer ([out 8 _int64])
+    (check-exn (regexp (string-append "^test: could not copy a series of dtype"
+                                      " '\\(datetime microseconds \"Europe/Brussels\"\\)"
+                                      " \\(status -1\\)$"))
+               (lambda ()
+                 (copy-zoned-datetimes 'test brussels '(datetime microseconds "Europe/Brussels")
+                                       1 4 out (ptr-add out 4 _int64) #f))))
   (check-equal? (series-dtype (series-cast stamps '(datetime microseconds "+05:00")))
                 '(datetime microseconds "Etc/GMT-5"))
   (check-exn #rx"unable to parse time zone: '\\+05:30'"
@@ -1466,14 +1499,19 @@
                 (datetime 2021 3 27 12))
   (check-exn #rx"^test: cannot convert to the time zone \"Mars/Base\": unable to parse"
              (lambda () (series-dt-convert-time-zone 'test brussels "Mars/Base")))
-  (check-exn #rx"^test: cannot replace the time zone with \"UTC\": invalid ambiguous Some\\(\"x\"\\)"
+  (check-exn (regexp (string-append "^test: cannot replace the time zone with \"UTC\": invalid"
+                                    " ambiguous 'x', expected one of 'earliest', 'latest', 'null'"
+                                    " or 'raise'$"))
              (lambda () (series-dt-replace-time-zone 'test brussels "UTC" 'x 'raise)))
+  (check-exn (regexp (string-append "^test: cannot replace the time zone with \"UTC\": invalid"
+                                    " non-existent 'earliest', expected 'null' or 'raise'$"))
+             (lambda () (series-dt-replace-time-zone 'test brussels "UTC" 'raise 'earliest)))
   (check-equal? (respell (string-append "is ambiguous. Please use `ambiguous` to tell how it"
                                         " should be localized. You may be able to use"
                                         " `non_existent='null'` to return `null`"))
                 (string-append "is ambiguous. Please use #:ambiguous to tell how it should be"
-                               " localized. You may be able to use #:non-existent 'null to"
-                               " return `null`"))
+                               " localized. You may be able to use dt-replace-time-zone's"
+                               " #:non-existent 'null to return `null`"))
   (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 

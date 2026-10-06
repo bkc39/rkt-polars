@@ -27,7 +27,8 @@
                   _CompatDType ->compat-dtype enum-dtype? time-unit-symbol->code
                   zoned-datetime-dtype?)
          (only-in polars/private/series series-new-temporal)
-         (only-in polars/private/temporal temporal-values-dtype)
+         (only-in polars/private/temporal
+                  temporal-value-dtype temporal-values-dtype zone-conflict)
          syntax/parse/define)
 
 (module+ test
@@ -441,13 +442,22 @@
          [(andmap symbol? rhs) (series-new-str "" (map symbol->string rhs))]
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
          [(temporal-values-dtype rhs)
-          => (lambda (dtype) (series-new-temporal who "" rhs dtype))]
+          => (lambda (dtype)
+               (check-one-zone who rhs)
+               (series-new-temporal who "" rhs dtype))]
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
 
-(define (expr-is-in e rhs)
-  (expr-is-in/raw e (->membership-expr 'expr-is-in rhs)))
+(define (check-one-zone who vals)
+  (define conflict (zone-conflict vals))
+  (when conflict
+    (raise-arguments-error who "the values have no common dtype: their time zones differ"
+                           "dtype" (temporal-value-dtype (car conflict))
+                           "other dtype" (temporal-value-dtype (cadr conflict)))))
+
+(define (expr-is-in e rhs #:who [who 'expr-is-in])
+  (expr-is-in/raw e (->membership-expr who rhs)))
 
 (define-compat expr-is-between/raw
   (_fun _Expr-ptr _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)

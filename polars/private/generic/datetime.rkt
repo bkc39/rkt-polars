@@ -176,8 +176,28 @@
   (check-equal? (for/list ([x (p:> (ref calendar "d") (datetime 2013 6 1 12))]) x) '(#f #f #t))
   (check-equal? (for/list ([x (p:< (ref calendar "dur") (nanoseconds 7200000000001))]) x)
                 '(#t #t #t))
-  (check-equal? (rows (is-in "dt" (list (datetime 2013 6 1) (moment 2013 6 2 1 2 3 500 #:tz "UTC"))))
-                2)
+  (for ([vals (list (list (datetime 2013 6 1) (moment 2013 6 2 1 2 3 #:tz "UTC"))
+                    (list (moment 2013 6 2 1 2 3 #:tz "UTC") (datetime 2013 6 1))
+                    (list (moment 2013 6 1 2 #:tz "Europe/Brussels")
+                          (moment 2013 6 1 5 45 #:tz "Asia/Kathmandu")))]
+        [dtypes (list '((datetime microseconds #f) (datetime microseconds "UTC"))
+                      '((datetime microseconds "UTC") (datetime microseconds #f))
+                      '((datetime microseconds "Europe/Brussels")
+                        (datetime microseconds "Asia/Kathmandu")))])
+    (check-exn (regexp (format (string-append "^is-in: the values have no common dtype: their"
+                                              " time zones differ\n  dtype: ~a\n"
+                                              "  other dtype: ~a$")
+                               (regexp-quote (format "~v" (car dtypes)))
+                               (regexp-quote (format "~v" (cadr dtypes)))))
+               (lambda () (is-in "dt" vals))))
+  (check-exn #rx"^is-in: the values have no common dtype: their time zones differ\n"
+             (lambda () (is-in "d" (list (datetime 2013 5 31) (moment 2013 6 2 #:tz "UTC")))))
+  (define instants
+    (dataframe (list (series (list (datetime 2013 6 1) (datetime 2013 6 2 1 2 3)) #:name "dt"))))
+  (for ([vals (list (list (moment 2013 6 1 2 #:tz "Europe/Brussels")
+                          (moment 2013 6 2 3 2 3 #:tz "Europe/Brussels"))
+                    (list (moment 2013 6 1 1 #:tz 3600) (moment 2013 6 2 1 2 3 #:tz "UTC")))])
+    (check-equal? (height (filter instants (is-in "dt" vals))) 2))
   (check-equal? (for/list ([x (series (list (nanoseconds -1500) (nanoseconds 1500))
                                       #:dtype '(duration microseconds))])
                   x)
@@ -229,6 +249,7 @@
                     ->posix ->tzid ->utc-offset moment moment->iso8601/tzid posix->datetime
                     posix->moment
                     resolve-offset/pre resolve-offset/post)
+           (only-in gregor/private/moment-base make-moment)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in polars/private/bulk in-series)
            (only-in polars/private/generic/strings str->datetime)
@@ -366,6 +387,22 @@
                 (list (moment 2021 3 28 1 30 #:tz "Europe/Brussels") polars-null))
   (check-exn #rx"^dt-replace-time-zone: .*'2021-03-28 02:30:00' is non-existent .*#:non-existent 'null"
              (lambda () (dt-replace-time-zone skipped "Europe/Brussels")))
+  (define tokyo-edge
+    (cast (series (list 9223369200000000001)) '(datetime nanoseconds "Asia/Tokyo")))
+  (check-equal? (ref tokyo-edge 0) (moment 2262 4 12 8 0 0 1 #:tz "Asia/Tokyo"))
+  (check-equal? (ref (dt-replace-time-zone tokyo-edge #f) 0) (datetime 1677 9 21 8 25 26 290448385))
+  (define skipped-text
+    (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock"))))
+  (check-exn (regexp (string-append "^lazyframe-collect: .*'2021-03-28 02:30:00' is non-existent"
+                                    " in time zone 'Europe/Brussels'\\. You may be able to use"
+                                    " dt-replace-time-zone's #:non-existent 'null to return"))
+             (lambda ()
+               (select skipped-text (str->datetime "clock" #:time-zone "Europe/Brussels"))))
+  (check-equal? (column (select skipped-text
+                                (~> (str->datetime "clock")
+                                    (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
+                        "clock")
+                (list (moment 2021 3 28 1 30 #:tz "Europe/Brussels") polars-null))
   (check-exn #rx"^dt-convert-time-zone: .*'Asia/Kathmando'.*did you mean 'Asia/Kathmandu'"
              (lambda () (dt-convert-time-zone "clock" "Asia/Kathmando")))
   (check-exn #rx"^cast: cannot convert to .*'Europe/Brusels'.*did you mean 'Europe/Brussels'"
@@ -514,7 +551,8 @@
                                  #:ambiguous ambiguous #:non-existent non-existent)))
   (check-exn (regexp (string-append "^dt-replace-time-zone: .*is non-existent in time zone"
                                     " 'Europe/Brussels'\\. You may be able to use"
-                                    " #:non-existent 'null to return `null` in this case\\.$"))
+                                    " dt-replace-time-zone's #:non-existent 'null to return"
+                                    " `null` in this case\\.$"))
              (lambda () (replaced 'earliest 'raise)))
   (check-equal? (replaced 'earliest 'null)
                 (list (moment 2021 10 31 2 30 #:tz "Europe/Brussels"
@@ -550,6 +588,31 @@
              (lambda () (dt-convert-time-zone wall "Mars/Base")))
   (check-exn #rx"^dt-replace-time-zone: cannot replace the time zone with \"Mars/Base\""
              (lambda () (dt-replace-time-zone (col "t") "Mars/Base")))
+  ;; polars' opt_try_new accepts any name under this variable; the binding's
+  ;; entry points still refuse one chrono-tz does not know
+  (define (with-environment name value thunk)
+    (define env (current-environment-variables))
+    (define before (environment-variables-ref env name))
+    (dynamic-wind (lambda () (environment-variables-set! env name value))
+                  thunk
+                  (lambda () (environment-variables-set! env name before))))
+  (with-environment
+   #"POLARS_IGNORE_TIMEZONE_PARSE_ERROR" #"1"
+   (lambda ()
+     (define mars '(datetime microseconds "Mars/Base"))
+     (define frame (dataframe (list (series '("2021-03-27 03:00") #:name "s"))))
+     (for ([attempt (list (lambda () (cast wall mars))
+                          (lambda () (cast "t" mars))
+                          (lambda () (col mars))
+                          (lambda () (lit (make-moment (datetime 2021 3 27) 0 "Mars/Base")))
+                          (lambda () (dt-convert-time-zone wall "Mars/Base"))
+                          (lambda () (dt-replace-time-zone wall "Mars/Base"))
+                          (lambda () (dt-convert-time-zone "t" "Mars/Base"))
+                          (lambda () (dt-replace-time-zone "t" "Mars/Base"))
+                          (lambda () (str->datetime "s" #:time-zone "Mars/Base")))])
+       (check-exn #rx"unable to parse time zone: 'Mars/Base'" attempt))
+     (check-equal? (dtype (ref (select frame (str->datetime "s" #:time-zone "Asia/Tokyo")) "s"))
+                   '(datetime microseconds "Asia/Tokyo"))))
   (check-exn #rx"^dt-convert-time-zone: cannot convert to .* \"UTC\": expected Datetime, got date$"
              (lambda () (dt-convert-time-zone (series (list (date 2021 3 27))) "UTC")))
   (check-exn #rx"^dt-replace-time-zone: cannot unset the time zone: expected Datetime, got str$"

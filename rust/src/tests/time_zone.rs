@@ -250,12 +250,34 @@ fn replace_resolves_ambiguous_and_non_existent_times() {
     let nulled = owned(replace(&gap, Some("Europe/Brussels"), "raise", "null"));
     assert_eq!(physical(&nulled), vec![None]);
     for (a, n, reason) in [
-        ("bogus", "raise", "invalid ambiguous Some(\"bogus\")"),
-        ("raise", "bogus", "invalid non_existent Some(\"bogus\")"),
+        (
+            "bogus",
+            "raise",
+            "invalid ambiguous 'bogus', expected one of 'earliest', \
+             'latest', 'null' or 'raise'",
+        ),
+        (
+            "raise",
+            "bogus",
+            "invalid non-existent 'bogus', expected 'null' or 'raise'",
+        ),
     ] {
         assert!(replace(&gap, Some("UTC"), a, n).is_null());
-        assert!(recorded_error().unwrap().contains(reason));
+        assert_eq!(recorded_error().as_deref(), Some(reason));
     }
+    let p = boxed(gap.clone());
+    let (utc, raise) = (cstr("UTC"), cstr("raise"));
+    assert!(series_dt_replace_time_zone(
+        p,
+        utc.as_ptr(),
+        ptr::null(),
+        raise.as_ptr()
+    )
+    .is_null());
+    assert!(recorded_error()
+        .unwrap()
+        .starts_with("invalid ambiguous (null or not UTF-8), expected"));
+    series_drop(p);
     let ints = Series::new("i".into(), [1i64]);
     assert!(replace(&ints, Some("UTC"), "raise", "raise").is_null());
     assert_eq!(

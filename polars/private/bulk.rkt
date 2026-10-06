@@ -9,11 +9,10 @@
          syntax/parse/define
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
-                  dataframe-height decimal-ref define-compat duration-value->period
-                  polars-null series-copy-decimal series-copy-i64 series-drop series-dtype
-                  series-dt-replace-time-zone series-len series-name series-null-count
-                  series-slice)
+                  _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
+                  dataframe-column-names dataframe-height decimal-ref define-compat
+                  duration-value->period polars-null series-copy-decimal series-copy-i64
+                  series-drop series-dtype series-len series-name series-null-count)
          (only-in polars/private/resource with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time))
@@ -132,14 +131,11 @@
 (define-physical-rows duration-rows _int64 series-copy-i64 duration-value->period)
 
 (define (zoned-rows shape who s dtype unit zone start count valid null-value scratch)
-  (with-release ([rows (series-slice s start count) series-drop]
-                 [clocks (series-dt-replace-time-zone who rows #f 'raise 'raise) series-drop])
-    (with-scratch scratch ([instants (* 2 count) _int64])
-      (define walls (ptr-add instants count _int64))
-      (checked who dtype (series-copy-i64 rows 0 count instants count valid (valid-len valid)))
-      (checked who dtype (series-copy-i64 clocks 0 count walls count #f 0))
-      (collect shape count valid null-value i
-               (epoch->moment unit (ptr-ref instants _int64 i) (ptr-ref walls _int64 i) zone)))))
+  (with-scratch scratch ([instants (* 2 count) _int64])
+    (define walls (ptr-add instants count _int64))
+    (copy-zoned-datetimes who s dtype start count instants walls valid)
+    (collect shape count valid null-value i
+             (epoch->moment unit (ptr-ref instants _int64 i) (ptr-ref walls _int64 i) zone))))
 
 (define (string-rows shape who s dtype start count valid null-value scratch)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
@@ -371,11 +367,11 @@
 
 (module+ test
   (require rackunit
+           (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    dataframe-new series-cast series-drop-count series-head series-new-i64
-                    series-new-str
-                    series-ref))
+                    dataframe-new polars-null? series-cast series-drop-count series-head
+                    series-new-i64 series-new-str series-ref))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -412,6 +408,21 @@
                                                      #:buffer-size chunk-rows)])
                     (vector-ref row 0))
                   refs))
+
+  (define (wall-clock v)
+    (if (polars-null? v) v (list (->datetime/local v) (->utc-offset v) (->tzid v))))
+  (for ([value (list 9223369200000000001 (+ (- (sub1 (expt 2 63))) 3600000000000))]
+        [zone '("Asia/Tokyo" "America/New_York")]
+        [expected (list (list (datetime 2262 4 12 8 0 0 1) 32400 "Asia/Tokyo")
+                        (list (datetime 1677 9 20 20 16 41 145224193) -17762
+                              "America/New_York"))])
+    (define edge (series-cast (series-new-i64 "t" (list polars-null value))
+                              (list 'datetime 'nanoseconds zone)))
+    (check-equal? (map wall-clock (series->list edge)) (list polars-null expected))
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list edge))
+                                                     #:buffer-size 1)])
+                    (wall-clock (vector-ref row 0)))
+                  (list polars-null expected)))
 
   (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
   (define (released-by thunk)

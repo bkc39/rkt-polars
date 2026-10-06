@@ -134,9 +134,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_str_to_datetime_tz`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...),
-  and drops the hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the cast
-  that follows validation refuses an unknown zone anyway.
+  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...;
+  `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
+  'null`, since `str->datetime` and the other verbs that can raise it lack
+  the keyword), and drops the hint to set
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's name through
+  `named_time_zone`, which checks it with `TimeZone::validate_time_zone`
+  after `opt_try_new`, and only `opt_try_new` reads that variable, so setting
+  it changes nothing here.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -266,9 +271,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   name, so the zone crosses as a string through its own exports
   (`series_time_zone`, the `_datetime_tz` cast / selector / literal entry
   points, `series_dt_*` / `expr_dt_*` convert and replace,
-  `expr_str_to_datetime_tz`); each that takes a zone validates it with polars'
-  `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`) and records why it
-  fails; `->compat-dtype` refuses a zoned datum. A list of moments settles
+  `expr_str_to_datetime_tz`); each that takes a zone canonicalises it with
+  polars' `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`), validates
+  it with `TimeZone::validate_time_zone` (which, unlike `opt_try_new`, ignores
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`) and records why it fails;
+  `->compat-dtype` refuses a zoned datum. A list of moments settles
   its zone as Python does: the first non-null value decides, a named zone is
   kept, a fixed offset gives UTC, a naive datetime among moments is read as
   UTC, and a list that starts naive makes a naive column of UTC clock times.
@@ -276,15 +283,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   UTC clock time), where Python's `pl.Datetime("us")` keeps the values' zone.
   `%z` parses to UTC; on an expression, an offset with no `#:format` and no
   `#:time-zone` is an error, as in Python. Every reading is polars'
-  (chrono-tz's compiled database), never tzinfo's: a moment read back is
-  built with the offset polars gives (its wall clock from
-  `replace_time_zone(None)`, through gregor's private `make-moment`), and the
-  series printer takes `%Z` from polars. tzinfo, behind gregor's own
-  functions, ignores the TZif footer (no daylight saving after 2037, or
-  sooner with slim zoneinfo) and some systems lack the backward-compatible
-  names (`US/Pacific`). Series operators refuse datetimes in different zones
-  before the native call, naming the operator. A zoned CSV schema override is
-  refused (the reader would drop the zone).
+  (chrono-tz's compiled database), never tzinfo's: a moment read back is built
+  with the offset polars gives, through gregor's private `make-moment` (#172;
+  `temporal.rkt` checks at compile time that gregor still provides it). The
+  offset is the wall clock `replace_time_zone(None)` gives on a microsecond
+  view of the column, less the floored instant: on a nanosecond column polars'
+  clock overflows i64, unchecked, within a day of either end of the range
+  (1677, 2262), and offsets change on whole seconds, so the floored instant
+  has the value's offset. The series printer takes `%Z` from polars. tzinfo,
+  behind gregor's own functions, ignores the TZif footer (no daylight saving
+  after 2037, or sooner with slim zoneinfo) and some systems lack the
+  backward-compatible names (`US/Pacific`). Series operators refuse datetimes
+  in different zones before the native call, naming the operator, and `is-in`
+  refuses a list whose datetimes differ in zone (or mix naive and zoned), as
+  Python's `is_in` does, though `series` builds a column from the same list. A
+  zoned CSV schema override is refused (the reader would drop the zone).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
   `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
   datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define

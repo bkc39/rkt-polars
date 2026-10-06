@@ -1,5 +1,35 @@
 #lang racket/base
 
+(module gregor-private racket/base
+  (provide check-gregor-export)
+
+  (define (exported-names exports)
+    (for*/list ([phase+names (in-list exports)]
+                #:when (eqv? (car phase+names) 0)
+                [export (in-list (cdr phase+names))])
+      (car export)))
+
+  (define (provides? mod name)
+    (cond
+      [(with-handlers ([exn:fail? (lambda (_) #f)]) (module-declared? mod #t))
+       (define-values (variables syntaxes) (module->exports mod))
+       (memq name (append (exported-names variables) (exported-names syntaxes)))]
+      [else #f]))
+
+  (define (check-gregor-export mod name)
+    (unless (provides? mod name)
+      (error 'polars
+             (string-append "~a no longer provides ~a, which reads a zoned datetime back"
+                            " as a moment; see https://github.com/bkc39/rkt-polars/issues/172")
+             mod name))))
+
+(require (for-syntax racket/base 'gregor-private))
+
+;; gregor's only constructor that attaches a zone's name to an offset tzinfo
+;; did not compute is private (#172); a rename fails here, by name.
+(begin-for-syntax
+  (check-gregor-export 'gregor/private/moment-base 'make-moment))
+
 (require (only-in gregor
                   ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date
                   date? datetime? jdn->date moment? ->tzid posix->datetime)
@@ -12,10 +42,13 @@
          epoch->datetime
          epoch->moment
          nanoseconds->time
+         offset-unit
          per-second
          temporal-encoder
          temporal-value-dtype
-         temporal-values-dtype)
+         temporal-values-dtype
+         utc-offset
+         zone-conflict)
 
 (define unix-epoch-jdn 2440588)
 (define ns/second 1000000000)
@@ -33,12 +66,24 @@
 (define (epoch->datetime unit value)
   (posix->datetime (/ value (per-second unit))))
 
-;; The offset is polars' (`clock` is the instant's wall clock in the zone, as
-;; replace_time_zone(None) gives it), not tzinfo's: tzinfo ignores the TZif
-;; footer and some systems lack the backward-compatible zone names.
+;; replace_time_zone(None) multiplies a nanosecond wall clock past i64 without
+;; a check, so a wall clock is read from a microsecond view of the column,
+;; which cannot overflow.
+(define (offset-unit unit)
+  (if (eq? unit 'nanoseconds) 'microseconds unit))
+
+;; `clock` is the wall clock of `value`'s instant in (offset-unit unit), as
+;; replace_time_zone(None) gives it. A cast to a coarser unit floors, and
+;; offsets change on whole seconds, so the floored instant has value's offset.
+(define (utc-offset unit value clock)
+  (define view (per-second (offset-unit unit)))
+  (/ (- clock (floor (/ (* value view) (per-second unit)))) view))
+
+;; The offset is polars', not tzinfo's: tzinfo ignores the TZif footer and
+;; some systems lack the backward-compatible zone names.
 (define (epoch->moment unit value clock zone)
-  (define ticks (per-second unit))
-  (make-moment (posix->datetime (/ clock ticks)) (/ (- clock value) ticks) zone))
+  (define offset (utc-offset unit value clock))
+  (make-moment (posix->datetime (+ (/ value (per-second unit)) offset)) offset zone))
 
 (define (nanoseconds->time value)
   (define-values (seconds nanosecond) (quotient/remainder value ns/second))
@@ -94,6 +139,18 @@
 
 (define (column-zone v)
   (and (moment? v) (or (->tzid v) "UTC")))
+
+;; Two datetimes whose columns would differ in zone, as Python's is_in, which
+;; finds no supertype for them, refuses; #f when every datetime agrees.
+(define (zone-conflict vals)
+  (define datetimes (filter datetime-like? vals))
+  (cond
+    [(pair? datetimes)
+     (define zone (column-zone (car datetimes)))
+     (for/first ([v (in-list (cdr datetimes))]
+                 #:unless (equal? (column-zone v) zone))
+       (list (car datetimes) v))]
+    [else #f]))
 
 (define (inferred-unit sub-microsecond? ->ns vals)
   (if (and (ormap sub-microsecond? vals) (andmap (lambda (v) (int64? (->ns v))) vals))
@@ -158,8 +215,18 @@
 
 (module+ test
   (require rackunit
-           (only-in gregor ->datetime/local date datetime moment moment->iso8601/tzid posix->moment)
-           (only-in gregor/period days hours milliseconds months nanoseconds period weeks))
+           (only-in gregor
+                    ->datetime/local ->utc-offset date datetime moment moment->iso8601/tzid
+                    posix->moment)
+           (only-in gregor/period days hours milliseconds months nanoseconds period weeks)
+           (submod ".." gregor-private))
+
+  (check-not-exn (lambda () (check-gregor-export 'gregor/private/moment-base 'make-moment)))
+  (check-exn (regexp (string-append "^polars: gregor/private/moment-base no longer provides"
+                                    " make-instant, .*/issues/172$"))
+             (lambda () (check-gregor-export 'gregor/private/moment-base 'make-instant)))
+  (check-exn #rx"^polars: gregor/private/moment-bass no longer provides make-moment, "
+             (lambda () (check-gregor-export 'gregor/private/moment-bass 'make-moment)))
 
   (for ([days (list 0 -1 19724 -719528 2932896)])
     (check-equal? ((temporal-encoder 'test 'date) (days->date days)) days))
@@ -233,16 +300,36 @@
                     (datetime 2021 11 7 5 30) (datetime 2021 11 7 6 30)
                     (datetime 1969 12 31 23 59 59 999000000))])
     (define naive (temporal-encoder 'test (list 'datetime unit #f)))
+    (define wall-clock (temporal-encoder 'test (list 'datetime (offset-unit unit) #f)))
     (define value (naive utc))
     (define gregor-reading (posix->moment (->posix utc) zone))
-    (define m (epoch->moment unit value (naive (->datetime/local gregor-reading)) zone))
+    (define m (epoch->moment unit value (wall-clock (->datetime/local gregor-reading)) zone))
     (check-equal? m gregor-reading)
     (check-equal? (->tzid m) zone)
     (check-equal? (->datetime/utc m) utc)
     (check-equal? ((temporal-encoder 'test (list 'datetime unit zone)) m) value))
   (check-equal? (->nanoseconds (epoch->moment 'nanoseconds 1616799600123456789
-                                              1616803200123456789 "Europe/Brussels"))
+                                              1616803200123456 "Europe/Brussels"))
                 123456789)
+  (check-equal? (map offset-unit '(nanoseconds microseconds milliseconds))
+                '(microseconds microseconds milliseconds))
+  (check-equal? (utc-offset 'nanoseconds -1 -1) 0)
+  (check-equal? (utc-offset 'nanoseconds -1001 (- 3600000000 2)) 3600)
+  (check-equal? (utc-offset 'milliseconds -1 (- 20700000 1)) 20700)
+  ;; a nanosecond wall clock past either end of i64, read from its microseconds
+  (define east (+ (* (->posix (datetime 2262 4 11 23)) ns/second) 1))
+  (define west (+ (- (sub1 (expt 2 63))) 3600000000000))
+  (for ([value (list east west)]
+        [offset '(32400 -17762)]
+        [zone '("Asia/Tokyo" "America/New_York")]
+        [wall (list (datetime 2262 4 12 8 0 0 1) (datetime 1677 9 20 20 16 41 145224193))])
+    (check-false (int64? (+ value (* offset ns/second))))
+    (define m (epoch->moment 'nanoseconds value
+                             (+ (floor (/ value 1000)) (* offset 1000000)) zone))
+    (check-equal? (->datetime/local m) wall)
+    (check-equal? (->utc-offset m) offset)
+    (check-equal? (->tzid m) zone)
+    (check-equal? ((temporal-encoder 'test (list 'datetime 'nanoseconds zone)) m) value))
   (check-equal? (moment->iso8601/tzid (epoch->moment 'microseconds instant
                                                      (+ instant 3600000000) "Europe/Brussels"))
                 "2021-03-27T00:00:00+01:00[Europe/Brussels]")
