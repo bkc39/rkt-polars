@@ -15,7 +15,7 @@ stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
 the flake's build and dev shell and `scripts/build-so.sh` set; the release
 build uses that same rustc version. The committed candidates are built with
 `[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
-unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
+unit (#125), which keeps the Linux `.so` at 81.6 MB against GitHub's
 104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
 uses it. The nix build, `cargo test` and the bench stay on `release`, because
 under LTO every test and example binary links on one core (the nix check went
