@@ -1,5 +1,8 @@
 use crate::prelude::*;
-use crate::{polars_dtype_from_compat, rust_string_to_ptr, CompatDType};
+use crate::{
+    clear_last_error, datetime_tz_dtype, polars_dtype_from_compat,
+    rust_string_to_ptr, CompatDType,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -94,6 +97,22 @@ pub extern "C" fn expr_lit_temporal(
         _ => return ptr::null_mut(),
     };
     Box::into_raw(Box::new(lit(scalar)))
+}
+
+/// A zoned Datetime literal from its unit's count since the epoch, UTC.
+#[no_mangle]
+pub extern "C" fn expr_lit_datetime_tz(
+    value: i64,
+    unit: i32,
+    tz: *const c_char,
+) -> *mut Expr {
+    clear_last_error();
+    match datetime_tz_dtype(unit, tz) {
+        Some(DataType::Datetime(unit, tz)) => {
+            Box::into_raw(Box::new(lit(Scalar::new_datetime(value, unit, tz))))
+        }
+        _ => ptr::null_mut(),
+    }
 }
 
 #[no_mangle]

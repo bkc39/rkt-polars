@@ -1755,6 +1755,7 @@ dependencies = [
  "blake3",
  "bytes",
  "chrono",
+ "chrono-tz",
  "crossbeam-queue",
  "fast-float2",
  "fastrand",
@@ -1800,6 +1801,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "495117c99362a05d4ea744c21f54d570991fd8ae3ec9dfb1f0e01f055747553f"
 dependencies = [
  "chrono",
+ "chrono-tz",
  "fallible-streaming-iterator",
  "hashbrown 0.17.1",
  "indexmap",

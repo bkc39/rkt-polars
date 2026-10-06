@@ -29,3 +29,19 @@ pub extern "C" fn expr_cast_enum(
         Box::into_raw(Box::new(e.clone().strict_cast(dtype)))
     })
 }
+
+#[no_mangle]
+pub extern "C" fn expr_cast_datetime_tz(
+    e: *const Expr,
+    unit: i32,
+    tz: *const c_char,
+) -> *mut Expr {
+    clear_last_error();
+    let Some(e) = (unsafe { e.as_ref() }) else {
+        set_last_error("expression is null");
+        return ptr::null_mut();
+    };
+    datetime_tz_dtype(unit, tz).map_or(ptr::null_mut(), |dtype| {
+        Box::into_raw(Box::new(e.clone().cast(dtype)))
+    })
+}
