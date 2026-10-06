@@ -4,7 +4,8 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         polars/private/expr-core)
+         polars/private/expr-core
+         (only-in polars/private/foreign call/foreign-error))
 
 (provide expr-str-contains expr-str-starts-with expr-str-ends-with
          expr-str-to-lowercase expr-str-to-uppercase
@@ -14,7 +15,8 @@
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
-         expr-str->date expr-str->datetime expr-str->time)
+         expr-str->date expr-str->datetime expr-str->time
+         parse-datetime)
 
 (define-compat expr-str-contains/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -243,20 +245,33 @@
   #:c-id expr_str_to_datetime
   #:wrap (allocator expr-drop))
 
+(define-compat expr-str->datetime-tz/raw
+  (_fun _Expr-ptr _string _uint8 _int32 _string/utf-8 _string/utf-8 _uint8 _uint8 _uint8
+        -> _Expr-ptr/null)
+  #:c-id expr_str_to_datetime_tz
+  #:wrap (allocator expr-drop))
+
 (define (expr-str->datetime e
                             #:format [format #f]
                             #:unit [unit 'microseconds]
                             #:strict [strict #t]
                             #:exact [exact #t]
                             #:cache [cache #t])
-  (check-strptime-options 'expr-str->datetime format strict exact cache)
-  (expr-str->datetime/raw e
-                          (or format "")
-                          (if format 1 0)
-                          (time-unit-symbol->code 'expr-str->datetime unit)
-                          (if strict 1 0)
-                          (if exact 1 0)
-                          (if cache 1 0)))
+  (parse-datetime 'expr-str->datetime e format unit #f 'raise strict exact cache))
+
+(define (parse-datetime who e format unit time-zone ambiguous strict exact cache)
+  (check-strptime-options who format strict exact cache)
+  (define code (time-unit-symbol->code who unit))
+  (define (flag b) (if b 1 0))
+  (if time-zone
+      (call/foreign-error who
+                          (lambda ()
+                            (expr-str->datetime-tz/raw e (or format "") (flag format) code
+                                                       time-zone (symbol->string ambiguous)
+                                                       (flag strict) (flag exact) (flag cache)))
+                          "cannot parse into the time zone ~s" time-zone)
+      (expr-str->datetime/raw e (or format "") (flag format) code
+                              (flag strict) (flag exact) (flag cache))))
 
 (define-compat expr-str->time/raw
   (_fun _Expr-ptr _string _uint8 _uint8 _uint8 _uint8 -> _Expr-ptr)

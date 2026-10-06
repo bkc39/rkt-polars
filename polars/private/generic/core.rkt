@@ -203,8 +203,12 @@
   (check-equal? (series-dtype (series (vector 1 2 3) #:dtype 'f64)) 'float64)
   (check-exn #rx"series: unsupported dtype '\\(datetime weeks\\)"
              (lambda () (series '(1) #:dtype '(datetime weeks))))
-  (check-exn #rx"series: unsupported dtype '\\(datetime microseconds \"UTC\"\\)"
+  (check-exn #rx"series: expected a gregor datetime or moment for this dtype"
              (lambda () (series '(1) #:dtype '(datetime microseconds "UTC"))))
+  (check-exn #rx"series: unsupported dtype '\\(datetime microseconds \"\"\\)"
+             (lambda () (series '(1) #:dtype '(datetime microseconds ""))))
+  (check-exn #rx"series: unsupported dtype '\\(datetime #f \"UTC\"\\)"
+             (lambda () (series '(1) #:dtype '(datetime #f "UTC"))))
   (check-equal? (series-name (series '(1 2 3) #:name "xs")) "xs")
   (check-equal? (series-dtype (series (list (expt 2 40)))) 'int64)
 
@@ -347,10 +351,13 @@
 
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (date 2024 1 2) (datetime 2024)))))
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (months 1)))))
-  (check-exn #rx"^series: a moment carries a time zone"
-             (lambda () (series (list (moment 2024 1 2 #:tz "Europe/Paris")))))
-  (check-exn #rx"^series: a moment carries a time zone"
-             (lambda () (series (list (moment 2024 1 2 #:tz "UTC")) #:dtype 'datetime)))
+  (check-equal? (round-trip (list (moment 2024 1 2 #:tz "Europe/Paris") polars-null))
+                (list '(datetime microseconds "Europe/Paris")
+                      (list (moment 2024 1 2 #:tz "Europe/Paris") polars-null)))
+  (check-equal? (round-trip (list (moment 2024 1 2 #:tz "Europe/Paris")) 'datetime)
+                (list '(datetime microseconds #f) (list (datetime 2024 1 1 23))))
+  (check-exn #rx"^series: cannot infer a dtype"
+             (lambda () (series (list (moment 2024 1 2 #:tz "UTC") (date 2024 1 2)))))
   (check-exn #rx"^series: expected a gregor date for this dtype\n  dtype: 'date\n  value: \"2024-01-02\""
              (lambda () (series '("2024-01-02") #:dtype 'date)))
   (check-exn #rx"^series: expected a gregor period without years or months"

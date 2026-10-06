@@ -12,6 +12,7 @@
 
 (require (prefix-in base: racket/base)
          (only-in racket/list make-list)
+         (only-in racket/match match*)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
@@ -32,10 +33,17 @@
 
 ;; The other operand of a series op, as a series matching `s`; a gregor value
 ;; keeps the dtype `lit` gives it, as the expression path does.
-(define (cmp-other s other)
-  (if (series? other)
-      other
-      (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
+(define (cmp-other who s other)
+  (define o
+    (if (series? other)
+        other
+        (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
+  (match* ((series-dtype s) (series-dtype o))
+    [((list 'datetime _ zone) (list 'datetime _ other-zone))
+     #:when (not (equal? zone other-zone))
+     (raise-arguments-error who "datetimes in different time zones"
+                            "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
+    [(_ _) o]))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
@@ -47,8 +55,8 @@
        (let ([a (base:car args)] [b (base:cadr args)])
          (cond
            [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
-           [(series? a) (wrap-series (series-op a (cmp-other a b)))]
-           [(series? b) (wrap-series (series-op-reflected b (cmp-other b a)))]
+           [(series? a) (wrap-series (series-op a (cmp-other 'name a b)))]
+           [(series? b) (wrap-series (series-op-reflected b (cmp-other 'name b a)))]
            [else (apply base-op args)]))]
       [else (apply base-op args)])))
 
@@ -63,13 +71,13 @@
 (define-cmp != expr-ne series-ne series-ne base:!=)
 
 ;; --- arithmetic operators ---------------------------------------------------
-(define (binary-arith expr-op series-op base-op a b)
+(define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
-        [(series? a) (wrap-series (series-op a (cmp-other a b)))]
-        [(series? b) (wrap-series (series-op (cmp-other b a) b))]
+        [(series? a) (wrap-series (series-op a (cmp-other who a b)))]
+        [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
         [else (base-op a b)]))
 
-(define-syntax-parse-rule (define-arith name:id expr-op:expr series-op:expr base-op:expr)
+(define-syntax-parse-rule (define-arith name:id who:id expr-op:expr series-op:expr base-op:expr)
   (define (name . args)
     (cond
       [(andmap base:number? args) (apply base-op args)]   ; numeric fast path
@@ -77,18 +85,18 @@
       [(null? (cdr args))
        (let ([a (car args)])
          (if (or (Expr-ptr? a) (series? a)) a (base-op a)))]
-      [else (foldl (lambda (b acc) (binary-arith expr-op series-op base-op acc b))
+      [else (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
                    (car args) (cdr args))])))
 
-(define-arith p+ expr-add series-add base:+)
-(define-arith p- expr-sub series-sub base:-)
-(define-arith p* expr-mul series-mul base:*)
-(define-arith p/ expr-div series-div base:/)
+(define-arith p+ + expr-add series-add base:+)
+(define-arith p- - expr-sub series-sub base:-)
+(define-arith p* * expr-mul series-mul base:*)
+(define-arith p/ / expr-div series-div base:/)
 
 ;; `mod` does not collide with racket/base (which spells it `modulo`), so it
 ;; is provided under its own name rather than via the rename-out dance.  Plain
 ;; numbers fall back to racket/base `modulo`.
-(define-arith mod expr-mod series-mod base:modulo)
+(define-arith mod mod expr-mod series-mod base:modulo)
 
 ;; --- boolean / logical operators --------------------------------------------
 ;; and / or stay short-circuit macros; only an Expr/series operand routes into

@@ -24,10 +24,10 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   frame-sort/c sort-flags
-                  _CompatDType ->compat-dtype enum-dtype?)
+                  _CompatDType ->compat-dtype enum-dtype? time-unit-symbol->code
+                  zoned-datetime-dtype?)
          (only-in polars/private/series series-new-temporal)
-         (only-in polars/private/temporal reject-moment temporal-values-dtype)
-         (only-in gregor moment?)
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define)
 
 (module+ test
@@ -112,7 +112,7 @@
           [lazyframe-scan-parquet (->* (path-string?)
                                        (#:n-rows (or/c #f exact-nonnegative-integer?))
                                        LazyFrame-ptr?)])
-         expr-cast
+         expr-cast expr-cast-to
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
          expr-meta-output-name expr-meta-root-names expr-meta-eq?
@@ -442,7 +442,6 @@
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
          [(temporal-values-dtype rhs)
           => (lambda (dtype) (series-new-temporal who "" rhs dtype))]
-         [(findf moment? rhs) => (lambda (m) (reject-moment who m))]
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
@@ -888,12 +887,26 @@
   #:c-id expr_cast_enum
   #:wrap (allocator expr-drop))
 
+(define-compat expr-cast-datetime-tz/raw
+  (_fun _Expr-ptr _int32 _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_cast_datetime_tz
+  #:wrap (allocator expr-drop))
+
 (define (expr-cast e dtype)
-  (if (enum-dtype? dtype)
-      (call/foreign-error 'expr-cast
-                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
-                          "cannot convert to ~v" dtype)
-      (expr-cast/c e (->compat-dtype dtype))))
+  (expr-cast-to 'expr-cast e dtype))
+
+(define (expr-cast-to who e dtype)
+  (cond
+    [(enum-dtype? dtype)
+     (call/foreign-error who
+                         (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
+                         "cannot convert to ~v" dtype)]
+    [(zoned-datetime-dtype? dtype)
+     (define code (time-unit-symbol->code (cadr dtype)))
+     (call/foreign-error who
+                         (lambda () (expr-cast-datetime-tz/raw e code (caddr dtype)))
+                         "cannot convert to ~v" dtype)]
+    [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ test
   (define df

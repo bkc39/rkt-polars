@@ -4,10 +4,9 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
-         (only-in gregor moment?)
          polars/private/foreign
          polars/private/series
-         (only-in polars/private/temporal reject-moment temporal-values-dtype)
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -55,7 +54,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ (enum-dtype? v)]))
+    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
 
 (define (normalize-dtype dt)
   (cond
@@ -80,7 +79,6 @@
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
     [(temporal-values-dtype vals)]
-    [(findf moment? vals) => (lambda (m) (reject-moment 'series m))]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 

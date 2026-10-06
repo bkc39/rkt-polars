@@ -12,9 +12,11 @@
                   _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
                   dataframe-height decimal-ref define-compat duration-value->period
                   polars-null series-copy-decimal series-copy-i64 series-drop series-dtype
-                  series-len series-name series-null-count)
+                  series-dt-replace-time-zone series-len series-name series-null-count
+                  series-slice)
          (only-in polars/private/resource with-raw-buffer with-release)
-         (only-in polars/private/temporal days->date epoch->datetime nanoseconds->time))
+         (only-in polars/private/temporal
+                  days->date epoch->datetime epoch->moment nanoseconds->time))
 
 (provide check-column-names
          dataframe->columns
@@ -129,6 +131,16 @@
 (define-physical-rows datetime-rows _int64 series-copy-i64 epoch->datetime)
 (define-physical-rows duration-rows _int64 series-copy-i64 duration-value->period)
 
+(define (zoned-rows shape who s dtype unit zone start count valid null-value scratch)
+  (with-release ([rows (series-slice s start count) series-drop]
+                 [clocks (series-dt-replace-time-zone who rows #f 'raise 'raise) series-drop])
+    (with-scratch scratch ([instants (* 2 count) _int64])
+      (define walls (ptr-add instants count _int64))
+      (checked who dtype (series-copy-i64 rows 0 count instants count valid (valid-len valid)))
+      (checked who dtype (series-copy-i64 clocks 0 count walls count #f 0))
+      (collect shape count valid null-value i
+               (epoch->moment unit (ptr-ref instants _int64 i) (ptr-ref walls _int64 i) zone)))))
+
 (define (string-rows shape who s dtype start count valid null-value scratch)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
   (with-scratch scratch ([offsets (add1 count) _int64])
@@ -187,7 +199,9 @@
     ['boolean (physical boolean-rows)]
     ['date (physical date-rows)]
     ['time (physical time-rows)]
-    [`(datetime ,unit ,_) (physical datetime-rows unit)]
+    [`(datetime ,unit #f) (physical datetime-rows unit)]
+    [`(datetime ,unit ,zone)
+     (zoned-rows shape who s dtype unit zone start count valid null-value scratch)]
     [`(duration ,_) (physical duration-rows dtype)]
     ['string (string-rows shape who s dtype start count valid null-value scratch)]
     [(or 'categorical `(enum . ,_))
@@ -359,7 +373,8 @@
   (require rackunit
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    series-cast series-drop-count series-head series-new-i64 series-new-str
+                    dataframe-new series-cast series-drop-count series-head series-new-i64
+                    series-new-str
                     series-ref))
 
   (define (gappy-ints n)
@@ -380,6 +395,23 @@
     (define refs (for/list ([i (in-range n)]) (series-ref s i)))
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
     (check-equal? (series->list s) refs))
+
+  (for* ([chunk-rows '(1 3 7)]
+         [unit '(milliseconds microseconds nanoseconds)]
+         [zone '("Europe/Brussels" "America/New_York" "UTC")])
+    (define n 11)
+    (define zoned
+      (series-cast (series-new-i64 "t" (for/list ([i (in-range n)])
+                                         (if (= i 4) polars-null (* (- i 5) 1800000 i))))
+                   (list 'datetime unit zone)))
+    (define refs (for/list ([i (in-range n)]) (series-ref zoned i)))
+    (check-equal? (sequence->list (in-series zoned #:chunk-rows chunk-rows)) refs)
+    (check-equal? (series->list zoned) refs)
+    (check-equal? (vector->list (series->vector zoned)) refs)
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list zoned))
+                                                     #:buffer-size chunk-rows)])
+                    (vector-ref row 0))
+                  refs))
 
   (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
   (define (released-by thunk)

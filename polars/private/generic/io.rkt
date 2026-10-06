@@ -44,7 +44,7 @@
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk in-series series->list)
            (only-in threading ~>)
-           (only-in gregor date datetime)
+           (only-in gregor date datetime moment)
            (prefix-in contracted: (submod ".."))
            (prefix-in raw: polars/private/csv)
            (only-in polars/private/generic/core
@@ -100,6 +100,7 @@
       (#:schema-overrides . ((a . int32))) (#:schema-overrides . (("a" . bogus)))
       (#:schema-overrides . (("a" . (duration microseconds))))
       (#:schema-overrides . (("a" . (enum x y))))
+      (#:schema-overrides . (("a" . (datetime microseconds "UTC"))))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
       (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)
 ))
@@ -453,5 +454,34 @@
   (define as-categorical (read-csv levels #:schema-overrides '(("level" . categorical))))
   (check-equal? (dtype (ref as-categorical "level")) 'categorical)
   (check-equal? (column as-categorical "level") '(info debug info))
+
+  (define brussels
+    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
+                             #:name "t"))))
+  (define brussels-csv (build-path scratch "brussels.csv"))
+  (write-csv brussels brussels-csv)
+  (check-equal? (file->string brussels-csv)
+                "t\n2021-03-27T12:00:00.500000+0100\n\n2021-07-01T00:00:00.000000+0200\n")
+  (define brussels-parquet (build-path scratch "brussels.parquet"))
+  (write-parquet brussels brussels-parquet)
+  (check-true (frame=? (read-parquet brussels-parquet) brussels))
+  (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
+                '(datetime microseconds "Europe/Brussels"))
+  (define brussels-ndjson (build-path scratch "brussels.ndjson"))
+  (write-ndjson brussels brussels-ndjson)
+  (check-equal? (file->string brussels-ndjson)
+                (string-append "{\"t\":\"2021-03-27T12:00:00.500+01:00\"}\n{\"t\":null}\n"
+                               "{\"t\":\"2021-07-01T00:00:00+02:00\"}\n"))
+  (define offsets (scratch-file "offsets.csv" "t,u"
+                                "2021-03-27T00:00:00+01:00,2021-03-27 00:00"
+                                "2021-03-29T00:00:00+02:00,2021-03-29 00:00"))
+  (for ([read (list (lambda (p) (read-csv p #:try-parse-dates #t))
+                    (lambda (p) (collect (scan-csv p #:try-parse-dates #t))))])
+    (define parsed (read offsets))
+    (check-equal? (dtype (ref parsed "t")) '(datetime microseconds "UTC"))
+    (check-equal? (column parsed "t")
+                  (list (moment 2021 3 26 23 #:tz "UTC") (moment 2021 3 28 22 #:tz "UTC")))
+    (check-equal? (dtype (ref parsed "u")) '(datetime microseconds #f)))
 
   (delete-directory/files scratch))

@@ -8,14 +8,14 @@
 (provide series-new-temporal
          series-repeat-temporal)
 
-(define (series-from-physical name physicals dtype)
+(define (series-from-physical who name physicals dtype)
   (define construct
     (cond
       [(eq? dtype 'date) (if (vector? physicals) series-new-i32/vec series-new-i32)]
       [(vector? physicals) series-new-i64/vec]
       [else series-new-i64]))
   (with-release ([s (construct name physicals) series-drop])
-    (series-cast s dtype)))
+    (series-cast-to who s dtype)))
 
 (define (physical-encoder who dtype)
   (define encode (temporal-encoder who dtype))
@@ -23,7 +23,8 @@
 
 (define (series-new-temporal who name elements dtype)
   (define physical (physical-encoder who dtype))
-  (series-from-physical name
+  (series-from-physical who
+                        name
                         (if (vector? elements)
                             (for/vector #:length (vector-length elements) ([v (in-vector elements)])
                               (physical v))
@@ -31,7 +32,7 @@
                         dtype))
 
 (define (series-repeat-temporal who name value n dtype)
-  (series-from-physical name (make-list n ((physical-encoder who dtype) value)) dtype))
+  (series-from-physical who name (make-list n ((physical-encoder who dtype) value)) dtype))
 
 (module+ test
   (require rackunit

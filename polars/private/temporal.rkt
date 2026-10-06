@@ -1,16 +1,18 @@
 #lang racket/base
 
 (require (only-in gregor
-                  ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date date?
-                  datetime? jdn->date moment? posix->datetime)
+                  ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date
+                  date? datetime? jdn->date moment? ->tzid posix->datetime)
+         (only-in gregor/private/moment-base make-moment)
          (only-in gregor/period period? period-ref)
          (only-in gregor/time time time?)
          racket/match)
 
 (provide days->date
          epoch->datetime
+         epoch->moment
          nanoseconds->time
-         reject-moment
+         per-second
          temporal-encoder
          temporal-value-dtype
          temporal-values-dtype)
@@ -30,6 +32,13 @@
 
 (define (epoch->datetime unit value)
   (posix->datetime (/ value (per-second unit))))
+
+;; The offset is polars' (`clock` is the instant's wall clock in the zone, as
+;; replace_time_zone(None) gives it), not tzinfo's: tzinfo ignores the TZif
+;; footer and some systems lack the backward-compatible zone names.
+(define (epoch->moment unit value clock zone)
+  (define ticks (per-second unit))
+  (make-moment (posix->datetime (/ clock ticks)) (/ (- clock value) ticks) zone))
 
 (define (nanoseconds->time value)
   (define-values (seconds nanosecond) (quotient/remainder value ns/second))
@@ -72,13 +81,19 @@
 (define (whole-microseconds? ns)
   (zero? (remainder ns 1000)))
 
+(define (datetime-like? v)
+  (or (datetime? v) (moment? v)))
+
 (define (temporal-kind v)
   (cond
     [(date? v) 'date]
     [(time? v) 'time]
-    [(datetime? v) 'datetime]
+    [(datetime-like? v) 'datetime]
     [(fixed-length-period? v) 'duration]
     [else #f]))
+
+(define (column-zone v)
+  (and (moment? v) (or (->tzid v) "UTC")))
 
 (define (inferred-unit sub-microsecond? ->ns vals)
   (if (and (ormap sub-microsecond? vals) (andmap (lambda (v) (int64? (->ns v))) vals))
@@ -97,20 +112,15 @@
        (andmap (lambda (v) (eq? (temporal-kind v) kind)) vals)
        (case kind
          [(datetime)
-          (list 'datetime (inferred-unit datetime-sub-microsecond? datetime->nanoseconds vals) #f)]
+          (list 'datetime
+                (inferred-unit datetime-sub-microsecond? datetime->nanoseconds vals)
+                (column-zone (car vals)))]
          [(duration)
           (list 'duration (inferred-unit period-sub-microsecond? period->nanoseconds vals))]
          [else kind])))
 
 (define (temporal-value-dtype v)
   (temporal-values-dtype (list v)))
-
-(define (reject-moment who v)
-  (raise-arguments-error
-   who
-   (string-append "a moment carries a time zone, and time-zone-aware datetimes are not"
-                  " supported; convert it with ->datetime/utc or ->datetime/local")
-   "value" v))
 
 (define (int64? n)
   (<= (- (expt 2 63)) n (sub1 (expt 2 63))))
@@ -122,11 +132,12 @@
 (define (printable? v)
   (<= (car chrono-jdn-range) (->jdn v) (cdr chrono-jdn-range)))
 
+(define (utc-clock v)
+  (if (moment? v) (->datetime/utc v) v))
+
 (define (temporal-encoder who dtype)
   (define ((encoder accepts? what ->physical in-range?) v)
     (unless (accepts? v)
-      (when (moment? v)
-        (reject-moment who v))
       (raise-arguments-error who (format "expected ~a for this dtype" what) "dtype" dtype "value" v))
     (define physical (->physical v))
     (unless (in-range? v physical)
@@ -137,9 +148,9 @@
     ['time (encoder time? "a gregor time" time->nanoseconds (lambda (_t _ns) #t))]
     [(or 'datetime (list* 'datetime _))
      (define unit (if (pair? dtype) (cadr dtype) 'microseconds))
-     (encoder datetime? "a gregor datetime"
+     (encoder datetime-like? "a gregor datetime or moment"
               (lambda (dt) (floor-nanoseconds->unit (datetime->nanoseconds dt) unit))
-              (lambda (dt ticks) (and (printable? dt) (int64? ticks))))]
+              (lambda (dt ticks) (and (printable? (utc-clock dt)) (int64? ticks))))]
     [(list* 'duration unit _)
      (encoder fixed-length-period? "a gregor period without years or months"
               (lambda (p) (truncate-nanoseconds->unit (period->nanoseconds p) unit))
@@ -147,7 +158,7 @@
 
 (module+ test
   (require rackunit
-           (only-in gregor date datetime moment)
+           (only-in gregor ->datetime/local date datetime moment moment->iso8601/tzid posix->moment)
            (only-in gregor/period days hours milliseconds months nanoseconds period weeks))
 
   (for ([days (list 0 -1 19724 -719528 2932896)])
@@ -183,7 +194,61 @@
   (check-equal? (temporal-value-dtype (hours 1)) '(duration microseconds))
   (check-equal? (temporal-value-dtype (nanoseconds 1)) '(duration nanoseconds))
   (check-false (temporal-value-dtype (months 1)))
-  (check-false (temporal-value-dtype (moment 2024 1 2 #:tz "UTC")))
+  (check-equal? (temporal-value-dtype (moment 2024 1 2 #:tz "UTC")) '(datetime microseconds "UTC"))
+  (check-equal? (temporal-value-dtype (moment 2024 1 2 0 0 0 1 #:tz "Europe/Brussels"))
+                '(datetime nanoseconds "Europe/Brussels"))
+  (check-equal? (temporal-value-dtype (moment 2024 1 2 #:tz 3600)) '(datetime microseconds "UTC"))
+  (check-equal? (temporal-value-dtype (moment 2024 1 2 #:tz "Etc/GMT-1"))
+                '(datetime microseconds "Etc/GMT-1"))
+  (define brussels (moment 2021 3 27 #:tz "Europe/Brussels"))
+  (define kathmandu (moment 2021 3 27 #:tz "Asia/Kathmandu"))
+  (define one-hour-east (moment 2021 3 27 #:tz 3600))
+  (for ([vals (list (list brussels kathmandu) (list brussels one-hour-east)
+                    (list brussels (datetime 2021 3 27)))]
+        [zone (list "Europe/Brussels" "Europe/Brussels" "Europe/Brussels")])
+    (check-equal? (temporal-values-dtype vals) (list 'datetime 'microseconds zone)))
+  (check-equal? (temporal-values-dtype (list one-hour-east brussels))
+                '(datetime microseconds "UTC"))
+  (check-equal? (temporal-values-dtype (list (datetime 2021 3 27) brussels))
+                '(datetime microseconds #f))
+  (check-false (temporal-values-dtype (list brussels (date 2021 3 27))))
+  (define instant (* 1616799600 1000000))
+  (for ([dtype (list '(datetime microseconds "Europe/Brussels") '(datetime microseconds "UTC")
+                     '(datetime microseconds #f))])
+    (define encode (temporal-encoder 'test dtype))
+    (for ([v (list brussels (moment 2021 3 27 4 45 #:tz "Asia/Kathmandu")
+                   (moment 2021 3 27 #:tz 3600) (datetime 2021 3 26 23))])
+      (check-equal? (encode v) instant)))
+  (check-equal? ((temporal-encoder 'test '(datetime nanoseconds "UTC"))
+                 (moment 1969 12 31 23 59 59 999999999 #:tz "UTC"))
+                -1)
+  (check-equal? ((temporal-encoder 'test '(datetime milliseconds "UTC"))
+                 (moment 1969 12 31 23 59 59 999999999 #:tz "UTC"))
+                -1)
+  (for* ([unit '(milliseconds microseconds nanoseconds)]
+         [zone '("Europe/Brussels" "America/New_York" "Asia/Kathmandu" "UTC")]
+         [utc (list (datetime 2021 3 28 0 59 59 999000000) (datetime 2021 3 28 1)
+                    (datetime 2021 10 31 0 30) (datetime 2021 10 31 1 30)
+                    (datetime 2021 3 14 6 59 59) (datetime 2021 3 14 7)
+                    (datetime 2021 11 7 5 30) (datetime 2021 11 7 6 30)
+                    (datetime 1969 12 31 23 59 59 999000000))])
+    (define naive (temporal-encoder 'test (list 'datetime unit #f)))
+    (define value (naive utc))
+    (define gregor-reading (posix->moment (->posix utc) zone))
+    (define m (epoch->moment unit value (naive (->datetime/local gregor-reading)) zone))
+    (check-equal? m gregor-reading)
+    (check-equal? (->tzid m) zone)
+    (check-equal? (->datetime/utc m) utc)
+    (check-equal? ((temporal-encoder 'test (list 'datetime unit zone)) m) value))
+  (check-equal? (->nanoseconds (epoch->moment 'nanoseconds 1616799600123456789
+                                              1616803200123456789 "Europe/Brussels"))
+                123456789)
+  (check-equal? (moment->iso8601/tzid (epoch->moment 'microseconds instant
+                                                     (+ instant 3600000000) "Europe/Brussels"))
+                "2021-03-27T00:00:00+01:00[Europe/Brussels]")
+  (define elsewhere (epoch->moment 'milliseconds 0 -20476000 "Nowhere/Known"))
+  (check-equal? (moment->iso8601/tzid elsewhere) "1969-12-31T18:18:44-05:41[Nowhere/Known]")
+  (check-equal? (->posix elsewhere) 0)
   (check-false (temporal-value-dtype "2024-01-02"))
   (check-equal? (temporal-values-dtype (list (date 2024 1 2) (date 2024 1 3))) 'date)
   (check-equal? (temporal-values-dtype (list (datetime 2024) (datetime 2024 1 1 0 0 0 1)))
@@ -218,8 +283,13 @@
 
   (check-exn #rx"^test: expected a gregor date for this dtype\n  dtype: 'date\n  value: 5$"
              (lambda () ((temporal-encoder 'test 'date) 5)))
-  (check-exn #rx"^test: a moment carries a time zone.*->datetime/utc"
-             (lambda () ((temporal-encoder 'test 'datetime) (moment 2024 1 2 #:tz "UTC"))))
+  (check-exn #rx"^test: expected a gregor date for this dtype\n  dtype: 'date\n  value: #<moment"
+             (lambda () ((temporal-encoder 'test 'date) (moment 2024 1 2 #:tz "UTC"))))
+  (check-exn #rx"^test: expected a gregor datetime or moment for this dtype"
+             (lambda () ((temporal-encoder 'test '(datetime microseconds "UTC")) (date 2024 1 2))))
+  (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime nanoseconds \"UTC\"\\)"
+             (lambda () ((temporal-encoder 'test '(datetime nanoseconds "UTC"))
+                         (moment 1500 #:tz "UTC"))))
   (check-exn #rx"^test: expected a gregor period without years or months"
              (lambda () ((temporal-encoder 'test '(duration microseconds)) (months 1))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"

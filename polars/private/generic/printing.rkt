@@ -5,12 +5,14 @@
 ;; through), so this is a leaf with no dependency on the wrapper core.
 
 (require (only-in gregor
-                  ->date ->nanoseconds ->time ->year date->iso8601 date? datetime?)
+                  ->date ->nanoseconds ->time ->year date->iso8601 date? datetime? moment?)
          (only-in gregor/period period-ref)
          (only-in gregor/time time? time->iso8601)
          (only-in racket/format ~r)
          racket/list
          racket/string
+         (only-in polars/private/expr dataframe-select-exprs expr-all expr-dt-strftime)
+         (only-in polars/private/resource with-release)
          polars/private/foreign)
 
 (provide series->string)
@@ -34,6 +36,8 @@
        [else (format "~a" dt)])]
     [(and (pair? dt) (eq? (car dt) 'enum)) "enum"]
     [(decimal-dtype? dt) (format "decimal[~a,~a]" (cadr dt) (caddr dt))]
+    [(zoned-datetime-dtype? dt)
+     (format "datetime[~a, ~a]" (tu->label (cadr dt)) (caddr dt))]
     [(and (pair? dt) (eq? (car dt) 'datetime))
      (format "datetime[~a]" (tu->label (cadr dt)))]
     [(and (pair? dt) (eq? (car dt) 'duration))
@@ -83,13 +87,15 @@
       (string-append "+" (date->iso8601 d))
       (date->iso8601 d)))
 
-(define (value->cell v dt)
+(define (value->cell v dt [abbreviation #f])
   (cond
     [(polars-null? v) "null"]
     [(and (pair? dt) (eq? (car dt) 'duration)) (duration->cell (period-ref v (cadr dt)) (cadr dt))]
     [(date? v) (date->cell v)]
     [(time? v) (clock->cell v)]
-    [(datetime? v) (string-append (date->cell (->date v)) " " (clock->cell (->time v)))]
+    [(or (datetime? v) (moment? v))
+     (string-append (date->cell (->date v)) " " (clock->cell (->time v))
+                    (if abbreviation (string-append " " abbreviation) ""))]
     [(string? v) (format "~s" v)]      ; quoted, like Polars
     [(symbol? v) (format "~s" (symbol->string v))]
     [(and (decimal-dtype? dt) (positive? (caddr dt))) (real->decimal-string v (caddr dt))]
@@ -101,14 +107,30 @@
       (range len)
       (append (range 0 5) (list 'ellipsis) (range (- len 5) len))))
 
+(define (zone-abbreviations s start count)
+  (with-release ([rows (series-slice s start count) series-drop]
+                 [frame (dataframe-new (list rows)) dataframe-drop]
+                 [out (dataframe-select-exprs frame (list (expr-dt-strftime (expr-all) "%Z")))
+                      dataframe-drop]
+                 [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
+    (for/list ([i (in-range count)])
+      (series-ref names i))))
+
+(define (shown-abbreviations s dt len)
+  (cond
+    [(not (zoned-datetime-dtype? dt)) (make-list len #f)]
+    [(<= len 10) (zone-abbreviations s 0 len)]
+    [else (append (zone-abbreviations s 0 5) (list #f) (zone-abbreviations s (- len 5) 5))]))
+
 (define (series->string s)
   (define len (series-len s))
   (define dt (series-dtype s))
   (define lines
-    (for/list ([i (in-list (row-indices len))])
+    (for/list ([i (in-list (row-indices len))]
+               [abbreviation (in-list (shown-abbreviations s dt len))])
       (if (eq? i 'ellipsis)
           "\t…"
-          (string-append "\t" (value->cell (series-ref s i) dt)))))
+          (string-append "\t" (value->cell (series-ref s i) dt abbreviation)))))
   (string-append
    (format "shape: (~a,)\n" len)
    (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label dt))
@@ -149,4 +171,38 @@
   (check-equal? (cells (series-cast (series-new-i64 "d" '(1500 61000000000)) '(duration nanoseconds)))
                 '("1500ns" "1m 1s" "]"))
   (check-equal? (cells (series-cast (series-new-i64 "d" '(1500 0)) '(duration milliseconds)))
-                '("1s 500ms" "0ms" "]")))
+                '("1s 500ms" "0ms" "]"))
+  (define zoned
+    (series-cast (series-new-i64 "t" (list 1616842800500 polars-null 1625090400000 -1))
+                 '(datetime milliseconds "Europe/Brussels")))
+  (check-equal? (series->string zoned)
+                (string-append "shape: (4,)\nSeries: 't' [datetime[ms, Europe/Brussels]]\n[\n"
+                               "\t2021-03-27 12:00:00.500 CET\n\tnull\n\t2021-07-01 00:00:00 CEST\n"
+                               "\t1970-01-01 00:59:59.999 CET\n]"))
+  (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
+                                    '(datetime microseconds "Asia/Kathmandu")))
+                '("2021-03-27 16:45:00 +0545" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
+                                    '(datetime microseconds "UTC")))
+                '("2021-03-27 11:00:00 UTC" "]"))
+  ;; polars' reading: an LMT offset, a summer after 2037, a backward-compatible name
+  (check-equal? (cells (series-cast (series-new-i64 "k" (list (* (- -2208988800 20476) 1000000)))
+                                    '(datetime microseconds "Asia/Kathmandu")))
+                '("1900-01-01 00:00:00 LMT" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "b" '(2540368800)) '(datetime milliseconds
+                                                                          "Europe/Brussels")))
+                '("1970-01-30 10:39:28.800 CET" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "b" '(2540282400000000))
+                                    '(datetime microseconds "Europe/Brussels")))
+                '("2050-07-01 12:00:00 CEST" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "p" '(1616842800000000))
+                                    '(datetime microseconds "US/Pacific")))
+                '("2021-03-27 04:00:00 PDT" "]"))
+  (define hourly (series-cast (series-new-i64 "h" (for/list ([h (in-range 12)])
+                                                    (* (+ 1616889600 (* 3600 h)) 1000000)))
+                              '(datetime microseconds "Europe/Brussels")))
+  (check-equal? (cells hourly)
+                '("2021-03-28 01:00:00 CET" "2021-03-28 03:00:00 CEST" "2021-03-28 04:00:00 CEST"
+                  "2021-03-28 05:00:00 CEST" "2021-03-28 06:00:00 CEST" "…"
+                  "2021-03-28 09:00:00 CEST" "2021-03-28 10:00:00 CEST" "2021-03-28 11:00:00 CEST"
+                  "2021-03-28 12:00:00 CEST" "2021-03-28 13:00:00 CEST" "]")))

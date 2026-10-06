@@ -6,8 +6,11 @@
 ;;   (str-to-lowercase (col "name"))  and  (str-to-lowercase "name")
 ;; work.
 
-(require polars/private/foreign
+(require racket/contract/base
+         (only-in racket/string non-empty-string?)
+         polars/private/foreign
          polars/private/expr
+         (only-in polars/private/expr-str parse-datetime)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
@@ -16,7 +19,17 @@
          str-replace str-replace-all str-extract
          str-len-bytes str-len-chars str-slice str-head str-tail
          str-find str-find-literal str-count-matches
-         str->date str->datetime str->time)
+         str->date str->time
+         (contract-out
+          [str->datetime (->* (col-expr/c)
+                              (#:format (or/c #f string?)
+                               #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)
+                               #:time-zone (or/c #f non-empty-string?)
+                               #:ambiguous (or/c 'raise 'earliest 'latest 'null)
+                               #:strict boolean?
+                               #:exact boolean?
+                               #:cache boolean?)
+                              Expr-ptr?)]))
 
 (define-expr-unop str-to-lowercase 'str-to-lowercase expr-str-to-lowercase)
 (define-expr-unop str-to-uppercase 'str-to-uppercase expr-str-to-uppercase)
@@ -72,10 +85,10 @@
   (expr-str->date (->col-expr 'str->date x)
                   #:format format #:strict strict #:exact exact #:cache cache))
 (define (str->datetime x #:format [format #f] #:unit [unit 'microseconds]
+                       #:time-zone [time-zone #f] #:ambiguous [ambiguous 'raise]
                        #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
-  (expr-str->datetime (->col-expr 'str->datetime x)
-                      #:format format #:unit unit
-                      #:strict strict #:exact exact #:cache cache))
+  (parse-datetime 'str->datetime (->col-expr 'str->datetime x)
+                  format unit time-zone ambiguous strict exact cache))
 (define (str->time x #:format [format #f] #:strict [strict #t]
                    #:exact [exact #t] #:cache [cache #t])
   (expr-str->time (->col-expr 'str->time x)
@@ -168,3 +181,61 @@
   (check-equal? (ref (ref out4 #:columns "dt") 1) polars-null)
   (check-not-eq? (ref (ref out4 #:columns "tm") 0) polars-null)
   (check-equal? (ref (ref out4 #:columns "tm") 1) polars-null))
+
+(module+ test
+  (require (only-in gregor moment resolve-offset/post resolve-offset/pre)
+           (only-in racket/contract exn:fail:contract:blame?)
+           (prefix-in contracted: (submod "..")))
+  (define stamps
+    (dataframe (list (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock")
+                     (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")
+                             #:name "offset"))))
+  (define (parsed . exprs)
+    (define d (apply select stamps exprs))
+    (for/list ([name (in-list (column-names d))])
+      (define s (ref d name))
+      (cons (dtype s) (for/list ([x s]) x))))
+  (check-equal? (parsed (str->datetime "offset" #:format "%Y-%m-%dT%H:%M:%S%z"))
+                (list (list '(datetime microseconds "UTC")
+                            (moment 2021 3 26 23 #:tz "UTC") (moment 2021 3 28 22 #:tz "UTC"))))
+  (check-exn #rx"^lazyframe-collect: .*no format and no time zone, but a time zone is part of"
+             (lambda () (parsed (str->datetime "offset"))))
+  (check-equal? (parsed (str->datetime "offset" #:time-zone "Asia/Tokyo" #:unit 'milliseconds))
+                (list (list '(datetime milliseconds "Asia/Tokyo")
+                            (moment 2021 3 27 8 #:tz "Asia/Tokyo")
+                            (moment 2021 3 29 7 #:tz "Asia/Tokyo"))))
+  (check-equal? (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"
+                                       #:ambiguous 'earliest))
+                (list (list '(datetime microseconds "Europe/Brussels")
+                            (moment 2021 3 27 3 #:tz "Europe/Brussels")
+                            (moment 2021 10 31 2 30 #:tz "Europe/Brussels"
+                                    #:resolve-offset resolve-offset/pre))))
+  (check-equal? (list-ref (car (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"
+                                                       #:ambiguous 'null #:strict #f)))
+                          2)
+                polars-null)
+  (check-exn #rx"^lazyframe-collect: .*conversion from `str` to `datetime\\[μs, Europe/Brussels\\]`"
+             (lambda () (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"
+                                               #:ambiguous 'null))))
+  (check-exn #rx"^lazyframe-collect: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
+             (lambda () (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"))))
+  (check-exn (regexp (string-append "^str->datetime: cannot parse into the time zone"
+                                    " \"Mars/Base\": unable to parse time zone: 'Mars/Base'"))
+             (lambda () (str->datetime "clock" #:time-zone "Mars/Base")))
+  (check-equal? (parsed (str->datetime "offset" #:time-zone "Asia/Tokyo")
+                        (str->datetime "clock" #:time-zone "Europe/Brussels" #:ambiguous 'latest))
+                (list (list '(datetime microseconds "Asia/Tokyo")
+                            (moment 2021 3 27 8 #:tz "Asia/Tokyo")
+                            (moment 2021 3 29 7 #:tz "Asia/Tokyo"))
+                      (list '(datetime microseconds "Europe/Brussels")
+                            (moment 2021 3 27 3 #:tz "Europe/Brussels")
+                            (moment 2021 10 31 2 30 #:tz "Europe/Brussels"
+                                    #:resolve-offset resolve-offset/post))))
+  (check-exn #rx"^str->datetime: cannot parse into the time zone \"Asia/Tokio\": .*'Asia/Tokyo'"
+             (lambda () (str->datetime "offset" #:time-zone "Asia/Tokio")))
+  (for ([bad (list (lambda () (contracted:str->datetime 5))
+                   (lambda () (contracted:str->datetime "clock" #:time-zone ""))
+                   (lambda () (contracted:str->datetime "clock" #:ambiguous 'first))
+                   (lambda () (contracted:str->datetime "clock" #:unit 'seconds))
+                   (lambda () (contracted:str->datetime "clock" #:strict 1)))])
+    (check-exn exn:fail:contract:blame? bad)))

@@ -4,7 +4,8 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         polars/private/expr-core)
+         polars/private/expr-core
+         (only-in polars/private/foreign call/foreign-error replace-zone-failure))
 
 (provide expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
@@ -12,7 +13,8 @@
          expr-dt-weekday expr-dt-ordinal-day expr-dt-is-leap-year
          expr-dt-date expr-dt-time
          expr-dt-millisecond expr-dt-microsecond expr-dt-nanosecond
-         expr-dt-timestamp expr-dt-strftime expr-dt-truncate)
+         expr-dt-timestamp expr-dt-strftime expr-dt-truncate
+         expr-dt-convert-time-zone expr-dt-replace-time-zone)
 
 (define-compat expr-dt-year
   (_fun _Expr-ptr -> _Expr-ptr)
@@ -132,3 +134,28 @@
 
 (define (expr-dt-truncate e every)
   (expr-dt-truncate/raw e (->expr every)))
+
+(define-compat expr-dt-convert-time-zone/raw
+  (_fun _Expr-ptr _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_dt_convert_time_zone
+  #:wrap (allocator expr-drop))
+
+(define (expr-dt-convert-time-zone e zone #:who [who 'expr-dt-convert-time-zone])
+  (call/foreign-error who
+                      (lambda () (expr-dt-convert-time-zone/raw e zone))
+                      "cannot convert to the time zone ~s" zone))
+
+(define-compat expr-dt-replace-time-zone/raw
+  (_fun _Expr-ptr _string/utf-8 _string/utf-8 _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_dt_replace_time_zone
+  #:wrap (allocator expr-drop))
+
+(define (expr-dt-replace-time-zone e zone
+                                   #:ambiguous [ambiguous 'raise]
+                                   #:non-existent [non-existent 'raise]
+                                   #:who [who 'expr-dt-replace-time-zone])
+  (call/foreign-error who
+                      (lambda ()
+                        (expr-dt-replace-time-zone/raw e zone (symbol->string ambiguous)
+                                                       (symbol->string non-existent)))
+                      "~a" (replace-zone-failure zone)))
