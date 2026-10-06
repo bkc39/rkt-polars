@@ -96,7 +96,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
       only the columns of that unit in exactly that zone, as
       @tt{pl.col(pl.Datetime("us", "Europe/Brussels"))} does. API gap: no
       spelling selects every datetime column whatever its unit or zone, as
-      @tt{pl.col(pl.Datetime)} and @tt{pl.Datetime("us", "*")} do.
+      @tt{pl.col(pl.Datetime)} and @tt{pl.Datetime("us", "*")} do (#171).
       @racket['categorical] is every categorical column, and an
       @racket['(enum ....)] dtype the columns of exactly that Enum
       (@secref["ref-categorical"]).}
@@ -486,8 +486,9 @@ total
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
   accepts except a duration, which Polars cannot parse from CSV, an Enum
-  and a zoned datetime; API gap: read the column as @racket['categorical],
-  @racket['string] or a naive datetime and @racket[cast] it. Each column
+  and a zoned datetime (#170); API gap: read the column as
+  @racket['categorical], @racket['string] or a naive datetime and
+  @racket[cast] it. Each column
   appears at most once (@racket[distinct-names?]), and naming a column the
   file lacks is an error, where Python ignores the override. With
   @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
@@ -909,7 +910,7 @@ total
   nearest name it does. On an expression, an ambiguous or non-existent time
   is reported when the plan runs. API gap: Python's @tt{ambiguous} may also
   be an expression, resolving each row its own way; here it is one symbol
-  for the whole column.
+  for the whole column (#171).
 
   @examples[#:eval ev
 (define clocks
@@ -1199,7 +1200,7 @@ the two can disagree. tzinfo ignores the rule a zoneinfo file gives for
 times after its last listed change, so it misses daylight saving after 2037,
 and on a system whose zoneinfo is built "slim", sooner; many systems merge
 zones' histories before 1970; and some lack the old names, such as
-@racket["US/Pacific"], that a column may still carry. The instant is never
+@racket["US/Pacific"], that a column may still carry (#172). The instant is never
 in doubt: a moment you build stores the instant its own offset gives, and a
 moment read back is the column's instant.
 
