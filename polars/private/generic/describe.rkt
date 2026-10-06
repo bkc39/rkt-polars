@@ -6,11 +6,14 @@
          (only-in gregor +days date date->iso8601)
          (only-in threading ~>)
          (only-in polars/private/expr col expr-sort lit)
+         (only-in polars/private/expr-dt expr-dt-replace-time-zone)
          (only-in polars/private/foreign
                   dataframe-column dataframe-column-names dataframe-height decimal-dtype?
-                  polars-null polars-null? series-dtype series-null-count series-rename)
+                  polars-null polars-null? series-dtype series-null-count series-rename
+                  zoned-datetime-dtype?)
          (only-in polars/private/generic/core dataframe dataframe? ref series series?)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
+         (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)
          (only-in polars/private/generic/reductions alias max mean min std)
          (only-in polars/private/generic/reshape cast collect lazy select with-columns))
@@ -78,13 +81,21 @@
 (define (cast-when e cast? dtype)
   (if cast? (cast e dtype) e))
 
-(define (statistic-expr plan stat)
+(define (local-cell-name plan stat) (format "~a:local" (cell-name plan stat)))
+
+(define (statistic-exprs plan stat)
   (define dt (column-plan-dtype plan))
-  (~> (col (column-plan-name plan))
-      (cast-when (date-mean? dt stat) '(datetime microseconds))
-      (reduce plan stat)
-      (cast-when (temporal-dtype? dt) 'int64)
-      (alias (cell-name plan stat))))
+  (define value
+    (~> (col (column-plan-name plan))
+        (cast-when (date-mean? dt stat) '(datetime microseconds))
+        (reduce plan stat)))
+  (cons (~> value (cast-when (temporal-dtype? dt) 'int64) (alias (cell-name plan stat)))
+        (match dt
+          [(list 'datetime unit (? string? zone))
+           (list (~> value (cast (list 'datetime (offset-unit unit) zone))
+                     (expr-dt-replace-time-zone #f) (cast 'int64)
+                     (alias (local-cell-name plan stat))))]
+          [_ '()])))
 
 (define (statistics-row plans)
   (~> (map column-plan-series plans)
@@ -93,9 +104,10 @@
       (with-columns (for/list ([plan (in-list plans)]
                                #:when (needs-sort? plan))
                       (expr-sort (col (column-plan-name plan)))))
-      (select (for*/list ([plan (in-list plans)]
-                          [stat (in-list (column-plan-queried plan))])
-                (statistic-expr plan stat)))
+      (select (apply append
+                     (for*/list ([plan (in-list plans)]
+                                 [stat (in-list (column-plan-queried plan))])
+                       (statistic-exprs plan stat))))
       collect))
 
 (define epoch (date 1970 1 1))
@@ -122,10 +134,22 @@
 
 (define (day->string days) (date->iso8601 (+days epoch days)))
 
+(define (offset->string seconds)
+  (define-values (hours rest) (quotient/remainder (abs seconds) 3600))
+  (define-values (minutes second) (quotient/remainder rest 60))
+  (string-append (if (negative? seconds) "-" "+") (pad hours 2) ":" (pad minutes 2)
+                 (if (zero? second) "" (string-append ":" (pad second 2)))))
+
 (define (temporal->string dt v)
   (match dt
     ['date (day->string v)]
     ['time (~> v (/ 1000) floor clock->string)]
+    [(list 'datetime unit (? string?))
+     (match-define (cons instant clock) v)
+     (define offset (utc-offset unit instant clock))
+     (string-append (temporal->string (list 'datetime unit #f)
+                                      (+ instant (* offset (per-second unit))))
+                    (offset->string offset))]
     [(list 'datetime unit _)
      (define-values (days clock) (day-and-clock (->microseconds unit v floor)))
      (string-append (day->string days) " " (clock->string clock))]
@@ -144,6 +168,13 @@
     [(temporal-dtype? dt) (temporal->string (statistic-dtype dt stat) v)]
     [else v]))
 
+(define (statistic-value row plan stat)
+  (define (cell name) (~> row (ref name) (ref 0)))
+  (define v (cell (cell-name plan stat)))
+  (if (and (zoned-datetime-dtype? (column-plan-dtype plan)) (not (polars-null? v)))
+      (cons v (cell (local-cell-name plan stat)))
+      v))
+
 (define (column-statistics d)
   (define height (dataframe-height d))
   (define plans
@@ -160,7 +191,7 @@
                   (match stat
                     ["count" count]
                     ["null_count" nulls]
-                    [_ #:when (member stat queried) (~> row (ref (cell-name plan stat)) (ref 0))]
+                    [_ #:when (member stat queried) (statistic-value row plan stat)]
                     [_ polars-null])))))
 
 (define (describe-series s)
@@ -211,6 +242,7 @@
   (check-equal? (ref (ref fr-desc #:columns "score") 4) 10.0)     ; numeric min
 
   (require racket/runtime-path
+           (only-in gregor moment)
            (only-in racket/list make-list)
            (only-in racket/math nan?)
            (only-in polars/private/generic/io read-parquet)
@@ -301,6 +333,68 @@
   (check-column (describe days) "d"
                 (list "7" "0" "1970-01-04 03:25:42.857142" polars-null "1970-01-01" "1970-01-03"
                       "1970-01-04" "1970-01-06" "1970-01-08"))
+
+  (define zoned
+    (dataframe
+     (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels") polars-null
+                         (moment 2021 7 1 #:tz "Europe/Brussels"))
+                   #:name "t")
+           (cast (series (list (* 1616825700 1000000) (* (- -2208988800 20476) 1000000)
+                               polars-null)
+                         #:name "k")
+                 '(datetime microseconds "Asia/Kathmandu"))
+           (series (list (moment 2020 1 1 12 #:tz "America/New_York") polars-null polars-null)
+                   #:name "ny"))))
+  (define zoned-desc (describe zoned))
+  (check-column zoned-desc "t"
+                (list "2" "1" "2021-05-14 06:30:00.250000+02:00" polars-null
+                      "2021-03-27 12:00:00.500000+01:00" "2021-03-27 12:00:00.500000+01:00"
+                      "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"
+                      "2021-07-01 00:00:00+02:00"))
+  (check-column zoned-desc "k"
+                (list "2" "1" "1960-08-14 05:46:52+05:30" polars-null
+                      "1900-01-01 00:00:00+05:41:16" "1900-01-01 00:00:00+05:41:16"
+                      "2021-03-27 12:00:00+05:45" "2021-03-27 12:00:00+05:45"
+                      "2021-03-27 12:00:00+05:45"))
+  (check-column zoned-desc "ny" (list* "1" "2" "2020-01-01 12:00:00-05:00" polars-null
+                                       (make-list 5 "2020-01-01 12:00:00-05:00")))
+  (check-column (describe (ref zoned "t")) "value"
+                (list "2" "1" "2021-05-14 06:30:00.250000+02:00"
+                      "2021-03-27 12:00:00.500000+01:00" "2021-03-27 12:00:00.500000+01:00"
+                      "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"
+                      "2021-07-01 00:00:00+02:00"))
+  (define zoned-temporal
+    (select (dataframe (list ms ns))
+            (~> "ms" (cast '(datetime milliseconds "Asia/Kathmandu")) (alias "ms"))
+            (~> "ns" (cast '(datetime nanoseconds "America/New_York")) (alias "ns"))))
+  (check-column (describe zoned-temporal) "ms"
+                (list "5" "1" "1970-01-01 00:42:00.252000+05:30" polars-null
+                      "1969-12-30 05:30:00+05:30" "1970-01-01 05:29:59.750000+05:30"
+                      "1970-01-01 05:30:00.007000+05:30" "1970-01-01 05:30:01.500000+05:30"
+                      "1970-01-02 05:30:00.001000+05:30"))
+  (check-column (describe zoned-temporal) "ns"
+                (list "5" "1" "1970-01-01 00:00:24.600000-05:00" polars-null
+                      "1969-12-31 18:59:59.999999-05:00" "1969-12-31 19:00:00-05:00"
+                      "1969-12-31 19:00:00-05:00" "1969-12-31 20:02:03-05:00"
+                      "1970-01-01 18:59:59.999999-05:00"))
+  (check-column (describe (series (list (moment 2021 3 27 12 #:tz "Europe/Brussels")
+                                        (moment 2021 7 1 #:tz "Europe/Brussels"))
+                                  #:name "local"))
+                "value"
+                (list "2" "0" "2021-05-14 06:30:00+02:00" "2021-03-27 12:00:00+01:00"
+                      "2021-03-27 12:00:00+01:00" "2021-07-01 00:00:00+02:00"
+                      "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"))
+  (define ns-edges
+    (dataframe
+     (list (cast (series (list 9223369200000000001 polars-null) #:name "east")
+                 '(datetime nanoseconds "Asia/Tokyo"))
+           (cast (series (list (+ (- (sub1 (expt 2 63))) 3600000000000) polars-null) #:name "west")
+                 '(datetime nanoseconds "America/New_York")))))
+  (for ([name '("east" "west")]
+        [shown '("2262-04-12 08:00:00+09:00" "1677-09-20 20:16:41.145224-04:56:02")])
+    (check-column (describe ns-edges) name (list* "1" "1" shown polars-null (make-list 5 shown))))
+  (check-equal? (map offset->string '(0 3600 -18000 20700 1050 -1050))
+                '("+00:00" "+01:00" "-05:00" "+05:45" "+00:17:30" "-00:17:30"))
 
   (define grouped
     (~> (dataframe (list (series '("x" "y" "x") #:name "k") (series '(1 2 3) #:name "v")))

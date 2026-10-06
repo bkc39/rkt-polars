@@ -67,7 +67,8 @@ pub(crate) fn compat_time_unit_from_polars(
 /// Inverse of `compat_dtype_from_polars`: lift a CompatDType (as it
 /// appears across the FFI) back to a polars DataType.  Datetime and
 /// Duration default to Microseconds when the time-unit field is None;
-/// timezone is always None for now (no Racket-side surface yet).
+/// a Datetime lifts naive, since the zone's name crosses only through the
+/// `_datetime_tz` entry points.
 /// Returns None for unknown tags or for nested/parameterized dtypes
 /// that we don't yet expose for input.
 pub(crate) fn polars_dtype_from_compat(c: &CompatDType) -> Option<DataType> {

@@ -93,6 +93,46 @@ pub extern "C" fn expr_str_to_datetime(
     )))
 }
 
+/// `expr_str_to_datetime` into a zone: a value with an offset converts to
+/// it, a naive one is read as its wall clock, resolved by `ambiguous`.
+#[no_mangle]
+pub extern "C" fn expr_str_to_datetime_tz(
+    e: *const Expr,
+    format: *const c_char,
+    has_format: u8,
+    time_unit: i32,
+    tz: *const c_char,
+    ambiguous: *const c_char,
+    strict: u8,
+    exact: u8,
+    cache: u8,
+) -> *mut Expr {
+    clear_last_error();
+    let Some(e) = (unsafe { e.as_ref() }) else {
+        set_last_error("expression is null");
+        return ptr::null_mut();
+    };
+    let Some(DataType::Datetime(unit, tz)) = datetime_tz_dtype(time_unit, tz)
+    else {
+        return ptr::null_mut();
+    };
+    let Some(ambiguous) = ambiguous_name(ambiguous) else {
+        return ptr::null_mut();
+    };
+    let options = strptime_options(
+        c_string_option(format, has_format),
+        strict,
+        exact,
+        cache,
+    );
+    Box::into_raw(Box::new(e.clone().str().to_datetime(
+        Some(unit),
+        tz,
+        options,
+        lit(ambiguous),
+    )))
+}
+
 #[no_mangle]
 pub extern "C" fn expr_str_to_time(
     e: *const Expr,

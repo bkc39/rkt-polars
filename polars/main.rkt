@@ -4,7 +4,6 @@
          polars/private/expr
          polars/private/foreign
          polars/private/generic
-         polars/private/series
          (only-in threading ~> ~>> lambda~> lambda~>>)
          ;; generic exports its dispatching and/or/not/xor via `rename-out`, and
          ;; `all-from-out` below silently drops those (they collide with this
@@ -22,14 +21,17 @@
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
 (provide dataframe-read-csv lazyframe-scan-csv
-         (all-from-out polars/private/expr)
+         (except-out (all-from-out polars/private/expr) expr-cast-to)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error dataframe-drop-count
                      last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
                      prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
-                     series-sort/raw sort-flags sort-flags/c sort-flags-mismatch)
+                     series-sort/raw sort-flags sort-flags/c sort-flags-mismatch
+                     series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
+                     series-dt-convert-time-zone series-dt-convert-time-zone/raw
+                     series-dt-replace-time-zone series-dt-replace-time-zone/raw
+                     series-time-zone replace-zone-failure zoned-datetime-dtype?)
          (all-from-out polars/private/generic)
-         (all-from-out polars/private/series)
          ~> ~>> lambda~> lambda~>>
          (rename-out [polars:and and] [polars:or or]
                      [polars:not not] [polars:xor xor]

@@ -5,17 +5,17 @@
                   _uint16 _uint32 _uint64 _uint8 ptr-add ptr-ref)
          (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
-         (only-in gregor jdn->date posix->datetime)
-         (only-in gregor/time time)
          (only-in racket/match match)
          syntax/parse/define
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
-                  dataframe-height decimal-ref define-compat duration-value->period
-                  polars-null series-copy-decimal series-drop series-dtype series-len
-                  series-name series-null-count)
-         (only-in polars/private/resource with-raw-buffer with-release))
+                  _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
+                  dataframe-column-names dataframe-height decimal-ref define-compat
+                  duration-value->period polars-null series-copy-decimal series-copy-i64
+                  series-drop series-dtype series-len series-name series-null-count)
+         (only-in polars/private/resource with-raw-buffer with-release)
+         (only-in polars/private/temporal
+                  days->date epoch->datetime epoch->moment nanoseconds->time))
 
 (provide check-column-names
          dataframe->columns
@@ -36,7 +36,7 @@
     ...))
 
 (define-copies
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
+  series-copy-i8 series-copy-i16 series-copy-i32
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
 
@@ -56,27 +56,6 @@
         (dst : _f64vector) (_size = (f64vector-length dst))
         (offset : _size) (stride : _size) (null-value : _double)
         -> _int64))
-
-(define unix-epoch-jdn 2440588)
-
-(define (days->date days)
-  (jdn->date (+ days unix-epoch-jdn)))
-
-(define (per-second unit)
-  (case unit
-    [(nanoseconds) 1000000000]
-    [(microseconds) 1000000]
-    [else 1000]))
-
-(define (epoch->datetime unit value)
-  (define k (per-second unit))
-  (posix->datetime (quotient (- value (modulo value k)) k)))
-
-(define (nanoseconds->time value)
-  (define-values (seconds nanosecond) (quotient/remainder value 1000000000))
-  (define-values (minutes second) (quotient/remainder seconds 60))
-  (define-values (hour minute) (quotient/remainder minutes 60))
-  (time hour minute second nanosecond))
 
 (define (convertible? dtype)
   (match dtype
@@ -151,6 +130,13 @@
 (define-physical-rows datetime-rows _int64 series-copy-i64 epoch->datetime)
 (define-physical-rows duration-rows _int64 series-copy-i64 duration-value->period)
 
+(define (zoned-rows shape who s dtype unit zone start count valid null-value scratch)
+  (with-scratch scratch ([instants (* 2 count) _int64])
+    (define walls (ptr-add instants count _int64))
+    (copy-zoned-datetimes who s dtype start count instants walls valid)
+    (collect shape count valid null-value i
+             (epoch->moment unit (ptr-ref instants _int64 i) (ptr-ref walls _int64 i) zone))))
+
 (define (string-rows shape who s dtype start count valid null-value scratch)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
   (with-scratch scratch ([offsets (add1 count) _int64])
@@ -209,7 +195,9 @@
     ['boolean (physical boolean-rows)]
     ['date (physical date-rows)]
     ['time (physical time-rows)]
-    [`(datetime ,unit ,_) (physical datetime-rows unit)]
+    [`(datetime ,unit #f) (physical datetime-rows unit)]
+    [`(datetime ,unit ,zone)
+     (zoned-rows shape who s dtype unit zone start count valid null-value scratch)]
     [`(duration ,_) (physical duration-rows dtype)]
     ['string (string-rows shape who s dtype start count valid null-value scratch)]
     [(or 'categorical `(enum . ,_))
@@ -379,10 +367,11 @@
 
 (module+ test
   (require rackunit
+           (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    series-cast series-drop-count series-head series-new-i64 series-new-str
-                    series-ref))
+                    dataframe-new polars-null? series-cast series-drop-count series-head
+                    series-new-i64 series-new-str series-ref))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -402,6 +391,38 @@
     (define refs (for/list ([i (in-range n)]) (series-ref s i)))
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
     (check-equal? (series->list s) refs))
+
+  (for* ([chunk-rows '(1 3 7)]
+         [unit '(milliseconds microseconds nanoseconds)]
+         [zone '("Europe/Brussels" "America/New_York" "UTC")])
+    (define n 11)
+    (define zoned
+      (series-cast (series-new-i64 "t" (for/list ([i (in-range n)])
+                                         (if (= i 4) polars-null (* (- i 5) 1800000 i))))
+                   (list 'datetime unit zone)))
+    (define refs (for/list ([i (in-range n)]) (series-ref zoned i)))
+    (check-equal? (sequence->list (in-series zoned #:chunk-rows chunk-rows)) refs)
+    (check-equal? (series->list zoned) refs)
+    (check-equal? (vector->list (series->vector zoned)) refs)
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list zoned))
+                                                     #:buffer-size chunk-rows)])
+                    (vector-ref row 0))
+                  refs))
+
+  (define (wall-clock v)
+    (if (polars-null? v) v (list (->datetime/local v) (->utc-offset v) (->tzid v))))
+  (for ([value (list 9223369200000000001 (+ (- (sub1 (expt 2 63))) 3600000000000))]
+        [zone '("Asia/Tokyo" "America/New_York")]
+        [expected (list (list (datetime 2262 4 12 8 0 0 1) 32400 "Asia/Tokyo")
+                        (list (datetime 1677 9 20 20 16 41 145224193) -17762
+                              "America/New_York"))])
+    (define edge (series-cast (series-new-i64 "t" (list polars-null value))
+                              (list 'datetime 'nanoseconds zone)))
+    (check-equal? (map wall-clock (series->list edge)) (list polars-null expected))
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list edge))
+                                                     #:buffer-size 1)])
+                    (wall-clock (vector-ref row 0)))
+                  (list polars-null expected)))
 
   (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
   (define (released-by thunk)

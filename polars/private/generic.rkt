@@ -78,6 +78,7 @@
          dt-is-leap-year dt-date dt-time
          dt-millisecond dt-microsecond dt-nanosecond
          dt-timestamp dt-strftime dt-truncate
+         dt-convert-time-zone dt-replace-time-zone
          rename rename! clone series-clone
          then otherwise else-when
          all exclude

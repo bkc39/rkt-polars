@@ -4,9 +4,9 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
-         (only-in gregor datetime?)
          polars/private/foreign
          polars/private/series
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -54,7 +54,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ (enum-dtype? v)]))
+    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
 
 (define (normalize-dtype dt)
   (cond
@@ -78,7 +78,7 @@
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
-    [(andmap datetime? vals) 'datetime]
+    [(temporal-values-dtype vals)]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 
@@ -98,8 +98,8 @@
     [(string)  (if vec? series-new-str/vec series-new-str)]
     [else
      (match canonical
-       [(or 'datetime `(datetime . ,_))
-        (if vec? series-new-datetime/vec series-new-datetime)]
+       [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))
+        (lambda (name elements) (series-new-temporal 'series name elements canonical))]
        [(or 'categorical (? enum-dtype?))
         (define strings (if vec? series-new-str/vec series-new-str))
         (lambda (name elements)

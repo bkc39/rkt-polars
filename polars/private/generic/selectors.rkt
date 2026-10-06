@@ -72,10 +72,11 @@
   (check-equal? (column-names (select people (col 'string))) '("name"))
   (check-equal? (column-names (select people (col 'str))) '("name"))
   (check-equal? (column-names (select people/date (col 'date))) '("birthdate"))
-  (check-equal? (column-names (select people (col '(datetime milliseconds)))) '("birthdate"))
+  (check-equal? (column-names (select people (col '(datetime microseconds)))) '("birthdate"))
   (check-equal? (column-names (select people (col (~> people (ref "birthdate") dtype))))
                 '("birthdate"))
-  (check-equal? (column-names (select people (col 'datetime))) '())
+  (check-equal? (column-names (select people (col 'datetime))) '("birthdate"))
+  (check-equal? (column-names (select people (col '(datetime milliseconds)))) '())
   (check-equal? (shape (select ints-only (col 'float64))) '(0 0))
 
   (check-equal? (column-names (select iris (col #rx"^sepal_")))

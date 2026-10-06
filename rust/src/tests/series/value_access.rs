@@ -121,26 +121,3 @@ fn ref_time_returns_i64() {
     series_drop(raw);
     series_drop(times);
 }
-
-#[test]
-fn ref_ymdhms_returns_value() {
-    let n = cstr("ts");
-    let data = [YMDHMS {
-        year: 2030,
-        month: 11,
-        day: 22,
-        hour: 13,
-        minute: 14,
-        second: 15,
-    }];
-    let s = series_new_ymdhms(n.as_ptr(), data.as_ptr(), data.len());
-    let v = series_ref_ymdhms(s, 0);
-    assert_eq!(v.valid, 1);
-    assert_eq!(v.value.year, 2030);
-    assert_eq!(v.value.month, 11);
-    assert_eq!(v.value.day, 22);
-    assert_eq!(v.value.hour, 13);
-    assert_eq!(v.value.minute, 14);
-    assert_eq!(v.value.second, 15);
-    series_drop(s);
-}
