@@ -15,8 +15,7 @@ The examples read upstream's @filepath{apple_stock.csv}, a hundred closing
 prices of Apple stock from 1981 to 2014.
 
 API gaps: no @tt{group_by_dynamic}, @tt{rolling} or @tt{upsample}, so
-upstream's Grouping and Resampling pages have no counterpart; no time zones
-(its Time zones page).
+upstream's Grouping and Resampling pages have no counterpart.
 
 @section[#:tag "ts-parsing"]{Parsing}
 
@@ -27,7 +26,9 @@ value:
   @item{@racket['date]: days since the UNIX epoch, as a 32-bit integer; a
     gregor @tt{date}.}
   @item{@racket['(datetime unit #f)]: a 64-bit count of milliseconds,
-    microseconds or nanoseconds since the epoch; a gregor @tt{datetime}.}
+    microseconds or nanoseconds since the epoch; a gregor @tt{datetime}.
+    With a time zone, @racket['(datetime unit "Zone/Name")], a gregor
+    @tt{moment} (@secref["ts-time-zones"]).}
   @item{@racket['(duration unit)]: a time delta; a gregor @tt{period}.}
   @item{@racket['time]: nanoseconds since midnight; a gregor @tt{time}.}]
 
@@ -58,9 +59,23 @@ column:
 
 @subsection[#:tag "ts-parsing-offsets"]{Mixed offsets}
 
-API gap: no time zones. @racket[str->datetime] drops an offset parsed with
-@litchar{%z}, where Python converts to UTC, and there is no
-@tt{dt.convert_time_zone}.
+Datetimes with mixed UTC offsets, as on either side of a daylight-saving
+change, parse to UTC. Pass @racket[str->datetime] a target zone with
+@racket[#:time-zone], or convert after parsing with
+@racket[dt-convert-time-zone]:
+
+@examples[#:eval ev #:label #f
+(define mixed
+  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
+                             "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")
+                           #:name "data"))))
+(define mixed-parsed
+  (~> mixed
+      (select (~> (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")
+                  (dt-convert-time-zone "Europe/Brussels")))
+      (ref "data")))
+mixed-parsed
+]
 
 @subsection[#:tag "ts-parsing-racket"]{Dates from Racket values}
 
@@ -122,5 +137,58 @@ compares directly too:
 (filter negative-dates (< (dt-year "ts") -1300))
 (filter negative-dates (= (col "ts") (date -1300 5 23)))
 ]
+
+@section[#:tag "ts-time-zones"]{Time zones}
+
+Avoid time zones when you can. A datetime column has none (it is naive),
+@racket["UTC"], or an area/location zone from the tz database such as
+@racket["Asia/Kathmandu"]; its dtype is @racket['(datetime unit "Zone/Name")].
+Fixed offsets such as @tt{+02:00} are better avoided: Polars keeps one as
+@racket["Etc/GMT-2"], which knows no daylight saving. A column has one zone,
+so data with several offsets parses to UTC (@secref["ts-parsing-offsets"]).
+
+@racket[dt-convert-time-zone] converts from one zone to another, keeping
+each instant; @racket[dt-replace-time-zone] sets, changes or, given
+@racket[#f], unsets the zone, keeping each wall-clock time:
+
+@examples[#:eval ev #:label #f
+(define ts '("2021-03-27 03:00" "2021-03-28 03:00"))
+(define tz-naive
+  (~> (dataframe (list (series ts #:name "tz_naive")))
+      (select (str->datetime "tz_naive"))
+      (ref "tz_naive")))
+(define tz-aware (~> tz-naive (dt-replace-time-zone "UTC") (rename "tz_aware")))
+(define time-zones-df (dataframe (list tz-naive tz-aware)))
+time-zones-df
+(select time-zones-df
+        (~> (col "tz_aware") (dt-replace-time-zone "Europe/Brussels")
+            (alias "replace time zone"))
+        (~> (col "tz_aware") (dt-convert-time-zone "Asia/Kathmandu")
+            (alias "convert time zone"))
+        (~> (col "tz_aware") (dt-replace-time-zone #f) (alias "unset time zone")))
+]
+
+@subsection[#:tag "ts-time-zones-racket"]{Zoned values from Racket}
+
+A gregor @tt{moment} is an instant in a zone, as Python's aware
+@tt{datetime} is, and a zoned column's values come back as moments in its
+zone. A list takes the zone of its first moment, as Python's does; a fixed
+offset gives UTC:
+
+@examples[#:eval ev #:label #f
+(define landings
+  (series (list (moment 2021 3 27 9 #:tz "Europe/Brussels")
+                (moment 2021 3 28 9 #:tz "Europe/Brussels")
+                (moment 2021 3 27 18 #:tz "Asia/Kathmandu"))
+          #:name "landed"))
+landings
+(series->list landings)
+(dtype (series (list (moment 2021 3 27 9 #:tz 3600))))
+]
+
+A moment read back carries Polars' offset, from chrono-tz's tz database.
+gregor reads the system's zoneinfo, which can disagree before 1970 or after
+2037, so a moment built there can name another instant than Polars would
+(@secref["ref-temporal-values"]).
 
 @(close-eval ev)

@@ -34,5 +34,14 @@
 (displayln (series (list (datetime 1995 10 16 9 30 0 123456789) (datetime 1600 1 1))
                    #:name "wide"))
 
-;; API gap: no time zones, so no mixed-offsets example: str->datetime drops an
-;; offset parsed with %z where Python converts to UTC; no dt.convert_time_zone.
+;; --- mixed offsets -------------------------------------------------------
+(define mixed
+  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
+                             "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")
+                           #:name "data"))))
+(define mixed-parsed
+  (~> mixed
+      (select (~> (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")
+                  (dt-convert-time-zone "Europe/Brussels")))
+      (ref "data")))
+(displayln mixed-parsed)

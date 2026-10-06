@@ -58,6 +58,7 @@ python user-guide/getting-started/expressions_and_contexts.py
 | --- | --- | --- |
 | Parsing | `parsing.rkt` | `parsing.py` |
 | Filtering | `filtering.rkt` | `filtering.py` |
+| Time zones | `time-zones.rkt` | `time_zones.py` |
 
 `io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
 [multiple files](https://docs.pola.rs/user-guide/io/multiple/)

@@ -7,7 +7,7 @@
 ;; column, or a nanosecond one when a value carries nanoseconds and a
 ;; nanosecond column (1677 to 2262) holds every value; otherwise the
 ;; nanoseconds are floored. #:dtype picks another unit, flooring what the unit
-;; cannot hold. A moment carries a time zone, which has no dtype here yet.
+;; cannot hold. A moment makes a zoned column (example 68).
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/62-temporal-series-from-gregor.rkt
@@ -30,9 +30,3 @@
 (printf "as milliseconds: ~s ~s\n" (dtype coarse) (series->list coarse))
 
 (displayln (dataframe (list birthdays (series '(1 2 3) #:name "n"))))
-
-(printf "a moment: ~a\n"
-        (with-handlers ([exn:fail:contract? exn-message])
-          (series (list (moment 2013 1 1 #:tz "America/New_York")))))
-(printf "converted first: ~s\n"
-        (series->list (series (list (->datetime/utc (moment 2013 1 1 #:tz "America/New_York"))))))

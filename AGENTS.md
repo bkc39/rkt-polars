@@ -124,12 +124,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options`, `series_sort_with_options` and the three
+  `dataframe_sort_with_options`, `series_sort_with_options`, the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
+  `expr_dtype_col_enum`) and the nine that take a time zone's name
+  (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
+  `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
+  `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
+  `expr_str_to_datetime_tz`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...).
+  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...),
+  and drops the hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the cast
+  that follows validation refuses an unknown zone anyway.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -140,7 +147,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum` and the IO helpers
+  `series_sort_with_options`, `series_cast_enum`, the three series time-zone
+  entry points (`series_cast_datetime_tz`, `series_dt_convert_time_zone`,
+  `series_dt_replace_time_zone`) and the IO helpers
   (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
@@ -250,9 +259,32 @@ it. Racket side: `define-compat` with `#:c-id`.
   zero. A date or datetime outside chrono's years (-262143 to 262142) is
   refused, since polars panics printing one. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
-  dtypes (`expr_lit_temporal`). Both refuse a gregor `moment`: time-zone-aware
-  datetimes have no surface yet (polars' `timezones` feature is off, and a
-  zoned column's dtype prints `todo-timezone`).
+  dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
+- A zoned datetime (#140, polars' `timezones` feature) is the datum
+  `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
+  `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no
+  name, so the zone crosses as a string through its own exports
+  (`series_time_zone`, the `_datetime_tz` cast / selector / literal entry
+  points, `series_dt_*` / `expr_dt_*` convert and replace,
+  `expr_str_to_datetime_tz`); each that takes a zone validates it with polars'
+  `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`) and records why it
+  fails; `->compat-dtype` refuses a zoned datum. A list of moments settles
+  its zone as Python does: the first non-null value decides, a named zone is
+  kept, a fixed offset gives UTC, a naive datetime among moments is read as
+  UTC, and a list that starts naive makes a naive column of UTC clock times.
+  `#:dtype` is the column's dtype outright (a naive one takes each moment's
+  UTC clock time), where Python's `pl.Datetime("us")` keeps the values' zone.
+  `%z` parses to UTC; on an expression, an offset with no `#:format` and no
+  `#:time-zone` is an error, as in Python. Every reading is polars'
+  (chrono-tz's compiled database), never tzinfo's: a moment read back is
+  built with the offset polars gives (its wall clock from
+  `replace_time_zone(None)`, through gregor's private `make-moment`), and the
+  series printer takes `%Z` from polars. tzinfo, behind gregor's own
+  functions, ignores the TZif footer (no daylight saving after 2037, or
+  sooner with slim zoneinfo) and some systems lack the backward-compatible
+  names (`US/Pacific`). Series operators refuse datetimes in different zones
+  before the native call, naming the operator. A zoned CSV schema override is
+  refused (the reader would drop the zone).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
   `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
   datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define

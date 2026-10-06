@@ -90,15 +90,18 @@ Dtype spellings accepted by @racket[series]' @racket[#:dtype]:
         (list @racket['date] "Date")
         (list @racket['time] "Time")
         (list @elem{@racket['datetime] or @racket['(datetime milliseconds)]} "Datetime")
+        (list @racket['(datetime microseconds "Europe/Brussels")]
+              "Datetime with a time zone")
         (list @racket['(duration microseconds)] "Duration")
         (list @racket['categorical] "Categorical")
         (list @racket['(enum low mid high)] "Enum")
         (list "—" "Decimal, Binary, Array, List, Struct"))]
 
 @racket[series] builds the temporal dtypes from gregor @tt{date}, @tt{time},
-@tt{datetime} and @tt{period} values, and infers them from those values too:
-microseconds, or nanoseconds when a value carries them and a nanosecond
-column holds every value (@secref["ref-temporal-values"]).
+@tt{datetime}, @tt{moment} and @tt{period} values, and infers them from those
+values too: microseconds, or nanoseconds when a value carries them and a
+nanosecond column holds every value, and a moment's time zone
+(@secref["ref-temporal-values"]).
 
 Categorical and Enum values read back as symbols (@secref["ref-categorical"]).
 A Decimal column, read from Parquet, has dtype @racket['(decimal precision scale)]
