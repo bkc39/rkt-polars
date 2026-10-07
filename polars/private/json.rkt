@@ -126,6 +126,11 @@
              (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
   (check-exn #rx"^dataframe-write-json: failed to write json to [^:]*out.json: cannot create file: "
              (lambda () (dataframe-write-json frame (build-path scratch "no" "out.json"))))
+  (check-equal? (dataframe-column-names (dataframe-read-json rows)) '("foo" "bar"))
+  (check-false (last-error-message))
+  (check-exn exn:fail? (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
+  (dataframe-write-json frame written)
+  (check-false (last-error-message))
   (check-exn #rx"^dataframe-read-json: contract violation"
              (lambda () (contracted:dataframe-read-json rows #:infer-schema-length 0)))
   (check-exn #rx"^dataframe-read-json: contract violation"
