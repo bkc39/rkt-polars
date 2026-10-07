@@ -1,11 +1,12 @@
 use std::io::Write;
 use std::num::NonZeroUsize;
+use std::path::Path;
 
 use crate::prelude::*;
 use crate::{
-    clear_last_error, decode_path, decode_schema, guard_panic, record,
-    set_last_error, write_frame, CompatDType, CompatJsonOptions, IO_BAD_PATH,
-    IO_NULL_ARG, IO_OK, IO_WRITE_FAILED,
+    clear_last_error, decode_path, decode_schema, finish_replacing,
+    guard_panic, record, set_last_error, temp_sibling, write_frame,
+    CompatDType, CompatJsonOptions, IO_BAD_PATH, IO_NULL_ARG,
 };
 use polars::prelude::{SerReader, SerWriter};
 
@@ -217,22 +218,27 @@ pub extern "C" fn dataframe_write_ndjson_with_options(
     };
     let df = unsafe { &*df_ptr };
     let level = has_compression_level.then_some(compression_level);
+    let target = Path::new(path);
+    let temp = temp_sibling(target);
+    let temp_name = temp.to_string_lossy().into_owned();
     let written = guard_panic(|| {
         record(
-            ndjson_compression(compression, level).and_then(|compression| {
-                ndjson_write(
-                    df,
-                    path,
-                    NDJsonWriterOptions {
-                        compression,
-                        check_extension,
-                    },
-                )
-            }),
+            refuse_binary(df)
+                .and_then(|()| ndjson_compression(compression, level))
+                .and_then(|compression| {
+                    ndjson_write(
+                        df,
+                        &temp_name,
+                        NDJsonWriterOptions {
+                            compression,
+                            check_extension,
+                        },
+                    )
+                })
+                .map_err(|err| {
+                    err.wrap_msg(|msg| msg.replace(&temp_name, path))
+                }),
         )
     });
-    match written {
-        Some(()) => IO_OK,
-        None => IO_WRITE_FAILED,
-    }
+    finish_replacing(&temp, target, written)
 }

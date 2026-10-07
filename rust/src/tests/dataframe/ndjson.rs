@@ -392,3 +392,61 @@ fn write_bytes(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
     std::fs::write(&path, contents).expect("write fixture");
     path
 }
+
+fn leftovers(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_failed_write_leaves_the_existing_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let keep = write(dir.path(), "keep.ndjson", "PRECIOUS");
+    let keep_gz = write(dir.path(), "keep.ndjson.gz", "PRECIOUS");
+    let bytes: [&[u8]; 2] = [b"p", b"q"];
+    let binary = Box::into_raw(Box::new(
+        DataFrame::new_infer_height(vec![
+            Series::new("a".into(), &[1i64, 2]).into(),
+            Series::new("b".into(), &bytes).into(),
+        ])
+        .unwrap(),
+    ));
+    let write_to = |df, path: &Path, check_extension| {
+        let p = cstr(path.to_str().unwrap());
+        dataframe_write_ndjson_with_options(
+            df,
+            p.as_ptr(),
+            0,
+            false,
+            0,
+            check_extension,
+        )
+    };
+    assert_ne!(write_to(binary, &keep, true), 0);
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("cannot write the binary column \"b\" as JSON")
+    );
+    let xs = make_i64("x", &[1]);
+    let ok = make_df(&[xs]);
+    assert_ne!(write_to(ok, &keep_gz, true), 0);
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("check_extension"), "{}", reason);
+    assert!(!reason.contains(".rkt-polars-"), "{}", reason);
+    assert_eq!(std::fs::read_to_string(&keep).unwrap(), "PRECIOUS");
+    assert_eq!(std::fs::read_to_string(&keep_gz).unwrap(), "PRECIOUS");
+    assert_eq!(leftovers(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
+    assert_eq!(write_to(ok, &keep, true), 0);
+    assert_eq!(std::fs::read_to_string(&keep).unwrap(), "{\"x\":1}\n");
+    assert_ne!(write_to(ok, dir.path(), true), 0);
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.starts_with("cannot create file: "), "{}", reason);
+    assert_eq!(leftovers(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
+    dataframe_drop(ok);
+    series_drop(xs);
+    dataframe_drop(binary);
+}

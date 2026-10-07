@@ -242,7 +242,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   succeeds, so a failed write leaves an existing file as it was.
 - `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
   is, through `dataframe_read_ndjson_with_options`; a directory reads every
-  file in it. Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
+  file in it, and they must share one extension (a README or `.DS_Store`
+  fails with "directory contained paths with different file extensions",
+  in Python too). Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
   Duration and Enum: 0.55's NDJSON buffer panics on the first six, which
   Python passes through. `#:batch-size` and `#:low-memory` reach
   `LazyJsonLineReader` as in Python, and 0.55 reads neither.
@@ -253,12 +255,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   until failure" dump polars appends to a planning error (`without_plan`).
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, so `#:check-extension` matches the
-  name to `#:compression`. gzip and zstd need the `decompress` feature
-  (#176) and a `flate2` newer than 1.0.30, whose `zlib-rs` 0.1.1 aborts the
-  process on some gzip streams (#199). Readers sniff compression from the
-  first four bytes, not the name (`SupportedCompression::check`): no valid
-  JSON starts with a signature, so a plain file that does fails with a
-  decompression error.
+  name to `#:compression`. The sink opens a path, not a file, so it writes
+  to `temp_sibling` itself and `finish_replacing` renames the result, as
+  `write_frame` does for the other writers. gzip and zstd need the
+  `decompress` feature (#176) and a `flate2` newer than 1.0.30, whose
+  `zlib-rs` 0.1.1 aborts the process on some gzip streams (#199). Readers
+  sniff compression from the first four bytes, not the name
+  (`SupportedCompression::check`): no valid JSON starts with a signature,
+  so a plain file that does fails with a decompression error.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).

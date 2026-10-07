@@ -122,7 +122,7 @@
             [_ #f])))))
 
 (define ndjson-schema/c
-  (and/c (listof (cons/c string? ndjson-dtype/c)) distinct-names?))
+  (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?))
 
 (define max-row-index (sub1 (expt 2 32)))
 
@@ -135,15 +135,15 @@
   (->i ([path path-string?])
        (#:schema [schema (or/c #f ndjson-schema/c)]
         #:schema-overrides [schema-overrides ndjson-schema/c]
-        #:infer-schema-length [infer-schema-length (or/c #f exact-positive-integer?)]
-        #:batch-size [batch-size (or/c #f exact-positive-integer?)]
-        #:n-rows [n-rows (or/c #f exact-nonnegative-integer?)]
+        #:infer-schema-length [infer-schema-length (or/c #f (integer-in 1 size-max))]
+        #:batch-size [batch-size (or/c #f (integer-in 1 size-max))]
+        #:n-rows [n-rows (or/c #f (integer-in 0 size-max))]
         #:low-memory [low-memory boolean?]
         #:rechunk [rechunk boolean?]
-        #:row-index-name [row-index-name (or/c #f string?)]
+        #:row-index-name [row-index-name (or/c #f column-name/c)]
         #:row-index-offset [row-index-offset (integer-in 0 max-row-index)]
         #:ignore-errors [ignore-errors boolean?]
-        #:include-file-paths [include-file-paths (or/c #f string?)])
+        #:include-file-paths [include-file-paths (or/c #f column-name/c)])
        #:pre/name (row-index-name include-file-paths)
        "#:row-index-name and #:include-file-paths must name different columns"
        (distinct-columns? row-index-name include-file-paths)
@@ -187,25 +187,23 @@
    [schema-len _size]
    [overrides-len _size]))
 
-(define-syntax-parse-rule (define-ndjson-entry name:id c-id:id result:expr drop:id)
-  (define-compat name
-    (_fun _string/utf-8
-          _CompatNdjsonOptions
-          (_list i _string/utf-8)
-          (_list i _CompatDType)
-          (_list i _string/utf-8)
-          (_list i _CompatDType)
-          _string/utf-8
-          _string/utf-8
-          -> result)
-    #:c-id c-id
-    #:wrap (allocator drop)))
+(define-compat dataframe-read-ndjson/raw
+  (_fun _string/utf-8 _CompatNdjsonOptions
+        (_list i _string/utf-8) (_list i _CompatDType)
+        (_list i _string/utf-8) (_list i _CompatDType)
+        _string/utf-8 _string/utf-8
+        -> _DataFrame-ptr/null)
+  #:c-id dataframe_read_ndjson_with_options
+  #:wrap (allocator dataframe-drop))
 
-(define-ndjson-entry dataframe-read-ndjson/raw dataframe_read_ndjson_with_options
-  _DataFrame-ptr/null dataframe-drop)
-
-(define-ndjson-entry lazyframe-scan-ndjson/raw lazyframe_scan_ndjson_with_options
-  _LazyFrame-ptr/null lazyframe-drop)
+(define-compat lazyframe-scan-ndjson/raw
+  (_fun _string/utf-8 _CompatNdjsonOptions
+        (_list i _string/utf-8) (_list i _CompatDType)
+        (_list i _string/utf-8) (_list i _CompatDType)
+        _string/utf-8 _string/utf-8
+        -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_ndjson_with_options
+  #:wrap (allocator lazyframe-drop))
 
 (define-compat dataframe-write-ndjson/raw
   (_fun _DataFrame-ptr _string/utf-8 _uint8 _stdbool _uint32 _stdbool -> _int32)
@@ -372,6 +370,21 @@
              (lambda () (dataframe-write-json-lines cities (build-path scratch "no" "out.ndjson"))))
   (check-exn #rx"^lazyframe-scan-json-lines: failed to scan [^:]*cities.ndjson: schema overrides name a column not in the file: \"zzz\"$"
              (lambda () (lazyframe-scan-json-lines cities-ndjson #:schema-overrides '(("zzz" . str)))))
+  (check-equal? (dataframe-height (dataframe-read-json-lines cities-ndjson
+                                                             #:n-rows (sub1 (expt 2 64))
+                                                             #:infer-schema-length (sub1 (expt 2 64))
+                                                             #:batch-size (sub1 (expt 2 64))))
+                3)
+  (for ([kvs (in-list `(((#:n-rows . ,(expt 2 64))) ((#:n-rows . ,(+ 2 (expt 2 64))))
+                        ((#:infer-schema-length . ,(expt 2 64))) ((#:batch-size . ,(expt 2 64)))
+                        ((#:row-index-name . "i\u0000x")) ((#:include-file-paths . "p\u0000x"))
+                        ((#:row-index-name . "p\u0000x") (#:include-file-paths . "p\u0000y"))
+                        ((#:schema . (("a\u0000zzz" . i64))))))])
+    (define sorted (sort kvs keyword<? #:key car))
+    (check-exn #rx"^dataframe-read-json-lines: contract violation"
+               (lambda () (keyword-apply contracted:dataframe-read-json-lines
+                                         (map car sorted) (map cdr sorted) (list cities-ndjson)))
+               (format "~s" kvs)))
   (for ([kvs (in-list '(((#:infer-schema-length . 0)) ((#:batch-size . 0)) ((#:n-rows . -1))
                         ((#:row-index-offset . -1)) ((#:row-index-offset . 4294967296))
                         ((#:schema . (("a" . i8)))) ((#:schema-overrides . (("a" . time))))

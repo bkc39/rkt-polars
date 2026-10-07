@@ -2595,6 +2595,15 @@
                                 (parameterize ([read-accept-reader #t] [read-accept-lang #t])
                                   (call-with-input-file file read))))])
       form))
+  (define (compat-form . parts) (cons 'define-compat parts))
+  (check-true (releases-result?
+               (compat-form 'good '(_fun _string -> _DataFrame-ptr/null)
+                            '#:wrap '(allocator dataframe-drop))))
+  (check-false (releases-result?
+                (compat-form 'swapped '(_fun _string -> _DataFrame-ptr/null)
+                             '#:wrap '(allocator lazyframe-drop))))
+  (check-false (releases-result?
+                (compat-form 'unwrapped '(_fun _string -> _LazyFrame-ptr/null))))
   (check > (length bindings) 200)
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))

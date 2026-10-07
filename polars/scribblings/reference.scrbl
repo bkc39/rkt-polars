@@ -37,20 +37,22 @@
      (quote-syntax
       ([path path-string?]
        [#:schema schema
-                 (or/c (and/c (listof (cons/c string? ndjson-dtype/c)) distinct-names?) #f)
+                 (or/c (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)
+                       #f)
                  #f]
        [#:schema-overrides schema-overrides
-                           (and/c (listof (cons/c string? ndjson-dtype/c)) distinct-names?)
+                           (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)
                            '()]
-       [#:infer-schema-length infer-schema-length (or/c exact-positive-integer? #f) 100]
-       [#:batch-size batch-size (or/c exact-positive-integer? #f) 1024]
-       [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
+       [#:infer-schema-length infer-schema-length
+                              (or/c (integer-in 1 (sub1 (expt 2 64))) #f) 100]
+       [#:batch-size batch-size (or/c (integer-in 1 (sub1 (expt 2 64))) #f) 1024]
+       [#:n-rows n-rows (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
        [#:low-memory low-memory boolean? #f]
        [#:rechunk rechunk boolean? #f]
-       [#:row-index-name row-index-name (or/c string? #f) #f]
+       [#:row-index-name row-index-name (or/c column-name/c #f) #f]
        [#:row-index-offset row-index-offset (integer-in 0 4294967295) 0]
        [#:ignore-errors ignore-errors boolean? #f]
-       [#:include-file-paths include-file-paths (or/c string? #f) #f]))))
+       [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]))))
 
 @(define-syntax-parser defndjsonproc
    [(_ (name result) body ...)
@@ -741,12 +743,18 @@ total
   Python. @racket[path] is always a glob pattern: the matching files stack
   in sorted filename order, and one that matches nothing is an error, which
   @racket[scan-ndjson] leaves to @racket[collect], as it does a file that
-  cannot be read. A directory reads every file in it. API gap: no
-  @racket[#:glob], so a literal @litchar{[}, @litchar{*} or @litchar{?} in a
-  file name is spelled @litchar{[[]}, @litchar{[*]} or @litchar{[?]}, as for
-  @racket[read-parquet] (#36); and no @tt{storage_options},
-  @tt{credential_provider} or @tt{retries}, which belong to the cloud
-  sources (#186).
+  cannot be read. A directory reads every file in it, and they must all
+  have the same extension: a directory holding a stray file, a
+  @filepath{README}, a @filepath{_SUCCESS} marker or a hidden
+  @filepath{.DS_Store}, fails with ``directory contained paths with
+  different file extensions'', as in Python; name the files with a pattern
+  instead. API gaps: no @racket[#:glob], so a literal @litchar{[},
+  @litchar{*} or @litchar{?} in a file name is spelled @litchar{[[]},
+  @litchar{[*]} or @litchar{[?]}, as for @racket[read-parquet] (#36); one
+  path or pattern, not Python's list of paths for @tt{source}; and no
+  @tt{storage_options}, @tt{credential_provider}, @tt{retries} or
+  @tt{file_cache_ttl}, which belong to the cloud sources (#186) and the
+  last of which Python deprecated in 1.39.
 
   Column types are inferred from the first @racket[infer-schema-length]
   lines, or from every line when it is @racket[#f]. A key first seen after
@@ -816,8 +824,11 @@ total
   errors. Unless @racket[check-extension] is @racket[#f], the path must end
   in @filepath{.gz} for gzip and @filepath{.zst} for zstd, and must not end
   in either for an uncompressed file. @racket[read-ndjson] and
-  @racket[scan-ndjson] read a compressed file back, whatever its name. API
-  gap: a path only, no file object or in-memory string.
+  @racket[scan-ndjson] read a compressed file back, whatever its name. As
+  with @racket[write-json], a binary column is an error, and the file is
+  written beside @racket[path] and renamed onto it once complete, so a
+  write that fails leaves an existing file as it was. API gap: a path
+  only, no file object or in-memory string.
 
   @examples[#:eval ev #:hidden
 (define nd-dir (make-temporary-directory "polars-doc-~a"))]

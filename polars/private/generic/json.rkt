@@ -368,13 +368,46 @@
   (check-exn #rx"^write-ndjson: failed to write ndjson to [^:]*out.ndjson: "
              (lambda () (write-ndjson guide-df (build-path scratch "no" "out.ndjson"))))
 
+  (define keep-nd (scratch-file "keep.ndjson" "PRECIOUS"))
+  (check-exn #rx"^write-ndjson: failed to write ndjson to [^:]*keep.ndjson: cannot write the binary column \"b\" as JSON$"
+             (lambda () (write-ndjson binary-frame keep-nd)))
+  (check-equal? (file->string keep-nd) "PRECIOUS")
+  (define keep-gz (scratch-file "keep.ndjson.gz" "PRECIOUS"))
+  (check-exn #rx"^write-ndjson: failed to write ndjson to [^:]*keep.ndjson.gz: pass #:check-extension #f"
+             (lambda () (write-ndjson guide-df keep-gz)))
+  (check-equal? (file->string keep-gz) "PRECIOUS")
+  (check-false (for/or ([name (directory-list scratch)])
+                 (regexp-match? #rx"^[.]rkt-polars-" (path->string name))))
+  (write-ndjson guide-df keep-nd)
+  (check-true (frame=? (read-ndjson keep-nd) guide-df))
+  (define nd-into-dir (message-of (lambda () (write-ndjson guide-df scratch))))
+  (check-regexp-match #rx"^write-ndjson: failed to write ndjson to [^:]*: cannot create file: " nd-into-dir)
+  (check-false (regexp-match? #rx"[.]rkt-polars-" nd-into-dir))
+
+  (define strays (build-path scratch "strays"))
+  (make-directory strays)
+  (write-ndjson guide-df (build-path strays "a.ndjson"))
+  (void (call-with-output-file (build-path strays "README") (lambda (out) (write-string "notes" out))))
+  (check-exn #rx"^read-ndjson: failed to read ndjson from [^:]*strays: directory contained paths with different file extensions"
+             (lambda () (read-ndjson strays)))
+  (delete-file (build-path strays "README"))
+  (void (call-with-output-file (build-path strays ".DS_Store") (lambda (out) (write-string "x" out))))
+  (check-exn #rx"directory contained paths with different file extensions"
+             (lambda () (read-ndjson strays)))
+  (delete-file (build-path strays ".DS_Store"))
+  (check-true (frame=? (read-ndjson strays) guide-df))
+  (check-equal? (height (read-ndjson stations-nd #:n-rows (sub1 (expt 2 64)))) 4)
+
   (define nd-bad
     `((#:schema . (("a" . i8))) (#:schema . (("a" . time))) (#:schema . (("a" . (enum x))))
       (#:schema-overrides . (("a" . (duration microseconds)))) (#:schema-overrides . (("a" . u16)))
       (#:infer-schema-length . 0) (#:batch-size . 0) (#:n-rows . -1) (#:n-rows . 1.5)
       (#:low-memory . 1) (#:rechunk . "yes") (#:ignore-errors . 1)
       (#:row-index-name . row) (#:row-index-offset . -1) (#:row-index-offset . 4294967296)
-      (#:include-file-paths . file)))
+      (#:include-file-paths . file) (#:n-rows . ,(expt 2 64)) (#:n-rows . ,(+ 2 (expt 2 64)))
+      (#:infer-schema-length . ,(expt 2 64)) (#:batch-size . ,(expt 2 64))
+      (#:schema . (("a\u0000zzz" . i64))) (#:row-index-name . "i\u0000x")
+      (#:include-file-paths . "p\u0000x")))
   (for* ([reader (in-list (list contracted:read-ndjson contracted:scan-ndjson))]
          [kv (in-list nd-bad)])
     (define blamed (regexp (format "^~a: contract violation" (object-name reader))))
@@ -384,6 +417,9 @@
   (check-exn #rx"#:row-index-name and #:include-file-paths must name different columns"
              (lambda () (contracted:read-ndjson stations-nd #:row-index-name "x"
                                                 #:include-file-paths "x")))
+  (check-exn #rx"^read-ndjson: contract violation"
+             (lambda () (contracted:read-ndjson stations-nd #:row-index-name "p\u0000x"
+                                                #:include-file-paths "p\u0000y")))
   (check-exn #rx"^write-ndjson: contract violation"
              (lambda () (contracted:write-ndjson guide-df guide-nd #:check-extension 1)))
   (for ([kvs (in-list '(((#:compression . brotli)) ((#:compression-level . 3))
