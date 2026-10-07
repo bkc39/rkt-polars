@@ -123,13 +123,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
-  today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
+  today the `dataframe_read_*` and `dataframe_write_*` IO entry points, the
+  `scan_*` family, `lazyframe_collect`,
   `dataframe_sort_with_options`, `series_sort_with_options` and the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
   `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...).
+  hints (`null_values` → `#:null-values`, ...) and in the JSON readers'
+  advice to increase `infer_schema_length` or give a schema.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -140,8 +142,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum` and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  `series_sort_with_options`, `series_cast_enum`, the IO helpers
+  (`read_frame`, `read_path`, `write_frame`) and
+  `dataframe_read_json_with_options` do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
@@ -216,6 +219,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
+- `read-json` / `write-json` are Python's `read_json` / `write_json`: one
+  JSON array of objects (a lone object reads as one row), eager only, since
+  the crate has no JSON-array scan or sink. The path is literal (no glob) and
+  a directory is an error. `#:infer-schema-length` must be positive or `#f`:
+  Python panics on 0. An override naming a column absent from the file (or
+  from `#:schema`) is an error, as in Python, reworded from 0.55's bare
+  `SchemaFieldNotFound`. The schema dtypes are `series`' `#:dtype` spellings
+  but an Enum, which `CompatDType` cannot carry. The names clash with
+  the `json` library's `read-json` / `write-json`.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).

@@ -625,6 +625,69 @@ total
   API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
   file and takes no glob pattern (#44).}
 
+@deftogether[(@defproc[(read-json [path path-string?]
+                                  [#:schema schema
+                                            (or/c (and/c (listof (cons/c string? json-dtype/c))
+                                                         distinct-names?)
+                                                  #f)
+                                            #f]
+                                  [#:schema-overrides schema-overrides
+                                                      (and/c (listof (cons/c string? json-dtype/c))
+                                                             distinct-names?)
+                                                      '()]
+                                  [#:infer-schema-length infer-schema-length
+                                                         (or/c exact-positive-integer? #f)
+                                                         100])
+                       dataframe?]
+              @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
+  Read a file that holds one JSON array of objects into a @tech{dataframe}
+  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}):
+  each row is an object whose keys are the column names. A file holding a
+  single object reads as one row. Both are eager: Polars has no scan or sink
+  for a JSON array, only for newline-delimited JSON. @racket[path] is taken
+  literally; a directory is an error.
+
+  Column types are inferred from the first @racket[infer-schema-length]
+  objects, or from every object when it is @racket[#f]; a key first seen
+  after them, or a later value that does not convert to the inferred type,
+  is an error. @racket[schema] gives the columns outright, in its order: a
+  key the schema lacks is skipped, and a column the file lacks reads as
+  nulls. @racket[schema-overrides] changes the types of named columns, the
+  file's or @racket[schema]'s, and naming a column absent from them is an
+  error. A @racket[json-dtype/c] is any spelling @racket[series]'
+  @racket[#:dtype] accepts except an Enum; API gap: read the column as
+  @racket['categorical] or @racket['string] and @racket[cast] it. A string
+  reads as a @racket['date], @racket['datetime] or @racket['time] when the
+  schema asks for one.
+
+  @racket[write-json] writes dates, times, datetimes and durations as
+  strings, Categorical and Enum values as their names, and NaN and the
+  infinities as @tt{null}, so reading the file back needs a schema to
+  restore those types. API gap: a path only, no file object or in-memory
+  string in or out. @racket[read-json] and @racket[write-json] share their
+  names with @racketmodname[json]'s, so a module that needs both renames one
+  pair, for example with @racket[prefix-in].
+
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define json-dir (make-temporary-directory "polars-doc-~a"))
+(define path (build-path json-dir "frame.json"))]
+  @examples[#:eval ev
+(define df (dataframe (list (series '(1 2 3) #:name "foo")
+                            (series (list polars-null "bak" "baz") #:name "bar"))))
+(write-json df path)
+(file->string path)
+(read-json path)
+(read-json "stations.json")
+(read-json "stations.json"
+           #:schema '(("day" . date) ("station" . categorical) ("reading" . f32)))
+(~> (read-json "stations.json" #:schema-overrides '(("day" . date)))
+    (select "day" "reading"))
+(eval:error (read-json "stations.json" #:infer-schema-length 1))
+(eval:error (read-json "stations.json" #:schema-overrides '(("dya" . date))))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files json-dir)]}
+
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
   @racket[lazy] turns a dataframe into a @tech{lazyframe} — a plan that
@@ -1517,6 +1580,28 @@ generic operations are simply the preferred surface.
   @examples[#:eval ev
 (dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
 (dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
+
+@deftogether[(@defproc[(dataframe-read-json [path path-string?]
+                                            [#:schema schema
+                                                      (or/c (and/c (listof (cons/c string? json-dtype/c))
+                                                                   distinct-names?)
+                                                            #f)
+                                                      #f]
+                                            [#:schema-overrides schema-overrides
+                                                                (and/c (listof (cons/c string? json-dtype/c))
+                                                                       distinct-names?)
+                                                                '()]
+                                            [#:infer-schema-length infer-schema-length
+                                                                   (or/c exact-positive-integer? #f)
+                                                                   100])
+                       DataFrame-ptr?]
+              @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{
+  The raw-pointer JSON-array reader and writer under @racket[read-json] and
+  @racket[write-json], with the same keywords and checks.
+
+  @examples[#:eval ev
+(dataframe-width (dataframe-read-json "stations.json" #:schema '(("station" . str))))
+(eval:error (dataframe-read-json "stations.json" #:infer-schema-length 0))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 

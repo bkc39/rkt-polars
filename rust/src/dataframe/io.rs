@@ -79,7 +79,7 @@ pub(crate) fn collect_frame(
     read_path(path, rules, |path| build(path).and_then(LazyFrame::collect))
 }
 
-fn write_frame(
+pub(crate) fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
     write: impl FnOnce(&mut std::fs::File, &mut DataFrame) -> PolarsResult<()>,

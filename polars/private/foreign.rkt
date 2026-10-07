@@ -60,7 +60,11 @@
      . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
-    ("to the `null_values` list" . "to #:null-values")))
+    ("to the `null_values` list" . "to #:null-values")
+    ("Try increasing `infer_schema_length` or specifying a schema."
+     . "Try increasing #:infer-schema-length or passing #:schema.")
+    ("consider increasing infer_schema_length, or manually specifying the full schema"
+     . "consider increasing #:infer-schema-length, or passing the full #:schema")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")

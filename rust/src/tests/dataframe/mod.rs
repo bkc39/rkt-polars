@@ -18,6 +18,7 @@ mod csv;
 mod groupby;
 mod io;
 mod join;
+mod json;
 mod reshape;
 mod smoke;
 mod stack;
