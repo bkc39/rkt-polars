@@ -1,6 +1,8 @@
 use crate::prelude::*;
 use crate::*;
 use polars::prelude::{SerReader, SerWriter};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const IO_OK: i32 = 0;
 const IO_NULL_ARG: i32 = 1;
@@ -15,11 +17,47 @@ fn open_file(path: &str) -> Option<std::fs::File> {
     )
 }
 
-fn create_file(path: &str) -> Option<std::fs::File> {
-    record(
-        std::fs::File::create(path)
+fn staging_path(target: &Path) -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let name = target
+        .file_name()
+        .map_or_else(|| "frame".into(), |name| name.to_string_lossy());
+    let dir = target
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    dir.join(format!(
+        ".{}.{}-{}.tmp",
+        name,
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// A writer writes a staging file beside `path` and renames it over `path`
+/// only once the write succeeds, so a failed write leaves `path` as it was.
+struct Staged {
+    file: std::fs::File,
+    staging: PathBuf,
+    target: PathBuf,
+}
+
+fn create_staged(path: &str) -> Option<Staged> {
+    let target =
+        std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    let staging = staging_path(&target);
+    let file = record(
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)
             .map_err(|err| format!("cannot create file: {}", err)),
-    )
+    )?;
+    Some(Staged {
+        file,
+        staging,
+        target,
+    })
 }
 
 fn read_frame(
@@ -79,7 +117,7 @@ pub(crate) fn collect_frame(
     read_path(path, rules, |path| build(path).and_then(LazyFrame::collect))
 }
 
-fn write_frame(
+pub(crate) fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
     write: impl FnOnce(&mut std::fs::File, &mut DataFrame) -> PolarsResult<()>,
@@ -96,14 +134,29 @@ fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
-    let Some(mut file) = create_file(path_str) else {
+    let Some(Staged {
+        mut file,
+        staging,
+        target,
+    }) = create_staged(path_str)
+    else {
         return IO_OPEN_FAILED;
     };
     let df = unsafe { &mut *df_ptr };
-    match guard_panic(|| record(write(&mut file, df))) {
-        Some(()) => IO_OK,
+    let written = guard_panic(|| record(write(&mut file, df)));
+    drop(file);
+    let status = match written.map(|()| std::fs::rename(&staging, &target)) {
+        Some(Ok(())) => IO_OK,
+        Some(Err(err)) => {
+            set_last_error(format!("cannot create file: {}", err));
+            IO_OPEN_FAILED
+        }
         None => IO_WRITE_FAILED,
+    };
+    if status != IO_OK {
+        let _ = std::fs::remove_file(&staging);
     }
+    status
 }
 
 #[no_mangle]

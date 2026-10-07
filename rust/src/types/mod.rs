@@ -1,6 +1,7 @@
 mod csv;
 mod dtype;
 mod optionals;
+mod parquet;
 mod shape;
 mod temporal;
 
@@ -16,5 +17,6 @@ pub use self::optionals::{
     CompatOptI64, CompatOptI8, CompatOptU16, CompatOptU32, CompatOptU64,
     CompatOptU8,
 };
+pub use self::parquet::{CompatParquetReadOptions, CompatParquetWriteOptions};
 pub use self::shape::Shape;
 pub use self::temporal::{CompatOptYMD, CompatOptYMDHMS, YMD, YMDHMS};

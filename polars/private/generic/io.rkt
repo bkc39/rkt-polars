@@ -1,11 +1,12 @@
 #lang racket/base
 
-(require (only-in racket/contract/base -> ->* contract-out or/c)
+(require (only-in racket/contract/base -> contract-out)
          (only-in polars/private/csv csv-reader/c dataframe-read-csv lazyframe-scan-csv)
-         (only-in polars/private/expr lazyframe-scan-parquet)
          (only-in polars/private/foreign
-                  dataframe-read-json-lines dataframe-read-parquet dataframe-write-csv
-                  dataframe-write-json-lines dataframe-write-parquet)
+                  dataframe-read-json-lines dataframe-write-csv dataframe-write-json-lines)
+         (only-in polars/private/parquet
+                  parquet-reader parquet-reader/c parquet-scanner parquet-scanner/c
+                  parquet-writer parquet-writer/c)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
          syntax/parse/define)
@@ -13,13 +14,11 @@
 (provide (contract-out
           [read-csv (csv-reader/c dataframe?)]
           [scan-csv (csv-reader/c lazyframe?)]
-          [read-parquet (-> path-string? dataframe?)]
-          [scan-parquet (->* (path-string?)
-                             (#:n-rows (or/c #f exact-nonnegative-integer?))
-                             lazyframe?)]
+          [read-parquet (parquet-reader/c dataframe?)]
+          [scan-parquet (parquet-scanner/c lazyframe?)]
           [read-ndjson (-> path-string? dataframe?)]
           [write-csv (-> dataframe? path-string? void?)]
-          [write-parquet (-> dataframe? path-string? void?)]
+          [write-parquet (parquet-writer/c dataframe?)]
           [write-ndjson (-> dataframe? path-string? void?)]))
 
 (define-syntax-parse-rule (define-wrapped name:id wrap:expr reader:expr)
@@ -27,11 +26,11 @@
 
 (define-wrapped read-csv wrap-dataframe dataframe-read-csv)
 (define-wrapped scan-csv wrap-lazyframe lazyframe-scan-csv)
-(define-wrapped read-parquet wrap-dataframe dataframe-read-parquet)
-(define-wrapped scan-parquet wrap-lazyframe lazyframe-scan-parquet)
+(define-wrapped read-parquet wrap-dataframe (parquet-reader 'read-parquet))
+(define-wrapped scan-parquet wrap-lazyframe (parquet-scanner 'scan-parquet))
 (define-wrapped read-ndjson wrap-dataframe dataframe-read-json-lines)
 (define write-csv dataframe-write-csv)
-(define write-parquet dataframe-write-parquet)
+(define write-parquet (parquet-writer 'write-parquet))
 (define write-ndjson dataframe-write-json-lines)
 
 (module+ test
@@ -449,3 +448,158 @@
   (check-equal? (column as-categorical "level") '(info debug info))
 
   (delete-directory/files scratch))
+
+(module+ test
+  (require (only-in racket/string string-contains?)
+           (only-in polars/private/generic/operators [> p>])
+           (only-in polars/private/generic/reshape explain lazy select)
+           (only-in polars/private/generic/reshape [filter frame-filter]))
+
+  (define pq-dir (make-temporary-directory "rkt-polars-io-parquet-~a"))
+  (define (pq-file name) (build-path pq-dir name))
+  (define (data name) (build-path data-dir name))
+  (define (dtypes-in df)
+    (for/list ([name (column-names df)]) (dtype (ref df name))))
+  (define (pq-message thunk)
+    (with-handlers ([exn:fail? exn-message]) (thunk) #f))
+
+  (define pq-flights (read-parquet (data "flights.parquet")))
+  (check-true (frame=? pq-flights
+                       (read-csv flights #:separator #\tab #:null-values "NA"
+                                 #:try-parse-dates #t)))
+  (check-equal? (shape pq-flights) '(102 19))
+  (check-equal? (column (read-parquet (data "flights.parquet")
+                                      #:columns '("carrier" "dep_delay") #:n-rows 3)
+                        "dep_delay")
+                '(2 4 2))
+  (define numbered (read-parquet (data "flights.parquet") #:columns '(0 1 -1) #:n-rows 2
+                                 #:row-index-name "row" #:row-index-offset 1))
+  (check-equal? (column-names numbered) '("row" "year" "time_hour"))
+  (check-equal? (column numbered "row") '(1 2))
+  (check-equal? (column-names (read-parquet (data "produce.parquet") #:include-file-paths "file"))
+                '("item" "grade" "price" "file"))
+  (parameterize ([current-directory data-dir])
+    (check-equal? (pq-message (lambda () (read-parquet "produce.parquet"
+                                                       #:columns '("item" "colour"))))
+                  (string-append "read-parquet: failed to read parquet from produce.parquet: "
+                                 "columns not in the file: \"colour\"")))
+
+  (define pq-produce (read-parquet (data "produce.parquet")))
+  (make-directory* (pq-file "mixed"))
+  (write-parquet pq-produce (pq-file "mixed/a.parquet"))
+  (write-parquet (select pq-produce "item") (pq-file "mixed/b.parquet"))
+  (define mixed (pq-file "mixed/*.parquet"))
+  (check-regexp-match
+   #rx"^read-parquet: failed to read parquet from [^:]*mixed/[*].parquet: .*grade.*#:missing-columns 'insert"
+   (pq-message (lambda () (read-parquet mixed))))
+  (parameterize ([current-directory pq-dir])
+    (check-regexp-match
+     #rx"^read-parquet: failed to read parquet from mixed/[*][.]parquet: .*grade"
+     (pq-message (lambda () (read-parquet "mixed/*.parquet")))))
+  (check-equal? (shape (read-parquet (data "flights.parquet") #:parallel 'row-groups
+                                     #:use-statistics #f #:low-memory #t #:rechunk #t))
+                '(102 19))
+  (parameterize ([current-directory data-dir])
+    (check-equal? (shape (read-parquet "produce.parque?")) '(4 3))
+    (check-regexp-match
+     #rx"^read-parquet: failed to read parquet from produce[.]parque[?]: cannot open file: "
+     (pq-message (lambda () (read-parquet "produce.parque?" #:glob #f)))))
+  (define cached (collect (scan-parquet (data "produce.parquet") #:cache #f
+                                        #:row-index-name "row")))
+  (check-equal? (column-names cached) '("row" "item" "grade" "price"))
+  (check-equal? (column cached "row") '(0 1 2 3))
+  (check-regexp-match
+   #rx"^explain: failed to explain the query: [^\n]*\"colour\""
+   (pq-message (lambda () (explain (select (lazy pq-produce) "colour")))))
+  (define inserted (read-parquet mixed #:missing-columns 'insert))
+  (check-equal? (shape inserted) '(8 3))
+  (check-equal? (dtypes-in inserted) (dtypes-in pq-produce))
+  (check-equal? (null-count (ref inserted "grade")) 5)
+
+  (define late
+    (~> (scan-parquet (data "flights.parquet"))
+        (frame-filter (p> (col "dep_delay") 20))
+        (select "carrier" "dep_delay")))
+  (check-equal? (column (collect late) "dep_delay") '(24 47 39))
+  (check-equal? (column (collect late) "carrier") '("EV" "UA" "MQ"))
+  (define optimised (explain late))
+  (check-regexp-match #rx"^Parquet SCAN [[][^]]*/flights[.]parquet[]]\n" optimised)
+  (for ([part '("PROJECT 2/19 COLUMNS" "SELECTION: col(\"dep_delay\") > 20")])
+    (check-true (string-contains? optimised part) part))
+  (define written (explain late #:optimized #f))
+  (check-false (string-contains? written "PROJECT 2/19 COLUMNS"))
+  (for ([part '("SELECT [col(\"carrier\"), col(\"dep_delay\")]"
+                "FILTER col(\"dep_delay\") > 20" "FROM" "Parquet SCAN [" "PROJECT */19 COLUMNS")])
+    (check-true (string-contains? written part) part))
+  (check-true (string-contains? (explain late #:format 'tree) "SELECTION"))
+  (define tree (explain (select (lazy pq-produce) "item") #:format 'tree))
+  (for ([part '("DF [\"item\", \"grade\", \"price\"]" "PROJECT: [\"item\"]; 1/3 COLUMNS")])
+    (check-true (string-contains? tree part) part))
+  (check-regexp-match #rx"^scan-parquet: contract violation\n  expected: parquet-parallel/c\n  given: 'row_groups"
+                      (pq-message (lambda () (contracted:scan-parquet (data "flights.parquet")
+                                                                      #:parallel 'row_groups))))
+  (check-regexp-match #rx"^application: procedure does not expect an argument with given keyword\n  procedure: scan-parquet\n  given keyword: #:columns"
+                      (pq-message (lambda () (contracted:scan-parquet (data "produce.parquet")
+                                                                      #:columns '("item")))))
+  (check-regexp-match #rx"^(lazyframe-)?collect: .*[Nn]o such file"
+                      (pq-message (lambda () (collect (scan-parquet "/no/such/file.parquet")))))
+  (for ([i '(1 2 3)])
+    (write-parquet (read-csv (data (format "parts/part-~a.csv" i)))
+                   (pq-file (format "part-~a.parquet" i))))
+  (check-equal? (height (read-parquet (pq-file "part-*.parquet")))
+                (for/sum ([i '(1 2 3)]) (height (read-csv (data (format "parts/part-~a.csv" i))))))
+  (check-equal? (height (collect (scan-parquet (pq-file "part-*.parquet") #:n-rows 3))) 3)
+
+  (define out (pq-file "produce.parquet"))
+  (write-parquet pq-produce out #:compression 'gzip #:compression-level 9 #:statistics #f)
+  (check-true (frame=? (read-parquet out) pq-produce))
+  (write-parquet pq-produce out #:compression 'lz4 #:row-group-size 2
+                 #:statistics '(min max null-count distinct-count)
+                 #:data-page-size 4096)
+  (check-true (frame=? (read-parquet out) pq-produce))
+  (check-regexp-match
+   #rx"^write-parquet: contract violation\n  #:compression-level 30 is outside zstd's levels, 1 to 22\n"
+   (pq-message (lambda () (contracted:write-parquet pq-produce out #:compression-level 30))))
+  (check-regexp-match
+   #rx"^write-parquet: contract violation\n  expected: parquet-statistics/c\n  given: '[(]null-count[)]"
+   (pq-message (lambda () (contracted:write-parquet pq-produce out #:statistics '(null-count)))))
+  (check-true (frame=? (read-parquet out) pq-produce))
+  (check-equal? (pq-message (lambda () (write-parquet pq-produce "/no/such/dir/out.parquet")))
+                (string-append "write-parquet: failed to write parquet to /no/such/dir/out.parquet: "
+                               "cannot create file: No such file or directory (os error 2)"))
+  (check-regexp-match #rx"^read-parquet: failed to read parquet from [^:]*: .*PAR1"
+                      (pq-message (lambda () (read-parquet (data "flights.tsv")))))
+  (check-regexp-match #rx"^explain: contract violation\n  expected: lazyframe[?]"
+                      (pq-message (lambda () (explain pq-produce))))
+  (check-regexp-match #rx"^explain: contract violation\n  expected: explain-format/c\n  given: 'dot"
+                      (pq-message (lambda () (explain late #:format 'dot))))
+
+  (define foo-bar
+    (dataframe (list (series '(1 2 3) #:name "foo")
+                     (series (list polars-null "bak" "baz") #:name "bar"))))
+  (write-parquet foo-bar (pq-file "path.parquet"))
+  (check-true (frame=? (read-parquet (pq-file "path.parquet")) foo-bar))
+  (check-true (frame=? (collect (scan-parquet (pq-file "path.parquet"))) foo-bar))
+
+  (write-csv pq-produce (pq-file "produce.csv"))
+  (check-equal? (dtypes-in (read-csv (pq-file "produce.csv"))) '(string string float64))
+  (check-equal? (column (read-csv (pq-file "produce.csv")) "price") (list 1.25 0.8 polars-null 12.0))
+  (write-parquet pq-produce (pq-file "produce-copy.parquet"))
+  (check-equal? (dtypes-in (read-parquet (pq-file "produce-copy.parquet")))
+                '(categorical (enum low mid high) (decimal 10 2)))
+  (define stamps (select pq-flights "time_hour"))
+  (write-csv stamps (pq-file "stamps.csv"))
+  (check-equal? (dtype (ref (read-csv (pq-file "stamps.csv")) "time_hour")) 'string)
+  (write-parquet stamps (pq-file "stamps.parquet"))
+  (check-equal? (dtype (ref (read-parquet (pq-file "stamps.parquet")) "time_hour"))
+                '(datetime microseconds #f))
+
+  (define framed (read-parquet (data "flights.parquet") #:columns '("row" "carrier" "dep_delay")
+                               #:n-rows 3 #:row-index-name "row"))
+  (check-equal? (column framed "row") '(0 1 2))
+  (check-equal? (column framed "carrier") '("UA" "UA" "AA"))
+  (write-parquet pq-flights (pq-file "flights.parquet")
+                 #:compression 'gzip #:compression-level 9 #:statistics 'full #:row-group-size 50)
+  (check-true (frame=? (read-parquet (pq-file "flights.parquet")) pq-flights))
+
+  (delete-directory/files pq-dir))

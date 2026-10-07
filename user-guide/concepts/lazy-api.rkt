@@ -26,4 +26,7 @@
 
 (displayln (collect q))
 
-;; API gaps: no explain (query plan preview) and no schema-only LazyFrame.
+;; --- previewing the query plan -------------------------------------------
+(displayln (explain q))
+
+;; API gap: no schema-only LazyFrame.

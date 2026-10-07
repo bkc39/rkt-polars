@@ -7,8 +7,8 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          (only-in racket/contract
-                  [-> ->/c] ->i any/c contract-out flat-named-contract non-empty-listof or/c
-                  rename-contract)
+                  [-> ->/c] ->* ->i any/c contract-out flat-named-contract non-empty-listof
+                  or/c rename-contract)
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
@@ -22,6 +22,7 @@
          _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
          expr-drop expr-drop-count lazyframe-drop
          sort-by/c
+         explain/c lazyframe-explainer
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          lit ->expr
@@ -71,6 +72,23 @@
 (define-compat expr->string
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_to_string)
+
+(define-compat lazyframe-explain/raw
+  (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstring)
+  #:c-id lazyframe_explain)
+
+(define explain-format/c (rename-contract (or/c 'plain 'tree) 'explain-format/c))
+
+(define (explain/c frame/c)
+  (->* (frame/c) (#:optimized boolean? #:format explain-format/c) string?))
+
+(define (lazyframe-explainer who)
+  (procedure-rename
+   (lambda (lf #:optimized [optimized #t] #:format [format 'plain])
+     (call/foreign-error who
+                         (lambda () (lazyframe-explain/raw lf optimized (eq? format 'tree)))
+                         "failed to explain the query"))
+   who))
 
 (define-compat expr-col
   (_fun _string -> _Expr-ptr)
