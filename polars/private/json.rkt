@@ -3,7 +3,8 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          (only-in racket/contract/base
-                  [-> ->/c] ->* and/c cons/c contract-out flat-named-contract listof or/c)
+                  [-> ->/c] ->* and/c cons/c contract-out flat-named-contract integer-in
+                  listof or/c)
          (only-in racket/list check-duplicates)
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null
@@ -16,6 +17,13 @@
           [dataframe-read-json (json-reader/c DataFrame-ptr?)]
           [dataframe-write-json (->/c DataFrame-ptr? path-string? void?)]))
 
+(define size-max (sub1 (expt 2 64)))
+
+(define column-name/c
+  (flat-named-contract
+   'column-name/c
+   (lambda (v) (and (string? v) (not (for/or ([c (in-string v)]) (char=? c #\nul)))))))
+
 (define json-dtype/c
   (flat-named-contract
    'json-dtype/c
@@ -25,13 +33,13 @@
   (not (check-duplicates (map car fields))))
 
 (define json-schema/c
-  (and/c (listof (cons/c string? json-dtype/c)) distinct-names?))
+  (and/c (listof (cons/c column-name/c json-dtype/c)) distinct-names?))
 
 (define (json-reader/c result/c)
   (->* (path-string?)
        (#:schema (or/c #f json-schema/c)
         #:schema-overrides json-schema/c
-        #:infer-schema-length (or/c #f exact-positive-integer?))
+        #:infer-schema-length (or/c #f (integer-in 1 size-max)))
        result/c))
 
 (define-cstruct _CompatJsonOptions
@@ -140,6 +148,17 @@
                                                         #:schema-overrides '(("a" . i32) ("a" . f64)))))
   (check-exn #rx"^dataframe-write-json: contract violation"
              (lambda () (contracted:dataframe-write-json 'frame written)))
+  (check-equal? (dataframe-column-names
+                 (contracted:dataframe-read-json rows #:infer-schema-length (sub1 (expt 2 64))))
+                '("foo" "bar"))
+  (for ([kvs (in-list `(((#:infer-schema-length . ,(expt 2 64)))
+                        ((#:infer-schema-length . ,(add1 (expt 2 64))))
+                        ((#:schema . (("a\u0000zzz" . i64))))
+                        ((#:schema-overrides . (("foo\u0000x" . str))))))])
+    (check-exn #rx"^dataframe-read-json: contract violation"
+               (lambda () (keyword-apply contracted:dataframe-read-json (map car kvs) (map cdr kvs)
+                                         (list rows)))
+               (format "~s" kvs)))
 
   (define (settle!)
     (for ([_ (in-range 4)])

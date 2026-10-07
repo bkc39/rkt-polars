@@ -258,3 +258,47 @@ fn write_json_writes_an_array_that_reads_back() {
     series_drop(xs);
     series_drop(gs);
 }
+
+fn leftovers(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_failed_write_leaves_the_existing_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "keep.json", "PRECIOUS");
+    let p = cstr(path.to_str().unwrap());
+    let bytes: [&[u8]; 2] = [b"p", b"q"];
+    let df = Box::into_raw(Box::new(
+        DataFrame::new_infer_height(vec![
+            Series::new("a".into(), &[1i64, 2]).into(),
+            Series::new("b".into(), &bytes).into(),
+        ])
+        .unwrap(),
+    ));
+    assert_ne!(dataframe_write_json(df, p.as_ptr()), 0);
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("cannot write the binary column \"b\" as JSON")
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "PRECIOUS");
+    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    let xs = make_i64("x", &[1]);
+    let ok = make_df(&[xs]);
+    assert_eq!(dataframe_write_json(ok, p.as_ptr()), 0);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"[{"x":1}]"#);
+    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    let into_dir = cstr(dir.path().to_str().unwrap());
+    assert_ne!(dataframe_write_json(ok, into_dir.as_ptr()), 0);
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.starts_with("cannot create file: "), "{}", reason);
+    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    dataframe_drop(ok);
+    series_drop(xs);
+    dataframe_drop(df);
+}
