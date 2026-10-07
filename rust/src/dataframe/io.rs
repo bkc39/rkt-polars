@@ -1,3 +1,6 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::prelude::*;
 use crate::*;
 use polars::prelude::{SerReader, SerWriter};
@@ -15,11 +18,49 @@ fn open_file(path: &str) -> Option<std::fs::File> {
     )
 }
 
-fn create_file(path: &str) -> Option<std::fs::File> {
+fn create_file(path: &Path) -> Option<std::fs::File> {
     record(
         std::fs::File::create(path)
             .map_err(|err| format!("cannot create file: {}", err)),
     )
+}
+
+static TEMP_FILES: AtomicUsize = AtomicUsize::new(0);
+
+/// A writer writes here and `finish_replacing` renames it onto `target`, so
+/// a failed write leaves an existing file as it was. The name keeps
+/// `target`'s extensions, which polars' sinks check.
+pub(crate) fn temp_sibling(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    target.with_file_name(format!(
+        ".rkt-polars-{}-{}-{}",
+        std::process::id(),
+        TEMP_FILES.fetch_add(1, Ordering::Relaxed),
+        name
+    ))
+}
+
+pub(crate) fn finish_replacing(
+    temp: &Path,
+    target: &Path,
+    written: Option<()>,
+) -> i32 {
+    let renamed = written.and_then(|()| {
+        record(
+            std::fs::rename(temp, target)
+                .map_err(|err| format!("cannot create file: {}", err)),
+        )
+    });
+    match renamed {
+        Some(()) => IO_OK,
+        None => {
+            let _ = std::fs::remove_file(temp);
+            IO_WRITE_FAILED
+        }
+    }
 }
 
 fn read_frame(
@@ -79,7 +120,7 @@ pub(crate) fn collect_frame(
     read_path(path, rules, |path| build(path).and_then(LazyFrame::collect))
 }
 
-fn write_frame(
+pub(crate) fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
     write: impl FnOnce(&mut std::fs::File, &mut DataFrame) -> PolarsResult<()>,
@@ -96,14 +137,15 @@ fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
-    let Some(mut file) = create_file(path_str) else {
+    let target = Path::new(path_str);
+    let temp = temp_sibling(target);
+    let Some(mut file) = create_file(&temp) else {
         return IO_OPEN_FAILED;
     };
     let df = unsafe { &mut *df_ptr };
-    match guard_panic(|| record(write(&mut file, df))) {
-        Some(()) => IO_OK,
-        None => IO_WRITE_FAILED,
-    }
+    let written = guard_panic(|| record(write(&mut file, df)));
+    drop(file);
+    finish_replacing(&temp, target, written)
 }
 
 #[no_mangle]

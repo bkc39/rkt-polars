@@ -1,0 +1,6 @@
+[
+  {"station": "north", "day": "2024-01-01", "reading": 3, "flag": "ok"},
+  {"station": "south", "day": "2024-01-01", "reading": 4.5, "flag": "low"},
+  {"station": "north", "day": "2024-01-02", "reading": 2, "flag": "ok"},
+  {"station": "south", "day": "2024-01-02", "reading": 5.25, "flag": "high", "note": "late"}
+]
