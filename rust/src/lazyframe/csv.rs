@@ -134,6 +134,7 @@ fn decode_selection(arrays: &CsvArrays) -> PolarsResult<Selection> {
     })
 }
 
+#[derive(Clone)]
 struct CsvRequest {
     comment_prefix: Option<CommentPrefix>,
     row_index: Option<RowIndex>,
@@ -246,57 +247,126 @@ fn lazy_reader(
         .map_parse_options(|_| (*parse).clone())
 }
 
-fn renamed(new_columns: &[PlSmallStr], schema: Schema) -> PolarsResult<Schema> {
-    polars_ensure!(
-        new_columns.len() <= schema.len(),
-        ComputeError: "{} new column names for a file of {} columns",
-        new_columns.len(),
-        schema.len()
-    );
-    let names = new_columns
-        .iter()
-        .chain(schema.iter_names().skip(new_columns.len()));
-    let mut out = Schema::with_capacity(schema.len());
-    for (name, dtype) in names.zip(schema.iter_values()) {
-        polars_ensure!(
-            out.insert(name.clone(), dtype.clone()).is_none(),
-            Duplicate: "column with name '{}' has more than one occurrence",
-            name
-        );
-    }
-    Ok(out)
-}
-
-fn with_new_columns(
-    reader: LazyCsvReader,
-    request: &CsvRequest,
-) -> PolarsResult<LazyCsvReader> {
-    if request.new_columns.is_empty() {
-        return Ok(reader);
-    }
-    let new_columns = request.new_columns.clone();
-    reader.with_schema_modify(move |schema| renamed(&new_columns, schema))
-}
-
 fn header_names(
     path: &str,
     options: &CompatCsvOptions,
     request: &CsvRequest,
 ) -> PolarsResult<Schema> {
+    let unnamed = CsvRequest {
+        null_values: None,
+        ..request.clone()
+    };
+    let rows_read = if options.has_header {
+        Some(0)
+    } else {
+        options
+            .has_infer_schema_length
+            .then_some(options.infer_schema_length)
+    };
     let header = CsvReadOptions::default()
         .with_has_header(options.has_header)
         .with_skip_rows(options.skip_rows)
         .with_skip_lines(options.skip_lines)
-        .with_infer_schema_length(Some(0))
+        .with_infer_schema_length(rows_read)
         .with_raise_if_empty(options.raise_if_empty)
-        .with_parse_options(parse_options(options, request));
+        .with_parse_options(parse_options(options, &unnamed));
     let schema = lazy_reader(path, options, header)
         .finish()?
         .collect_schema()?;
-    if request.new_columns.is_empty() {
-        Ok((*schema).clone())
-    } else {
-        renamed(&request.new_columns, (*schema).clone())
+    Ok((*schema).clone())
+}
+
+struct Renaming {
+    file: Vec<PlSmallStr>,
+    named: Schema,
+}
+
+impl Renaming {
+    fn new(header: &Schema, new_columns: &[PlSmallStr]) -> PolarsResult<Self> {
+        polars_ensure!(
+            new_columns.len() <= header.len(),
+            ComputeError: "{} new column names for a file of {} columns",
+            new_columns.len(),
+            header.len()
+        );
+        let file: Vec<PlSmallStr> = header.iter_names().cloned().collect();
+        let names = new_columns
+            .iter()
+            .chain(file.iter().skip(new_columns.len()));
+        let mut named = Schema::with_capacity(file.len());
+        for (name, dtype) in names.zip(header.iter_values()) {
+            polars_ensure!(
+                named.insert(name.clone(), dtype.clone()).is_none(),
+                Duplicate: "column with name '{}' has more than one occurrence",
+                name
+            );
+        }
+        Ok(Self { file, named })
+    }
+
+    fn file_name(&self, name: &str) -> PolarsResult<PlSmallStr> {
+        Ok(self.file[self.named.try_index_of(name)?].clone())
+    }
+
+    fn new_name(&self, file_name: &str) -> PlSmallStr {
+        match self.file.iter().position(|n| n == file_name) {
+            Some(i) => self.named.get_at_index(i).unwrap().0.clone(),
+            None => file_name.into(),
+        }
+    }
+
+    fn changes(&self) -> (Vec<PlSmallStr>, Vec<PlSmallStr>) {
+        self.file
+            .iter()
+            .zip(self.named.iter_names())
+            .filter(|(file, named)| file != named)
+            .map(|(file, named)| (file.clone(), named.clone()))
+            .unzip()
+    }
+
+    fn in_file_names(&self, request: &CsvRequest) -> PolarsResult<CsvRequest> {
+        require_override_columns(&self.named, request)?;
+        require_free_row_index(&self.named, request)?;
+        let overrides = match &request.overrides {
+            None => None,
+            Some(overrides) => {
+                let fields = overrides
+                    .iter()
+                    .map(|(name, dtype)| {
+                        Ok(Field::new(self.file_name(name)?, dtype.clone()))
+                    })
+                    .collect::<PolarsResult<Vec<_>>>()?;
+                Some(Arc::new(Schema::from_iter(fields)))
+            }
+        };
+        let null_values = match &request.null_values {
+            Some(NullValues::Named(pairs)) => Some(NullValues::Named(
+                pairs
+                    .iter()
+                    .map(|(name, marker)| {
+                        Ok((self.file_name(name)?, marker.clone()))
+                    })
+                    .collect::<PolarsResult<Vec<_>>>()?,
+            )),
+            other => other.clone(),
+        };
+        let selection = match &request.selection {
+            Selection::Names(names) => Selection::Names(
+                names
+                    .iter()
+                    .map(|name| self.file_name(name))
+                    .collect::<PolarsResult<Vec<_>>>()?,
+            ),
+            other => other.clone(),
+        };
+        Ok(CsvRequest {
+            comment_prefix: request.comment_prefix.clone(),
+            row_index: None,
+            null_values,
+            overrides,
+            new_columns: Vec::new(),
+            selection,
+        })
     }
 }
 
@@ -334,24 +404,6 @@ fn require_free_row_index(
         row_index.name
     );
     Ok(())
-}
-
-fn checks_header(request: &CsvRequest) -> bool {
-    request.overrides.is_some()
-        || (request.row_index.is_some() && !request.new_columns.is_empty())
-}
-
-fn check_header(
-    path: &str,
-    options: &CompatCsvOptions,
-    request: &CsvRequest,
-) -> PolarsResult<()> {
-    if !checks_header(request) {
-        return Ok(());
-    }
-    let header = header_names(path, options, request)?;
-    require_override_columns(&header, request)?;
-    require_free_row_index(&header, request)
 }
 
 fn select(lf: LazyFrame, request: &CsvRequest) -> PolarsResult<LazyFrame> {
@@ -392,6 +444,29 @@ fn reads_header_at_scan(request: &CsvRequest) -> bool {
     request.overrides.is_some() || !request.new_columns.is_empty()
 }
 
+fn renamed_scan(
+    path: &str,
+    options: &CompatCsvOptions,
+    request: &CsvRequest,
+) -> PolarsResult<LazyFrame> {
+    let renaming = Renaming::new(
+        &header_names(path, options, request)?,
+        &request.new_columns,
+    )?;
+    let plain = CsvRequest {
+        selection: Selection::Every,
+        ..renaming.in_file_names(request)?
+    };
+    let (from, to) = renaming.changes();
+    let lf = lazy_reader(path, options, read_options(options, &plain))
+        .finish()?
+        .rename(from, to, true);
+    Ok(match &request.row_index {
+        Some(ri) => lf.with_row_index(ri.name.clone(), Some(ri.offset)),
+        None => lf,
+    })
+}
+
 fn csv_scan(
     path: &str,
     options: &CompatCsvOptions,
@@ -407,22 +482,27 @@ fn csv_scan(
             },
         )?;
     }
-    let reader = lazy_reader(path, options, read_options(options, &request));
-    let lf = with_new_columns(reader, &request)?.finish()?;
-    check_header(path, options, &request)?;
+    let lf = if request.new_columns.is_empty() {
+        let lf = lazy_reader(path, options, read_options(options, &request))
+            .finish()?;
+        if request.overrides.is_some() {
+            require_override_columns(
+                &header_names(path, options, &request)?,
+                &request,
+            )?;
+        }
+        lf
+    } else {
+        renamed_scan(path, options, &request)?
+    };
     select(lf, &request)
 }
 
-fn eager_read(
+fn eager_plain(
     path: &str,
     options: &CompatCsvOptions,
     request: &CsvRequest,
 ) -> PolarsResult<DataFrame> {
-    if request.overrides.is_some() || request.row_index.is_some() {
-        let header = header_names(path, options, request)?;
-        require_override_columns(&header, request)?;
-        require_free_row_index(&header, request)?;
-    }
     let read = read_options(options, request);
     let read = match &request.selection {
         Selection::Every => read,
@@ -437,16 +517,53 @@ fn eager_read(
         .finish()
 }
 
+fn eager_renamed(
+    path: &str,
+    options: &CompatCsvOptions,
+    request: &CsvRequest,
+) -> PolarsResult<DataFrame> {
+    let renaming = Renaming::new(
+        &header_names(path, options, request)?,
+        &request.new_columns,
+    )?;
+    let mut df = eager_plain(path, options, &renaming.in_file_names(request)?)?;
+    let names: Vec<PlSmallStr> = df
+        .get_column_names()
+        .into_iter()
+        .map(|name| renaming.new_name(name))
+        .collect();
+    df.set_column_names(&names)?;
+    match &request.row_index {
+        Some(ri) => df.with_row_index(ri.name.clone(), Some(ri.offset)),
+        None => Ok(df),
+    }
+}
+
+fn eager_read(
+    path: &str,
+    options: &CompatCsvOptions,
+    request: &CsvRequest,
+) -> PolarsResult<DataFrame> {
+    if !request.new_columns.is_empty() {
+        return eager_renamed(path, options, request);
+    }
+    if request.overrides.is_some() || request.row_index.is_some() {
+        let header = header_names(path, options, request)?;
+        require_override_columns(&header, request)?;
+        require_free_row_index(&header, request)?;
+    }
+    eager_plain(path, options, request)
+}
+
 fn csv_read(
     path: &str,
     options: &CompatCsvOptions,
     arrays: &CsvArrays,
 ) -> PolarsResult<DataFrame> {
-    let request = decode(options, arrays)?;
-    if is_pattern(path, options.glob) || !request.new_columns.is_empty() {
+    if is_pattern(path, options.glob) {
         return csv_scan(path, options, arrays)?.collect();
     }
-    eager_read(path, options, &request)
+    eager_read(path, options, &decode(options, arrays)?)
 }
 
 macro_rules! csv_entry {

@@ -193,8 +193,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
   keywords, as Python's `read_csv` does: `dataframe_read_csv_v2`
-  reads a glob pattern, or any read with `#:new-columns`, by scan and
-  collect, and a single file with 0.55's
+  reads a glob pattern by scan and collect, and a single file with 0.55's
   eager `CsvReader`, which is about three times faster on nycflights. Both
   are built from one decoded request, and a table-driven Rust test holds
   the eager, one-file-glob and scan reads to identical frames and error
@@ -206,15 +205,24 @@ it. Racket side: `define-compat` with `#:c-id`.
   that names a column names it as `#:new-columns` leaves it, as Python's
   `scan_csv` does; Python's `read_csv` selects and applies a `null_values`
   mapping by the file's names and renames its result afterwards, the row
-  index among them. A row index named like a column is an error on every
-  path, where Python's eager `read_csv` returns a frame with the name twice.
+  index among them. `#:new-columns` is applied by reading the header,
+  translating every by-name keyword back to the file's names, reading, and
+  renaming afterwards (`df.set_column_names` eagerly, `LazyFrame::rename` in a
+  scan), with any row index added after the rename; so a per-column null
+  marker counts during type inference, where Python's `scan_csv` (0.55's
+  `with_schema_modify`) infers before renaming, and the eager and scan paths
+  stay independent for the parity test. A row index named like a column is
+  an error on every path, where Python's eager `read_csv` returns a frame
+  with the name twice.
   `write-csv` is the eager `CsvWriter`; Python 1.42.1's `write_csv` runs
-  `sink_csv`, and a Racket test holds the two to the same bytes for every
-  option. The one
-  deliberate difference is the separator guard: when
-  `#:separator` and `#:new-columns` are not given, a one-column result (a
-  row index aside) whose header splits on a
-  tab, `;` or `|` (and whose first row agrees) raises. The eager readers
+  `sink_csv`, and a Racket test holds the two to the same bytes for 18
+  option sets, one of them a batch size of 1. The writer clamps the batch
+  size to the frame's height, which writes the same bytes, because 0.55
+  multiplies it by the thread count unchecked (`write_impl.rs`), and a
+  wrapped product loops forever. The one read-csv / scan-csv difference is
+  the separator guard: when `#:separator`, `#:new-columns` and `#:columns`
+  are not given, a one-column result (a row index aside) whose header
+  splits on a tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
   a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
   of a directory is an error, as in Python; a scan reads every file in it.
@@ -225,7 +233,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   header lacks. That check reads the header because 0.55 applies overrides
   by name and ignores an absent one, as Python 1.42.1 does; a misspelt
   override would otherwise do nothing. `#:new-columns` reads the header at
-  scan too (0.55's `with_schema_modify`, as Python's `scan_csv` does), so
+  scan too, to translate names, as Python's `scan_csv` does, so
   either keyword reports a file that cannot be opened at scan, with the
   cause alone. `call/foreign-error` respells 0.55's
   empty-expansion reason, which carries the pattern, as `no files match the

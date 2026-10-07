@@ -38,6 +38,10 @@
 
 (define eol-char/c (flat-named-contract 'eol-char/c ascii-char?))
 
+(define size-max (sub1 (expt 2 64)))
+(define csv-size/c (flat-named-contract 'csv-size/c (integer-in 0 size-max)))
+(define float-precision-max #xFFFF)
+
 (define csv-dtype/c
   (flat-named-contract
    'csv-dtype/c
@@ -58,7 +62,7 @@
 
 (define column-selection/c
   (or/c (and/c (listof string?) distinct?)
-        (and/c (listof exact-nonnegative-integer?) distinct?)))
+        (and/c (listof csv-size/c) distinct?)))
 
 (define (given v default)
   (if (unsupplied-arg? v) default v))
@@ -127,14 +131,14 @@
    [#:quote-char quote-char (or/c #f csv-char/c) #\"]
    [#:eol-char eol-char eol-char/c #\newline]
    [#:comment-prefix comment-prefix (or/c #f non-empty-string?) #f]
-   [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-   [#:skip-lines skip-lines exact-nonnegative-integer? 0]
-   [#:skip-rows-after-header skip-rows-after-header exact-nonnegative-integer? 0]
-   [#:n-rows n-rows (or/c #f exact-nonnegative-integer?) #f]
+   [#:skip-rows skip-rows csv-size/c 0]
+   [#:skip-lines skip-lines csv-size/c 0]
+   [#:skip-rows-after-header skip-rows-after-header csv-size/c 0]
+   [#:n-rows n-rows (or/c #f csv-size/c) #f]
    [#:null-values null-values (or/c #f string? (listof string?) column-null-values/c) #f]
    [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
    [#:infer-schema infer-schema boolean? #t]
-   [#:infer-schema-length infer-schema-length (or/c #f exact-nonnegative-integer?) 100]
+   [#:infer-schema-length infer-schema-length (or/c #f csv-size/c) 100]
    [#:schema-overrides schema-overrides
                        (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
                        '()]
@@ -195,7 +199,7 @@
               new-columns
               column-names
               column-indices
-              (and has-header (not separator) (null? new-columns)))))
+              (and has-header (not separator) (null? new-columns) (null? columns)))))
 
 (define-syntax-parse-rule (define-csv-entry name:id c-id:id result:expr drop:id)
   (define-compat name
@@ -353,12 +357,12 @@
    [#:separator separator csv-char/c #\,]
    [#:line-terminator line-terminator string? "\n"]
    [#:quote-char quote-char csv-char/c #\"]
-   [#:batch-size batch-size exact-positive-integer? 1024]
+   [#:batch-size batch-size (integer-in 1 size-max) 1024]
    [#:datetime-format datetime-format (or/c #f string?) #f]
    [#:date-format date-format (or/c #f string?) #f]
    [#:time-format time-format (or/c #f string?) #f]
    [#:float-scientific float-scientific (or/c 'auto boolean?) 'auto]
-   [#:float-precision float-precision (or/c #f exact-nonnegative-integer?) #f]
+   [#:float-precision float-precision (or/c #f (integer-in 0 float-precision-max)) #f]
    [#:decimal-comma decimal-comma boolean? #f]
    [#:null-value null-value string? ""]
    [#:quote-style quote-style (or/c 'necessary 'always 'non-numeric 'never) 'necessary])

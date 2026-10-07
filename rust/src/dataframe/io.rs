@@ -129,29 +129,38 @@ fn quote_style(code: u8) -> PolarsResult<QuoteStyle> {
     })
 }
 
-struct CsvWriteStrings {
-    line_terminator: *const c_char,
-    null_value: *const c_char,
-    datetime_format: *const c_char,
-    date_format: *const c_char,
-    time_format: *const c_char,
+pub(crate) struct CsvWriteStrings {
+    pub(crate) line_terminator: *const c_char,
+    pub(crate) null_value: *const c_char,
+    pub(crate) datetime_format: *const c_char,
+    pub(crate) date_format: *const c_char,
+    pub(crate) time_format: *const c_char,
 }
 
-fn csv_writer<'a>(
-    file: &'a mut std::fs::File,
+pub(crate) fn csv_writer<W: std::io::Write>(
+    out: W,
     options: &CompatCsvWriteOptions,
     strings: &CsvWriteStrings,
-) -> PolarsResult<CsvWriter<&'a mut std::fs::File>> {
-    let batch_size = std::num::NonZeroUsize::new(options.batch_size)
-        .ok_or_else(
-            || polars_err!(ComputeError: "batch size must be positive"),
-        )?;
+    height: usize,
+) -> PolarsResult<CsvWriter<W>> {
+    let batch_size =
+        std::num::NonZeroUsize::new(options.batch_size.min(height.max(1)))
+            .ok_or_else(
+                || polars_err!(ComputeError: "batch size must be positive"),
+            )?;
+    polars_ensure!(
+        !options.has_float_precision
+            || options.float_precision <= u16::MAX as usize,
+        ComputeError: "float precision {} is over {}",
+        options.float_precision,
+        u16::MAX
+    );
     let line_terminator =
         optional_str(strings.line_terminator, "line terminator")?
             .unwrap_or_else(|| "\n".into());
     let null_value =
         optional_str(strings.null_value, "null value")?.unwrap_or_default();
-    Ok(CsvWriter::new(file)
+    Ok(CsvWriter::new(out)
         .include_header(options.include_header)
         .include_bom(options.include_bom)
         .with_separator(options.separator)
@@ -199,7 +208,7 @@ pub extern "C" fn dataframe_write_csv_with_options(
         time_format,
     };
     write_frame(df_ptr, path, |file, df| {
-        csv_writer(file, &options, &strings)?.finish(df)
+        csv_writer(file, &options, &strings, df.height())?.finish(df)
     })
 }
 

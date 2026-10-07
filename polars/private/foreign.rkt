@@ -66,11 +66,18 @@
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
+(define without-decompress
+  '("polars panicked: activate 'decompress' feature"
+    "cannot read compressed CSV file; compile with feature 'decompress'"))
+
 (define (respell reason)
-  (for/fold ([reason (if (or (regexp-match? empty-expansion reason)
-                             (equal? reason "no paths specified for this reader"))
-                         "no files match the pattern"
-                         reason)])
+  (for/fold ([reason (cond
+                       [(or (regexp-match? empty-expansion reason)
+                            (equal? reason "no paths specified for this reader"))
+                        "no files match the pattern"]
+                       [(member reason without-decompress)
+                        "cannot read compressed input; this build lacks polars' decompress feature"]
+                       [else reason])])
             ([(python racket) (in-dict racket-spellings)])
     (string-replace reason python racket)))
 

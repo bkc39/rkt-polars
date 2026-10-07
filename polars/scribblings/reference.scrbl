@@ -12,7 +12,7 @@
      (quote-syntax
       [#:columns columns
                  (or/c (and/c (listof string?) distinct?)
-                       (and/c (listof exact-nonnegative-integer?) distinct?))
+                       (and/c (listof csv-size/c) distinct?))
                  '()]))
    (define csv-shared-arguments
      (syntax->list
@@ -21,8 +21,8 @@
         [#:separator separator (or/c csv-char/c #f) #f]
         [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
         [#:quote-char quote-char (or/c csv-char/c #f) #\"]
-        [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-        [#:skip-lines skip-lines exact-nonnegative-integer? 0]
+        [#:skip-rows skip-rows csv-size/c 0]
+        [#:skip-lines skip-lines csv-size/c 0]
         [#:schema-overrides schema-overrides
                             (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
                             '()]
@@ -35,10 +35,10 @@
         [#:ignore-errors ignore-errors boolean? #f]
         [#:try-parse-dates try-parse-dates boolean? #f]
         [#:infer-schema infer-schema boolean? #t]
-        [#:infer-schema-length infer-schema-length (or/c exact-nonnegative-integer? #f) 100]
-        [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
+        [#:infer-schema-length infer-schema-length (or/c csv-size/c #f) 100]
+        [#:n-rows n-rows (or/c csv-size/c #f) #f]
         [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-        [#:skip-rows-after-header skip-rows-after-header exact-nonnegative-integer? 0]
+        [#:skip-rows-after-header skip-rows-after-header csv-size/c 0]
         [#:row-index-name row-index-name (or/c string? #f) #f]
         [#:row-index-offset row-index-offset (integer-in 0 #xFFFFFFFF) 0]
         [#:eol-char eol-char eol-char/c #\newline]
@@ -59,12 +59,12 @@
        [#:separator separator csv-char/c #\,]
        [#:line-terminator line-terminator string? "\n"]
        [#:quote-char quote-char csv-char/c #\"]
-       [#:batch-size batch-size exact-positive-integer? 1024]
+       [#:batch-size batch-size (integer-in 1 (sub1 (expt 2 64))) 1024]
        [#:datetime-format datetime-format (or/c string? #f) #f]
        [#:date-format date-format (or/c string? #f) #f]
        [#:time-format time-format (or/c string? #f) #f]
        [#:float-scientific float-scientific (or/c 'auto boolean?) 'auto]
-       [#:float-precision float-precision (or/c exact-nonnegative-integer? #f) #f]
+       [#:float-precision float-precision (or/c (integer-in 0 65535) #f) #f]
        [#:decimal-comma decimal-comma boolean? #f]
        [#:null-value null-value string? ""]
        [#:quote-style quote-style (or/c 'necessary 'always 'non-numeric 'never)
@@ -499,7 +499,9 @@ total
   against @racket[current-directory], whose own name is never read as a
   pattern. A directory is an error: name its files with a pattern.
 
-  A @racket[csv-char/c] is one ASCII character other than newline or return.
+  A @racket[csv-char/c] is one ASCII character other than newline or return,
+  and a @racket[csv-size/c] a count or position Polars takes as a native
+  size, from @racket[0] to @racket[(sub1 (expt 2 64))].
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
   differ from it, and @racket[#:quote-char #f] turns quoting off. An
   @racket[eol-char/c] is any ASCII character; @racket[eol-char] ends a line
@@ -517,7 +519,9 @@ total
   column with @racket[#:missing-utf8-is-empty-string #t]. Column types
   are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
   reads every row, and @racket[0], or @racket[#:infer-schema #f], makes every
-  column a string.
+  column a string. Polars reserves room for that many rows first, so an
+  enormous count can exhaust memory and abort the process, as in Python;
+  use @racket[#f] to read every row (#200).
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
   accepts except a duration, which Polars cannot parse from CSV, and an
@@ -543,7 +547,8 @@ total
   is a row number past @racket[#xFFFFFFFF]. Every keyword that names a
   column --- @racket[columns], @racket[schema-overrides], a per-column
   @racket[null-values] --- names it as @racket[new-columns] leaves it, as
-  Python's @tt{scan_csv} does. Python's @tt{read_csv} instead selects
+  Python's @tt{scan_csv} does; unlike there, a marker so named also counts
+  when the column's type is inferred. Python's @tt{read_csv} instead selects
   @tt{columns} and applies a @tt{null_values} mapping by the file's names,
   then renames the first columns of its result, the row index among them.
 
@@ -562,8 +567,8 @@ total
   read eagerly rather than through a plan, which is faster. There is one
   extra check, stricter than Python's
   @tt{read_csv}, which returns the one column. When @racket[separator] is
-  @racket[#f], @racket[new-columns] is empty and the file reads as one
-  column, a row index aside, whose header splits on a tab, @litchar{;} or
+  @racket[#f], @racket[new-columns] and @racket[columns] are empty and the
+  file reads as one column, a row index aside, whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to
   pass --- unless the first row is not a string, or splits into a different
   number of fields. Passing a @racket[separator], even @racket[#\,], turns
@@ -694,24 +699,21 @@ stations
     (ref #:columns "year")
     dtype)]
 
-  Line ends and empty files. Here @racket[lines] is a path in the temporary
-  directory holding @litchar{a,b;1,x;2,y;}, and @racket[nothing] an empty
-  one:
+  Line ends and empty files. @filepath{eol.csv} ends each line with
+  @litchar{;}, and @racket[nothing] is an empty file in the temporary
+  directory:
 
   @examples[#:eval ev #:hidden
-(define lines (build-path (find-system-path 'temp-dir) "polars-doc-lines.csv"))
 (define nothing (build-path (find-system-path 'temp-dir) "polars-doc-nothing.csv"))
-(call-with-output-file lines #:exists 'replace
-  (lambda (out) (write-string "a,b;1,x;2,y;" out)))
 (call-with-output-file nothing #:exists 'replace void)]
 
   @examples[#:eval ev #:label #f
-(read-csv lines #:eol-char #\;)
+(read-csv "eol.csv" #:eol-char #\;)
+(collect (scan-csv "eol.csv" #:eol-char #\; #:row-index-name "row" #:row-index-offset 1))
 (eval:error (read-csv nothing))
 (read-csv nothing #:raise-if-empty #f)]
 
   @examples[#:eval ev #:hidden
-(delete-file lines)
 (delete-file nothing)]}
 
 @defcsvscanproc[(scan-csv lazyframe?)]{
@@ -754,12 +756,14 @@ stations
   holds the separator, the quote or a line end (@racket['necessary]),
   always, when it is not a number (@racket['non-numeric]), or never, which
   can write a file that does not read back. @racket[batch-size] is the rows
-  each thread formats at a time.
+  each thread formats at a time, up to @racket[(sub1 (expt 2 64))] as in
+  Python; a batch larger than @racket[d] writes it in one.
 
   @racket[datetime-format], @racket[date-format] and @racket[time-format]
   are @hyperlink["https://docs.rs/chrono/latest/chrono/format/strftime/index.html"]{chrono}
   format strings, by default ISO 8601 at the column's precision.
-  @racket[float-precision] fixes the digits after the decimal point;
+  @racket[float-precision] fixes the digits after the decimal point, at
+  most 65535, the most Rust formats;
   @racket[float-scientific] writes every float in scientific notation
   (@racket[#t]), none (@racket[#f]), or as Polars does by default
   (@racket['auto], Python's @tt{None}): the shortest digits that read back

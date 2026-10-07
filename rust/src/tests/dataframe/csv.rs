@@ -963,6 +963,65 @@ fn new_columns_rename_before_the_other_keywords_name_columns() {
 }
 
 #[test]
+fn a_null_value_named_after_a_rename_counts_when_types_are_inferred() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "n.csv", b"a,b\n1,x\nNA,y\n3,z\n");
+    let renamed = Csv {
+        new_columns: vec![cstr("p")],
+        named_nulls: vec![(cstr("p"), cstr("NA"))],
+        ..Default::default()
+    };
+    let plain = Csv {
+        named_nulls: vec![(cstr("a"), cstr("NA"))],
+        ..Default::default()
+    };
+    let df = renamed.read(&path);
+    assert_eq!(df.get_column_names(), ["p", "b"]);
+    assert_eq!(df.column("p").unwrap().dtype(), &DataType::Int64);
+    assert_eq!(df.column("p").unwrap().null_count(), 1);
+    let mut expected = plain.read(&path);
+    expected.rename("a", "p".into()).unwrap();
+    assert!(df.equals_missing(&expected));
+    assert_eq!(df.schema(), expected.schema());
+    assert!(expected.equals_missing(&renamed.scan_collect(&path)));
+    assert_eq!(expected.schema(), renamed.scan_collect(&path).schema());
+}
+
+#[test]
+fn a_rename_matches_the_plain_read_renamed_afterwards() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(
+        dir.path(),
+        "m.csv",
+        b"a,b,c\n1,2024-01-02,x\n,2024-01-03,y\n3,,z\n",
+    );
+    let mut renamed = Csv {
+        new_columns: vec![cstr("c"), cstr("a")],
+        row_index_name: Some(cstr("b")),
+        ..Default::default()
+    };
+    renamed.options.try_parse_dates = true;
+    renamed.options.row_index_offset = 5;
+    let mut plain = Csv::default();
+    plain.options.try_parse_dates = true;
+    let mut expected = plain.read(&path);
+    let msg = renamed.read_err(&path);
+    assert_eq!(
+        msg,
+        "duplicate: column with name 'c' has more than one occurrence"
+    );
+    renamed.new_columns = vec![cstr("c"), cstr("a"), cstr("b2")];
+    expected.set_column_names(&["c", "a", "b2"]).expect("names");
+    let expected = expected
+        .with_row_index("b".into(), Some(5))
+        .expect("row index");
+    for got in [renamed.read(&path), renamed.scan_collect(&path)] {
+        assert_eq!(got.schema(), expected.schema());
+        assert!(got.equals_missing(&expected), "{:?}", got);
+    }
+}
+
+#[test]
 fn a_selection_keeps_the_file_order_and_the_row_index() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "s.csv", b"a,b,c\n1,2,3\n4,5,6\n");
@@ -1012,6 +1071,108 @@ fn a_row_index_that_takes_a_column_name_is_refused_on_every_path() {
         "duplicate: cannot add row_index with name 'x': column already exists in file.";
     assert_eq!(renamed.read_err(&path), expected);
     assert_eq!(renamed.scan_err(&path), expected);
+}
+
+struct Capped {
+    bytes: Vec<u8>,
+    cap: usize,
+}
+
+impl std::io::Write for Capped {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.bytes.len() + buf.len() > self.cap {
+            return Err(std::io::Error::other("the write ran past its cap"));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn written_in_batches(batch_size: usize) -> Result<String, String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut df = DataFrame::new_infer_height(vec![Column::new(
+            "x".into(),
+            [1i64, 2, 3],
+        )])
+        .unwrap();
+        let options = CompatCsvWriteOptions {
+            batch_size,
+            ..Default::default()
+        };
+        let strings = CsvWriteStrings {
+            line_terminator: ptr::null(),
+            null_value: ptr::null(),
+            datetime_format: ptr::null(),
+            date_format: ptr::null(),
+            time_format: ptr::null(),
+        };
+        let mut out = Capped {
+            bytes: Vec::new(),
+            cap: 1 << 16,
+        };
+        let result = csv_writer(&mut out, &options, &strings, df.height())
+            .and_then(|mut writer| writer.finish(&mut df))
+            .map(|()| String::from_utf8(out.bytes).unwrap())
+            .map_err(|err| err.to_string());
+        let _ = sender.send(result);
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("the write finishes")
+}
+
+#[test]
+fn any_batch_size_writes_each_row_once() {
+    for batch_size in [1, 2, 3, 4, 1 << 32, 1 << 63, (1 << 63) + 1, usize::MAX]
+    {
+        assert_eq!(
+            written_in_batches(batch_size).as_deref(),
+            Ok("x\n1\n2\n3\n"),
+            "batch size {}",
+            batch_size
+        );
+    }
+    assert_eq!(
+        written_in_batches(0),
+        Err("batch size must be positive".to_string())
+    );
+}
+
+#[test]
+fn a_float_precision_past_u16_is_refused() {
+    let mut df =
+        DataFrame::new_infer_height(vec![Column::new("f".into(), [1.5f64])])
+            .unwrap();
+    let mut options = CompatCsvWriteOptions {
+        has_float_precision: true,
+        float_precision: u16::MAX as usize,
+        ..Default::default()
+    };
+    let text = written(&mut df, options);
+    assert_eq!(text.len(), "f\r\n1.\r\n".len() + u16::MAX as usize);
+    options.float_precision += 1;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let p = cstr(dir.path().join("p.csv").to_str().unwrap());
+    let status = dataframe_write_csv_with_options(
+        &mut df,
+        p.as_ptr(),
+        options,
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    );
+    assert_eq!(status, 4);
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("float precision 65536 is over 65535")
+    );
 }
 
 fn written(df: &mut DataFrame, options: CompatCsvWriteOptions) -> String {
