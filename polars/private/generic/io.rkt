@@ -553,15 +553,17 @@
   (define out (pq-file "produce.parquet"))
   (write-parquet pq-produce out #:compression 'gzip #:compression-level 9 #:statistics #f)
   (check-true (frame=? (read-parquet out) pq-produce))
-  (write-parquet pq-produce out #:compression 'lz4 #:row-group-size 2 #:statistics '(null-count)
+  (write-parquet pq-produce out #:compression 'lz4 #:row-group-size 2
+                 #:statistics '(min max null-count distinct-count)
                  #:data-page-size 4096)
   (check-true (frame=? (read-parquet out) pq-produce))
   (check-regexp-match
-   #rx"^write-parquet: contract violation.*compression-level must be within the codec's range"
+   #rx"^write-parquet: contract violation\n  #:compression-level 30 is outside zstd's levels, 1 to 22\n"
    (pq-message (lambda () (contracted:write-parquet pq-produce out #:compression-level 30))))
   (check-regexp-match
-   #rx"^write-parquet: contract violation\n  expected: .*min-with-max[?]"
-   (pq-message (lambda () (contracted:write-parquet pq-produce out #:statistics '(min)))))
+   #rx"^write-parquet: contract violation\n  expected: parquet-statistics/c\n  given: '[(]null-count[)]"
+   (pq-message (lambda () (contracted:write-parquet pq-produce out #:statistics '(null-count)))))
+  (check-true (frame=? (read-parquet out) pq-produce))
   (check-equal? (pq-message (lambda () (write-parquet pq-produce "/no/such/dir/out.parquet")))
                 (string-append "write-parquet: failed to write parquet to /no/such/dir/out.parquet: "
                                "cannot create file: No such file or directory (os error 2)"))

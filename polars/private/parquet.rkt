@@ -39,11 +39,16 @@
 (define parallel/c (symbols/c 'parquet-parallel/c parallel-codes))
 (define compression/c (symbols/c 'parquet-compression/c compression-codes))
 (define statistic/c (symbols/c 'parquet-statistic/c statistic-bits))
-(define (min-with-max? names)
-  (or (not (memq 'min names)) (and (memq 'max names) #t)))
+(define (complete-statistics? names)
+  (or (null? names)
+      (and (memq 'min names) (memq 'max names) (memq 'null-count names) #t)))
 (define statistics/c
-  (or/c boolean? 'full
-        (and/c (listof statistic/c) (flat-named-contract 'min-with-max? min-with-max?))))
+  (rename-contract
+   (or/c boolean? 'full (and/c (listof statistic/c) complete-statistics?))
+   'parquet-statistics/c))
+(define name/c
+  (flat-named-contract 'nul-free-string?
+                       (lambda (v) (and (string? v) (not (memv #\nul (string->list v)))))))
 (define column-index/c
   (rename-contract (integer-in (- (expt 2 63)) (sub1 (expt 2 63))) 'column-index/c))
 (define row-index-offset/c (integer-in 0 (sub1 (expt 2 32))))
@@ -58,9 +63,12 @@
     [(list _ low high) (cons low high)]
     [#f #f]))
 
-(define (level-fits? compression level)
-  (match* ((level-range (given compression 'zstd)) (given level #f))
-    [((cons low high) (? exact-integer? level)) (<= low level high)]
+(define (level-problem compression level)
+  (define codec (given compression 'zstd))
+  (match* ((level-range codec) (given level #f))
+    [((cons low high) (? exact-integer? level))
+     (or (<= low level high)
+         (format "#:compression-level ~a is outside ~s's levels, ~a to ~a" level codec low high))]
     [(_ _) #t]))
 
 (define (statistics->bits statistics)
@@ -99,13 +107,13 @@
   (define-parquet-options (options:id io/c:id param:id)
     ([arg:id arg/c:expr] ...) range/c:expr
     ([kw:keyword name:id contract:expr default:expr] ...)
-    (~optional (~seq #:pre (pre-name:id ...) pre-message:str pre-check:expr))
+    (~optional (~seq #:pre (pre-name:id ...) pre-check:expr))
     body:expr)
   (begin
     (define (io/c param)
       (->i ([arg arg/c] ...)
            ((~@ kw [name contract]) ...)
-           (~? (~@ #:pre/name (pre-name ...) pre-message pre-check))
+           (~? (~@ #:pre/desc (pre-name ...) pre-check))
            [result range/c]))
     (define (options (~@ kw [name default]) ...)
       body)))
@@ -114,14 +122,14 @@
   (define scan-keywords
     (quote-syntax
      ([#:n-rows n-rows size/c #f]
-      [#:row-index-name row-index-name (or/c #f string?) #f]
+      [#:row-index-name row-index-name (or/c #f name/c) #f]
       [#:row-index-offset row-index-offset row-index-offset/c 0]
       [#:parallel parallel parallel/c 'auto]
       [#:use-statistics use-statistics boolean? #t]
       [#:glob glob boolean? #t]
       [#:rechunk rechunk boolean? #f]
       [#:low-memory low-memory boolean? #f]
-      [#:include-file-paths include-file-paths (or/c #f string?) #f]
+      [#:include-file-paths include-file-paths (or/c #f name/c) #f]
       [#:missing-columns missing-columns (or/c 'raise 'insert) 'raise]))))
 
 (define-syntax-parse-rule
@@ -134,7 +142,7 @@
     body))
 
 (define-parquet-reader-options (read-options parquet-reader/c)
-  ([#:columns columns (or/c #f (listof string?) (listof column-index/c)) #f])
+  ([#:columns columns (or/c #f (listof name/c) (listof column-index/c)) #f])
   (read-call (make-CompatParquetReadOptions
               (and n-rows #t) (code parallel-codes parallel) use-statistics low-memory
               rechunk #f glob (eq? missing-columns 'insert) row-index-offset (or n-rows 0))
@@ -155,8 +163,7 @@
    [#:row-group-size row-group-size size/c #f]
    [#:data-page-size data-page-size size/c #f])
   #:pre (compression compression-level)
-  "compression-level must be within the codec's range: gzip 0 to 9, brotli 0 to 11, zstd 1 to 22"
-  (level-fits? compression compression-level)
+  (level-problem compression compression-level)
   (let ([level (and (level-range compression) compression-level)])
     (make-CompatParquetWriteOptions (code compression-codes compression)
                                     (and level #t)
@@ -253,11 +260,13 @@
 (module+ test
   (require rackunit
            racket/file
+           racket/runtime-path
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list make-list)
            (only-in racket/string string-contains?)
            (only-in polars/private/expr
-                    col expr-gt lazyframe-collect lazyframe-explain lazyframe-filter)
+                    col dataframe-lazy expr-gt lazyframe-collect lazyframe-explain
+                    lazyframe-filter lazyframe-select)
            (only-in polars/private/foreign
                     dataframe-column dataframe-column-names dataframe-drop-count
                     dataframe-drop dataframe-height dataframe-new dataframe-shape
@@ -391,6 +400,17 @@
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.parquet"))
   (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
              (lambda () (dataframe-write-parquet cities unwritable)))
+
+  (define kept-dir (in-scratch "kept"))
+  (make-directory* kept-dir)
+  (define kept (build-path kept-dir "kept.parquet"))
+  (dataframe-write-parquet cities kept)
+  (define kept-bytes (file->bytes kept))
+  (define floats (dataframe-new (list (series-new-f64 "f" '(1.5 2.5 3.5)))))
+  (define min-max-only (make-CompatParquetWriteOptions 5 #f 3 #f #f 0 0 0))
+  (check-equal? (dataframe-write-parquet/raw floats (path->string kept) min-max-only) 4)
+  (check-equal? (file->bytes kept) kept-bytes)
+  (check-equal? (directory-list kept-dir) (list (string->path "kept.parquet")))
   (define junk (in-scratch "junk.bin"))
   (call-with-output-file junk
     (lambda (out) (void (write-string "this is not parquet" out)))
@@ -488,8 +508,8 @@
   (check-equal? (written-size '(#:statistics . (min max null-count))) (written-size))
   (check-equal? (written-size '(#:statistics . full))
                 (written-size '(#:statistics . (min max distinct-count null-count))))
-  (check < unstated (written-size '(#:statistics . (null-count))))
-  (check < (written-size '(#:statistics . (null-count))) (written-size))
+  (check-equal? (written-size '(#:statistics . (null-count max distinct-count min)))
+                (written-size '(#:statistics . full)))
   (check < (written-size) (written-size '(#:row-group-size . 1000)))
   (check-equal? (written-size '(#:row-group-size . 0)) (written-size))
   (check < (written-size) (written-size '(#:data-page-size . 64)))
@@ -504,7 +524,9 @@
                    '((#:row-index-name . a)) '((#:row-index-offset . -1))
                    `((#:row-index-offset . ,(expt 2 32)))
                    '((#:parallel . row_groups)) '((#:use-statistics . 1)) '((#:glob . "no"))
-                   '((#:missing-columns . ignore)) '((#:include-file-paths . #t)))])
+                   '((#:missing-columns . ignore)) '((#:include-file-paths . #t))
+                   '((#:columns . ("a\u0000zz"))) '((#:row-index-name . "i\u0000j"))
+                   '((#:include-file-paths . "f\u0000g")))])
     (check-exn (blamed? 'dataframe-read-parquet)
                (lambda () (keyword-apply/sorted contracted:dataframe-read-parquet kvs
                                                 numbers-parquet))
@@ -527,6 +549,9 @@
                    '((#:compression . 5) (#:compression-level . 3))
                    '((#:statistics . partial)) '((#:statistics . (min bogus)))
                    '((#:statistics . (min))) '((#:statistics . (min null-count)))
+                   '((#:statistics . (null-count))) '((#:statistics . (max null-count)))
+                   '((#:statistics . (distinct-count null-count)))
+                   '((#:statistics . (min max))) '((#:statistics . (min max distinct-count)))
                    '((#:row-group-size . -1)) '((#:data-page-size . 1.5))
                    `((#:row-group-size . ,(expt 2 64))) `((#:data-page-size . ,(expt 2 64))))])
     (check-exn (blamed? 'dataframe-write-parquet)
@@ -534,10 +559,37 @@
                                                 numbers (in-scratch "never.parquet")))
                (format "~s" kvs)))
   (check-regexp-match
-   #rx"compression-level must be within the codec's range: gzip 0 to 9, brotli 0 to 11, zstd 1 to 22"
+   #rx"^dataframe-write-parquet: contract violation\n  #:compression-level 0 is outside zstd's levels, 1 to 22\n"
    (message-of (lambda () (contracted:dataframe-write-parquet numbers (in-scratch "never.parquet")
                                                               #:compression-level 0))))
+  (check-regexp-match
+   #rx"^dataframe-write-parquet: contract violation\n  #:compression-level 10 is outside gzip's levels, 0 to 9\n"
+   (message-of (lambda () (contracted:dataframe-write-parquet numbers (in-scratch "never.parquet")
+                                                              #:compression 'gzip
+                                                              #:compression-level 10))))
+  (check-false (regexp-match? #rx"unsupplied"
+                              (message-of
+                               (lambda ()
+                                 (contracted:dataframe-write-parquet
+                                  numbers (in-scratch "never.parquet") #:compression-level 0)))))
   (check-false (file-exists? (in-scratch "never.parquet")))
+
+  (define-runtime-path produce-parquet "../scribblings/data/produce.parquet")
+  (check-regexp-match
+   #rx"^dataframe-read-parquet: failed to read parquet from [^:]*produce[.]parquet: column index 3 is out of range for 3 columns$"
+   (message-of (lambda () (contracted:dataframe-read-parquet produce-parquet #:columns '(3)))))
+  (check-exn (blamed? 'lazyframe-scan-parquet)
+             (lambda () (contracted:lazyframe-scan-parquet produce-parquet #:missing-columns 'ignore)))
+  (check-exn (blamed? 'dataframe-write-parquet)
+             (lambda () (contracted:dataframe-write-parquet (dataframe-read-parquet produce-parquet)
+                                                            (in-scratch "raw.parquet")
+                                                            #:compression 'lzo)))
+  (check-regexp-match
+   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"colour\""
+   (message-of (lambda ()
+                 (lazyframe-explain
+                  (lazyframe-select (dataframe-lazy (dataframe-read-parquet produce-parquet))
+                                    (list (col "colour")))))))
 
   (define (settle!)
     (for ([_ (in-range 4)])

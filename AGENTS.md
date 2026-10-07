@@ -234,7 +234,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   the frame into equal parts); by default its groups are about 512² rows,
   the sink's about 122,880. The frames read back are the same. As in
   Python, `#:row-group-size 0` is the default and a codec without levels
-  ignores `#:compression-level`. The
+  ignores `#:compression-level`. Stricter than Python, a non-empty
+  `#:statistics` list must name `'min`, `'max` and `'null-count`: without
+  min and max polars writes a page index that marks pages holding values as
+  null pages (#203), and without the null count it fails at the footer on a
+  column it does not dictionary-encode. A name passed as a C string
+  (`#:columns`, `#:row-index-name`, `#:include-file-paths`) refuses a NUL in
+  the contract, which would otherwise truncate it (#165).
+- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`): it
+  writes a staging file beside the target and renames it over the target
+  only once the write succeeds, so a failed write leaves an existing file
+  as it was and no partial file behind. The
   Parquet verbs report under the verb's own name (`read-parquet:`), the
   low-level bindings under theirs (#153). `dataframe_read_parquet`,
   `dataframe_write_parquet`, `lazyframe_scan_parquet` and

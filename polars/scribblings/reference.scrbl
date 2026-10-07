@@ -605,7 +605,7 @@ total
        [#:statistics statistics
                      (or/c boolean? 'full
                            (and/c (listof (or/c 'min 'max 'distinct-count 'null-count))
-                                  min-with-max?))
+                                  complete-statistics?))
                      #t]
        [#:row-group-size row-group-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
        [#:data-page-size data-page-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])))
@@ -719,11 +719,12 @@ total
   it, as in Python. @racket[statistics] writes each column chunk's minimum,
   maximum and null count by default; @racket[#f] writes none,
   @racket['full] also asks for the distinct count (which Polars writes for
-  boolean columns), and a list names the ones to write. A list that names
-  @racket['min] must name @racket['max]; as in Python, a list that names any
-  statistic but not @racket['null-count] fails for a column Polars does not
-  dictionary-encode (floats, booleans, and integers or strings with many
-  distinct values).
+  boolean columns), and a list names the ones to write. A non-empty list
+  must name @racket['min], @racket['max] and @racket['null-count], where
+  Python takes any set: without the minimum and maximum, Polars writes a
+  page index that marks pages holding values as null pages, so a reader that
+  prunes pages by it can skip rows a filter keeps (#203); without the
+  null count, it fails on a column it does not dictionary-encode.
   @racket[row-group-size] puts that many rows in each row group, the last
   taking the rest. By default, or with @racket[0] (which Python also takes
   as the default), the writer makes groups of about 512² rows, where
@@ -735,10 +736,11 @@ total
 (define out (build-path parquet-dir "produce.parquet"))
 (write-parquet produce out #:compression 'gzip #:compression-level 9 #:statistics #f)
 (read-parquet out)
-(write-parquet produce out #:compression 'lz4 #:row-group-size 2 #:statistics '(null-count)
-               #:data-page-size 4096)
+(write-parquet produce out #:compression 'lz4 #:row-group-size 2
+               #:statistics '(min max null-count distinct-count) #:data-page-size 4096)
 (read-parquet out)
 (eval:error (write-parquet produce out #:compression-level 30))
+(eval:error (write-parquet produce out #:statistics '(null-count)))
 (eval:error (write-parquet produce "/no/such/dir/out.parquet"))]}
 
 @deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
@@ -1665,7 +1667,12 @@ generic operations are simply the preferred surface.
 (dataframe-write-parquet (dataframe-read-parquet "produce.parquet")
                          (build-path parquet-dir "raw.parquet")
                          #:compression 'snappy)
-(dataframe-height (dataframe-read-parquet (build-path parquet-dir "raw.parquet")))]
+(dataframe-height (dataframe-read-parquet (build-path parquet-dir "raw.parquet")))
+(eval:error (dataframe-read-parquet "produce.parquet" #:columns '(3)))
+(eval:error (lazyframe-scan-parquet "produce.parquet" #:missing-columns 'ignore))
+(eval:error (dataframe-write-parquet (dataframe-read-parquet "produce.parquet")
+                                     (build-path parquet-dir "raw.parquet")
+                                     #:compression 'lzo))]
 
   @examples[#:eval ev #:hidden
 (delete-directory/files parquet-dir)]}
@@ -1706,7 +1713,10 @@ are the wrapper-returning equivalents.
   The plan under @racket[explain], which wraps it.
 
   @examples[#:eval ev
-(displayln (lazyframe-explain (dataframe-lazy (dataframe-read-parquet "produce.parquet"))))]}
+(displayln (lazyframe-explain (dataframe-lazy (dataframe-read-parquet "produce.parquet"))))
+(eval:error (lazyframe-explain
+             (lazyframe-select (dataframe-lazy (dataframe-read-parquet "produce.parquet"))
+                               (list (col "colour")))))]}
 
 @deftogether[(@defproc[(lazyframe-select       [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
               @defproc[(lazyframe-with-columns [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]

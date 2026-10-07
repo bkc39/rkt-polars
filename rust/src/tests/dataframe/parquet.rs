@@ -172,26 +172,21 @@ fn write_options_validate_the_compression_level() {
     let level_error = |options: CompatParquetWriteOptions| {
         parquet_write_options(&options).err().unwrap().to_string()
     };
-    for (compression, level, range) in [
-        (2, 10, "0..=9"),
-        (2, -1, "0..=9"),
-        (2, 300, "0..=9"),
-        (3, 12, "0..=11"),
-        (3, -1, "0..=11"),
-        (5, 0, "1..=22"),
-        (5, 23, "1..=22"),
+    for (compression, level, codec) in [
+        (2, 10, "gzip"),
+        (2, -1, "gzip"),
+        (2, 300, "gzip"),
+        (3, 12, "brotli"),
+        (3, -1, "brotli"),
+        (5, 0, "zstd"),
+        (5, 23, "zstd"),
     ] {
         let message = level_error(with(compression, Some(level)));
-        assert!(
-            message.contains(&format!(
-                "valid compression range {} exceeded",
-                range
-            )),
-            "{} {} {:?}",
-            compression,
-            level,
-            message
+        let expected = format!(
+            "compression level {} is out of range for {}",
+            level, codec
         );
+        assert!(message.starts_with(&expected), "{:?}", message);
     }
     for (compression, level) in [
         (2, 0),
@@ -307,11 +302,77 @@ fn an_invalid_level_fails_before_the_file_is_created() {
         ..Default::default()
     };
     assert_ne!(write_with(df, &path, options), 0);
-    assert_eq!(
-        recorded_error().as_deref(),
-        Some("valid compression range 1..=22 exceeded.")
+    let reason = recorded_error().expect("a reason");
+    assert!(
+        reason.starts_with("compression level 30 is out of range for zstd"),
+        "{:?}",
+        reason
     );
     assert!(!path.exists());
+    dataframe_drop(df);
+}
+
+fn entries(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_failed_write_leaves_the_existing_file_as_it_was() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("keep.parquet");
+    let df = frame(1000);
+    let floats = Box::into_raw(Box::new(
+        DataFrame::new(
+            3,
+            vec![Series::new("f".into(), &[1.5f64, 2.5, 3.5]).into()],
+        )
+        .unwrap(),
+    ));
+    assert_eq!(write_with(df, &path, Default::default()), 0);
+    let before = std::fs::read(&path).unwrap();
+
+    let min_max = CompatParquetWriteOptions {
+        statistics: 0b0011,
+        ..Default::default()
+    };
+    for options in [
+        min_max,
+        CompatParquetWriteOptions {
+            has_row_group_size: true,
+            row_group_size: 1,
+            ..min_max
+        },
+    ] {
+        assert_eq!(write_with(floats, &path, options), 4);
+        assert!(recorded_error().is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
+    }
+
+    let fresh = dir.path().join("fresh.parquet");
+    assert_eq!(write_with(floats, &fresh, min_max), 4);
+    assert!(!fresh.exists());
+    assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
+
+    assert_eq!(write_with(floats, &path, Default::default()), 0);
+    let back = read_with(&path, Default::default());
+    assert!(unsafe { (*back).equals_missing(&*floats) });
+    assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
+
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    let sub = cstr(dir.path().join("sub").to_str().unwrap());
+    assert_eq!(dataframe_write_csv(df, sub.as_ptr()), 3);
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.starts_with("cannot create file: "), "{:?}", reason);
+    assert_eq!(entries(dir.path()), vec!["keep.parquet", "sub"]);
+
+    dataframe_drop(back);
+    dataframe_drop(floats);
     dataframe_drop(df);
 }
 

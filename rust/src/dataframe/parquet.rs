@@ -139,11 +139,20 @@ pub extern "C" fn dataframe_read_parquet_with_options(
 
 fn level<T>(
     options: &CompatParquetWriteOptions,
+    codec: &str,
     make: impl FnOnce(i32) -> PolarsResult<T>,
 ) -> PolarsResult<Option<T>> {
+    let level = options.compression_level;
     options
         .has_compression_level
-        .then(|| make(options.compression_level))
+        .then(|| {
+            make(level).map_err(|err| {
+                polars_err!(
+                    ComputeError: "compression level {} is out of range for {}: {}",
+                    level, codec, err
+                )
+            })
+        })
         .transpose()
 }
 
@@ -153,14 +162,18 @@ pub(crate) fn parquet_compression(
     Ok(match options.compression {
         0 => ParquetCompression::Uncompressed,
         1 => ParquetCompression::Snappy,
-        2 => ParquetCompression::Gzip(level(options, |l| {
+        2 => ParquetCompression::Gzip(level(options, "gzip", |l| {
             GzipLevel::try_new(u8::try_from(l).unwrap_or(u8::MAX))
         })?),
-        3 => ParquetCompression::Brotli(level(options, |l| {
+        3 => ParquetCompression::Brotli(level(options, "brotli", |l| {
             BrotliLevel::try_new(u32::try_from(l).unwrap_or(u32::MAX))
         })?),
         4 => ParquetCompression::Lz4Raw,
-        5 => ParquetCompression::Zstd(level(options, ZstdLevel::try_new)?),
+        5 => ParquetCompression::Zstd(level(
+            options,
+            "zstd",
+            ZstdLevel::try_new,
+        )?),
         code => polars_bail!(ComputeError: "unknown compression {}", code),
     })
 }
