@@ -4,7 +4,8 @@ use std::num::NonZeroUsize;
 use crate::prelude::*;
 use crate::{
     clear_last_error, decode_path, decode_schema, guard_panic, record,
-    write_frame, CompatDType, CompatJsonOptions,
+    set_last_error, write_frame, CompatDType, CompatJsonOptions, IO_BAD_PATH,
+    IO_NULL_ARG, IO_OK, IO_WRITE_FAILED,
 };
 use polars::prelude::{SerReader, SerWriter};
 
@@ -129,4 +130,83 @@ pub extern "C" fn dataframe_write_json(
         buffer.flush()?;
         Ok(())
     })
+}
+
+pub(crate) fn without_plan(err: PolarsError) -> PolarsError {
+    err.wrap_msg(|msg| {
+        msg.split("\n\nResolved plan until failure:")
+            .next()
+            .unwrap_or(msg)
+            .to_string()
+    })
+}
+
+fn ndjson_compression(
+    code: u8,
+    level: Option<u32>,
+) -> PolarsResult<ExternalCompression> {
+    match code {
+        0 => Ok(ExternalCompression::Uncompressed),
+        1 => Ok(ExternalCompression::Gzip { level }),
+        2 => Ok(ExternalCompression::Zstd { level }),
+        _ => Err(polars_err!(ComputeError: "unknown compression {}", code)),
+    }
+}
+
+fn ndjson_write(
+    df: &DataFrame,
+    path: &str,
+    options: NDJsonWriterOptions,
+) -> PolarsResult<()> {
+    df.clone()
+        .lazy()
+        .sink(
+            SinkDestination::File {
+                target: SinkTarget::Path(path.into()),
+            },
+            FileWriteFormat::NDJson(options),
+            UnifiedSinkArgs::default(),
+        )?
+        .collect()
+        .map(drop)
+        .map_err(without_plan)
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_write_ndjson_with_options(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+    compression: u8,
+    has_compression_level: bool,
+    compression_level: u32,
+    check_extension: bool,
+) -> i32 {
+    clear_last_error();
+    if df_ptr.is_null() {
+        set_last_error("dataframe is null");
+        return IO_NULL_ARG;
+    }
+    let Some(path) = decode_path(path) else {
+        return IO_BAD_PATH;
+    };
+    let df = unsafe { &*df_ptr };
+    let level = has_compression_level.then_some(compression_level);
+    let written = guard_panic(|| {
+        record(
+            ndjson_compression(compression, level).and_then(|compression| {
+                ndjson_write(
+                    df,
+                    path,
+                    NDJsonWriterOptions {
+                        compression,
+                        check_extension,
+                    },
+                )
+            }),
+        )
+    });
+    match written {
+        Some(()) => IO_OK,
+        None => IO_WRITE_FAILED,
+    }
 }

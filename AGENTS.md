@@ -117,7 +117,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`,
+  calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
@@ -143,8 +143,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
   `series_sort_with_options`, `series_cast_enum`, the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) and
-  `dataframe_read_json_with_options` do: 0.41.3 aborted Racket on a
+  (`read_path`, `write_frame`) and the JSON entry points
+  (`dataframe_read_json_with_options`, `lazyframe_scan_ndjson_with_options`,
+  `dataframe_write_ndjson_with_options`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
@@ -203,18 +204,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   deliberate difference is the separator guard: when
   `#:separator` is not given, a one-column result whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
-  glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
-  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
-  of a directory is an error, as in Python; a scan reads every file in it.
-- A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file, an invalid glob pattern, or one that matches no file is reported at
-  `collect`, as in Python (0.55 expands a pattern at collect). Reported at
-  scan instead: with `#:schema-overrides`, an override naming a column the
-  header lacks. That check reads the header because 0.55 applies overrides
-  by name and ignores an absent one, as Python 1.42.1 does; a misspelt
-  override would otherwise do nothing. `call/foreign-error` respells 0.55's
-  empty-expansion reason, which carries the pattern, as `no files match the
-  pattern`.
+  glob like the scans, CSV, Parquet and NDJSON (#44); `#:glob #f` takes
+  a CSV path literally, and Parquet and NDJSON have no opt-out (#36). An
+  eager CSV read of a directory is an error, as in Python; a scan reads
+  every file in it.
+- A `scan-csv` / `scan-parquet` / `scan-ndjson` only builds a plan; a
+  missing or malformed file, an invalid glob pattern, or one that matches no
+  file is reported at `collect`, as in Python (0.55 expands a pattern at
+  collect). Reported at scan instead: with `#:schema-overrides`, an override
+  naming a column the header lacks. That check reads the header because
+  0.55 applies overrides by name and ignores an absent one, as Python 1.42.1
+  does; a misspelt override would otherwise do nothing. `scan-ndjson` makes
+  the same check (inferring the schema when none is given), since 0.55
+  reports an absent override at collect as a bare column name.
+  `call/foreign-error` respells 0.55's empty-expansion reason, which carries
+  the pattern, as `no files match the pattern`.
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
@@ -228,6 +232,25 @@ it. Racket side: `define-compat` with `#:c-id`.
   `SchemaFieldNotFound`. The schema dtypes are `series`' `#:dtype` spellings
   but an Enum, which `CompatDType` cannot carry. The names clash with
   the `json` library's `read-json` / `write-json`.
+- `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
+  is, through `dataframe_read_ndjson_with_options`; a directory reads every
+  file in it. Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
+  Duration and Enum: 0.55's NDJSON buffer panics on the first six, which
+  Python passes through. `#:batch-size` and `#:low-memory` reach
+  `LazyJsonLineReader` as in Python, and 0.55 reads neither.
+  `#:row-index-name` and `#:include-file-paths` must differ (polars panics
+  otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
+  Rust, as for `read-json`: Python's `read_ndjson` ignores the overrides
+  once a schema is given. The eager NDJSON verbs strip the "Resolved plan
+  until failure" dump polars appends to a planning error (`without_plan`).
+- `write-ndjson` is Python's `lazy().sink_ndjson()`, through
+  `dataframe_write_ndjson_with_options`, so `#:check-extension` matches the
+  name to `#:compression`. gzip and zstd need the `decompress` feature
+  (#176) and a `flate2` newer than 1.0.30, whose `zlib-rs` 0.1.1 aborts the
+  process on some gzip streams (#199). Readers sniff compression from the
+  first four bytes, not the name (`SupportedCompression::check`): no valid
+  JSON starts with a signature, so a plain file that does fails with a
+  decompression error.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).
