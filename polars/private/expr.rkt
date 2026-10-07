@@ -11,10 +11,8 @@
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
-         (only-in racket/contract/base ->* contract-out or/c)
          (only-in polars/private/foreign
                   call/foreign-error
-                  path->complete-string
                   _DataFrame-ptr
                   _DataFrame-ptr/null
                   DataFrame-ptr?
@@ -30,6 +28,7 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
            (only-in polars/private/foreign
                     series-new-i32
@@ -41,7 +40,6 @@
                     polars-null
                     dataframe-new
                     dataframe-drop-count
-                    dataframe-write-parquet
                     dataframe-height
                     dataframe-width
                     dataframe-column
@@ -106,9 +104,7 @@
          lazyframe-head lazyframe-tail lazyframe-slice
          lazyframe-join
          (contract-out
-          [lazyframe-scan-parquet (->* (path-string?)
-                                       (#:n-rows (or/c #f exact-nonnegative-integer?))
-                                       LazyFrame-ptr?)])
+          [lazyframe-explain (explain/c LazyFrame-ptr?)])
          expr-cast
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
@@ -150,22 +146,7 @@
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define-compat lazyframe-scan-parquet/raw
-  (_fun _string -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_parquet
-  #:wrap (allocator lazyframe-drop))
-
-(define-compat lazyframe-scan-parquet/options/raw
-  (_fun _string _uint8 _size -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_parquet_options
-  #:wrap (allocator lazyframe-drop))
-
-(define (lazyframe-scan-parquet path #:n-rows [n-rows #f])
-  (define p (path->complete-string 'lazyframe-scan-parquet path #:glob? #t))
-  (call/foreign-error 'lazyframe-scan-parquet
-                      (lambda ()
-                        (lazyframe-scan-parquet/options/raw p (if n-rows 1 0) (or n-rows 0)))
-                      "failed to scan ~a" path))
+(define lazyframe-explain (lazyframe-explainer 'lazyframe-explain))
 
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
@@ -944,26 +925,17 @@
   (check-equal? (series-ref (dataframe-column csv-scan-options-out "value") 0) 25)
   (delete-file tmp-scan-csv/options)
 
-  (define tmp-scan-parquet
-    (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.parquet"))
-  (dataframe-write-parquet df tmp-scan-parquet)
-  (define parquet-scan (lazyframe-scan-parquet tmp-scan-parquet))
-  (check-pred LazyFrame-ptr? parquet-scan)
-  (define parquet-scan-out
-    (lazyframe-collect
-     (lazyframe-select
-      (lazyframe-filter parquet-scan (expr-ge (col "x") 2))
-      (list (col "x")
-            (expr-alias (expr-mul (col "x") 10) "ten_x")))))
-  (check-equal? (dataframe-height parquet-scan-out) 3)
-  (check-equal? (series-sum-i32 (dataframe-column parquet-scan-out "ten_x")) 90)
-
-  (define parquet-scan-limited
-    (lazyframe-collect
-     (lazyframe-scan-parquet tmp-scan-parquet #:n-rows 2)))
-  (check-equal? (dataframe-height parquet-scan-limited) 2)
-  (check-equal? (series-sum-i32 (dataframe-column parquet-scan-limited "x")) 3)
-  (delete-file tmp-scan-parquet)
+  (define narrowed-lf (lazyframe-select (lazyframe-filter lf (expr-ge (col "x") 2))
+                                        (list (col "x"))))
+  (define written-plan (lazyframe-explain narrowed-lf #:optimized #f))
+  (check-true (string-prefix? written-plan "SELECT [col(\"x\")]\n  FILTER col(\"x\") >= 2\n"))
+  (check-true (string-contains? written-plan "PROJECT */2 COLUMNS"))
+  (check-true (string-contains? (lazyframe-explain narrowed-lf) "PROJECT[\"x\"] 1/2 COLUMNS"))
+  (check-not-equal? (lazyframe-explain narrowed-lf #:format 'tree #:optimized #f) written-plan)
+  (check-regexp-match
+   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"nope\""
+   (with-handlers ([exn:fail? exn-message])
+     (lazyframe-explain (lazyframe-select lf (list (col "nope"))))))
 
   ;; with-columns adding a literal column
   (define lf2

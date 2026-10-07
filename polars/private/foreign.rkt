@@ -60,7 +60,10 @@
      . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
-    ("to the `null_values` list" . "to #:null-values")))
+    ("to the `null_values` list" . "to #:null-values")
+    ("`missing_columns='insert'`" . "#:missing-columns 'insert")
+    ("hint: specify this column in the schema, or pass extra_columns='ignore' in scan options. "
+     . "")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
@@ -1569,28 +1572,6 @@
                             #:ok? zero?
                             "failed to write csv to ~a" path)))
 
-(define-compat dataframe-write-parquet/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_parquet)
-
-(define (dataframe-write-parquet df path)
-  (define p (path->complete-string 'dataframe-write-parquet path))
-  (void (call/foreign-error 'dataframe-write-parquet
-                            (lambda () (dataframe-write-parquet/raw df p))
-                            #:ok? zero?
-                            "failed to write parquet to ~a" path)))
-
-(define-compat dataframe-read-parquet/raw
-  (_fun _string -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_parquet
-  #:wrap (allocator dataframe-drop))
-
-(define (dataframe-read-parquet path)
-  (define p (path->complete-string 'dataframe-read-parquet path #:glob? #t))
-  (call/foreign-error 'dataframe-read-parquet
-                      (lambda () (dataframe-read-parquet/raw p))
-                      "failed to read parquet from ~a" path))
-
 (define-compat dataframe-write-json-lines/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_json_lines)
@@ -2294,27 +2275,12 @@
                 '("store" "variable" "value"))
   (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
 
-  ;; --- Parquet and JSON Lines roundtrip ---
+  ;; --- JSON Lines roundtrip ---
   (define csv-df
     (dataframe-new
      (list (series-new-str "city" '("Boston" "New York" "Chicago"))
            (series-new-f64 "population_millions" '(0.65 8.8 2.7))
            (series-new-i32 "founded" '(1630 1624 1837)))))
-  (define tmp-parquet
-    (build-path (find-system-path 'temp-dir) "rkt-polars-test.parquet"))
-  (dataframe-write-parquet csv-df tmp-parquet)
-  (define parquet-round (dataframe-read-parquet tmp-parquet))
-  (define-values (pr pc) (dataframe-shape parquet-round))
-  (check-equal? pr 3)
-  (check-equal? pc 3)
-  (check-equal? (dataframe-column-names parquet-round)
-                '("city" "population_millions" "founded"))
-  (check-equal? (series-dtype (dataframe-column parquet-round "founded")) 'int32)
-  (check-= (series-sum-f64 (dataframe-column parquet-round "population_millions"))
-           12.15
-           1e-9)
-  (delete-file tmp-parquet)
-
   (define tmp-jsonl
     (build-path (find-system-path 'temp-dir) "rkt-polars-test.jsonl"))
   (dataframe-write-json-lines csv-df tmp-jsonl)
@@ -2331,25 +2297,12 @@
   (delete-file tmp-jsonl))
 
 (module+ test
-  (define tmp-dir (find-system-path 'temp-dir))
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
   (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
              (lambda () (dataframe-write-csv one-col unwritable)))
-  (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
-             (lambda () (dataframe-write-parquet one-col unwritable)))
   (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "
-             (lambda () (dataframe-write-json-lines one-col unwritable)))
-
-  (define junk (build-path tmp-dir "rkt-polars-junk.bin"))
-  (call-with-output-file junk
-    (lambda (out) (write-string "this is not parquet" out))
-    #:exists 'replace)
-  (check-exn #rx"^dataframe-read-parquet: failed to read parquet from .*: .*PAR1"
-             (lambda () (dataframe-read-parquet junk)))
-  (delete-file junk)
-  (check-exn #rx"^dataframe-read-parquet: failed to read parquet from [^:]*: cannot open file: [Nn]o such file"
-             (lambda () (dataframe-read-parquet (build-path tmp-dir "rkt-polars-no-such.parquet")))))
+             (lambda () (dataframe-write-json-lines one-col unwritable))))
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)

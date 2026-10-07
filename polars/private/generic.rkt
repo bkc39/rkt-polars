@@ -65,7 +65,7 @@
          sort-by rank gather
          select drop with-column with-columns cast join vstack hstack
          join-asof pivot unpivot
-         group-by agg grouped? lazy collect scan-csv scan-parquet
+         group-by agg grouped? lazy collect explain scan-csv scan-parquet
          str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix

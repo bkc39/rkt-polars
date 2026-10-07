@@ -123,13 +123,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
-  today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
+  today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
+  `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
   `dataframe_sort_with_options`, `series_sort_with_options` and the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
   `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...).
+  hints (`null_values` → `#:null-values`, `missing_columns='insert'` →
+  `#:missing-columns 'insert`, ...), and drops the multi-file scan's hint to
+  pass `extra_columns` or a schema, which the bindings lack.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -139,9 +142,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `dataframe_sort_with_options`,
+  `lazyframe_collect`, `lazyframe_explain`, `dataframe_sort_with_options`,
   `series_sort_with_options`, `series_cast_enum` and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  (`read_frame`, `read_path`, `write_frame`, `scan`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
@@ -201,7 +204,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:separator` is not given, a one-column result whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
-  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
+  a CSV or Parquet path literally. An eager CSV read
   of a directory is an error, as in Python; a scan reads every file in it.
 - A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
   file, an invalid glob pattern, or one that matches no file is reported at
@@ -219,6 +222,24 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).
+- `read-parquet` is `scan-parquet` with the same keywords, collected, as
+  Python's `read_parquet` is; its `#:columns` selects after the scan, so a
+  position counts the row index column. The names and positions are checked
+  against the scan's schema first, so a missing name, a position out of
+  range or a column picked twice reports one line (Python's `select` reports
+  the plan as well), and a name is a name, never Python's regex or `*`.
+  `write-parquet` runs the eager `ParquetWriter`, where Python's goes
+  through the streaming sink: given `#:row-group-size`, it writes groups of
+  exactly that many rows, as the sink does (the eager writer alone splits
+  the frame into equal parts); by default its groups are about 512² rows,
+  the sink's about 122,880. The frames read back are the same. As in
+  Python, `#:row-group-size 0` is the default and a codec without levels
+  ignores `#:compression-level`. The
+  Parquet verbs report under the verb's own name (`read-parquet:`), the
+  low-level bindings under theirs (#153). `dataframe_read_parquet`,
+  `dataframe_write_parquet`, `lazyframe_scan_parquet` and
+  `lazyframe_scan_parquet_options` are no longer bound from Racket; their
+  `_with_options` successors are.
 - The separator guard is stricter than Python, whose `read_csv` returns the
   one column; the #86 scoreboard (check C1) requires the error.
 - A duration schema override is a contract error: polars cannot parse a
