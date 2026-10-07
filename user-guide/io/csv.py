@@ -59,3 +59,47 @@ print(
 print(pl.read_csv(data_dir / "notes.csv", separator=";", comment_prefix="#", quote_char="'"))
 print(pl.read_csv(data_dir / "latin1.csv", encoding="utf8-lossy"))
 print(pl.read_csv(data_dir / "parts" / "part-1.csv", has_header=False, skip_rows=1, n_rows=1))
+
+print(
+    pl.read_csv(
+        flights_tsv,
+        separator="\t",
+        null_values="NA",
+        columns=["carrier", "flight", "dep_delay"],
+        row_index_name="row",
+        n_rows=3,
+    )
+)
+print(
+    pl.read_csv(
+        data_dir / "parts" / "part-1.csv",
+        has_header=False,
+        skip_rows=1,
+        new_columns=["from", "to", "delay"],
+    )
+)
+
+stations = pl.read_csv(
+    data_dir / "stations.csv",
+    skip_lines=1,
+    separator=";",
+    decimal_comma=True,
+    null_values={"temp": "-", "rain": "n/a"},
+    truncate_ragged_lines=True,
+    try_parse_dates=True,
+)
+print(stations)
+
+# --- writing options ---------------------------------------------------------
+stations.write_csv(
+    path,
+    separator=";",
+    decimal_comma=True,
+    null_value="-",
+    date_format="%d.%m.%Y",
+    time_format="%H:%M",
+)
+print(path.read_text(), end="")
+stations.select("station", "temp").write_csv(path, quote_style="non_numeric", float_precision=2)
+print(path.read_text(), end="")
+path.unlink()

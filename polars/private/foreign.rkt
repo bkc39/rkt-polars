@@ -60,13 +60,15 @@
      . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
-    ("to the `null_values` list" . "to #:null-values")))
+    ("to the `null_values` list" . "to #:null-values")
+    ("'truncate_ragged_lines=true'" . "#:truncate-ragged-lines #t")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
 (define (respell reason)
-  (for/fold ([reason (if (regexp-match? empty-expansion reason)
+  (for/fold ([reason (if (or (regexp-match? empty-expansion reason)
+                             (equal? reason "no paths specified for this reader"))
                          "no files match the pattern"
                          reason)])
             ([(python racket) (in-dict racket-spellings)])
@@ -1558,17 +1560,6 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
-(define-compat dataframe-write-csv/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_csv)
-
-(define (dataframe-write-csv df path)
-  (define p (path->complete-string 'dataframe-write-csv path))
-  (void (call/foreign-error 'dataframe-write-csv
-                            (lambda () (dataframe-write-csv/raw df p))
-                            #:ok? zero?
-                            "failed to write csv to ~a" path)))
-
 (define-compat dataframe-write-parquet/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_parquet)
@@ -2334,8 +2325,6 @@
   (define tmp-dir (find-system-path 'temp-dir))
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
-  (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
-             (lambda () (dataframe-write-csv one-col unwritable)))
   (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
              (lambda () (dataframe-write-parquet one-col unwritable)))
   (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "

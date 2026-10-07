@@ -42,7 +42,7 @@ pub(crate) fn is_pattern(path: &str, glob: bool) -> bool {
     glob && path.contains(['*', '?', '['])
 }
 
-fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
+pub(crate) fn require_path(path: &str, rules: &PathRules) -> PolarsResult<()> {
     if is_pattern(path, rules.glob) {
         return Ok(());
     }
@@ -106,16 +106,100 @@ fn write_frame(
     }
 }
 
+fn optional_str(
+    ptr: *const c_char,
+    what: &str,
+) -> PolarsResult<Option<PlSmallStr>> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    let text = unsafe { CStr::from_ptr(ptr) }.to_str().map_err(
+        |err| polars_err!(ComputeError: "{} is not valid UTF-8: {}", what, err),
+    )?;
+    Ok(Some(text.into()))
+}
+
+fn quote_style(code: u8) -> PolarsResult<QuoteStyle> {
+    Ok(match code {
+        0 => QuoteStyle::Necessary,
+        1 => QuoteStyle::Always,
+        2 => QuoteStyle::NonNumeric,
+        3 => QuoteStyle::Never,
+        _ => polars_bail!(ComputeError: "unknown quote style {}", code),
+    })
+}
+
+struct CsvWriteStrings {
+    line_terminator: *const c_char,
+    null_value: *const c_char,
+    datetime_format: *const c_char,
+    date_format: *const c_char,
+    time_format: *const c_char,
+}
+
+fn csv_writer<'a>(
+    file: &'a mut std::fs::File,
+    options: &CompatCsvWriteOptions,
+    strings: &CsvWriteStrings,
+) -> PolarsResult<CsvWriter<&'a mut std::fs::File>> {
+    let batch_size = std::num::NonZeroUsize::new(options.batch_size)
+        .ok_or_else(
+            || polars_err!(ComputeError: "batch size must be positive"),
+        )?;
+    let line_terminator =
+        optional_str(strings.line_terminator, "line terminator")?
+            .unwrap_or_else(|| "\n".into());
+    let null_value =
+        optional_str(strings.null_value, "null value")?.unwrap_or_default();
+    Ok(CsvWriter::new(file)
+        .include_header(options.include_header)
+        .include_bom(options.include_bom)
+        .with_separator(options.separator)
+        .with_quote_char(options.quote_char)
+        .with_quote_style(quote_style(options.quote_style)?)
+        .with_line_terminator(line_terminator)
+        .with_null_value(null_value)
+        .with_batch_size(batch_size)
+        .with_datetime_format(optional_str(
+            strings.datetime_format,
+            "datetime format",
+        )?)
+        .with_date_format(optional_str(strings.date_format, "date format")?)
+        .with_time_format(optional_str(strings.time_format, "time format")?)
+        .with_float_scientific(
+            options
+                .has_float_scientific
+                .then_some(options.float_scientific),
+        )
+        .with_float_precision(
+            options
+                .has_float_precision
+                .then_some(options.float_precision),
+        )
+        .with_decimal_comma(options.decimal_comma))
+}
+
 #[no_mangle]
-pub extern "C" fn dataframe_write_csv(
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn dataframe_write_csv_with_options(
     df_ptr: *mut DataFrame,
     path: *const c_char,
+    options: CompatCsvWriteOptions,
+    line_terminator: *const c_char,
+    null_value: *const c_char,
+    datetime_format: *const c_char,
+    date_format: *const c_char,
+    time_format: *const c_char,
 ) -> i32 {
+    let strings = CsvWriteStrings {
+        line_terminator,
+        null_value,
+        datetime_format,
+        date_format,
+        time_format,
+    };
     write_frame(df_ptr, path, |file, df| {
-        CsvWriter::new(file)
-            .include_header(true)
-            .with_separator(b',')
-            .finish(df)
+        csv_writer(file, &options, &strings)?.finish(df)
     })
 }
 

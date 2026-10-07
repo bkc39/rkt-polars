@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{clear_last_error, decode_path, record};
+use crate::{clear_last_error, decode_path, guard_panic, record};
 use polars::io::HiveOptions;
 
 pub(crate) fn scan(
@@ -8,7 +8,7 @@ pub(crate) fn scan(
 ) -> *mut LazyFrame {
     clear_last_error();
     decode_path(path)
-        .and_then(|path| record(build(path)))
+        .and_then(|path| guard_panic(|| record(build(path))))
         .map_or(ptr::null_mut(), |lf| Box::into_raw(Box::new(lf)))
 }
 

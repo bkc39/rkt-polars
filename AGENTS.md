@@ -141,8 +141,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
   `series_sort_with_options`, `series_cast_enum` and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
-  Parquet Categorical or Decimal column (#93).
+  (`read_frame`, `read_path`, `write_frame`, `scan`) do: 0.41.3 aborted Racket on a
+  Parquet Categorical or Decimal column (#93), and a `scan-csv` that reads
+  the header (`#:schema-overrides`) aborted it on a compressed file (#177).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
   otherwise observe a native free (`foreign.rkt` has a case for each Series-
@@ -172,7 +173,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
-  `dataframe_read_csv_with_options`), so a stale library fails at load, when
+  `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`), so a
+  stale library fails at load, when
   `define-compat` cannot resolve the symbol, instead of misreading its
   arguments.
 - **A change to any `#[no_mangle]` export needs both
@@ -190,15 +192,28 @@ it. Racket side: `define-compat` with `#:c-id`.
   `cast` / `series-cast` accept only canonical (#64).
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
-  keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
-  reads a glob pattern by scan and collect, and a single file with 0.55's
+  keywords, as Python's `read_csv` does: `dataframe_read_csv_v2`
+  reads a glob pattern, or any read with `#:new-columns`, by scan and
+  collect, and a single file with 0.55's
   eager `CsvReader`, which is about three times faster on nycflights. Both
   are built from one decoded request, and a table-driven Rust test holds
   the eager, one-file-glob and scan reads to identical frames and error
-  texts, with three listed exceptions (a malformed-quote error's chunk
-  locator; an `#:n-rows 0` read of invalid UTF-8 fails eagerly). The one
+  texts, with listed exceptions (a malformed-quote error's chunk
+  locator; an `#:n-rows 0` read of a line that does not parse, invalid
+  UTF-8 or a ragged line, fails eagerly).
+  `#:columns` is `read-csv`'s alone, as `columns` is Python's `read_csv`'s;
+  the scan entry point applies it too, so the test covers it. Every keyword
+  that names a column names it as `#:new-columns` leaves it, as Python's
+  `scan_csv` does; Python's `read_csv` selects and applies a `null_values`
+  mapping by the file's names and renames its result afterwards, the row
+  index among them. A row index named like a column is an error on every
+  path, where Python's eager `read_csv` returns a frame with the name twice.
+  `write-csv` is the eager `CsvWriter`; Python 1.42.1's `write_csv` runs
+  `sink_csv`, and a Racket test holds the two to the same bytes for every
+  option. The one
   deliberate difference is the separator guard: when
-  `#:separator` is not given, a one-column result whose header splits on a
+  `#:separator` and `#:new-columns` are not given, a one-column result (a
+  row index aside) whose header splits on a
   tab, `;` or `|` (and whose first row agrees) raises. The eager readers
   glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
   a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
@@ -209,7 +224,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   scan instead: with `#:schema-overrides`, an override naming a column the
   header lacks. That check reads the header because 0.55 applies overrides
   by name and ignores an absent one, as Python 1.42.1 does; a misspelt
-  override would otherwise do nothing. `call/foreign-error` respells 0.55's
+  override would otherwise do nothing. `#:new-columns` reads the header at
+  scan too (0.55's `with_schema_modify`, as Python's `scan_csv` does), so
+  either keyword reports a file that cannot be opened at scan, with the
+  cause alone. `call/foreign-error` respells 0.55's
   empty-expansion reason, which carries the pattern, as `no files match the
   pattern`.
 - IO paths resolve against Racket's `current-directory`, not the process's
