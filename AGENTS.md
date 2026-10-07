@@ -8,19 +8,31 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 macOS arm64 ship with the package, so users need no Rust toolchain. The
 `dtype-decimal` feature is on because polars' `sign` does not compile
 without it (#106); Decimal columns are read (from Parquet), not built.
-`dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
-as in Python polars' own wheels: its `std::simd` code carries the CSV reader
-(a stable build scans nycflights at 2.5× Python). It compiles on the pinned
-stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
-the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. The committed candidates are built with
-`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
-unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
-104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
-uses it. The nix build, `cargo test` and the bench stay on `release`, because
-under LTO every test and example binary links on one core (the nix check went
-from 30 to 145 minutes on CI), so the bench measures the release build, not
-the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
+`dtype-categorical` carries Categorical and Enum. Every IO feature of the
+crate is on (#176): `csv`, `parquet`, `json`, `ipc`, `ipc_streaming`, `avro`,
+`scan_lines`, `decompress` (gzip, zlib and zstd input) and the cloud sources
+`http`, `aws`, `gcp` and `azure`, which bring `cloud`, `async` and the file
+cache. The `polars` crate has no `catalog` feature; Unity Catalog is reachable
+only through direct `polars-lazy` and `polars-io` dependencies with theirs
+(#191 decides). HTTPS is rustls on ring with the system's root certificates
+(object_store's `rustls-tls-native-roots`); the `rustls-only` gate
+(`scripts/rustls-only.sh`, a flake check and CI's Lint job) fails when
+`rust/Cargo.lock` holds OpenSSL or native-tls, which would link the system's
+libssl, or aws-lc, rustls' default provider, which is C and assembly built
+with cmake. polars' `nightly` feature is on, as in Python polars' own wheels: its
+`std::simd` code carries the CSV reader (a stable build scans nycflights at
+2.5× Python). It compiles on the pinned stable rustc (1.98.1, nixpkgs at
+`flake.lock`) with `RUSTC_BOOTSTRAP=1`, which the flake's build and dev shell
+and `scripts/build-so.sh` set; the release build uses that same rustc version.
+The committed candidates are built with `[profile.dist]` in `rust/Cargo.toml`:
+release plus thin LTO and one codegen unit (#125), which keeps the Linux `.so`
+at 83.9 MB against GitHub's 104,857,600-byte file limit; a local release build
+is 104.6 MB, at the limit (the IO features of #176 add 2.5 MB to the first and
+3.3 MB to the second). Only `scripts/build-so.sh` uses `[profile.dist]`. The nix build,
+`cargo test` and the bench stay on `release`, because under LTO every test and
+example binary links on one core (the nix check went from 30 to 145 minutes on
+CI), so the bench measures the release build, not the shipped one. `panic`
+stays `unwind`: `guard_panic` depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,

@@ -33,6 +33,10 @@ jobs:
       - name: No define-syntax-rule
         run: scripts/no-syntax-rule.sh
 
+      - name: TLS is rustls only
+        if: ${{ !cancelled() }}
+        run: scripts/rustls-only.sh
+
       - name: Install Nix
         if: ${{ !cancelled() }}
         uses: DeterminateSystems/nix-installer-action@v23
