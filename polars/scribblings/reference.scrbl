@@ -679,9 +679,11 @@ total
   file's or @racket[schema]'s, and naming a column absent from them is an
   error. A @racket[json-dtype/c] is any spelling @racket[series]'
   @racket[#:dtype] accepts except an Enum; API gap: read the column as
-  @racket['categorical] or @racket['string] and @racket[cast] it. A string
-  reads as a @racket['date], @racket['datetime] or @racket['time] when the
-  schema asks for one.
+  @racket['categorical] or @racket['string] and @racket[cast] it. An ISO
+  8601 date, datetime or time string reads as that type when the schema
+  asks for it; a string that does not parse as the type asked for reads as
+  null, as in Python, and that includes a bare date read as a
+  @racket['datetime].
 
   @racket[write-json] writes dates, times, datetimes and durations as
   strings, Categorical and Enum values as their names, and NaN and the
@@ -706,6 +708,7 @@ total
            #:schema '(("day" . date) ("station" . categorical) ("reading" . f32)))
 (~> (read-json "stations.json" #:schema-overrides '(("day" . date)))
     (select "day" "reading"))
+(~> (read-json "stations.json" #:schema '(("day" . datetime))) (head 1))
 (eval:error (read-json "stations.json" #:infer-schema-length 1))
 (eval:error (read-json "stations.json" #:schema-overrides '(("dya" . date))))]
   @examples[#:eval ev #:hidden

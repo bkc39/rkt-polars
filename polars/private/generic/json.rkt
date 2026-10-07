@@ -100,6 +100,10 @@
                 (list (date 2024 1 1) (date 2024 1 1) (date 2024 1 2) (date 2024 1 2)))
   (check-equal? (column typed "station") '(north south north south))
 
+  (check-equal? (column (read-json stations #:schema '(("day" . datetime))) "day")
+                (list polars-null polars-null polars-null polars-null))
+  (check-equal? (column (read-json stations #:schema '(("station" . date))) "station")
+                (list polars-null polars-null polars-null polars-null))
   (define overridden (read-json stations #:schema-overrides '(("day" . date))))
   (check-equal? (dtypes-of overridden)
                 '(("station" string) ("day" date) ("reading" float64) ("flag" string)
