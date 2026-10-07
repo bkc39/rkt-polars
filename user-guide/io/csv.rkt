@@ -74,6 +74,11 @@
             #:truncate-ragged-lines #t #:try-parse-dates #t))
 (displayln stations)
 
+;; API gaps: no compressed input yet (gzip, zlib, zstd; #176); no schema,
+;; with_column_names, include_file_paths or missing_columns (#193); no
+;; spelling for the tuning knobs (n_threads, low_memory, rechunk, batch_size)
+;; or for use_pyarrow and the encodings Python decodes itself.
+
 ;; --- writing options ---------------------------------------------------------
 (write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"
            #:date-format "%d.%m.%Y" #:time-format "%H:%M")
@@ -83,8 +88,5 @@
 (display (file->string path))
 (delete-file path)
 
-;; API gaps: compressed files, read (gzip, zlib, zstd; #176) or written
-;; (#184); no schema, with_column_names, include_file_paths or
-;; missing_columns; no spelling for the tuning knobs (n_threads, low_memory,
-;; rechunk, batch_size) or for use_pyarrow and the encodings Python decodes
-;; itself.
+;; API gap: no compressed output (compression), which Python writes through
+;; sink_csv (#184).

@@ -134,6 +134,12 @@ each marker to its column only.
 stations
 ]
 
+API gaps: no compressed input yet (gzip, zlib, zstd; #176); no
+@tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
+@tt{missing_columns} (#193); no spelling for the tuning knobs
+(@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
+@tt{use_pyarrow} and the encodings Python decodes itself.
+
 @subsection[#:tag "io-csv-write-options"]{Writing options}
 
 @racket[write-csv] takes @tt{write_csv}'s options with their Racket
@@ -157,11 +163,8 @@ values are written.
 (delete-file path)
 ]
 
-API gaps: compressed files, read (gzip, zlib, zstd; #176) or written
-(#184); no @tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
-@tt{missing_columns}; no spelling for the tuning knobs (@tt{n_threads},
-@tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for @tt{use_pyarrow}
-and the encodings Python decodes itself.
+API gap: no compressed output (@tt{compression}), which Python writes
+through @tt{sink_csv} (#184).
 
 @section[#:tag "io-multiple"]{Multiple files}
 

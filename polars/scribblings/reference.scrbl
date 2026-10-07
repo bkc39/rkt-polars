@@ -547,8 +547,10 @@ total
   @tt{columns} and applies a @tt{null_values} mapping by the file's names,
   then renames the first columns of its result, the row index among them.
 
-  API gap: compressed input (gzip, zlib, zstd) is not read yet; it waits for
-  the build's @tt{decompress} feature (#176).
+  API gaps: compressed input (gzip, zlib, zstd) is not read yet; it waits for
+  the build's @tt{decompress} feature (#176). No @tt{schema},
+  @tt{with_column_names}, @tt{include_file_paths} or @tt{missing_columns}
+  (#193).
 
   The result is @racket[(collect (scan-csv path ....))] with the same
   keywords but @racket[#:columns], which @racket[scan-csv] lacks, as Python's
