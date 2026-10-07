@@ -550,7 +550,11 @@ total
   API gaps: compressed input (gzip, zlib, zstd) is not read yet; it waits for
   the build's @tt{decompress} feature (#176). No @tt{schema},
   @tt{with_column_names}, @tt{include_file_paths} or @tt{missing_columns}
-  (#193).
+  (#193). Polars decides from a file's first four bytes whether it is
+  compressed, as in Python, with no switch to say it is not, so a plain
+  file that starts like a zlib stream (a header beginning @litchar{x^}) is
+  taken for compressed data and fails to read or reads as garbage; a UTF-8
+  byte order mark at the start of the file avoids it.
 
   The result is @racket[(collect (scan-csv path ....))] with the same
   keywords but @racket[#:columns], which @racket[scan-csv] lacks, as Python's

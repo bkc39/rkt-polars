@@ -138,7 +138,12 @@ API gaps: no compressed input yet (gzip, zlib, zstd; #176); no
 @tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
 @tt{missing_columns} (#193); no spelling for the tuning knobs
 (@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
-@tt{use_pyarrow} and the encodings Python decodes itself.
+@tt{use_pyarrow} and the encodings Python decodes itself. Polars decides
+from a file's first four bytes whether it is compressed, as in Python, and
+has no switch to say it is not: a plain file that starts like a zlib
+stream, a header beginning @litchar{x^} say, is taken for compressed data
+and fails to read or reads as garbage. A UTF-8 byte order mark at the start
+of the file avoids it.
 
 @subsection[#:tag "io-csv-write-options"]{Writing options}
 

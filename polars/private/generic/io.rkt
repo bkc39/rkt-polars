@@ -702,6 +702,40 @@
                              collect))
                 '((1 "LGA" "IAH" 4)))
 
+  (define compressed (build-path data-dir "compressed"))
+  (define part-1-frame (read-csv part-1))
+  (define decompress?
+    (not (message-of (lambda () (read-csv (build-path compressed "part-1.csv.gz"))))))
+  (define zlib-looking (csv-file "zlib-looking.csv" "x^2,y\n1,2\n3,4\n"))
+  (define tiny-zlib-looking (csv-file "tiny-zlib-looking.csv" "x^\n1\n"))
+  (define bom-first (csv-file "bom-first.csv" "﻿x^2,y\n1,2\n3,4\n"))
+  (define (scan-message path)
+    (message-of (lambda () (collect (scan-csv path)))))
+  (cond
+    [decompress?
+     (for ([ext '("gz" "zlib" "zst")])
+       (define path (build-path compressed (string-append "part-1.csv." ext)))
+       (check-true (frame=? (read-csv path) part-1-frame) ext)
+       (check-true (frame=? (collect (scan-csv path)) part-1-frame) ext)
+       (check-equal? (rows-of (read-csv path #:n-rows 1)) '(("EWR" "IAH" 2)) ext))
+     (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*zlib-looking.csv: .*corrupt deflate stream"
+                         (message-of (lambda () (read-csv zlib-looking))))
+     (check-regexp-match #rx"corrupt deflate stream" (scan-message zlib-looking))
+     (check-equal? (shape (read-csv tiny-zlib-looking)) '(0 1))
+     (check-false (equal? (column-names (read-csv tiny-zlib-looking)) '("x^")))]
+    [else
+     (for ([path (list (build-path compressed "part-1.csv.gz") (build-path compressed "part-1.csv.zlib")
+                       (build-path compressed "part-1.csv.zst") zlib-looking tiny-zlib-looking)])
+       (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*: cannot read compressed CSV file; compile with feature 'decompress'$"
+                           (message-of (lambda () (read-csv path))))
+       (check-regexp-match #rx"^lazyframe-collect: failed to collect the query: polars panicked: activate 'decompress' feature$"
+                           (scan-message path))
+       (check-regexp-match #rx"^scan-csv: failed to scan [^:]*: polars panicked: activate 'decompress' feature$"
+                           (message-of (lambda () (scan-csv path #:schema-overrides '(("y" . str)))))))])
+  (check-equal? (rows-of (read-csv bom-first)) '((1 2) (3 4)))
+  (check-equal? (column-names (read-csv bom-first)) '("x^2" "y"))
+  (check-true (frame=? (read-csv bom-first) (collect (scan-csv bom-first))))
+
   (check-regexp-match #rx"reads as one column"
                       (message-of (lambda () (read-csv flights #:row-index-name "i"))))
   (check-equal? (shape (read-csv flights #:new-columns '("line"))) '(102 1))

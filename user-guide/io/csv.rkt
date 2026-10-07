@@ -77,7 +77,10 @@
 ;; API gaps: no compressed input yet (gzip, zlib, zstd; #176); no schema,
 ;; with_column_names, include_file_paths or missing_columns (#193); no
 ;; spelling for the tuning knobs (n_threads, low_memory, rechunk, batch_size)
-;; or for use_pyarrow and the encodings Python decodes itself.
+;; or for use_pyarrow and the encodings Python decodes itself. Polars decides
+;; from a file's first four bytes whether it is compressed, as in Python: a
+;; plain file that starts like a zlib stream (a header beginning x^) is taken
+;; for compressed data; a UTF-8 byte order mark at the start avoids it.
 
 ;; --- writing options ---------------------------------------------------------
 (write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"
