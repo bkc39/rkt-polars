@@ -8,7 +8,15 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 macOS arm64 ship with the package, so users need no Rust toolchain. The
 `dtype-decimal` feature is on because polars' `sign` does not compile
 without it (#106); Decimal columns are read (from Parquet), not built.
-`dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
+`dtype-categorical` carries Categorical and Enum. Every IO feature of the
+crate is on (#176): `csv`, `parquet`, `json`, `ipc`, `ipc_streaming`, `avro`,
+`scan_lines`, `decompress` (gzip, zlib and zstd input) and the cloud sources
+`http`, `aws`, `gcp` and `azure`, which bring `cloud`, `async` and the file
+cache. The crate has no `catalog` feature, so Unity Catalog is out of reach.
+HTTPS is rustls on ring with the system's root certificates (object_store's
+`rustls-tls-native-roots`); `rust/Cargo.lock` must hold no `openssl-sys` or
+`native-tls`, which would break the glibc 2.17 floor and the macOS catalog
+install. polars' `nightly` feature is on,
 as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
 stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
