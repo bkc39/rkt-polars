@@ -38,6 +38,7 @@
   (require rackunit
            racket/file
            racket/runtime-path
+           (only-in file/gzip gzip-through-ports)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list last remove-duplicates)
            (only-in racket/sequence sequence->list)
@@ -447,5 +448,21 @@
   (define as-categorical (read-csv levels #:schema-overrides '(("level" . categorical))))
   (check-equal? (dtype (ref as-categorical "level")) 'categorical)
   (check-equal? (column as-categorical "level") '(info debug info))
+
+  (define (gzip-file name rows)
+    (define plain (apply scratch-file (string-append name ".plain") rows))
+    (define packed (build-path scratch (string-append name ".gz")))
+    (call-with-input-file plain
+      (lambda (in)
+        (call-with-output-file packed #:exists 'replace
+          (lambda (out) (gzip-through-ports in out #f 0)))))
+    packed)
+  (define many 200000)
+  (define gz-csv
+    (gzip-file "many.csv" (cons "a,s" (for/list ([i (in-range many)])
+                                       (format "~a,row-~a" i (modulo i 977))))))
+  (define from-gz-csv (read-csv gz-csv))
+  (check-equal? (shape from-gz-csv) (list many 2))
+  (check-equal? (ref (ref from-gz-csv "s") (sub1 many)) (format "row-~a" (modulo (sub1 many) 977)))
 
   (delete-directory/files scratch))
