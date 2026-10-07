@@ -112,6 +112,8 @@ API gaps: @tt{null_values} takes no per-column mapping (#101); no
 @tt{columns}, @tt{new_columns}, @tt{eol_char}, @tt{row_index_name},
 @tt{truncate_ragged_lines} or @tt{decimal_comma}.
 
+@include-section["io-parquet.scrbl"]
+
 @section[#:tag "io-multiple"]{Multiple files}
 
 Polars can deal with multiple files differently depending on your needs and

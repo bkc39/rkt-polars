@@ -584,44 +584,168 @@ total
 (eval:error (scan-csv "flights.tsv" #:separator #\tab
                       #:schema-overrides '(("dep_dealy" . f64))))]}
 
-@deftogether[(@defproc[(read-parquet [path path-string?]) dataframe?]
-              @defproc[(scan-parquet [path path-string?]
-                                     [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f])
-                       lazyframe?])]{
-  Read Parquet eagerly (@tt{pl.read_parquet}), or start a plan from it
-  (@tt{pl.scan_parquet}). @racket[path] is always a glob pattern: the
-  matching files stack in sorted filename order, and one that matches
-  nothing is an error, which @racket[scan-parquet] leaves to
-  @racket[collect]. A directory reads every file in it and adds its
-  @litchar{key=value} subdirectory names as columns; a single file or a
-  pattern adds none, as in Python, and neither does a directory whose own
-  path holds @litchar{[}, @litchar{*} or @litchar{?}, which Polars reads as
-  a pattern once it is escaped. @racket[read-parquet] is
-  @racket[(collect (scan-parquet path))]. API gap: no @racket[#:glob], so a
-  literal @litchar{[}, @litchar{*} or @litchar{?} in a file name is spelled
-  @litchar{[[]}, @litchar{[*]} or @litchar{[?]} (#36).
+@(begin-for-syntax
+   (define parquet-scan-arguments
+     (quote-syntax
+      ([#:n-rows n-rows (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
+       [#:row-index-name row-index-name (or/c string? #f) #f]
+       [#:row-index-offset row-index-offset (integer-in 0 4294967295) 0]
+       [#:parallel parallel (or/c 'auto 'columns 'row-groups 'prefiltered 'none) 'auto]
+       [#:use-statistics use-statistics boolean? #t]
+       [#:glob glob boolean? #t]
+       [#:rechunk rechunk boolean? #f]
+       [#:low-memory low-memory boolean? #f]
+       [#:include-file-paths include-file-paths (or/c string? #f) #f]
+       [#:missing-columns missing-columns (or/c 'raise 'insert) 'raise])))
+   (define parquet-write-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:compression compression (or/c 'uncompressed 'snappy 'gzip 'brotli 'lz4 'zstd) 'zstd]
+       [#:compression-level compression-level (or/c exact-integer? #f) #f]
+       [#:statistics statistics
+                     (or/c boolean? 'full
+                           (and/c (listof (or/c 'min 'max 'distinct-count 'null-count))
+                                  min-with-max?))
+                     #t]
+       [#:row-group-size row-group-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
+       [#:data-page-size data-page-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])))
+   (define (parquet-arguments kind)
+     (syntax-case parquet-scan-arguments ()
+       [(scan ...)
+        (case kind
+          [(read) #'([path path-string?]
+                     [#:columns columns
+                                (or/c (listof string?)
+                                      (listof (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
+                                      #f)
+                                #f]
+                     scan ...)]
+          [(scan) #'([path path-string?] scan ... [#:cache cache boolean? #t])]
+          [(write) #`([d dataframe?] #,@(syntax->list parquet-write-arguments))]
+          [(raw-write) #`([d DataFrame-ptr?] #,@(syntax->list parquet-write-arguments))])])))
+
+@(define-syntax-parser defparquetproc
+   [(_ (name:id kind:id result:expr) body ...)
+    #:with (argument ...) (replace-context #'name (parquet-arguments (syntax-e #'kind)))
+    #'(defproc (name argument ...) result body ...)])
+
+@defparquetproc[(read-parquet read dataframe?)]{
+  Reads Parquet into a @tech{dataframe} (@tt{pl.read_parquet}): it is
+  @racket[(collect (scan-parquet path ....))] with the same keywords, then
+  @racket[columns]. @racket[path] is a glob pattern: the matching files stack
+  in sorted filename order, and one that matches nothing is an error;
+  @racket[#:glob #f] takes it literally. A directory reads every file in it
+  and adds its @litchar{key=value} subdirectory names as columns; a single
+  file or a pattern adds none, as in Python, and neither does a directory
+  whose own path holds @litchar{[}, @litchar{*} or @litchar{?}. A relative
+  @racket[path] is resolved against @racket[current-directory], whose own
+  name is never read as a pattern.
+
+  @racket[columns] picks columns by name, or by position from 0 (negative
+  counts from the end), in the order given; a name the file lacks, a
+  position out of range or a column picked twice is an error. A name is
+  matched literally, where Python's would also take a regex or @litchar{*}.
+  @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
+  column numbering the rows from @racket[row-index-offset].
+  @racket[include-file-paths] adds a column of that name holding each row's
+  file as a complete path. When the files a pattern matches differ, a file
+  that lacks a column of the first is an error unless
+  @racket[#:missing-columns 'insert], which fills it with nulls.
+  @racket[parallel] sets how the reader divides the work (over columns, row
+  groups, both after evaluating a pushed-down filter, or not at all),
+  @racket[#:use-statistics #f] stops it skipping row groups by their
+  statistics,
+  @racket[low-memory] trades speed for memory and @racket[rechunk] makes
+  each column contiguous; none of the four changes the result.
 
   Categorical, Enum and Decimal columns keep their dtypes
   (@secref["ref-categorical"]). A file Polars cannot read raises
   @racket[exn:fail] with Polars' reason, even where Polars itself panics.
+  API gaps: no @tt{schema} or @tt{extra_columns} (#197), no
+  @tt{use_pyarrow}; hive options are #185.
 
   @examples[#:eval ev #:hidden
 (require racket/file)
 (define parquet-dir (make-temporary-directory "polars-doc-~a"))
 (for ([i '(1 2 3)])
   (write-parquet (read-csv (format "parts/part-~a.csv" i))
-                 (build-path parquet-dir (format "part-~a.parquet" i))))]
+                 (build-path parquet-dir (format "part-~a.parquet" i))))
+(define produce (read-parquet "produce.parquet"))
+(define mixed-dir (build-path parquet-dir "mixed"))
+(make-directory mixed-dir)
+(write-parquet produce (build-path mixed-dir "a.parquet"))
+(write-parquet (select produce "item") (build-path mixed-dir "b.parquet"))]
   @examples[#:eval ev
+(read-parquet "produce.parquet")
 (read-parquet (build-path parquet-dir "*.parquet"))
+(read-parquet "flights.parquet" #:columns '("carrier" "dep_delay") #:n-rows 3)
+(read-parquet "flights.parquet" #:columns '(0 1 -1) #:n-rows 2
+              #:row-index-name "row" #:row-index-offset 1)
+(column-names (read-parquet "produce.parquet" #:include-file-paths "file"))
+(shape (read-parquet "flights.parquet" #:parallel 'row-groups #:use-statistics #f
+                     #:low-memory #t #:rechunk #t))
+(shape (read-parquet "produce.parque?"))
+(eval:error (read-parquet "produce.parque?" #:glob #f))
+(eval:error (read-parquet "produce.parquet" #:columns '("item" "colour")))
+(eval:error (parameterize ([current-directory parquet-dir])
+               (read-parquet "mixed/*.parquet")))
+(parameterize ([current-directory parquet-dir])
+  (read-parquet "mixed/*.parquet" #:missing-columns 'insert))]}
+
+@defparquetproc[(scan-parquet scan lazyframe?)]{
+  Starts a @tech{lazyframe} plan from Parquet without reading it
+  (@tt{pl.scan_parquet}); the keywords are @racket[read-parquet]'s, without
+  @racket[#:columns] (@racket[select] instead) and with @racket[cache],
+  which keeps what the scan reads for a plan that uses it more than once.
+  @racket[collect] runs the plan, and that is where a file that cannot be
+  read, or a pattern that matches nothing, is reported. Polars reads only
+  the columns the plan uses, and skips row groups its filter rules out;
+  @racket[explain] shows both.
+
+  @examples[#:eval ev
+(~> (scan-parquet "flights.parquet")
+    (filter (> (col "dep_delay") 20))
+    (select "carrier" "dep_delay")
+    collect)
 (collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))
-(read-parquet "produce.parquet")]}
+(collect (scan-parquet "produce.parquet" #:cache #f #:row-index-name "row"))
+(eval:error (scan-parquet "flights.parquet" #:parallel 'row_groups))]}
+
+@defparquetproc[(write-parquet write void?)]{
+  Writes @racket[d] to Parquet (@tt{df.write_parquet}). @racket[compression]
+  picks the codec; @racket[compression-level] sets its level, within 0 to 9
+  for @racket['gzip] (default 6), 0 to 11 for @racket['brotli] (default 1)
+  and 1 to 22 for @racket['zstd] (default 3), and the other codecs ignore
+  it, as in Python. @racket[statistics] writes each column chunk's minimum,
+  maximum and null count by default; @racket[#f] writes none,
+  @racket['full] also asks for the distinct count (which Polars writes for
+  boolean columns), and a list names the ones to write. A list that names
+  @racket['min] must name @racket['max]; as in Python, a list that names any
+  statistic but not @racket['null-count] fails for a column Polars does not
+  dictionary-encode (floats, booleans, and integers or strings with many
+  distinct values).
+  @racket[row-group-size] puts that many rows in each row group, the last
+  taking the rest. By default, or with @racket[0] (which Python also takes
+  as the default), the writer makes groups of about 512² rows, where
+  Python's streaming writer makes about 122,880. @racket[data-page-size]
+  sets the bytes a data page aims for (default 1 MiB). API gaps: no
+  @tt{partition_by} (#185), @tt{metadata} or @tt{mkdir} (#197).
+
+  @examples[#:eval ev
+(define out (build-path parquet-dir "produce.parquet"))
+(write-parquet produce out #:compression 'gzip #:compression-level 9 #:statistics #f)
+(read-parquet out)
+(write-parquet produce out #:compression 'lz4 #:row-group-size 2 #:statistics '(null-count)
+               #:data-page-size 4096)
+(read-parquet out)
+(eval:error (write-parquet produce out #:compression-level 30))
+(eval:error (write-parquet produce "/no/such/dir/out.parquet"))]}
 
 @deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
               @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
               @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
   Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
-  CSV, Parquet or newline-delimited JSON (@tt{df.write_csv} and friends).
+  CSV or newline-delimited JSON (@tt{df.write_csv} and friends).
   API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
   file and takes no glob pattern (#44).}
 
@@ -638,6 +762,29 @@ total
 (define four (dataframe (list (series '(1 2 3 4) #:name "v"))))
 (~> four lazy (filter (> (col "v") 2)) collect)
 (eval:error (~> four lazy (filter (> (col "nope") 2)) collect))]}
+
+@defproc[(explain [lf lazyframe?]
+                  [#:optimized optimized boolean? #t]
+                  [#:format format (or/c 'plain 'tree) 'plain])
+         string?]{
+  Returns the plan @racket[lf] would run, as text (@tt{lf.explain()}): the
+  optimised plan, or with @racket[#:optimized #f] the plan as written;
+  @racket['tree] draws it as a tree. Reading the optimised plan from the
+  bottom up, a filter and a column selection that Polars pushed into a scan
+  appear in the scan itself, as its @tt{SELECTION} and its
+  @tt{PROJECT} count. A plan that cannot resolve, such as one naming a
+  column its source lacks, is an error.
+
+  @examples[#:eval ev
+(define late
+  (~> (scan-parquet "flights.parquet")
+      (filter (> (col "dep_delay") 20))
+      (select "carrier" "dep_delay")))
+(displayln (explain late #:optimized #f))
+(displayln (explain late))
+(displayln (explain (select (lazy produce) "item") #:format 'tree))
+(eval:error (explain (select (lazy produce) "colour")))
+(eval:error (explain late #:format 'dot))]}
 
 @deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
               @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
@@ -1500,14 +1647,28 @@ generic operations are simply the preferred surface.
 @subsection[#:tag "ref-reading-writing"]{Reading & writing}
 
 @deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-write-parquet [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-read-parquet [path path-string?]) dataframe?]
               @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
-  Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON; the
-  fluent @racket[read-csv] and friends are the surface. Like
-  @racket[read-parquet], @racket[dataframe-read-parquet] accepts a glob
-  pattern.}
+  Round-trip a dataframe through CSV or newline-delimited JSON; the
+  fluent @racket[read-csv] and friends are the surface.}
+
+@deftogether[(@defparquetproc[(dataframe-read-parquet read DataFrame-ptr?)]
+              @defparquetproc[(lazyframe-scan-parquet scan LazyFrame-ptr?)]
+              @defparquetproc[(dataframe-write-parquet raw-write void?)])]{
+  The raw-pointer reader, scan and writer under @racket[read-parquet],
+  @racket[scan-parquet] and @racket[write-parquet], with the same keywords
+  and checks.
+
+  @examples[#:eval ev
+(dataframe-height (dataframe-read-parquet "flights.parquet" #:n-rows 5))
+(dataframe-width (lazyframe-collect (lazyframe-scan-parquet "produce.parquet")))
+(dataframe-write-parquet (dataframe-read-parquet "produce.parquet")
+                         (build-path parquet-dir "raw.parquet")
+                         #:compression 'snappy)
+(dataframe-height (dataframe-read-parquet (build-path parquet-dir "raw.parquet")))]
+
+  @examples[#:eval ev #:hidden
+(delete-directory/files parquet-dir)]}
 
 @deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
               @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
@@ -1537,6 +1698,15 @@ are the wrapper-returning equivalents.
   @racket[dataframe-lazy] starts a plan from an in-memory frame
   (@tt{df.lazy()}); @racket[lazyframe-collect] executes a plan and returns the
   resulting frame (@tt{lf.collect()}).}
+
+@defproc[(lazyframe-explain [lf LazyFrame-ptr?]
+                            [#:optimized optimized boolean? #t]
+                            [#:format format (or/c 'plain 'tree) 'plain])
+         string?]{
+  The plan under @racket[explain], which wraps it.
+
+  @examples[#:eval ev
+(displayln (lazyframe-explain (dataframe-lazy (dataframe-read-parquet "produce.parquet"))))]}
 
 @deftogether[(@defproc[(lazyframe-select       [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]
               @defproc[(lazyframe-with-columns [lf LazyFrame-ptr?] [exprs (listof Expr-ptr?)]) LazyFrame-ptr?]

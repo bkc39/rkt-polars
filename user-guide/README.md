@@ -52,12 +52,14 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Categorical data and enums | `categorical-data-and-enums.rkt` | `categorical_data_and_enums.py` |
 | Window functions | `window-functions.rkt` | `window_functions.py` |
 
-`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
+`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/),
+[Parquet](https://docs.pola.rs/user-guide/io/parquet/) and
 [multiple files](https://docs.pola.rs/user-guide/io/multiple/)
 
 | Topic | Racket | Python |
 | --- | --- | --- |
 | CSV, with the reading options | `csv.rkt` | `csv.py` |
+| Parquet | `parquet.rkt` | `parquet.py` |
 | Multiple files | `multiple.rkt` | `multiple.py` |
 
 `interop/` — upstream [Arrow producer/consumer](https://docs.pola.rs/user-guide/misc/arrow/) and [Visualization](https://docs.pola.rs/user-guide/misc/visualization/), through `to_list` / `to_dict` / `to_numpy`
