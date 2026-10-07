@@ -18,28 +18,61 @@ fn write_round_trip(
 }
 
 extern "C" fn read_csv(path: *const c_char) -> *mut DataFrame {
-    dataframe_read_csv_with_options(
+    dataframe_read_csv_v2(
         path,
         CompatCsvOptions::default(),
         ptr::null(),
         ptr::null(),
+        ptr::null(),
         0,
         ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
         ptr::null(),
         0,
     )
 }
 
 fn scan_csv(path: *const c_char) -> *mut LazyFrame {
-    lazyframe_scan_csv_with_options(
+    lazyframe_scan_csv_v2(
         path,
         CompatCsvOptions::default(),
         ptr::null(),
         ptr::null(),
+        ptr::null(),
         0,
         ptr::null(),
         ptr::null(),
         0,
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+    )
+}
+
+extern "C" fn write_csv(df: *mut DataFrame, path: *const c_char) -> i32 {
+    dataframe_write_csv_with_options(
+        df,
+        path,
+        CompatCsvWriteOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
     )
 }
 
@@ -52,7 +85,7 @@ fn csv_round_trip_preserves_shape_and_values() {
     let xs = make_i64("x", &[1, 2, 3]);
     let gs = make_str("g", &["a", "b", "c"]);
     let df = make_df(&[xs, gs]);
-    let back = write_round_trip(df, "csv", dataframe_write_csv, read_csv);
+    let back = write_round_trip(df, "csv", write_csv, read_csv);
     assert_eq!(dataframe_height(back), 3);
     assert_eq!(read_column_names(back), vec!["x", "g"]);
     assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
@@ -117,11 +150,8 @@ fn write_csv_status_codes_null_inputs() {
     // write returns 1 for null df / null path, not 0 (success).
     let xs = make_i32("x", &[1]);
     let df = make_df(&[xs]);
-    assert_eq!(
-        dataframe_write_csv(ptr::null_mut(), cstr("/tmp/x").as_ptr()),
-        1
-    );
-    assert_eq!(dataframe_write_csv(df, ptr::null()), 1);
+    assert_eq!(write_csv(ptr::null_mut(), cstr("/tmp/x").as_ptr()), 1);
+    assert_eq!(write_csv(df, ptr::null()), 1);
     dataframe_drop(df);
     series_drop(xs);
 }
@@ -184,9 +214,9 @@ fn null_arguments_say_which_one() {
     let xs = make_i32("x", &[1]);
     let df = make_df(&[xs]);
     let p = cstr("/tmp/x");
-    assert_eq!(dataframe_write_csv(ptr::null_mut(), p.as_ptr()), 1);
+    assert_eq!(write_csv(ptr::null_mut(), p.as_ptr()), 1);
     assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
-    assert_eq!(dataframe_write_csv(df, ptr::null()), 1);
+    assert_eq!(write_csv(df, ptr::null()), 1);
     assert_eq!(recorded_error().as_deref(), Some("path is null"));
     assert!(read_csv(ptr::null()).is_null());
     assert_eq!(recorded_error().as_deref(), Some("path is null"));
@@ -218,14 +248,14 @@ fn every_entry_point_clears_a_stale_reason() {
     };
 
     set_last_error("stale");
-    assert_eq!(dataframe_write_csv(df, csv.as_ptr()), 0);
-    cleared("dataframe_write_csv");
+    assert_eq!(write_csv(df, csv.as_ptr()), 0);
+    cleared("dataframe_write_csv_with_options");
     assert_eq!(dataframe_write_parquet(df, parquet.as_ptr()), 0);
     cleared("dataframe_write_parquet");
     assert_eq!(dataframe_write_json_lines(df, ndjson.as_ptr()), 0);
     cleared("dataframe_write_json_lines");
-    frame("dataframe_read_csv_with_options", read_csv(csv.as_ptr()));
-    cleared("dataframe_read_csv_with_options");
+    frame("dataframe_read_csv_v2", read_csv(csv.as_ptr()));
+    cleared("dataframe_read_csv_v2");
     frame(
         "dataframe_read_parquet",
         dataframe_read_parquet(parquet.as_ptr()),
@@ -236,8 +266,8 @@ fn every_entry_point_clears_a_stale_reason() {
         dataframe_read_json_lines(ndjson.as_ptr()),
     );
     cleared("dataframe_read_json_lines");
-    plan("lazyframe_scan_csv_with_options", scan_csv(csv.as_ptr()));
-    cleared("lazyframe_scan_csv_with_options");
+    plan("lazyframe_scan_csv_v2", scan_csv(csv.as_ptr()));
+    cleared("lazyframe_scan_csv_v2");
     plan(
         "lazyframe_scan_parquet",
         lazyframe_scan_parquet(parquet.as_ptr()),

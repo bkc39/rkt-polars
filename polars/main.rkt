@@ -1,6 +1,6 @@
 #lang racket/base
 
-(require (only-in polars/private/csv dataframe-read-csv lazyframe-scan-csv)
+(require (only-in polars/private/csv dataframe-read-csv dataframe-write-csv lazyframe-scan-csv)
          polars/private/expr
          polars/private/foreign
          polars/private/generic
@@ -21,7 +21,7 @@
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
-(provide dataframe-read-csv lazyframe-scan-csv
+(provide dataframe-read-csv dataframe-write-csv lazyframe-scan-csv
          (all-from-out polars/private/expr)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error dataframe-drop-count

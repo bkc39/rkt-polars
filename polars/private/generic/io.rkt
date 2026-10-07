@@ -1,10 +1,11 @@
 #lang racket/base
 
 (require (only-in racket/contract/base -> ->* contract-out or/c)
-         (only-in polars/private/csv csv-reader/c dataframe-read-csv lazyframe-scan-csv)
+         (only-in polars/private/csv
+                  csv-reader csv-reader/c csv-scanner csv-scanner/c csv-writer csv-writer/c)
          (only-in polars/private/expr lazyframe-scan-parquet)
          (only-in polars/private/foreign
-                  dataframe-read-json-lines dataframe-read-parquet dataframe-write-csv
+                  dataframe-read-json-lines dataframe-read-parquet
                   dataframe-write-json-lines dataframe-write-parquet)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
@@ -12,25 +13,25 @@
 
 (provide (contract-out
           [read-csv (csv-reader/c dataframe?)]
-          [scan-csv (csv-reader/c lazyframe?)]
+          [scan-csv (csv-scanner/c lazyframe?)]
           [read-parquet (-> path-string? dataframe?)]
           [scan-parquet (->* (path-string?)
                              (#:n-rows (or/c #f exact-nonnegative-integer?))
                              lazyframe?)]
           [read-ndjson (-> path-string? dataframe?)]
-          [write-csv (-> dataframe? path-string? void?)]
+          [write-csv (csv-writer/c dataframe?)]
           [write-parquet (-> dataframe? path-string? void?)]
           [write-ndjson (-> dataframe? path-string? void?)]))
 
 (define-syntax-parse-rule (define-wrapped name:id wrap:expr reader:expr)
   (define name (procedure-rename (compose1 wrap reader) 'name)))
 
-(define-wrapped read-csv wrap-dataframe dataframe-read-csv)
-(define-wrapped scan-csv wrap-lazyframe lazyframe-scan-csv)
+(define-wrapped read-csv wrap-dataframe (csv-reader 'read-csv))
+(define-wrapped scan-csv wrap-lazyframe (csv-scanner 'scan-csv))
 (define-wrapped read-parquet wrap-dataframe dataframe-read-parquet)
 (define-wrapped scan-parquet wrap-lazyframe lazyframe-scan-parquet)
 (define-wrapped read-ndjson wrap-dataframe dataframe-read-json-lines)
-(define write-csv dataframe-write-csv)
+(define write-csv (procedure-rename (csv-writer 'write-csv) 'write-csv))
 (define write-parquet dataframe-write-parquet)
 (define write-ndjson dataframe-write-json-lines)
 
@@ -81,40 +82,76 @@
         (and (string? lazy) (equal? (cause-of eager) (cause-of lazy)))
         (and (not (string? lazy)) (frame=? eager lazy))))
 
-  (define csv-keywords
-    '(#:comment-prefix #:encoding #:glob #:has-header #:ignore-errors
-      #:infer-schema-length #:n-rows #:null-values #:quote-char
-      #:schema-overrides #:separator #:skip-rows #:try-parse-dates))
+  (define scan-keywords
+    (sort '(#:comment-prefix #:decimal-comma #:encoding #:eol-char #:glob #:has-header
+            #:ignore-errors #:infer-schema #:infer-schema-length
+            #:missing-utf8-is-empty-string #:n-rows #:new-columns #:null-values #:quote-char
+            #:raise-if-empty #:row-index-name #:row-index-offset #:schema-overrides
+            #:separator #:skip-lines #:skip-rows #:skip-rows-after-header
+            #:truncate-ragged-lines #:try-parse-dates)
+          keyword<?))
+  (define read-keywords (sort (cons '#:columns scan-keywords) keyword<?))
   (define csv-readers
     (list contracted:read-csv contracted:scan-csv raw:dataframe-read-csv raw:lazyframe-scan-csv))
-  (for ([reader (in-list csv-readers)])
+  (for ([reader (in-list csv-readers)]
+        [keywords (list read-keywords scan-keywords read-keywords scan-keywords)])
     (define-values (required accepted) (procedure-keywords reader))
     (check-equal? required '())
-    (check-equal? accepted csv-keywords))
+    (check-equal? accepted keywords))
 
   (define missing (build-path scratch "no-such.csv"))
   (define bad-keywords
     `((#:separator . "\t") (#:separator . 9) (#:separator . #\é) (#:separator . #\newline)
       (#:quote-char . "'") (#:comment-prefix . "") (#:null-values . NA)
       (#:null-values . ("NA" 1)) (#:infer-schema-length . -1) (#:infer-schema-length . 1.5)
+      (#:null-values . (("a" . "NA") ("a" . "-"))) (#:null-values . (("a" . NA)))
+      (#:null-values . ,(hash "a" "NA"))
       (#:schema-overrides . ((a . int32))) (#:schema-overrides . (("a" . bogus)))
       (#:schema-overrides . (("a" . (duration microseconds))))
       (#:schema-overrides . (("a" . (enum x y))))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
       (#:schema-overrides . ,(hash "a" 'int32)) (#:encoding . latin1) (#:glob . 1)
-))
+      (#:eol-char . "\n") (#:eol-char . #\é) (#:eol-char . 10)
+      (#:new-columns . ("x" "x")) (#:new-columns . "x") (#:new-columns . (x))
+      (#:row-index-name . i) (#:row-index-offset . -1) (#:row-index-offset . ,(expt 2 32))
+      (#:skip-lines . -1) (#:skip-rows-after-header . 1.5) (#:infer-schema . 0)
+      (#:raise-if-empty . 1) (#:missing-utf8-is-empty-string . "yes")
+      (#:truncate-ragged-lines . 1) (#:decimal-comma . 1)))
+  (define bad-together
+    '(((#:quote-char . #\,))
+      ((#:separator . #\;) (#:quote-char . #\;))
+      ((#:separator . #\"))
+      ((#:eol-char . #\,))
+      ((#:eol-char . #\"))
+      ((#:separator . #\;) (#:eol-char . #\;))
+      ((#:quote-char . #\') (#:eol-char . #\'))
+      ((#:skip-rows . 1) (#:skip-lines . 1))))
+  (define bad-columns
+    '((#:columns . ("a" "a")) (#:columns . (0 0)) (#:columns . ("a" 0)) (#:columns . (-1))
+      (#:columns . "a")))
   (for ([reader (in-list csv-readers)]
         [name '(read-csv scan-csv dataframe-read-csv lazyframe-scan-csv)])
     (define blamed (regexp (format "^~a: contract violation" name)))
     (check-exn blamed (lambda () (reader 'sym)))
-    (for ([kvs (in-list (append (map list bad-keywords)
-                                '(((#:quote-char . #\,))
-                                  ((#:separator . #\;) (#:quote-char . #\;))
-                                  ((#:separator . #\")))))])
+    (for ([kvs (in-list (append (map list bad-keywords) bad-together))])
       (check-exn (lambda (e) (and (exn:fail:contract:blame? e)
                                   (regexp-match? blamed (exn-message e))))
                  (lambda () (with-keywords reader missing kvs))
                  (format "~a ~s" name kvs))))
+  (for ([reader (list contracted:read-csv raw:dataframe-read-csv)]
+        [name '(read-csv dataframe-read-csv)]
+        #:when #t
+        [kv (in-list bad-columns)])
+    (check-exn (regexp (format "^~a: contract violation" name))
+               (lambda () (with-keywords reader missing (list kv)))
+               (format "~a ~s" name kv)))
+  (for ([reader (list contracted:scan-csv raw:lazyframe-scan-csv)])
+    (check-exn #rx"does not expect an argument with given keyword\n.*given keyword: #:columns"
+               (lambda () (reader missing #:columns '("a")))))
+  (check-exn #rx"eol-char must differ from the separator and quote-char"
+             (lambda () (contracted:read-csv missing #:separator #\; #:eol-char #\;)))
+  (check-exn #rx"only one of skip-rows and skip-lines may be set"
+             (lambda () (contracted:scan-csv missing #:skip-rows 1 #:skip-lines 2)))
   (check-exn #rx"^write-csv: contract violation" (lambda () (contracted:write-csv 5 "x")))
 
   (define flights-na (read-csv flights #:separator #\tab #:null-values "NA"))
@@ -135,7 +172,7 @@
 
   (define unparsed (message-of (lambda () (read-csv flights #:separator #\tab))))
   (check-regexp-match
-   #rx"^dataframe-read-csv: failed to read csv from [^:]*flights.tsv: could not parse `NA` as dtype `i64` at column 'arr_delay' \\(column number 9\\)"
+   #rx"^read-csv: failed to read csv from [^:]*flights.tsv: could not parse `NA` as dtype `i64` at column 'arr_delay' \\(column number 9\\)"
    unparsed)
   (for ([hint '("#:infer-schema-length 10000" "#:schema-overrides" "#:ignore-errors to #t"
                 "`NA` to #:null-values")])
@@ -182,10 +219,10 @@
   (define ab (scratch-file "ab.csv" "a,b" "1,2"))
   (define absent '(("a" . int64) ("zzz" . float32)))
   (check-exn
-   #rx"^dataframe-read-csv: failed to read csv from [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
+   #rx"^read-csv: failed to read csv from [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
    (lambda () (read-csv ab #:schema-overrides absent)))
   (check-exn
-   #rx"^lazyframe-scan-csv: failed to scan [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
+   #rx"^scan-csv: failed to scan [^:]*ab.csv: schema overrides name columns not in the file: \"zzz\"$"
    (lambda () (scan-csv ab #:schema-overrides absent)))
 
   (define typed
@@ -262,7 +299,7 @@
 
   (define gone (build-path scratch "gone.csv"))
   (check-exn #rx"^lazyframe-collect: " (lambda () (collect (scan-csv gone))))
-  (check-exn #rx"^lazyframe-scan-csv: failed to scan "
+  (check-exn #rx"^scan-csv: failed to scan "
              (lambda () (scan-csv gone #:schema-overrides '(("a" . int32)))))
 
   (for ([name '("b" "c" "a")] [value '(2 3 1)])
@@ -287,7 +324,7 @@
 
   (void (scratch-file "mixed/a.csv" "x" "1")
         (scratch-file "mixed/b.csv" "y" "2"))
-  (check-exn #rx"^dataframe-read-csv: " (lambda () (read-csv (build-path scratch "mixed" "*.csv"))))
+  (check-exn #rx"^read-csv: " (lambda () (read-csv (build-path scratch "mixed" "*.csv"))))
 
   (define nothing (build-path scratch "globbed" "*.none"))
   (check-pred lazyframe? (scan-csv nothing))
@@ -337,7 +374,7 @@
 
   (void (scratch-file "dirmix/a.csv" "x" "1")
         (scratch-file "dirmix/notes.txt" "x" "99"))
-  (check-exn #rx"^dataframe-read-csv: failed to read csv from [^:]*dirmix: cannot open file: it is a directory"
+  (check-exn #rx"^read-csv: failed to read csv from [^:]*dirmix: cannot open file: it is a directory"
              (lambda () (read-csv (build-path scratch "dirmix") #:glob #f)))
 
   (for ([year '(2013 2014)])
@@ -393,7 +430,7 @@
     (message-of (lambda () (read-csv path))))
   (check-exn #rx"reads as one column" (lambda () (read-csv flights #:separator #f)))
   (define flights-guard (guard-message flights))
-  (check-regexp-match #rx"^dataframe-read-csv: [^:]*flights.tsv reads as one column" flights-guard)
+  (check-regexp-match #rx"^read-csv: [^:]*flights.tsv reads as one column" flights-guard)
   (check-regexp-match #rx"splits on #\\\\tab into 19 fields" flights-guard)
   (check-regexp-match #rx"pass #:separator #\\\\tab," flights-guard)
   (check-equal? (length (regexp-match* #rx"flights.tsv" flights-guard)) 1)
@@ -449,3 +486,413 @@
   (check-equal? (column as-categorical "level") '(info debug info))
 
   (delete-directory/files scratch))
+
+(module+ test
+  (require (only-in polars/private/generic/reshape rename select [filter frame-filter])
+           (only-in polars/private/generic/operators [> gt]))
+  (define csv-dir (make-temporary-directory "rkt-polars-csv-options-~a"))
+  (define (csv-file name contents)
+    (define path (build-path csv-dir name))
+    (call-with-output-file path #:exists 'replace
+      (lambda (out) (void (write-string contents out))))
+    path)
+  (define (rows-of df)
+    (for/list ([i (in-range (height df))])
+      (for/list ([name (in-list (column-names df))]) (list-ref (column df name) i))))
+
+  (define abc (csv-file "abc.csv" "a,b,c\n1,NA,x\nNA,2,-\n3,4,y\n"))
+  (define abc-pattern (build-path csv-dir "[a]bc.csv"))
+
+  (define a-only (read-csv abc #:null-values '(("a" . "NA"))))
+  (check-equal? (dtypes-of a-only) '(int64 string string))
+  (check-equal? (rows-of a-only) (list (list 1 "NA" "x") (list polars-null "2" "-")
+                                       (list 3 "4" "y")))
+  (check-equal? (rows-of (read-csv abc #:null-values '(("a" . "NA") ("c" . "-"))))
+                (list (list 1 "NA" "x") (list polars-null "2" polars-null) (list 3 "4" "y")))
+  (check-true (frame=? a-only (read-csv abc-pattern #:null-values '(("a" . "NA")))))
+  (check-true (read-and-scan-agree abc '((#:null-values . (("a" . "NA"))))))
+  (check-true (frame=? (read-csv abc #:null-values '()) (read-csv abc)))
+  (check-regexp-match
+   #rx"^read-csv: failed to read csv from [^:]*abc.csv: not found: unable to find column \"zzz\"; valid columns: \\[\"a\", \"b\", \"c\"\\]"
+   (message-of (lambda () (read-csv abc #:null-values '(("zzz" . "NA"))))))
+  (check-regexp-match #rx"unable to find column \"zzz\""
+                      (message-of (lambda () (collect (scan-csv abc #:null-values '(("zzz" . "NA")))))))
+
+  (check-equal? (column-names (read-csv abc #:columns '("c" "a"))) '("a" "c"))
+  (check-equal? (column-names (read-csv abc #:columns '(2 0))) '("a" "c"))
+  (check-true (frame=? (read-csv abc #:columns '("c" "a")) (read-csv abc-pattern #:columns '(2 0))))
+  (check-true (frame=? (read-csv abc #:columns '()) (read-csv abc)))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: not found: unable to find column \"zzz\""
+                      (message-of (lambda () (read-csv abc #:columns '("zzz")))))
+  (for ([path (list abc abc-pattern)])
+    (check-regexp-match #rx"projection index: 7 is out of bounds for csv schema with length: 3$"
+                        (message-of (lambda () (read-csv path #:columns '(7))))))
+  (check-equal? (column-names (read-csv abc #:columns '("b") #:row-index-name "i")) '("i" "b"))
+  (check-equal? (column-names (read-csv abc #:columns '(1) #:row-index-name "i")) '("i" "b"))
+
+  (check-equal? (column-names (read-csv abc #:new-columns '("x"))) '("x" "b" "c"))
+  (check-true (read-and-scan-agree abc '((#:new-columns . ("x")))))
+  (define na-in-a (read-csv abc #:null-values '(("a" . "NA"))))
+  (for ([renamed (list (read-csv abc #:new-columns '("x") #:null-values '(("x" . "NA")))
+                       (collect (scan-csv abc #:new-columns '("x")
+                                          #:null-values '(("x" . "NA")))))])
+    (check-equal? (dtypes-of renamed) '(int64 string string))
+    (check-true (frame=? renamed (rename na-in-a "a" "x"))))
+  (define swapped-keywords
+    '((#:new-columns . ("c" "x" "a")) (#:null-values . (("c" . "NA")))
+      (#:row-index-name . "b")))
+  (define swapped (with-keywords read-csv abc swapped-keywords))
+  (check-equal? (column-names swapped) '("b" "c" "x" "a"))
+  (check-equal? (dtypes-of swapped) '(uint32 int64 string string))
+  (check-equal? (column swapped "b") '(0 1 2))
+  (check-equal? (for/list ([name '("c" "x" "a")]) (column swapped name))
+                (for/list ([name '("a" "b" "c")]) (column na-in-a name)))
+  (check-true (frame=? swapped (collect (with-keywords scan-csv abc swapped-keywords))))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: 4 new column names for a file of 3 columns$"
+                      (message-of (lambda () (read-csv abc #:new-columns '("p" "q" "r" "s")))))
+  (check-regexp-match #rx"^scan-csv: failed to scan [^:]*abc.csv: 4 new column names for a file of 3 columns$"
+                      (message-of (lambda () (scan-csv abc #:new-columns '("p" "q" "r" "s")))))
+  (check-regexp-match #rx"duplicate: column with name 'b' has more than one occurrence$"
+                      (message-of (lambda () (read-csv abc #:new-columns '("b")))))
+  (define headerless (read-csv abc #:has-header #f #:new-columns '("p" "q" "r")))
+  (check-equal? (column-names headerless) '("p" "q" "r"))
+  (check-equal? (height headerless) 4)
+  (define renamed-typed
+    (read-csv abc #:new-columns '("x") #:null-values '(("x" . "NA"))
+              #:schema-overrides '(("x" . f64))))
+  (check-equal? (dtypes-of renamed-typed) '(float64 string string))
+  (check-equal? (column renamed-typed "x") (list 1.0 polars-null 3.0))
+  (check-regexp-match #rx"schema overrides name columns not in the file: \"a\"$"
+                      (message-of (lambda () (read-csv abc #:new-columns '("x")
+                                                       #:schema-overrides '(("a" . f64))))))
+  (check-regexp-match #rx"^scan-csv: failed to scan [^:]*nope.csv: "
+                      (message-of (lambda () (scan-csv (build-path csv-dir "nope.csv")
+                                                       #:new-columns '("x")))))
+  (check-equal? (column-names (read-csv abc #:new-columns '("x") #:columns '("x" "c")))
+                '("x" "c"))
+  (define no-match (build-path csv-dir "*.none"))
+  (check-regexp-match #rx"^scan-csv: failed to scan [^:]*[*][.]none: no files match the pattern$"
+                      (message-of (lambda () (scan-csv no-match #:new-columns '("x")))))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*[*][.]none: no files match the pattern$"
+                      (message-of (lambda () (read-csv no-match #:new-columns '("x")))))
+
+  (define indexed (read-csv abc #:row-index-name "i" #:row-index-offset 10))
+  (check-equal? (column-names indexed) '("i" "a" "b" "c"))
+  (check-equal? (dtype (ref indexed "i")) 'uint32)
+  (check-equal? (column indexed "i") '(10 11 12))
+  (check-true (read-and-scan-agree abc '((#:row-index-name . "i") (#:row-index-offset . 10))))
+  (define clash "duplicate: cannot add row_index with name 'a': column already exists in file.")
+  (check-equal? (cause-of (message-of (lambda () (read-csv abc #:row-index-name "a")))) clash)
+  (check-equal? (cause-of (message-of (lambda () (read-csv abc #:row-index-name "a"
+                                                           #:columns '("b")))))
+                clash)
+  (check-regexp-match (regexp-quote clash)
+                      (message-of (lambda () (collect (scan-csv abc #:row-index-name "a")))))
+  (check-regexp-match #rx"cannot add row_index with name 'x'"
+                      (message-of (lambda () (scan-csv abc #:new-columns '("x")
+                                                       #:row-index-name "x"))))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: polars panicked: .*overflows"
+                      (message-of (lambda () (read-csv abc #:row-index-name "i"
+                                                       #:row-index-offset #xFFFFFFFE))))
+
+  (define eol-fixture (build-path data-dir "eol.csv"))
+  (check-equal? (rows-of (read-csv eol-fixture #:eol-char #\;)) '(("UA" 1545) ("AA" 1141)))
+  (check-equal? (dtypes-of (read-csv eol-fixture #:eol-char #\;)) '(string int64))
+  (check-equal? (rows-of (collect (scan-csv eol-fixture #:eol-char #\; #:row-index-name "row"
+                                            #:row-index-offset 1)))
+                '((1 "UA" 1545) (2 "AA" 1141)))
+  (check-true (read-and-scan-agree eol-fixture '((#:eol-char . #\;) (#:row-index-name . "row")
+                                                 (#:row-index-offset . 1))))
+  (define eol (csv-file "eol.csv" "a,b;1,x;2,y;"))
+  (check-equal? (rows-of (read-csv eol #:eol-char #\;)) '((1 "x") (2 "y")))
+  (check-true (read-and-scan-agree eol '((#:eol-char . #\;))))
+  (define ragged (csv-file "ragged.csv" "a,b\n1,x\n2,y,extra\n3\n"))
+  (check-regexp-match #rx"found more fields than defined in 'Schema'\n\nConsider setting #:truncate-ragged-lines #t\\.$"
+                      (message-of (lambda () (read-csv ragged))))
+  (check-equal? (rows-of (read-csv ragged #:truncate-ragged-lines #t))
+                (list '(1 "x") '(2 "y") (list 3 polars-null)))
+  (check-true (read-and-scan-agree ragged '((#:truncate-ragged-lines . #t))))
+  (define commas (csv-file "commas.csv" "a;b\n1,5;x\n2,25;y\n"))
+  (check-equal? (column (read-csv commas #:separator #\;) "a") '("1,5" "2,25"))
+  (check-equal? (column (read-csv commas #:separator #\; #:decimal-comma #t) "a") '(1.5 2.25))
+  (define quoted-commas (csv-file "quoted-commas.csv" "a,b\n\"1,5\",x\n\"2,25\",y\n"))
+  (check-equal? (column (read-csv quoted-commas #:decimal-comma #t) "a") '(1.5 2.25))
+  (define preamble (csv-file "preamble.csv" "junk \"quoted\nstill junk\na,b\n1,x\n2,y\n3,z\n"))
+  (check-equal? (rows-of (read-csv preamble #:skip-lines 2)) '((1 "x") (2 "y") (3 "z")))
+  (check-regexp-match #rx"empty CSV" (message-of (lambda () (read-csv preamble #:skip-rows 2))))
+  (check-equal? (rows-of (read-csv preamble #:skip-lines 2 #:skip-rows-after-header 1))
+                '((2 "y") (3 "z")))
+  (check-true (read-and-scan-agree preamble '((#:skip-lines . 2) (#:skip-rows-after-header . 1))))
+  (define empty-file (csv-file "empty.csv" ""))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*empty.csv: no data: empty CSV$"
+                      (message-of (lambda () (read-csv empty-file))))
+  (check-equal? (shape (read-csv empty-file #:raise-if-empty #f)) '(0 0))
+  (check-equal? (shape (collect (scan-csv empty-file #:raise-if-empty #f))) '(0 0))
+  (define gaps (csv-file "gaps.csv" "a,b\n1,\n,x\n"))
+  (check-equal? (column (read-csv gaps) "b") (list polars-null "x"))
+  (check-equal? (column (read-csv gaps #:missing-utf8-is-empty-string #t) "b") '("" "x"))
+  (check-equal? (column (read-csv gaps #:missing-utf8-is-empty-string #t) "a")
+                (list 1 polars-null))
+  (check-equal? (dtypes-of (read-csv abc #:infer-schema #f #:null-values "NA"))
+                '(string string string))
+  (check-true (frame=? (read-csv abc #:infer-schema #f #:infer-schema-length 50)
+                       (read-csv abc #:infer-schema-length 0)))
+
+  (define stations (build-path data-dir "stations.csv"))
+  (define station-frame
+    (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
+              #:null-values '(("temp" . "-") ("rain" . "n/a")) #:truncate-ragged-lines #t))
+  (check-equal? (dtypes-of station-frame) '(string string string float64 float64 string))
+  (check-equal? (rows-of (select station-frame "station" "temp" "rain" "note"))
+                (list (list "Oslo" 12.5 0.0 "-") (list "Bergen" polars-null 3.2 polars-null)
+                      (list "Tromso" 4.0 polars-null "cold") (list "Narvik" 3.5 1.0 "windy")))
+  (check-equal? (column (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
+                                  #:null-values '("-" "n/a") #:truncate-ragged-lines #t)
+                        "note")
+                (list polars-null polars-null "cold" "windy"))
+  (check-equal? (column (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
+                                  #:null-values '(("temp" . "-") ("rain" . "n/a"))
+                                  #:truncate-ragged-lines #t #:missing-utf8-is-empty-string #t)
+                        "note")
+                '("-" "" "cold" "windy"))
+  (define dated-stations
+    (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
+              #:null-values '(("temp" . "-") ("rain" . "n/a")) #:truncate-ragged-lines #t
+              #:try-parse-dates #t))
+  (check-equal? (dtypes-of dated-stations) '(string date time float64 float64 string))
+  (define stations-out (build-path csv-dir "stations-out.csv"))
+  (define (stations-written frame . kvs)
+    (keyword-apply write-csv (map car kvs) (map cdr kvs) (list frame stations-out))
+    (file->string stations-out))
+  (check-equal? (stations-written dated-stations '(#:date-format . "%d.%m.%Y")
+                                  '(#:decimal-comma . #t) '(#:null-value . "-")
+                                  '(#:separator . #\;) '(#:time-format . "%H:%M"))
+                "station;day;at;temp;rain;note\nOslo;01.05.2024;06:00;12,5;0,0;-\nBergen;01.05.2024;06:30;-;3,2;-\nTromso;02.05.2024;07:15;4,0;-;cold\nNarvik;02.05.2024;08:00;3,5;1,0;windy\n")
+  (check-equal? (stations-written (select dated-stations "station" "temp")
+                                  '(#:float-precision . 2))
+                "station,temp\nOslo,12.50\nBergen,\nTromso,4.00\nNarvik,3.50\n")
+  (check-equal? (stations-written (select dated-stations "station" "temp")
+                                  '(#:float-precision . 2) '(#:quote-style . non-numeric))
+                "\"station\",\"temp\"\n\"Oslo\",12.50\n\"Bergen\",\n\"Tromso\",4.00\n\"Narvik\",3.50\n")
+  (check-equal? (stations-written (select dated-stations "station" "temp")
+                                  '(#:float-scientific . #t))
+                "station,temp\nOslo,1.25e1\nBergen,\nTromso,4e0\nNarvik,3.5e0\n")
+  (check-equal? (stations-written (select dated-stations "station" "note")
+                                  '(#:include-header . #f) '(#:line-terminator . "\r\n")
+                                  '(#:quote-style . always))
+                "\"Oslo\",\"-\"\r\n\"Bergen\",\"\"\r\n\"Tromso\",\"cold\"\r\n\"Narvik\",\"windy\"\r\n")
+  (check-equal? (stations-written (select (read-csv flights #:separator #\tab #:null-values "NA"
+                                                    #:try-parse-dates #t #:n-rows 3)
+                                          "carrier" "flight" "time_hour")
+                                  '(#:batch-size . 1) '(#:datetime-format . "%Y-%m-%dT%H:%M")
+                                  '(#:include-bom . #t) '(#:quote-style . non-numeric))
+                "﻿\"carrier\",\"flight\",\"time_hour\"\n\"UA\",1545,\"2013-01-01T05:00\"\n\"UA\",1714,\"2013-01-01T05:00\"\n\"AA\",1141,\"2013-01-01T05:00\"\n")
+  (check-equal? (rows-of (read-csv flights #:separator #\tab #:null-values "NA"
+                                   #:columns '("carrier" "flight" "dep_delay")
+                                   #:row-index-name "row" #:n-rows 3))
+                '((0 2 "UA" 1545) (1 4 "UA" 1714) (2 2 "AA" 1141)))
+  (check-equal? (column-names (read-csv (build-path data-dir "parts" "part-1.csv")
+                                        #:has-header #f #:skip-rows 1
+                                        #:new-columns '("from" "to" "delay")))
+                '("from" "to" "delay"))
+
+  (define part-1 (build-path data-dir "parts" "part-1.csv"))
+  (check-equal? (rows-of (read-csv flights #:separator #\tab #:null-values "NA"
+                                   #:columns '("carrier" "flight" "dep_delay")
+                                   #:row-index-name "row" #:row-index-offset 1 #:n-rows 3))
+                '((1 2 "UA" 1545) (2 4 "UA" 1714) (3 2 "AA" 1141)))
+  (check-equal? (column-names (read-csv flights #:separator #\tab #:columns '(9 10) #:n-rows 2))
+                '("carrier" "flight"))
+  (check-regexp-match #rx"projection index: 42 is out of bounds for csv schema with length: 19$"
+                      (message-of (lambda () (read-csv flights #:separator #\tab
+                                                       #:columns '(42)))))
+  (check-regexp-match #rx"4 new column names for a file of 3 columns$"
+                      (message-of (lambda () (read-csv part-1 #:new-columns '("a" "b" "c" "d")))))
+  (check-regexp-match #rx"cannot add row_index with name 'origin'"
+                      (message-of (lambda () (read-csv part-1 #:row-index-name "origin"))))
+  (check-regexp-match #rx"found more fields than defined in 'Schema'"
+                      (message-of (lambda () (read-csv stations #:skip-lines 1
+                                                       #:separator #\;))))
+  (check-regexp-match #rx"unable to find column \"temperature\""
+                      (message-of (lambda () (read-csv stations #:skip-lines 1 #:separator #\;
+                                                       #:null-values '(("temperature" . "-"))))))
+  (check-equal? (rows-of (read-csv part-1 #:skip-rows-after-header 1)) '(("LGA" "IAH" 4)))
+  (check-equal? (~> (read-csv flights #:separator #\tab #:infer-schema #f)
+                    (ref #:columns "year")
+                    dtype)
+                'string)
+  (check-equal? (rows-of (~> (scan-csv part-1 #:new-columns '("from" "to") #:row-index-name "row")
+                             (frame-filter (gt (col "dep_delay") 3))
+                             collect))
+                '((1 "LGA" "IAH" 4)))
+
+  (define compressed (build-path data-dir "compressed"))
+  (define part-1-frame (read-csv part-1))
+  (define decompress?
+    (not (message-of (lambda () (read-csv (build-path compressed "part-1.csv.gz"))))))
+  (define zlib-looking (csv-file "zlib-looking.csv" "x^2,y\n1,2\n3,4\n"))
+  (define tiny-zlib-looking (csv-file "tiny-zlib-looking.csv" "x^\n1\n"))
+  (define bom-first (csv-file "bom-first.csv" "﻿x^2,y\n1,2\n3,4\n"))
+  (define (scan-message path)
+    (message-of (lambda () (collect (scan-csv path)))))
+  (cond
+    [decompress?
+     (for ([ext '("gz" "zlib" "zst")])
+       (define path (build-path compressed (string-append "part-1.csv." ext)))
+       (check-true (frame=? (read-csv path) part-1-frame) ext)
+       (check-true (frame=? (collect (scan-csv path)) part-1-frame) ext)
+       (check-equal? (rows-of (read-csv path #:n-rows 1)) '(("EWR" "IAH" 2)) ext)
+       (check-equal? (column-names (read-csv path #:new-columns '("from"))) '("from" "dest" "dep_delay")
+                     ext)
+       (check-equal? (column-names (collect (scan-csv path #:new-columns '("from"))))
+                     '("from" "dest" "dep_delay")
+                     ext))
+     (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*zlib-looking.csv: .*corrupt deflate stream"
+                         (message-of (lambda () (read-csv zlib-looking))))
+     (check-regexp-match #rx"corrupt deflate stream" (scan-message zlib-looking))
+     (check-equal? (shape (read-csv tiny-zlib-looking)) '(0 1))
+     (check-false (equal? (column-names (read-csv tiny-zlib-looking)) '("x^")))]
+    [else
+     (for ([path (list (build-path compressed "part-1.csv.gz") (build-path compressed "part-1.csv.zlib")
+                       (build-path compressed "part-1.csv.zst") zlib-looking tiny-zlib-looking)])
+       (define cause "cannot read compressed input; this build lacks polars' decompress feature")
+       (for ([read (list (lambda () (read-csv path))
+                         (lambda () (read-csv path #:new-columns '("from")))
+                         (lambda () (read-csv path #:row-index-name "i")))])
+         (check-equal? (cause-of (message-of read)) cause (format "~a" path)))
+       (for ([scan (list (lambda () (scan-csv path #:schema-overrides '(("y" . str))))
+                         (lambda () (scan-csv path #:new-columns '("from"))))])
+         (check-regexp-match (regexp (string-append "^scan-csv: failed to scan [^:]*: "
+                                                    (regexp-quote cause) "$"))
+                             (message-of scan)))
+       (check-regexp-match (regexp (string-append "^lazyframe-collect: failed to collect the query: "
+                                                  (regexp-quote cause) "$"))
+                           (scan-message path)))])
+  (check-equal? (rows-of (read-csv bom-first)) '((1 2) (3 4)))
+  (check-equal? (column-names (read-csv bom-first)) '("x^2" "y"))
+  (check-true (frame=? (read-csv bom-first) (collect (scan-csv bom-first))))
+
+  (check-regexp-match #rx"reads as one column"
+                      (message-of (lambda () (read-csv flights #:row-index-name "i"))))
+  (check-equal? (shape (read-csv flights #:new-columns '("line"))) '(102 1))
+  (define semicolon-name (csv-file "semicolon-name.csv" "a;b,c\n1;2,3\n"))
+  (for ([columns '(("a;b") (0))])
+    (check-equal? (rows-of (read-csv semicolon-name #:columns columns)) '(("1;2")))
+    (check-equal? (column-names (read-csv semicolon-name #:columns columns)) '("a;b")))
+  (define semicolons (csv-file "semicolons.csv" "a;b\n1;2\n"))
+  (check-regexp-match #rx"reads as one column" (message-of (lambda () (read-csv semicolons))))
+  (check-equal? (rows-of (read-csv semicolons #:columns '("a;b"))) '(("1;2")))
+
+  (define size-max (sub1 (expt 2 64)))
+  (define (blamed-read kw value)
+    (message-of (lambda () (keyword-apply contracted:read-csv (list kw) (list value) (list abc)))))
+  (for ([kw '(#:skip-rows #:skip-lines #:skip-rows-after-header #:n-rows #:infer-schema-length)])
+    (check-regexp-match #rx"^read-csv: contract violation" (blamed-read kw (expt 2 64)) (format "~a" kw))
+    (check-regexp-match #rx"^read-csv: contract violation" (blamed-read kw (add1 (expt 2 64))) (format "~a" kw)))
+  (check-regexp-match #rx"^read-csv: contract violation" (blamed-read '#:columns (list (expt 2 64))))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: projection index: 18446744073709551615 is out of bounds for csv schema with length: 3$"
+                      (blamed-read '#:columns (list size-max)))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: no data: specified skip_lines is larger than total number of lines\\.$"
+                      (blamed-read '#:skip-lines size-max))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*abc.csv: no data: empty CSV$"
+                      (blamed-read '#:skip-rows size-max))
+  (check-equal? (shape (read-csv abc #:skip-rows-after-header size-max)) '(0 3))
+  (check-equal? (shape (read-csv abc #:n-rows size-max)) '(3 3))
+
+  (define oracle-source
+    (csv-file "write-oracle.csv"
+              (string-append
+               "i,f,s,d,t,h,b\n"
+               "1,1.5,\"a,b\",2024-01-02,2024-01-02 03:04:05.006,05:06:07,true\n"
+               ",1e-10,\"q\"\"t\",,,,false\n"
+               "3,12345678.9,,2024-12-31,2024-12-31 00:00:00,23:59:59.999999,\n")))
+  (define oracle-frame (read-csv oracle-source #:try-parse-dates #t))
+  (check-equal? (dtypes-of oracle-frame)
+                '(int64 float64 string date (datetime microseconds #f) time boolean))
+  (define written-path (build-path csv-dir "written.csv"))
+  (define (written kvs)
+    (define sorted (sort kvs keyword<? #:key car))
+    (keyword-apply write-csv (map car sorted) (map cdr sorted) (list oracle-frame written-path))
+    (file->string written-path))
+  (define python-1.42.1-write-csv
+    '((()
+       "i,f,s,d,t,h,b\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,\"q\"\"t\",,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:include-header . #f))
+       "1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,\"q\"\"t\",,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:include-bom . #t))
+       "\ufeffi,f,s,d,t,h,b\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,\"q\"\"t\",,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:separator . #\;))
+       "i;f;s;d;t;h;b\n1;1.5;a,b;2024-01-02;2024-01-02T03:04:05.006000;05:06:07.000000000;true\n;1e-10;\"q\"\"t\";;;;false\n3;12345678.9;;2024-12-31;2024-12-31T00:00:00.000000;23:59:59.999999000;\n")
+      (((#:line-terminator . "\r\n"))
+       "i,f,s,d,t,h,b\r\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\r\n,1e-10,\"q\"\"t\",,,,false\r\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\r\n")
+      (((#:quote-char . #\'))
+       "i,f,s,d,t,h,b\n1,1.5,'a,b',2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,q\"t,,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:quote-style . always))
+       "\"i\",\"f\",\"s\",\"d\",\"t\",\"h\",\"b\"\n\"1\",\"1.5\",\"a,b\",\"2024-01-02\",\"2024-01-02T03:04:05.006000\",\"05:06:07.000000000\",\"true\"\n\"\",\"1e-10\",\"q\"\"t\",\"\",\"\",\"\",\"false\"\n\"3\",\"12345678.9\",\"\",\"2024-12-31\",\"2024-12-31T00:00:00.000000\",\"23:59:59.999999000\",\"\"\n")
+      (((#:quote-style . non-numeric))
+       "\"i\",\"f\",\"s\",\"d\",\"t\",\"h\",\"b\"\n1,1.5,\"a,b\",\"2024-01-02\",\"2024-01-02T03:04:05.006000\",\"05:06:07.000000000\",\"true\"\n,1e-10,\"q\"\"t\",,,,\"false\"\n3,12345678.9,,\"2024-12-31\",\"2024-12-31T00:00:00.000000\",\"23:59:59.999999000\",\n")
+      (((#:quote-style . never))
+       "i,f,s,d,t,h,b\n1,1.5,a,b,2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,q\"t,,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:batch-size . 1))
+       "i,f,s,d,t,h,b\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,\"q\"\"t\",,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:datetime-format . "%Y/%m/%d %H:%M") (#:date-format . "%d.%m.%Y")
+        (#:time-format . "%H-%M"))
+       "i,f,s,d,t,h,b\n1,1.5,\"a,b\",02.01.2024,2024/01/02 03:04,05-06,true\n,1e-10,\"q\"\"t\",,,,false\n3,12345678.9,,31.12.2024,2024/12/31 00:00,23-59,\n")
+      (((#:float-scientific . #t))
+       "i,f,s,d,t,h,b\n1,1.5e0,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1e-10,\"q\"\"t\",,,,false\n3,1.23456789e7,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:float-scientific . #f))
+       "i,f,s,d,t,h,b\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,0.0000000001,\"q\"\"t\",,,,false\n3,12345678.9,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:float-precision . 2))
+       "i,f,s,d,t,h,b\n1,1.50,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,0.00,\"q\"\"t\",,,,false\n3,12345678.90,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:float-precision . 2) (#:float-scientific . #t))
+       "i,f,s,d,t,h,b\n1,1.50e0,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,1.00e-10,\"q\"\"t\",,,,false\n3,1.23e7,,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:decimal-comma . #t))
+       "i,f,s,d,t,h,b\n1,\"1,5\",\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\n,\"1e-10\",\"q\"\"t\",,,,false\n3,\"12345678,9\",,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,\n")
+      (((#:decimal-comma . #t) (#:separator . #\;))
+       "i;f;s;d;t;h;b\n1;1,5;a,b;2024-01-02;2024-01-02T03:04:05.006000;05:06:07.000000000;true\n;1e-10;\"q\"\"t\";;;;false\n3;12345678,9;;2024-12-31;2024-12-31T00:00:00.000000;23:59:59.999999000;\n")
+      (((#:null-value . "NA"))
+       "i,f,s,d,t,h,b\n1,1.5,\"a,b\",2024-01-02,2024-01-02T03:04:05.006000,05:06:07.000000000,true\nNA,1e-10,\"q\"\"t\",NA,NA,NA,false\n3,12345678.9,NA,2024-12-31,2024-12-31T00:00:00.000000,23:59:59.999999000,NA\n")))
+  (for ([case (in-list python-1.42.1-write-csv)])
+    (check-equal? (written (car case)) (cadr case) (format "~s" (car case))))
+  (check-equal? (written '((#:float-scientific . auto) (#:quote-style . necessary)
+                           (#:null-value . "")))
+                (written '()))
+  (for ([batch-size (list 2 3 4 (expt 2 32) size-max)])
+    (check-equal? (written `((#:batch-size . ,batch-size))) (written '()) (format "~a" batch-size)))
+  (define precise (written '((#:float-precision . 65535))))
+  (check-equal? (string-length precise) (+ (string-length (written '((#:float-precision . 0))))
+                                           (* 3 65536)))
+  (for ([kv '((#:datetime-format . "%Q") (#:date-format . "%H") (#:time-format . "%Y"))]
+        [cause '("cannot format NaiveDateTime with format '%Q'"
+                 "cannot format NaiveDate with format '%H'"
+                 "cannot format NaiveTime with format '%Y'")])
+    (check-regexp-match (regexp (string-append "^write-csv: failed to write csv to [^:]*written.csv: "
+                                               (regexp-quote cause) "$"))
+                        (message-of (lambda () (written (list kv))))))
+  (check-regexp-match #rx"^write-csv: failed to write csv to [^:]*out.csv: cannot create file: "
+                      (message-of (lambda () (write-csv oracle-frame
+                                                        (build-path csv-dir "no" "out.csv")))))
+  (define round-trip (build-path csv-dir "round-trip.csv"))
+  (write-csv station-frame round-trip #:separator #\; #:decimal-comma #t #:null-value "n/a"
+             #:quote-style 'always)
+  (check-true (frame=? (read-csv round-trip #:separator #\; #:decimal-comma #t
+                                 #:null-values "n/a")
+                       station-frame))
+  (for ([kv `((#:separator . ";") (#:separator . #\newline) (#:quote-char . #\é)
+              (#:quote-style . non_numeric) (#:batch-size . 0) (#:float-scientific . yes)
+              (#:float-precision . -1) (#:null-value . #f) (#:line-terminator . #\newline)
+              (#:datetime-format . sym) (#:include-header . 1) (#:include-bom . "no")
+              (#:decimal-comma . 1) (#:batch-size . ,(expt 2 64))
+              (#:batch-size . ,(add1 (expt 2 64))) (#:float-precision . 65536)
+              (#:float-precision . ,(expt 2 64)))])
+    (check-exn #rx"^write-csv: contract violation"
+               (lambda () (keyword-apply contracted:write-csv (list (car kv)) (list (cdr kv))
+                                         (list oracle-frame round-trip)))
+               (format "~s" kv)))
+  (check-exn #rx"quote-char must differ from the separator"
+             (lambda () (contracted:write-csv oracle-frame round-trip
+                                              #:separator #\; #:quote-char #\;)))
+  (check-exn #rx"quote-char must differ from the separator"
+             (lambda () (contracted:write-csv oracle-frame round-trip #:quote-char #\,)))
+
+  (delete-directory/files csv-dir))

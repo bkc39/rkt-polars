@@ -108,9 +108,68 @@ and @racket[#:n-rows] frame the rows to read.
 (read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1 #:n-rows 1)
 ]
 
-API gaps: @tt{null_values} takes no per-column mapping (#101); no
-@tt{columns}, @tt{new_columns}, @tt{eol_char}, @tt{row_index_name},
-@tt{truncate_ragged_lines} or @tt{decimal_comma}.
+@bold{Columns.} @racket[#:columns] reads some columns, by name or position;
+@racket[#:new-columns] renames the first ones; @racket[#:row-index-name]
+adds a row number.
+
+@examples[#:eval ev #:label #f
+(read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
+          #:columns '("carrier" "flight" "dep_delay")
+          #:row-index-name "row" #:n-rows 3)
+(read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1
+          #:new-columns '("from" "to" "delay"))
+]
+
+@bold{Messy files.} @filepath{stations.csv} opens with a stray line,
+writes decimals with a comma, marks missing values differently per column
+and has a line with a field too many. @racket[#:skip-lines] skips lines
+without parsing them; a @racket[#:null-values] association list applies
+each marker to its column only.
+
+@examples[#:eval ev #:label #f
+(define stations
+  (read-csv "stations.csv" #:skip-lines 1 #:separator #\; #:decimal-comma #t
+            #:null-values '(("temp" . "-") ("rain" . "n/a"))
+            #:truncate-ragged-lines #t #:try-parse-dates #t))
+stations
+]
+
+API gaps: no compressed input yet (gzip, zlib, zstd; #176); no
+@tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
+@tt{missing_columns} (#193); no spelling for the tuning knobs
+(@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
+@tt{use_pyarrow} and the encodings Python decodes itself. Polars decides
+from a file's first four bytes whether it is compressed, as in Python, and
+has no switch to say it is not: a plain file that starts like a zlib
+stream, a header beginning @litchar{x^} say, is taken for compressed data
+and fails to read or reads as garbage. A UTF-8 byte order mark at the start
+of the file avoids it.
+
+@subsection[#:tag "io-csv-write-options"]{Writing options}
+
+@racket[write-csv] takes @tt{write_csv}'s options with their Racket
+spellings: separator, quoting, line ends, how nulls, floats and temporal
+values are written.
+
+@examples[#:eval ev #:hidden
+(require (only-in racket/file file->string))
+]
+
+@examples[#:eval ev #:label #f
+(write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"
+           #:date-format "%d.%m.%Y" #:time-format "%H:%M")
+(display (file->string path))
+(write-csv (select stations "station" "temp") path
+           #:quote-style 'non-numeric #:float-precision 2)
+(display (file->string path))
+]
+
+@examples[#:eval ev #:hidden
+(delete-file path)
+]
+
+API gap: no compressed output (@tt{compression}), which Python writes
+through @tt{sink_csv} (#184).
 
 @section[#:tag "io-multiple"]{Multiple files}
 
