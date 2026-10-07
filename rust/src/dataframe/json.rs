@@ -117,12 +117,38 @@ pub extern "C" fn dataframe_read_json_with_options(
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 
+fn holds_binary(dtype: &DataType) -> bool {
+    match dtype {
+        DataType::Binary | DataType::BinaryOffset => true,
+        DataType::List(inner) => holds_binary(inner),
+        DataType::Struct(fields) => {
+            fields.iter().any(|field| holds_binary(field.dtype()))
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn refuse_binary(df: &DataFrame) -> PolarsResult<()> {
+    match df
+        .columns()
+        .iter()
+        .find(|column| holds_binary(column.dtype()))
+    {
+        Some(column) => Err(polars_err!(
+            ComputeError: "cannot write the binary column {:?} as JSON",
+            column.name().as_str()
+        )),
+        None => Ok(()),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn dataframe_write_json(
     df_ptr: *mut DataFrame,
     path: *const c_char,
 ) -> i32 {
     write_frame(df_ptr, path, |file, df| {
+        refuse_binary(df)?;
         let mut buffer = std::io::BufWriter::new(file);
         JsonWriter::new(&mut buffer)
             .with_json_format(JsonFormat::Json)

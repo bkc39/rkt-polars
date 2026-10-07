@@ -648,16 +648,16 @@ total
 
 @deftogether[(@defproc[(read-json [path path-string?]
                                   [#:schema schema
-                                            (or/c (and/c (listof (cons/c string? json-dtype/c))
+                                            (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
                                                          distinct-names?)
                                                   #f)
                                             #f]
                                   [#:schema-overrides schema-overrides
-                                                      (and/c (listof (cons/c string? json-dtype/c))
+                                                      (and/c (listof (cons/c column-name/c json-dtype/c))
                                                              distinct-names?)
                                                       '()]
                                   [#:infer-schema-length infer-schema-length
-                                                         (or/c exact-positive-integer? #f)
+                                                         (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
                                                          100])
                        dataframe?]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
@@ -672,12 +672,17 @@ total
 
   Column types are inferred from the first @racket[infer-schema-length]
   objects, or from every object when it is @racket[#f]; a key first seen
-  after them, or a later value that does not convert to the inferred type,
-  is an error. @racket[schema] gives the columns outright, in its order: a
+  after them is an error. A later value of another JSON type is converted
+  where Polars can: a float read as an integer truncates, a boolean reads
+  as 0 or 1, and a number outside the type's range, such as 300 read as an
+  @racket['int8], reads as null. A value that cannot convert, such as a
+  string where a number was inferred, is an error. Python does the same.
+  @racket[schema] gives the columns outright, in its order: a
   key the schema lacks is skipped, and a column the file lacks reads as
   nulls. @racket[schema-overrides] changes the types of named columns, the
   file's or @racket[schema]'s, and naming a column absent from them is an
-  error. A @racket[json-dtype/c] is any spelling @racket[series]'
+  error. A @racket[column-name/c] is a string without a NUL character
+  (#165). A @racket[json-dtype/c] is any spelling @racket[series]'
   @racket[#:dtype] accepts except an Enum; API gap: read the column as
   @racket['categorical] or @racket['string] and @racket[cast] it. An ISO
   8601 date, datetime or time string reads as that type when the schema
@@ -688,10 +693,21 @@ total
   @racket[write-json] writes dates, times, datetimes and durations as
   strings, Categorical and Enum values as their names, and NaN and the
   infinities as @tt{null}, so reading the file back needs a schema to
-  restore those types. API gap: a path only, no file object or in-memory
-  string in or out. @racket[read-json] and @racket[write-json] share their
-  names with @racketmodname[json]'s, so a module that needs both renames one
-  pair, for example with @racket[prefix-in].
+  restore those types. A binary column is an error, where Python's
+  @tt{write_json} panics. The file is written beside @racket[path] and
+  renamed onto it once complete, so a write that fails leaves an existing
+  file as it was. API gap: a path only, no file object or in-memory
+  string in or out.
+
+  @racket[read-json] and @racket[write-json] keep Python's names, which
+  @racketmodname[json] also provides, so a module that requires both
+  libraries, @racket[(require polars json)], fails with ``identifier already
+  required''. Rename @racketmodname[json]'s pair, or leave it out:
+
+  @racketblock[
+  (require polars (prefix-in js: json))
+  (require polars (except-in json read-json write-json))
+  ]
 
   @examples[#:eval ev #:hidden
 (require racket/file)
@@ -709,6 +725,8 @@ total
 (~> (read-json "stations.json" #:schema-overrides '(("day" . date)))
     (select "day" "reading"))
 (~> (read-json "stations.json" #:schema '(("day" . datetime))) (head 1))
+(~> (read-json "stations.json" #:schema-overrides '(("reading" . i64)))
+    (select "station" "reading"))
 (eval:error (read-json "stations.json" #:infer-schema-length 1))
 (eval:error (read-json "stations.json" #:schema-overrides '(("dya" . date))))]
   @examples[#:eval ev #:hidden
@@ -1708,16 +1726,16 @@ generic operations are simply the preferred surface.
 
 @deftogether[(@defproc[(dataframe-read-json [path path-string?]
                                             [#:schema schema
-                                                      (or/c (and/c (listof (cons/c string? json-dtype/c))
+                                                      (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
                                                                    distinct-names?)
                                                             #f)
                                                       #f]
                                             [#:schema-overrides schema-overrides
-                                                                (and/c (listof (cons/c string? json-dtype/c))
+                                                                (and/c (listof (cons/c column-name/c json-dtype/c))
                                                                        distinct-names?)
                                                                 '()]
                                             [#:infer-schema-length infer-schema-length
-                                                                   (or/c exact-positive-integer? #f)
+                                                                   (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
                                                                    100])
                        DataFrame-ptr?]
               @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{

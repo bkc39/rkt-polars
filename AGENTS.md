@@ -51,7 +51,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    operators `+ - * / > < >= <= = and or not xor when abs round floor sqrt exp
    log filter sort min max first last reverse` **shadow `racket/base`** and fall
    back to it on plain values. `~>` from `threading` is re-provided so
-   `(require polars)` is enough.
+   `(require polars)` is enough. `read-json` / `write-json` keep Python's
+   names (owner's decision, 2026-10-07), which the `json` library also
+   provides: `(require polars json)` fails with "identifier already
+   required", and `(prefix-in js: json)` or `(except-in json read-json
+   write-json)` is the fix the docs give.
 
 A pipeline reads as `(~> df (filter (> (col "v") 15)) (group-by "g") (agg (sum "v")))`.
 Every fluent verb takes the frame — or the expression — as its **first**
@@ -230,8 +234,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   Python panics on 0. An override naming a column absent from the file (or
   from `#:schema`) is an error, as in Python, reworded from 0.55's bare
   `SchemaFieldNotFound`. The schema dtypes are `series`' `#:dtype` spellings
-  but an Enum, which `CompatDType` cannot carry. The names clash with
-  the `json` library's `read-json` / `write-json`.
+  but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
+  a contract error, since `_string/utf-8` would cut it there (#165).
+  `write-json` refuses a binary column, where polars hits a `todo!()`.
+- `write_frame` writes to a sibling temp file (`temp_sibling`, which keeps
+  the target's extensions) and renames it onto the target once the write
+  succeeds, so a failed write leaves an existing file as it was.
 - `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
   is, through `dataframe_read_ndjson_with_options`; a directory reads every
   file in it. Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,

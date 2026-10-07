@@ -69,6 +69,12 @@ parsing of the file and instead returns a lazy computation holder called a
     collect)
 ]
 
+Racket's @racketmodname[json] library also provides @racket[read-json] and
+@racket[write-json], so @racket[(require polars json)] fails with
+``identifier already required''. Rename @racketmodname[json]'s pair with
+@racket[(require polars (prefix-in js: json))], or leave it out with
+@racket[(require polars (except-in json read-json write-json))].
+
 @section[#:tag "io-json-options"]{Reading options}
 
 Upstream documents @tt{read_json}'s and @tt{read_ndjson}'s options on its
