@@ -43,7 +43,7 @@
          len shape shape/values dtype null-count define-enum
          width height column-name column-names
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
-         write-json read-json
+         write-json read-json scan-ndjson
          series->list series->vector series->f64vector in-series
          dataframe->columns dataframe->hash dataframe->f64vector in-dataframe-columns
          in-dataframe-rows dataframe->rows
