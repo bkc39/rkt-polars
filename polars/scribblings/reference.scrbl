@@ -2,7 +2,9 @@
 @(require "utils.rkt"
           racket/runtime-path
           syntax/parse/define
-          (for-syntax racket/base syntax/strip-context))
+          (for-syntax racket/base
+                      (only-in racket/syntax syntax-local-eval)
+                      syntax/strip-context))
 
 @(define-runtime-path data-dir "data")
 @(define ev (make-polars-eval #:directory data-dir))
@@ -26,11 +28,6 @@
        [#:try-parse-dates try-parse-dates boolean? #f]
        [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
        [#:glob glob boolean? #t]))))
-
-@(define-syntax-parser defcsvproc
-   [(_ (name result) body ...)
-    #:with (argument ...) (replace-context #'name csv-arguments)
-    #'(defproc (name argument ...) result body ...)])
 
 @(begin-for-syntax
    (define json-arguments
@@ -60,10 +57,10 @@
        [#:compression-level compression-level (or/c exact-nonnegative-integer? #f) #f]
        [#:check-extension check-extension boolean? #t]))))
 
-@(define-syntax-parser defjsonproc
-   [(_ (name result) body ...)
-    #:with (argument ...) (replace-context #'name json-arguments)
-    #'(defproc (name argument ...) result body ...)])
+@(define-syntax-parser defproc/arguments
+   [(_ arguments:id (name leading ... result) body ...)
+    #:with (argument ...) (replace-context #'name (syntax-local-eval #'arguments))
+    #'(defproc (name leading ... argument ...) result body ...)])
 
 @(define-syntax-parser defndjsonproc
    [(_ (name result) body ...)
@@ -480,7 +477,7 @@ total
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)]}
 
-@defcsvproc[(read-csv dataframe?)]{
+@defproc/arguments[csv-arguments (read-csv dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
   a glob pattern (@litchar{*}, @litchar{?}, @litchar{[...]}): every matching
   file is read, in sorted filename order, and the files must share a header;
@@ -605,7 +602,7 @@ total
 (eval:error (read-csv "parts/part-?.csv" #:glob #f))
 (eval:error (read-csv "parts"))]}
 
-@defcsvproc[(scan-csv lazyframe?)]{
+@defproc/arguments[csv-arguments (scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
   (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
   runs the plan, and that is where a file that cannot be read, or a glob
@@ -665,17 +662,9 @@ total
   A dataframe out to CSV or Parquet (@tt{df.write_csv},
   @tt{df.write_parquet}).
 
-  A writer writes a staging file in @racket[path]'s directory, which must
-  be writable, and renames it onto @racket[path] once complete, so a failed
-  write leaves an existing file as it was; the new file keeps the old one's
-  read, write and execute bits but not its setuid, setgid or sticky bit,
-  owner, ACLs, extended attributes or hard links. A symbolic link is
-  followed and kept, and a FIFO or device is written in place.
-  A staging file left by a killed process, @tt{.rkt-polars-}@italic{pid}@tt{-}@italic{n}@tt{.partial},
-  is skipped by a glob such as @tt{dir/*.parquet} and read by @tt{dir/*},
-  and a read of the directory itself fails with an error naming it.}
+  A writer replaces an existing file atomically, keeping its permission bits.}
 
-@deftogether[(@defjsonproc[(read-json dataframe?)]
+@deftogether[(@defproc/arguments[json-arguments (read-json dataframe?)]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
   Read a file holding one JSON array of objects into a @tech{dataframe}
   (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}).
@@ -1696,8 +1685,8 @@ generic operations are simply the preferred surface.
   @racket[read-parquet], @racket[dataframe-read-parquet] accepts a glob
   pattern.}
 
-@deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
-              @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
+@deftogether[(@defproc/arguments[csv-arguments (dataframe-read-csv DataFrame-ptr?)]
+              @defproc/arguments[csv-arguments (lazyframe-scan-csv LazyFrame-ptr?)])]{
   The raw-pointer reader and scan under @racket[read-csv] and
   @racket[scan-csv], with the same keywords and checks.
 
@@ -1705,7 +1694,7 @@ generic operations are simply the preferred surface.
 (dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
 (dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
 
-@deftogether[(@defjsonproc[(dataframe-read-json DataFrame-ptr?)]
+@deftogether[(@defproc/arguments[json-arguments (dataframe-read-json DataFrame-ptr?)]
               @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{
   The raw-pointer JSON-array reader and writer under @racket[read-json] and
   @racket[write-json], with the same keywords and checks.

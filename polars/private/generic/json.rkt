@@ -34,52 +34,17 @@
                     column-names dataframe dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
            (only-in polars/private/generic/reshape cast collect filter select)
-           polars/private/generic/test-fixtures)
+           polars/private/generic/test-fixtures
+           (submod polars/private/generic/test-fixtures test))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define stations (build-path data-dir "stations.json"))
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
-  (define (dtypes-of df)
-    (for/list ([name (column-names df)]) (list name (dtype (ref df name)))))
   (define (message-of thunk)
     (with-handlers ([exn:fail? exn-message]) (thunk) #f))
   (define (gzip-file from to)
     (call-with-output-file to
       (lambda (out) (call-with-input-file from (lambda (in) (gzip-through-ports in out #f 0))))))
-  (define (staging-files dir)
-    (filter (lambda (name) (regexp-match? #rx"[.]partial$" (path->string name)))
-            (directory-list dir)))
-  (define (check-staged-write write! ext)
-    (define dir (make-temporary-directory "rkt-polars-staged-~a"))
-    (define (named stem) (format "~a.~a" stem ext))
-    (define (failure cause)
-      (pregexp (format "^~a: failed to write [^ ]+ to [^:]*: cannot create file: ~a"
-                       (object-name write!) cause)))
-    (define real (scratch-file dir (named "real") "OLD"))
-    (define link (build-path dir (named "link")))
-    (make-file-or-directory-link (named "real") link)
-    (write! guide-df link)
-    (check-true (link-exists? link))
-    (check-not-equal? (file->string real) "OLD")
-    (define locked (scratch-file dir (named "locked") "OLD"))
-    (file-or-directory-permissions locked #o444)
-    (unless (memq 'write (file-or-directory-permissions locked))
-      (check-exn (failure "Permission denied") (lambda () (write! guide-df locked)))
-      (check-equal? (file->string locked) "OLD"))
-    (define private (scratch-file dir (named "private") "OLD"))
-    (file-or-directory-permissions private #o600)
-    (write! guide-df private)
-    (check-equal? (file-or-directory-permissions private 'bits) #o600)
-    (write! guide-df "/dev/null")
-    (define long (build-path dir (named (make-string (- 249 (string-length ext)) #\x))))
-    (write! guide-df long)
-    (check-true (file-exists? long))
-    (define sub (build-path dir "sub"))
-    (make-directory sub)
-    (check-exn (failure "") (lambda () (write! guide-df sub)))
-    (check-equal? (staging-files dir) '())
-    (check-equal? (directory-list sub) '())
-    (delete-directory/files dir))
 
   (define-values (required accepted) (procedure-keywords contracted:read-json))
   (check-equal? required '())
@@ -189,7 +154,13 @@
   (check-equal? (staging-files scratch) '())
   (write-json guide-df keep)
   (check-true (frame=? (read-json keep) guide-df))
-  (check-staged-write write-json "json")
+  (define dangling (build-path scratch "dangling.json"))
+  (make-file-or-directory-link "made.json" dangling)
+  (check-exn #rx"cannot write the binary column \"b\" as JSON$"
+             (lambda () (write-json binary-frame dangling)))
+  (check-false (file-exists? (build-path scratch "made.json")))
+  (delete-file dangling)
+  (check-staged-write write-json "json" guide-df)
 
   (define promoted (scratch-file scratch "promoted.json" "[{\"a\":1},{\"a\":2.5},{\"a\":true}]"))
   (check-equal? (column (read-json promoted #:infer-schema-length 1) "a") '(1 2 1))
@@ -239,17 +210,18 @@
     (check-exn (contract-violation-of 'read-json)
                (lambda () (apply-keywords contracted:read-json (list kv) stations))
                (format "~s" kv)))
-  (check-exn #rx"^read-json: contract violation" (lambda () (contracted:read-json 'sym)))
-  (check-exn #rx"^write-json: contract violation" (lambda () (contracted:write-json 5 "x")))
-  (check-exn #rx"^write-json: contract violation" (lambda () (contracted:write-json frame 5)))
+  (check-exn (contract-violation-of 'read-json) (lambda () (contracted:read-json 'sym)))
+  (check-exn (contract-violation-of 'write-json) (lambda () (contracted:write-json 5 "x")))
+  (check-exn (contract-violation-of 'write-json) (lambda () (contracted:write-json frame 5)))
 
-  (define ndjson-keywords
-    '(#:batch-size #:ignore-errors #:include-file-paths #:infer-schema-length #:low-memory
-      #:n-rows #:rechunk #:row-index-name #:row-index-offset #:schema #:schema-overrides))
-  (for ([reader (list contracted:read-ndjson contracted:scan-ndjson)])
-    (define-values (required accepted) (procedure-keywords reader))
-    (check-equal? required '())
-    (check-equal? accepted ndjson-keywords))
+  (define-values (nd-required nd-accepted) (procedure-keywords contracted:read-ndjson))
+  (check-equal? nd-required '())
+  (check-equal? (remove* nd-accepted accepted) '())
+  (check-equal? (remove* accepted nd-accepted)
+                '(#:batch-size #:ignore-errors #:include-file-paths #:low-memory #:n-rows
+                  #:rechunk #:row-index-name #:row-index-offset))
+  (check-equal? (call-with-values (lambda () (procedure-keywords contracted:scan-ndjson)) list)
+                (list nd-required nd-accepted))
   (check-equal? (map object-name (list read-ndjson scan-ndjson write-ndjson))
                 '(read-ndjson scan-ndjson write-ndjson))
 
@@ -397,7 +369,13 @@
   (check-equal? (staging-files scratch) '())
   (write-ndjson guide-df keep-nd)
   (check-true (frame=? (read-ndjson keep-nd) guide-df))
-  (check-staged-write write-ndjson "ndjson")
+  (define dangling-nd (build-path scratch "dangling.ndjson"))
+  (make-file-or-directory-link "made.ndjson" dangling-nd)
+  (check-exn #rx"cannot write the binary column \"b\" as JSON$"
+             (lambda () (write-ndjson binary-frame dangling-nd)))
+  (check-false (file-exists? (build-path scratch "made.ndjson")))
+  (delete-file dangling-nd)
+  (check-staged-write write-ndjson "ndjson" guide-df)
 
   (define leftover (build-path scratch "leftover"))
   (make-directory leftover)
@@ -439,10 +417,10 @@
   (check-exn #rx"#:row-index-name and #:include-file-paths must name different columns"
              (lambda () (contracted:read-ndjson stations-nd #:row-index-name "x"
                                                 #:include-file-paths "x")))
-  (check-exn #rx"^read-ndjson: contract violation"
+  (check-exn (contract-violation-of 'read-ndjson)
              (lambda () (contracted:read-ndjson stations-nd #:row-index-name "p\u0000x"
                                                 #:include-file-paths "p\u0000y")))
-  (check-exn #rx"^write-ndjson: contract violation"
+  (check-exn (contract-violation-of 'write-ndjson)
              (lambda () (contracted:write-ndjson guide-df guide-nd #:check-extension 1)))
   (for ([kvs (in-list '(((#:compression . brotli)) ((#:compression-level . 3))
                         ((#:compression . uncompressed) (#:compression-level . 3))
@@ -457,6 +435,6 @@
   (check-false (file-exists? (build-path scratch "never.ndjson.gz")))
   (check-exn #rx"#:compression-level needs #:compression 'gzip"
              (lambda () (contracted:write-ndjson guide-df guide-nd #:compression-level 3)))
-  (check-exn #rx"^read-ndjson: contract violation" (lambda () (contracted:read-ndjson 'sym)))
+  (check-exn (contract-violation-of 'read-ndjson) (lambda () (contracted:read-ndjson 'sym)))
 
   (delete-directory/files scratch))

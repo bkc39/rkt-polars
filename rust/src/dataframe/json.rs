@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use crate::prelude::*;
 use crate::{
     clear_last_error, decode_path, decode_schema, guard_panic, record,
-    write_checked_frame, write_frame, CompatDType, CompatJsonOptions,
+    write_checked_frame, CompatDType, CompatJsonOptions,
 };
 use polars::prelude::file::Writable;
 use polars::prelude::{SerReader, SerWriter};
@@ -146,15 +146,19 @@ pub extern "C" fn dataframe_write_json(
     df_ptr: *mut DataFrame,
     path: *const c_char,
 ) -> i32 {
-    write_frame(df_ptr, path, |file, df| {
-        refuse_binary(df)?;
-        let mut buffer = std::io::BufWriter::new(file);
-        JsonWriter::new(&mut buffer)
-            .with_json_format(JsonFormat::Json)
-            .finish(df)?;
-        buffer.flush()?;
-        Ok(())
-    })
+    write_checked_frame(
+        df_ptr,
+        path,
+        |_, df| refuse_binary(df),
+        |(), file, df| {
+            let mut buffer = std::io::BufWriter::new(file);
+            JsonWriter::new(&mut buffer)
+                .with_json_format(JsonFormat::Json)
+                .finish(df)?;
+            buffer.flush()?;
+            Ok(())
+        },
+    )
 }
 
 pub(crate) fn without_plan(err: PolarsError) -> PolarsError {
@@ -234,17 +238,14 @@ pub extern "C" fn dataframe_write_ndjson_with_options(
     write_checked_frame(
         df_ptr,
         path,
-        |path| {
+        |path, df| {
+            refuse_binary(df)?;
             let compression = ndjson_compression(compression, level)?;
             if check_extension {
-                ndjson_extension(path, compression)
-            } else {
-                Ok(())
+                ndjson_extension(path, compression)?;
             }
+            Ok(compression)
         },
-        |file, df| {
-            refuse_binary(df)?;
-            ndjson_write(df, file, ndjson_compression(compression, level)?)
-        },
+        |compression, file, df| ndjson_write(df, file, compression),
     )
 }
