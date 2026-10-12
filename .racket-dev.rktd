@@ -31,6 +31,9 @@
   ;; No define-syntax-rule or syntax-rules in the Racket sources.  A grep, so
   ;; no shell.
   (no-syntax-rule ("bash scripts/no-syntax-rule.sh" #:shell ""))
+  ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
+  ;; ring.  A grep, so no shell.
+  (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
   ;; The project's Resyntax suite (lint/) over the same trees, red on any
   ;; suggestion; `scripts/resyntax-lint.sh fix` applies them.  It takes
   ;; minutes, so it is not a push gate; CI runs it.
@@ -46,4 +49,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule compile test examples fmt)))
+ (push-gates (no-syntax-rule rustls-only compile test examples fmt)))

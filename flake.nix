@@ -354,9 +354,15 @@
             ${pkgs.bash}/bin/bash $src/scripts/no-syntax-rule.sh
             touch $out
           '';
+          rustls-only = pkgs.runCommand "rkt-polars-rustls-only" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
+            touch $out
+          '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule;
+          inherit rustfmt racket-version no-syntax-rule rustls-only;
           inherit (self.packages.${system}) rust racket;
         });
 
