@@ -66,4 +66,4 @@
 
 (delete-directory/files dir)
 
-;; API gaps: no schema, extra_columns or metadata (#197).
+;; API gaps: schema, extra_columns, metadata.

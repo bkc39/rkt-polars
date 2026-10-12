@@ -2,11 +2,9 @@ use crate::prelude::*;
 use crate::{
     clear_last_error, collect_c_strings, collect_frame, decode_parquet_names,
     parquet_scan_with, record, write_frame, CompatParquetReadOptions,
-    CompatParquetWriteOptions, PathRules,
+    CompatParquetWriteOptions, PathRules, IO_BAD_OPTIONS,
 };
 use polars::polars_utils::compression::{BrotliLevel, GzipLevel, ZstdLevel};
-
-const IO_BAD_OPTIONS: i32 = 5;
 
 const COLUMNS_ALL: u8 = 0;
 const COLUMNS_BY_NAME: u8 = 1;

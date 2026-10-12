@@ -18,8 +18,9 @@
 
 (require polars/private/generic/core
          polars/private/generic/convert
-         polars/private/generic/io
+         polars/private/generic/csv
          polars/private/generic/json
+         polars/private/generic/parquet
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators

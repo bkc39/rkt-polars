@@ -6,9 +6,8 @@
          syntax/parse/define
          (for-syntax racket/base)
          (only-in racket/contract/base
-                  ->i and/c cons/c contract-out flat-named-contract integer-in listof or/c
-                  unsupplied-arg?)
-         (only-in racket/list check-duplicates index-of partition)
+                  and/c cons/c contract-out flat-named-contract integer-in listof or/c)
+         (only-in racket/list index-of partition)
          (only-in racket/string non-empty-string?)
          (only-in polars/private/expr-core
                   _LazyFrame-ptr/null LazyFrame-ptr? define-compat lazyframe-drop)
@@ -19,9 +18,14 @@
                   path->complete-string polars-null? series-drop series-dtype
                   series-ref)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c))
+         (only-in polars/private/io-contracts
+                  c-string/c column-name/c distinct-names? distinct? given positive-size/c
+                  row-index/c size/c)
+         (only-in polars/private/io-options define-io-options keyword-forwarder))
 
 (provide csv-reader/c csv-scanner/c csv-writer/c csv-reader csv-scanner csv-writer
+         csv-read-arguments csv-scan-arguments csv-write-arguments
+         float-precision-max read-keywords scan-keywords
          (contract-out
           [dataframe-read-csv (csv-reader/c DataFrame-ptr?)]
           [lazyframe-scan-csv (csv-scanner/c LazyFrame-ptr?)]
@@ -41,6 +45,9 @@
 
 (define float-precision-max #xFFFF)
 
+(define float-precision/c
+  (flat-named-contract 'float-precision/c (integer-in 0 float-precision-max)))
+
 (define csv-dtype/c
   (flat-named-contract
    'csv-dtype/c
@@ -50,21 +57,8 @@
             [(cons (or 'duration 'enum) _) #f]
             [_ #t])))))
 
-(define (distinct? vs)
-  (not (check-duplicates vs)))
-
-(define (distinct-names? pairs)
-  (distinct? (map car pairs)))
-
-(define column-null-values/c
-  (and/c (listof (cons/c string? string?)) distinct-names?))
-
-(define column-selection/c
-  (or/c (and/c (listof string?) distinct?)
-        (and/c (listof size/c) distinct?)))
-
-(define (given v default)
-  (if (unsupplied-arg? v) default v))
+(define (char->byte c)
+  (if c (char->integer c) 0))
 
 (define (quote-differs? separator quote-char)
   (not (eqv? (or (given separator #f) #\,) (given quote-char #\"))))
@@ -102,56 +96,44 @@
 (struct csv-call (options comment-prefix row-index-name null-values null-columns null-markers
                           names dtypes new-columns columns projection guard?))
 
-(define-syntax-parse-rule
-  (define-csv-options (options:id reader/c:id scanner/c:id)
-    #:shared ([kw:keyword name:id contract:expr default:expr] ...)
-    #:read-only ([read-kw:keyword read-name:id read-contract:expr read-default:expr] ...)
-    (~seq #:pre (pre-name:id ...) pre-message:str pre-check:expr) ...
-    body:expr)
-  (begin
-    (define (reader/c range/c)
-      (->i ([path path-string?])
-           ((~@ kw [name contract]) ... (~@ read-kw [read-name read-contract]) ...)
-           (~@ #:pre/name (pre-name ...) pre-message pre-check) ...
-           [result range/c]))
-    (define (scanner/c range/c)
-      (->i ([path path-string?])
-           ((~@ kw [name contract]) ...)
-           (~@ #:pre/name (pre-name ...) pre-message pre-check) ...
-           [result range/c]))
-    (define (options (~@ kw [name default]) ... (~@ read-kw [read-name read-default]) ...)
-      body)))
-
-(define-csv-options (csv-options csv-reader/c csv-scanner/c)
-  #:shared
+(define-io-options csv-options
+  ([(csv-reader/c range/c) read-keywords ([path path-string?]) range/c
+    #:arguments csv-read-arguments]
+   [(csv-scanner/c range/c) scan-keywords ([path path-string?]) range/c
+    #:arguments csv-scan-arguments #:omit (#:columns)])
   ([#:has-header has-header boolean? #t]
-   [#:new-columns new-columns (and/c (listof string?) distinct?) '()]
-   [#:separator separator (or/c #f csv-char/c) #f]
-   [#:quote-char quote-char (or/c #f csv-char/c) #\"]
-   [#:eol-char eol-char eol-char/c #\newline]
-   [#:comment-prefix comment-prefix (or/c #f non-empty-string?) #f]
+   [#:columns columns
+              (or/c (and/c (listof column-name/c) distinct?) (and/c (listof size/c) distinct?))
+              '()]
+   [#:new-columns new-columns (and/c (listof column-name/c) distinct?) '()]
+   [#:separator separator (or/c csv-char/c #f) #f]
+   [#:comment-prefix comment-prefix (or/c (and/c non-empty-string? c-string/c) #f) #f]
+   [#:quote-char quote-char (or/c csv-char/c #f) #\"]
    [#:skip-rows skip-rows size/c 0]
    [#:skip-lines skip-lines size/c 0]
-   [#:skip-rows-after-header skip-rows-after-header size/c 0]
-   [#:n-rows n-rows (or/c #f size/c) #f]
-   [#:null-values null-values (or/c #f string? (listof string?) column-null-values/c) #f]
-   [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
-   [#:infer-schema infer-schema boolean? #t]
-   [#:infer-schema-length infer-schema-length (or/c #f size/c) 100]
    [#:schema-overrides schema-overrides
-                       (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
+                       (and/c (listof (cons/c column-name/c csv-dtype/c)) distinct-names?)
                        '()]
+   [#:null-values null-values
+                  (or/c c-string/c (listof c-string/c)
+                        (and/c (listof (cons/c column-name/c c-string/c)) distinct-names?)
+                        #f)
+                  #f]
+   [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
    [#:ignore-errors ignore-errors boolean? #f]
    [#:try-parse-dates try-parse-dates boolean? #f]
-   [#:decimal-comma decimal-comma boolean? #f]
-   [#:truncate-ragged-lines truncate-ragged-lines boolean? #f]
-   [#:raise-if-empty raise-if-empty boolean? #t]
-   [#:row-index-name row-index-name (or/c #f column-name/c) #f]
-   [#:row-index-offset row-index-offset row-index/c 0]
+   [#:infer-schema infer-schema boolean? #t]
+   [#:infer-schema-length infer-schema-length (or/c size/c #f) 100]
+   [#:n-rows n-rows (or/c size/c #f) #f]
    [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
+   [#:skip-rows-after-header skip-rows-after-header size/c 0]
+   [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+   [#:row-index-offset row-index-offset row-index/c 0]
+   [#:eol-char eol-char eol-char/c #\newline]
+   [#:raise-if-empty raise-if-empty boolean? #t]
+   [#:truncate-ragged-lines truncate-ragged-lines boolean? #f]
+   [#:decimal-comma decimal-comma boolean? #f]
    [#:glob glob boolean? #t])
-  #:read-only
-  ([#:columns columns column-selection/c '()])
   #:pre (separator quote-char) "quote-char must differ from the separator (#\\, when not given)"
   (quote-differs? separator quote-char)
   #:pre (separator quote-char eol-char)
@@ -168,10 +150,10 @@
         [_ (values '() null-values)]))
     (define-values (column-names column-indices) (partition string? columns))
     (csv-call (make-CompatCsvOptions has-header
-                                     (char->integer (or separator #\,))
+                                     (char->byte (or separator #\,))
                                      quote-char
-                                     (if quote-char (char->integer quote-char) 0)
-                                     (char->integer eol-char)
+                                     (char->byte quote-char)
+                                     (char->byte eol-char)
                                      ignore-errors
                                      try-parse-dates
                                      (eq? encoding 'utf8-lossy)
@@ -200,49 +182,34 @@
               column-indices
               (and has-header (not separator) (null? new-columns) (null? columns)))))
 
-(define-syntax-parse-rule (define-csv-entry name:id c-id:id result:expr drop:id)
-  (define-compat name
-    (_fun _string/utf-8
-          _CompatCsvOptions
-          _string/utf-8
-          _string/utf-8
-          (null-values : (_list i _string/utf-8))
-          (_size = (length null-values))
-          (null-columns : (_list i _string/utf-8))
-          (_list i _string/utf-8)
-          (_size = (length null-columns))
-          (names : (_list i _string/utf-8))
-          (_list i _CompatDType)
-          (_size = (length names))
-          (new-columns : (_list i _string/utf-8))
-          (_size = (length new-columns))
-          (columns : (_list i _string/utf-8))
-          (_size = (length columns))
-          (projection : (_list i _size))
-          (_size = (length projection))
-          -> result)
-    #:c-id c-id
-    #:wrap (allocator drop)))
+(define-syntax-parse-rule (_csv-fun (~datum ->) result:expr)
+  (_fun _string/utf-8
+        _CompatCsvOptions
+        _string/utf-8
+        _string/utf-8
+        (null-values : (_list i _string/utf-8))
+        (_size = (length null-values))
+        (null-columns : (_list i _string/utf-8))
+        (_list i _string/utf-8)
+        (_size = (length null-columns))
+        (names : (_list i _string/utf-8))
+        (_list i _CompatDType)
+        (_size = (length names))
+        (new-columns : (_list i _string/utf-8))
+        (_size = (length new-columns))
+        (columns : (_list i _string/utf-8))
+        (_size = (length columns))
+        (projection : (_list i _size))
+        (_size = (length projection))
+        -> result))
 
-(define-csv-entry dataframe-read-csv/raw dataframe_read_csv_v2
-  _DataFrame-ptr/null dataframe-drop)
+(define-compat dataframe-read-csv/raw (_csv-fun -> _DataFrame-ptr/null)
+  #:c-id dataframe_read_csv_v2
+  #:wrap (allocator dataframe-drop))
 
-(define-csv-entry lazyframe-scan-csv/raw lazyframe_scan_csv_v2
-  _LazyFrame-ptr/null lazyframe-drop)
-
-(define read-keywords
-  (let-values ([(required accepted) (procedure-keywords csv-options)])
-    accepted))
-(define scan-keywords (remq '#:columns read-keywords))
-
-(define (keyword-reader who keywords read)
-  (procedure-rename
-   (procedure-reduce-keyword-arity
-    (make-keyword-procedure
-     (lambda (keywords arguments path)
-       (read path (keyword-apply csv-options keywords arguments '()))))
-    1 '() keywords)
-   who))
+(define-compat lazyframe-scan-csv/raw (_csv-fun -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_csv_v2
+  #:wrap (allocator lazyframe-drop))
 
 (define (apply-csv who entry path call)
   (match-define (csv-call options comment-prefix row-index-name null-values null-columns
@@ -255,17 +222,17 @@
          names dtypes new-columns columns projection))
 
 (define (csv-scanner who)
-  (keyword-reader
-   who scan-keywords
-   (lambda (path call)
+  (keyword-forwarder
+   who csv-options scan-keywords 1
+   (lambda (call path)
      (call/foreign-error who
                          (lambda () (apply-csv who lazyframe-scan-csv/raw path call))
                          "failed to scan ~a" path))))
 
 (define (csv-reader who)
-  (keyword-reader
-   who read-keywords
-   (lambda (path call)
+  (keyword-forwarder
+   who csv-options read-keywords 1
+   (lambda (call path)
      (define df
        (call/foreign-error who
                            (lambda () (apply-csv who dataframe-read-csv/raw path call))
@@ -335,63 +302,58 @@
         -> _int32)
   #:c-id dataframe_write_csv_with_options)
 
-(define-syntax-parse-rule
-  (define-csv-writer (writer:id writer/c:id)
-    ([kw:keyword name:id contract:expr default:expr] ...)
-    #:pre (pre-name:id ...) pre-message:str pre-check:expr
-    (who:id frame:id path:id)
-    body:expr)
-  (begin
-    (define (writer/c frame/c)
-      (->i ([frame frame/c] [path path-string?])
-           ((~@ kw [name contract]) ...)
-           #:pre/name (pre-name ...) pre-message pre-check
-           [result void?]))
-    (define ((writer who) frame path (~@ kw [name default]) ...)
-      body)))
+(struct write-call (options line-terminator null-value datetime-format date-format time-format))
 
-(define-csv-writer (csv-writer csv-writer/c)
+(define-io-options csv-write-options
+  ([(csv-writer/c frame/c) write-keywords ([frame frame/c] [path path-string?]) void?
+    #:arguments csv-write-arguments])
   ([#:include-bom include-bom boolean? #f]
    [#:include-header include-header boolean? #t]
    [#:separator separator csv-char/c #\,]
-   [#:line-terminator line-terminator string? "\n"]
+   [#:line-terminator line-terminator c-string/c "\n"]
    [#:quote-char quote-char csv-char/c #\"]
    [#:batch-size batch-size positive-size/c 1024]
-   [#:datetime-format datetime-format (or/c #f string?) #f]
-   [#:date-format date-format (or/c #f string?) #f]
-   [#:time-format time-format (or/c #f string?) #f]
+   [#:datetime-format datetime-format (or/c c-string/c #f) #f]
+   [#:date-format date-format (or/c c-string/c #f) #f]
+   [#:time-format time-format (or/c c-string/c #f) #f]
    [#:float-scientific float-scientific (or/c 'auto boolean?) 'auto]
-   [#:float-precision float-precision (or/c #f (integer-in 0 float-precision-max)) #f]
+   [#:float-precision float-precision (or/c float-precision/c #f) #f]
    [#:decimal-comma decimal-comma boolean? #f]
-   [#:null-value null-value string? ""]
+   [#:null-value null-value c-string/c ""]
    [#:quote-style quote-style (or/c 'necessary 'always 'non-numeric 'never) 'necessary])
   #:pre (separator quote-char) "quote-char must differ from the separator (#\\, when not given)"
   (not (eqv? (given separator #\,) (given quote-char #\")))
-  (who frame path)
-  (let ([complete (path->complete-string who path)]
-        [options (make-CompatCsvWriteOptions
-                  include-header
-                  include-bom
-                  (char->integer separator)
-                  (char->integer quote-char)
-                  (index-of quote-styles quote-style)
-                  decimal-comma
-                  (boolean? float-scientific)
-                  (eq? float-scientific #t)
-                  float-precision
-                  (or float-precision 0)
-                  batch-size)])
-    (void (call/foreign-error who
-                              (lambda ()
-                                (dataframe-write-csv/raw frame complete options
-                                                         line-terminator null-value
-                                                         datetime-format date-format
-                                                         time-format))
-                              #:ok? zero?
-                              "failed to write csv to ~a" path))))
+  (write-call (make-CompatCsvWriteOptions include-header
+                                          include-bom
+                                          (char->byte separator)
+                                          (char->byte quote-char)
+                                          (index-of quote-styles quote-style)
+                                          decimal-comma
+                                          (boolean? float-scientific)
+                                          (eq? float-scientific #t)
+                                          float-precision
+                                          (or float-precision 0)
+                                          batch-size)
+              line-terminator null-value datetime-format date-format time-format))
 
-(define dataframe-write-csv
-  (procedure-rename (csv-writer 'dataframe-write-csv) 'dataframe-write-csv))
+(define (csv-writer who)
+  (keyword-forwarder
+   who csv-write-options write-keywords 2
+   (lambda (call frame path)
+     (match-define (write-call options line-terminator null-value
+                               datetime-format date-format time-format)
+       call)
+     (define complete (path->complete-string who path))
+     (void (call/foreign-error who
+                               (lambda ()
+                                 (dataframe-write-csv/raw frame complete options
+                                                          line-terminator null-value
+                                                          datetime-format date-format
+                                                          time-format))
+                               #:ok? zero?
+                               "failed to write csv to ~a" path)))))
+
+(define dataframe-write-csv (csv-writer 'dataframe-write-csv))
 
 (module+ test
   (require rackunit
@@ -401,7 +363,9 @@
                     dataframe-column-names dataframe-drop-count dataframe-new
                     dataframe-shape last-error-message
                     series-new-f64 series-new-i32 series-new-str series-sum-f64)
-           (only-in polars/private/test-helpers contract-violation-of message-of scratch-file))
+           (only-in polars/private/test-helpers
+                    apply-keywords contract-violation-of drops-once message-of scratch-file
+                    settle!))
 
   (define scratch (make-temporary-directory "rkt-polars-csv-~a"))
 
@@ -432,9 +396,15 @@
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
              (lambda () (dataframe-write-csv cities unwritable)))
-  (check-exn (contract-violation-of 'dataframe-write-csv)
-             (lambda () (contracted:dataframe-write-csv cities semicolons
-                                                        #:quote-style 'sometimes)))
+  (for ([kv '((#:quote-style . sometimes) (#:line-terminator . "\r\u0000X")
+               (#:null-value . "N\u0000A") (#:date-format . "%Y\u0000")
+               (#:time-format . "\u0000") (#:datetime-format . "%F\u0000%T")
+               (#:float-precision . 65536))])
+    (check-exn (contract-violation-of 'dataframe-write-csv)
+               (lambda () (apply-keywords contracted:dataframe-write-csv (list kv)
+                                          cities semicolons))
+               (format "~s" kv)))
+  (check-equal? (object-name dataframe-write-csv) 'dataframe-write-csv)
   (check-exn #rx"^dataframe-read-csv: failed to read csv from [^:]*cities.csv: not found: unable to find column \"gate\""
              (lambda () (dataframe-read-csv cities-csv #:columns '("city" "gate"))))
 
@@ -463,25 +433,12 @@
   (check-equal? (dataframe-height (dataframe-read-csv na-csv #:null-values '(("x" . "NA")))) 3)
   (check-false (last-error-message))
 
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
-
-  (define (drops-once thunk)
-    (settle!)
-    (define before (dataframe-drop-count))
-    (dataframe-drop (thunk))
-    (settle!)
-    (- (dataframe-drop-count) before))
-
-  (check-equal? (drops-once (lambda () (dataframe-read-csv cities-csv))) 1)
-  (check-equal? (drops-once (lambda () (dataframe-read-csv na-csv #:null-values "NA"))) 1)
-  (check-equal? (drops-once (lambda () (dataframe-read-csv parts #:null-values "NA"))) 1)
-  (check-equal? (drops-once (lambda () (dataframe-read-csv cities-csv #:columns '(0)
-                                                           #:row-index-name "i")))
-                1)
-  (check-equal? (drops-once (lambda () (dataframe-read-csv cities-csv #:new-columns '("x")))) 1)
+  (for ([read (list (lambda () (dataframe-read-csv cities-csv))
+                    (lambda () (dataframe-read-csv na-csv #:null-values "NA"))
+                    (lambda () (dataframe-read-csv parts #:null-values "NA"))
+                    (lambda () (dataframe-read-csv cities-csv #:columns '(0) #:row-index-name "i"))
+                    (lambda () (dataframe-read-csv cities-csv #:new-columns '("x"))))])
+    (check-equal? (drops-once dataframe-drop-count dataframe-drop read) 1))
 
   (let* ([wanted 20]
          [before (dataframe-drop-count)])

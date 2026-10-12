@@ -15,25 +15,13 @@ pub(crate) fn scan(
         .map_or(ptr::null_mut(), |lf| Box::into_raw(Box::new(lf)))
 }
 
-pub(crate) fn parquet_scan(
-    path: &str,
-    n_rows: Option<usize>,
-) -> PolarsResult<LazyFrame> {
-    let options = CompatParquetReadOptions {
-        has_n_rows: n_rows.is_some(),
-        n_rows: n_rows.unwrap_or(0),
-        ..Default::default()
-    };
-    parquet_scan_with(path, &options, ParquetNames::default())
-}
-
 #[derive(Default)]
 pub(crate) struct ParquetNames {
     pub row_index_name: Option<PlSmallStr>,
     pub include_file_paths: Option<PlSmallStr>,
 }
 
-fn decode_name(
+pub(crate) fn decode_name(
     ptr: *const c_char,
     what: &str,
 ) -> PolarsResult<Option<PlSmallStr>> {
@@ -101,25 +89,16 @@ pub(crate) fn parquet_scan_with(
     options: &CompatParquetReadOptions,
     names: ParquetNames,
 ) -> PolarsResult<LazyFrame> {
-    LazyFrame::scan_parquet(path.into(), parquet_scan_args(options, names)?)
-}
-
-#[no_mangle]
-pub extern "C" fn lazyframe_scan_parquet(
-    path: *const c_char,
-) -> *mut LazyFrame {
-    scan(path, |path| parquet_scan(path, None))
-}
-
-#[no_mangle]
-pub extern "C" fn lazyframe_scan_parquet_options(
-    path: *const c_char,
-    has_n_rows: u8,
-    n_rows: usize,
-) -> *mut LazyFrame {
-    scan(path, |path| {
-        parquet_scan(path, (has_n_rows != 0).then_some(n_rows))
-    })
+    let args = parquet_scan_args(options, names)?;
+    let row_index = args.row_index.clone();
+    let lf = LazyFrame::scan_parquet(
+        path.into(),
+        ScanArgsParquet {
+            row_index: zero_based(&row_index),
+            ..args
+        },
+    )?;
+    Ok(offset_rows(lf, &row_index))
 }
 
 #[no_mangle]
@@ -133,4 +112,57 @@ pub extern "C" fn lazyframe_scan_parquet_with_options(
         let names = decode_parquet_names(row_index_name, include_file_paths)?;
         parquet_scan_with(path, &options, names)
     })
+}
+
+/// The row index a reader numbers from zero; `offset_rows` and
+/// `offset_frame_rows` add the offset afterwards, checked, because polars'
+/// readers add it unchecked (eager CSV wraps, the streaming node panics).
+pub(crate) fn zero_based(row_index: &Option<RowIndex>) -> Option<RowIndex> {
+    row_index.as_ref().map(|ri| RowIndex {
+        name: ri.name.clone(),
+        offset: 0,
+    })
+}
+
+fn offset_column(column: Column, offset: IdxSize) -> PolarsResult<Column> {
+    let index = column.idx()?;
+    if index
+        .max()
+        .is_some_and(|last| last.checked_add(offset).is_none())
+    {
+        polars_bail!(
+            ComputeError: "row index from offset {offset} overflows {IDX_DTYPE}"
+        );
+    }
+    Ok((index + offset).into_column())
+}
+
+pub(crate) fn offset_rows(
+    lf: LazyFrame,
+    row_index: &Option<RowIndex>,
+) -> LazyFrame {
+    match row_index {
+        Some(RowIndex { name, offset }) if *offset > 0 => {
+            let offset = *offset;
+            lf.with_column(col(name.clone()).map(
+                move |column| offset_column(column, offset),
+                |_, field| Ok(field.clone()),
+            ))
+        }
+        _ => lf,
+    }
+}
+
+pub(crate) fn offset_frame_rows(
+    mut df: DataFrame,
+    row_index: &Option<RowIndex>,
+) -> PolarsResult<DataFrame> {
+    match row_index {
+        Some(RowIndex { name, offset }) if *offset > 0 => {
+            let shifted = offset_column(df.column(name)?.clone(), *offset)?;
+            df.with_column(shifted)?;
+            Ok(df)
+        }
+        _ => Ok(df),
+    }
 }

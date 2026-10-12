@@ -4,21 +4,23 @@
          ffi/unsafe/alloc
          racket/match
          syntax/parse/define
-         (for-syntax racket/base syntax/parse)
+         (for-syntax racket/base)
          (only-in racket/contract/base
-                  [-> ->/c] ->* ->i and/c cons/c contract-out flat-named-contract
-                  listof or/c unsupplied-arg?)
-         (only-in racket/list check-duplicates)
+                  [-> ->/c] ->* and/c cons/c contract-out flat-named-contract
+                  listof or/c)
          (only-in polars/private/expr-core _LazyFrame-ptr/null LazyFrame-ptr? lazyframe-drop)
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c))
+         (only-in polars/private/io-contracts
+                  column-name/c distinct-names? given positive-size/c row-index/c size/c)
+         (only-in polars/private/io-options define-io-options keyword-forwarder))
 
 (provide json-reader json-writer json-reader/c
-         ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c ndjson-writer/c
+         ndjson-arguments ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c
+         ndjson-writer/c ndjson-writer-arguments
          (contract-out
           [dataframe-read-json (json-reader/c DataFrame-ptr?)]
           [dataframe-write-json (->/c DataFrame-ptr? path-string? void?)]
@@ -30,9 +32,6 @@
   (flat-named-contract
    'json-dtype/c
    (lambda (v) (and (dtype-spec? v) (not (enum-dtype? v))))))
-
-(define (distinct-names? fields)
-  (not (check-duplicates (map car fields))))
 
 (define json-schema/c
   (flat-named-contract 'json-schema/c
@@ -121,9 +120,6 @@
   (flat-named-contract 'ndjson-schema/c
                        (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)))
 
-(define (given v default)
-  (if (unsupplied-arg? v) default v))
-
 (define (distinct-columns? row-index-name include-file-paths)
   (define name (given row-index-name #f))
   (not (and name (equal? name (given include-file-paths #f)))))
@@ -140,16 +136,6 @@
     [bounds (<= (car bounds) level (cdr bounds))]
     [else #f]))
 
-(define (ndjson-writer/c frame/c)
-  (->i ([df frame/c] [path path-string?])
-       (#:compression [compression (or/c 'uncompressed 'gzip 'zstd)]
-        #:compression-level [compression-level (or/c #f exact-nonnegative-integer?)]
-        #:check-extension [check-extension boolean?])
-       #:pre/name (compression compression-level)
-       "#:compression-level needs #:compression 'gzip (a level from 0 to 9) or 'zstd (1 to 22)"
-       (level-fits? compression compression-level)
-       [result void?]))
-
 (define-cstruct _CompatNdjsonOptions
   ([has-schema _stdbool]
    [has-infer-schema-length _stdbool]
@@ -165,21 +151,18 @@
    [schema-len _size]
    [overrides-len _size]))
 
-(define-compat dataframe-read-ndjson/raw
+(define-syntax-parse-rule (_ndjson-fun (~literal ->) result:expr)
   (_fun _string/utf-8 _CompatNdjsonOptions
         (_list i _string/utf-8) (_list i _CompatDType)
         (_list i _string/utf-8) (_list i _CompatDType)
         _string/utf-8 _string/utf-8
-        -> _DataFrame-ptr/null)
+        -> result))
+
+(define-compat dataframe-read-ndjson/raw (_ndjson-fun -> _DataFrame-ptr/null)
   #:c-id dataframe_read_ndjson_with_options
   #:wrap (allocator dataframe-drop))
 
-(define-compat lazyframe-scan-ndjson/raw
-  (_fun _string/utf-8 _CompatNdjsonOptions
-        (_list i _string/utf-8) (_list i _CompatDType)
-        (_list i _string/utf-8) (_list i _CompatDType)
-        _string/utf-8 _string/utf-8
-        -> _LazyFrame-ptr/null)
+(define-compat lazyframe-scan-ndjson/raw (_ndjson-fun -> _LazyFrame-ptr/null)
   #:c-id lazyframe_scan_ndjson_with_options
   #:wrap (allocator lazyframe-drop))
 
@@ -187,74 +170,50 @@
   (_fun _DataFrame-ptr _string/utf-8 _uint8 _stdbool _uint32 _stdbool -> _int32)
   #:c-id dataframe_write_ndjson_with_options)
 
-(begin-for-syntax
-  (define-syntax-class option
-    #:description "an option [keyword name contract default]"
-    (pattern [kw:keyword name:id contract:expr default:expr])))
-
-(define-syntax-parse-rule
-  (define-ndjson-options (call:id entry:id path:id) reader/c:id
-    (option:option ...)
-    #:pre (pre-name:id ...) pre-message:str pre-check:expr
-    body:expr)
-  (begin
-    (define (reader/c result/c)
-      (->i ([path path-string?])
-           ((~@ option.kw [option.name option.contract]) ...)
-           #:pre/name (pre-name ...) pre-message pre-check
-           [result result/c]))
-    (define (call entry path (~@ option.kw [option.name option.default]) ...)
-      body)))
-
-(define-ndjson-options (ndjson-call entry path) ndjson-reader/c
-  ([#:schema schema (or/c #f ndjson-schema/c) #f]
+(define-io-options ndjson-options
+  ([(ndjson-reader/c result/c) ndjson-keywords ([path path-string?]) result/c
+    #:arguments ndjson-arguments])
+  ([#:schema schema (or/c ndjson-schema/c #f) #f]
    [#:schema-overrides schema-overrides ndjson-schema/c '()]
-   [#:infer-schema-length infer-schema-length (or/c #f positive-size/c) 100]
-   [#:batch-size batch-size (or/c #f positive-size/c) 1024]
-   [#:n-rows n-rows (or/c #f size/c) #f]
+   [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]
+   [#:batch-size batch-size (or/c positive-size/c #f) 1024]
+   [#:n-rows n-rows (or/c size/c #f) #f]
    [#:low-memory low-memory boolean? #f]
    [#:rechunk rechunk boolean? #f]
-   [#:row-index-name row-index-name (or/c #f column-name/c) #f]
+   [#:row-index-name row-index-name (or/c column-name/c #f) #f]
    [#:row-index-offset row-index-offset row-index/c 0]
    [#:ignore-errors ignore-errors boolean? #f]
-   [#:include-file-paths include-file-paths (or/c #f column-name/c) #f])
+   [#:include-file-paths include-file-paths (or/c column-name/c #f) #f])
   #:pre (row-index-name include-file-paths)
   "#:row-index-name and #:include-file-paths must name different columns"
   (distinct-columns? row-index-name include-file-paths)
   (let ([fields (or schema '())])
-    (entry path
-           (make-CompatNdjsonOptions (and schema #t)
-                                     (and infer-schema-length #t)
-                                     (and batch-size #t)
-                                     (and n-rows #t)
-                                     low-memory
-                                     rechunk
-                                     ignore-errors
-                                     (or infer-schema-length 0)
-                                     (or batch-size 0)
-                                     (or n-rows 0)
-                                     row-index-offset
-                                     (length fields)
-                                     (length schema-overrides))
-           (map car fields)
-           (field-dtypes fields)
-           (map car schema-overrides)
-           (field-dtypes schema-overrides)
-           row-index-name
-           include-file-paths)))
+    (list (make-CompatNdjsonOptions (and schema #t)
+                                    (and infer-schema-length #t)
+                                    (and batch-size #t)
+                                    (and n-rows #t)
+                                    low-memory
+                                    rechunk
+                                    ignore-errors
+                                    (or infer-schema-length 0)
+                                    (or batch-size 0)
+                                    (or n-rows 0)
+                                    row-index-offset
+                                    (length fields)
+                                    (length schema-overrides))
+          (map car fields)
+          (field-dtypes fields)
+          (map car schema-overrides)
+          (field-dtypes schema-overrides)
+          row-index-name
+          include-file-paths)))
 
 (define (ndjson-procedure who entry message)
-  (define-values (_ option-keywords) (procedure-keywords ndjson-call))
-  (procedure-rename
-   (procedure-reduce-keyword-arity
-    (make-keyword-procedure
-     (lambda (keywords arguments path)
-       (define p (path->complete-string who path #:glob? #t))
-       (call/foreign-error who
-                           (lambda () (keyword-apply ndjson-call keywords arguments (list entry p)))
-                           message path)))
-    1 '() option-keywords)
-   who))
+  (keyword-forwarder
+   who ndjson-options ndjson-keywords 1
+   (lambda (arguments path)
+     (define p (path->complete-string who path #:glob? #t))
+     (call/foreign-error who (lambda () (apply entry p arguments)) message path))))
 
 (define (ndjson-reader who)
   (ndjson-procedure who dataframe-read-ndjson/raw "failed to read ndjson from ~a"))
@@ -262,23 +221,29 @@
 (define (ndjson-scanner who)
   (ndjson-procedure who lazyframe-scan-ndjson/raw "failed to scan ~a"))
 
+(define-io-options ndjson-write-options
+  ([(ndjson-writer/c frame/c) ndjson-write-keywords ([frame frame/c] [path path-string?]) void?
+    #:arguments ndjson-writer-arguments])
+  ([#:compression compression (or/c 'uncompressed 'gzip 'zstd) 'uncompressed]
+   [#:compression-level compression-level (or/c exact-nonnegative-integer? #f) #f]
+   [#:check-extension check-extension boolean? #t])
+  #:pre (compression compression-level)
+  "#:compression-level needs #:compression 'gzip (a level from 0 to 9) or 'zstd (1 to 22)"
+  (level-fits? compression compression-level)
+  (list (hash-ref compression-codes compression)
+        (and compression-level #t)
+        (or compression-level 0)
+        check-extension))
+
 (define (ndjson-writer who)
-  (procedure-rename
-   (lambda (df path
-            #:compression [compression 'uncompressed]
-            #:compression-level [compression-level #f]
-            #:check-extension [check-extension #t])
+  (keyword-forwarder
+   who ndjson-write-options ndjson-write-keywords 2
+   (lambda (arguments frame path)
      (define p (path->complete-string who path))
      (void (call/foreign-error who
-                               (lambda ()
-                                 (dataframe-write-ndjson/raw df p
-                                                             (hash-ref compression-codes compression)
-                                                             (and compression-level #t)
-                                                             (or compression-level 0)
-                                                             check-extension))
+                               (lambda () (apply dataframe-write-ndjson/raw frame p arguments))
                                #:ok? zero?
-                               "failed to write ndjson to ~a" path)))
-   who))
+                               "failed to write ndjson to ~a" path)))))
 
 (define dataframe-read-json-lines (ndjson-reader 'dataframe-read-json-lines))
 (define lazyframe-scan-json-lines (ndjson-scanner 'lazyframe-scan-json-lines))
@@ -295,7 +260,7 @@
                     series-new-f64 series-new-i32 series-new-i64 series-new-str
                     series-sum-f64)
            (only-in polars/private/test-helpers
-                    apply-keywords contract-violation-of scratch-file))
+                    apply-keywords contract-violation-of drops-once scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
 
@@ -377,17 +342,8 @@
              (lambda () (contracted:dataframe-write-json-lines cities cities-ndjson
                                                               #:check-extension 'yes)))
 
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
-  (define (drops-once thunk)
-    (settle!)
-    (define before (dataframe-drop-count))
-    (dataframe-drop (thunk))
-    (settle!)
-    (- (dataframe-drop-count) before))
-  (check-equal? (drops-once (lambda () (dataframe-read-json rows #:schema '(("foo" . i32))))) 1)
-  (check-equal? (drops-once (lambda () (dataframe-read-json-lines cities-ndjson #:n-rows 1))) 1)
+  (for ([read (list (lambda () (dataframe-read-json rows #:schema '(("foo" . i32))))
+                    (lambda () (dataframe-read-json-lines cities-ndjson #:n-rows 1)))])
+    (check-equal? (drops-once dataframe-drop-count dataframe-drop read) 1))
 
   (delete-directory/files scratch))

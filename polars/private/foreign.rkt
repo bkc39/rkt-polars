@@ -2256,11 +2256,8 @@
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
-           (prefix-in contracted: (submod "..")))
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
+           (prefix-in contracted: (submod ".."))
+           (only-in polars/private/test-helpers settle!))
   (define ((sort-blame? rx) e)
     (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
@@ -2512,7 +2509,7 @@
 
   (define (releases-result? form)
     (match form
-      [(list* 'define-compat _ (list* '_fun signature) options)
+      [(list* 'define-compat _ (list* _ signature) options)
        (define type (result-type signature))
        (define drop (hash-ref owned-drops type #f))
        (cond
@@ -2538,6 +2535,17 @@
                           #:wrap (allocator lazyframe-drop))))
   (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
   (check > (length bindings) 200)
+  (define (shared-signature-result form)
+    (match form
+      [(list* 'define-compat (or 'dataframe-read-csv/raw 'lazyframe-scan-ndjson/raw)
+              (cons _ signature) _)
+       (result-type signature)]
+      [_ #f]))
+  (check-equal? (for*/list ([form (in-list bindings)]
+                            [type (in-value (shared-signature-result form))]
+                            #:when type)
+                  type)
+                '(_DataFrame-ptr/null _LazyFrame-ptr/null))
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))
                   (cadr form))

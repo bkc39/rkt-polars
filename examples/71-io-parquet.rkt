@@ -2,11 +2,6 @@
 
 ;; Parquet's reading and writing options, and pushdown into a scan.
 ;;
-;; write-parquet picks a codec and its level, the statistics it writes and the
-;; size of its row groups; read-parquet picks columns by name or position,
-;; caps the rows and numbers them; scan-parquet reads only what its plan
-;; needs, which explain shows.
-;;
 ;; Inside `nix develop`:
 ;;   racket examples/71-io-parquet.rkt
 

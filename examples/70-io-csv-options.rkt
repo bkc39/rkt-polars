@@ -1,18 +1,6 @@
 #lang racket/base
 
-;; CSV options: the rest of read_csv's keywords, and write_csv's.
-;;
-;; Reading: #:columns picks columns by name or position, in the file's order;
-;; #:new-columns renames the first ones, and the keywords that name a column
-;; then use the new name; #:row-index-name / #:row-index-offset add a row
-;; number. #:null-values takes an association list for markers that apply to
-;; one column only. #:skip-lines skips lines without parsing them,
-;; #:decimal-comma reads 1,5 as 1.5, #:truncate-ragged-lines drops a line's
-;; extra fields, #:eol-char ends lines with another character, and
-;; #:raise-if-empty #f reads an empty file as an empty frame.
-;;
-;; Writing: write-csv takes the separator, quoting, line ends and the way
-;; nulls, floats and temporal values are written.
+;; read-csv's and write-csv's keyword options.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/70-io-csv-options.rkt
@@ -54,11 +42,11 @@
 
 (define scratch (make-temporary-directory "rkt-polars-csv-options-~a"))
 (define lines (build-path scratch "lines.csv"))
-(call-with-output-file lines (lambda (out) (void (write-string "a,b;1,x;2,y;" out))))
+(display-to-file "a,b;1,x;2,y;" lines)
 (displayln "#:eol-char #\\; on a;b-terminated lines:")
 (displayln (read-csv lines #:eol-char #\;))
 (define nothing (build-path scratch "nothing.csv"))
-(call-with-output-file nothing void)
+(display-to-file "" nothing)
 (displayln "an empty file:")
 (report (lambda () (read-csv nothing)))
 (displayln (shape (read-csv nothing #:raise-if-empty #f)))

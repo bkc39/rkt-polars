@@ -232,7 +232,7 @@ fn write_options_validate_the_compression_level() {
 
 #[test]
 fn the_writer_applies_codec_row_groups_and_statistics() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let df = frame(1000);
     for (code, codec) in [
         (0, "Uncompressed"),
@@ -292,7 +292,7 @@ fn the_writer_applies_codec_row_groups_and_statistics() {
 
 #[test]
 fn an_invalid_level_fails_before_the_file_is_created() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("never.parquet");
     let df = frame(3);
     let options = CompatParquetWriteOptions {
@@ -312,18 +312,9 @@ fn an_invalid_level_fails_before_the_file_is_created() {
     dataframe_drop(df);
 }
 
-fn entries(dir: &std::path::Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    names
-}
-
 #[test]
 fn a_failed_write_leaves_the_existing_file_as_it_was() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("keep.parquet");
     let df = frame(1000);
     let floats = Box::into_raw(Box::new(
@@ -378,7 +369,7 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
 
 #[test]
 fn columns_select_by_name_or_position() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("cols.parquet");
     let df = frame(4);
     assert_eq!(write_with(df, &path, Default::default()), 0);
@@ -421,7 +412,7 @@ fn columns_select_by_name_or_position() {
 
 #[test]
 fn a_column_name_is_never_a_pattern() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("patterned.parquet");
     let columns: Vec<Column> = ["*", "^a.*$", "ab"]
         .iter()
@@ -442,7 +433,7 @@ fn a_column_name_is_never_a_pattern() {
 
 #[test]
 fn new_entry_points_clear_a_stale_reason() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("fresh.parquet");
     let p = cstr(path.to_str().unwrap());
     let df = frame(3);
@@ -505,8 +496,8 @@ fn explain_reports_a_plan_that_cannot_resolve() {
 }
 
 #[test]
-fn a_row_index_past_the_index_type_is_a_reason_not_an_abort() {
-    let dir = tempfile::tempdir().expect("tempdir");
+fn a_row_index_past_the_index_type_names_the_overflow() {
+    let dir = scratch_dir();
     let path = dir.path().join("index.parquet");
     let df = frame(4);
     assert_eq!(write_with(df, &path, Default::default()), 0);
@@ -527,6 +518,10 @@ fn a_row_index_past_the_index_type_is_a_reason_not_an_abort() {
     );
     assert!(out.is_null());
     let reason = recorded_error().expect("a reason");
-    assert!(reason.starts_with("polars panicked: "), "{}", reason);
+    assert!(
+        reason.contains("row index from offset 4294967295 overflows u32"),
+        "{}",
+        reason
+    );
     dataframe_drop(df);
 }

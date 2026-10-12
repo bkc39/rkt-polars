@@ -1,6 +1,39 @@
 use super::test_util::*;
 use super::*;
 
+pub(super) extern "C" fn write_parquet(
+    df: *mut DataFrame,
+    path: *const c_char,
+) -> i32 {
+    dataframe_write_parquet_with_options(
+        df,
+        path,
+        CompatParquetWriteOptions::default(),
+    )
+}
+
+pub(super) extern "C" fn read_parquet(path: *const c_char) -> *mut DataFrame {
+    dataframe_read_parquet_with_options(
+        path,
+        CompatParquetReadOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        ptr::null(),
+        0,
+    )
+}
+
+pub(super) extern "C" fn scan_parquet(path: *const c_char) -> *mut LazyFrame {
+    lazyframe_scan_parquet_with_options(
+        path,
+        CompatParquetReadOptions::default(),
+        ptr::null(),
+        ptr::null(),
+    )
+}
+
 fn write_round_trip(
     df: *mut DataFrame,
     ext: &str,
@@ -144,12 +177,7 @@ fn parquet_round_trip_preserves_shape_and_values() {
     let xs = make_i64("x", &[1, 2, 3]);
     let gs = make_str("g", &["a", "b", "c"]);
     let df = make_df(&[xs, gs]);
-    let back = write_round_trip(
-        df,
-        "parquet",
-        dataframe_write_parquet,
-        dataframe_read_parquet,
-    );
+    let back = write_round_trip(df, "parquet", write_parquet, read_parquet);
     assert_eq!(dataframe_height(back), 3);
     assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
     dataframe_drop(back);
@@ -212,7 +240,7 @@ fn unwritable_path_reports_the_os_reason() {
     let xs = make_i32("x", &[1]);
     let df = make_df(&[xs]);
     let p = cstr("/nonexistent-directory-45/out.parquet");
-    assert_eq!(dataframe_write_parquet(df, p.as_ptr()), 3);
+    assert_eq!(write_parquet(df, p.as_ptr()), 3);
     let msg = recorded_error().expect("a reason");
     assert!(msg.starts_with("cannot create file: "), "{:?}", msg);
     dataframe_drop(df);
@@ -225,7 +253,7 @@ fn malformed_input_reports_the_polars_reason() {
     let path = dir.path().join("junk.bin");
     std::fs::write(&path, b"this is not parquet").expect("write");
     let p = cstr(path.to_str().unwrap());
-    assert!(dataframe_read_parquet(p.as_ptr()).is_null());
+    assert!(read_parquet(p.as_ptr()).is_null());
     let msg = recorded_error().expect("a reason");
     assert!(msg.contains("PAR1"), "{:?}", msg);
 }
@@ -272,8 +300,8 @@ fn every_entry_point_clears_a_stale_reason() {
     set_last_error("stale");
     assert_eq!(write_csv(df, csv.as_ptr()), 0);
     cleared("dataframe_write_csv_with_options");
-    assert_eq!(dataframe_write_parquet(df, parquet.as_ptr()), 0);
-    cleared("dataframe_write_parquet");
+    assert_eq!(write_parquet(df, parquet.as_ptr()), 0);
+    cleared("dataframe_write_parquet_with_options");
     assert_eq!(
         dataframe_write_ndjson_with_options(
             df,
@@ -291,10 +319,10 @@ fn every_entry_point_clears_a_stale_reason() {
     frame("dataframe_read_csv_v2", read_csv(csv.as_ptr()));
     cleared("dataframe_read_csv_v2");
     frame(
-        "dataframe_read_parquet",
-        dataframe_read_parquet(parquet.as_ptr()),
+        "dataframe_read_parquet_with_options",
+        read_parquet(parquet.as_ptr()),
     );
-    cleared("dataframe_read_parquet");
+    cleared("dataframe_read_parquet_with_options");
     frame(
         "dataframe_read_ndjson_with_options",
         read_ndjson(ndjson.as_ptr()),
@@ -310,15 +338,10 @@ fn every_entry_point_clears_a_stale_reason() {
     plan("lazyframe_scan_csv_v2", scan_csv(csv.as_ptr()));
     cleared("lazyframe_scan_csv_v2");
     plan(
-        "lazyframe_scan_parquet",
-        lazyframe_scan_parquet(parquet.as_ptr()),
+        "lazyframe_scan_parquet_with_options",
+        scan_parquet(parquet.as_ptr()),
     );
-    cleared("lazyframe_scan_parquet");
-    plan(
-        "lazyframe_scan_parquet_options",
-        lazyframe_scan_parquet_options(parquet.as_ptr(), 0, 0),
-    );
-    cleared("lazyframe_scan_parquet_options");
+    cleared("lazyframe_scan_parquet_with_options");
     let lf = scan_csv(csv.as_ptr());
     set_last_error("stale");
     frame("lazyframe_collect", lazyframe_collect(lf));
@@ -336,7 +359,7 @@ fn a_scan_defers_a_bad_file_to_collect() {
     std::fs::write(&path, b"this is not parquet").expect("write");
     let p = cstr(path.to_str().unwrap());
 
-    let lf = lazyframe_scan_parquet(p.as_ptr());
+    let lf = scan_parquet(p.as_ptr());
     assert!(!lf.is_null(), "the scan itself should only build a plan");
     assert_eq!(recorded_error(), None);
 
@@ -380,12 +403,7 @@ fn parquet_round_trips_categorical_enum_and_decimal() {
         decimals.into(),
     ];
     let df = Box::into_raw(Box::new(DataFrame::new(3, columns).unwrap()));
-    let back = write_round_trip(
-        df,
-        "parquet",
-        dataframe_write_parquet,
-        dataframe_read_parquet,
-    );
+    let back = write_round_trip(df, "parquet", write_parquet, read_parquet);
     let (out, original) = unsafe { (&*back, &*df) };
     assert_eq!(out.schema(), original.schema());
     assert!(out.equals_missing(original));

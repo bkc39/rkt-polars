@@ -134,15 +134,9 @@ each marker to its column only.
 stations
 ]
 
-A gzip, zlib or zstd file reads like a plain one. API gaps: no
-@tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
-@tt{missing_columns}; no spelling for the tuning knobs (@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
-@tt{use_pyarrow} and the encodings Python decodes itself. Polars decides
-from a file's first four bytes whether it is compressed, as in Python, and
-has no switch to say it is not: a plain file that starts like a zlib
-stream, a header beginning @litchar{x^} say, is taken for compressed data
-and fails to read or reads as garbage. A UTF-8 byte order mark at the start
-of the file avoids it.
+A gzip, zlib or zstd file reads like a plain one. API gaps: @tt{schema},
+@tt{with_column_names}, @tt{include_file_paths}, @tt{missing_columns}, the
+tuning knobs, @tt{use_pyarrow}.
 
 @subsection[#:tag "io-csv-write-options"]{Writing options}
 
@@ -167,8 +161,7 @@ values are written.
 (delete-file path)
 ]
 
-API gap: no compressed output (@tt{compression}), which Python writes
-through @tt{sink_csv}.
+API gap: compressed output (@tt{compression}).
 
 @include-section["io-json.scrbl"]
 
