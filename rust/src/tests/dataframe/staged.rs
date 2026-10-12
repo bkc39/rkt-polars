@@ -190,7 +190,8 @@ fn a_new_file_gets_default_permissions() {
 #[test]
 fn a_fifo_is_written_in_place() {
     use std::os::unix::fs::FileTypeExt;
-    let cases: [(&str, Writer, &str); 2] = [
+    let cases: [(&str, Writer, &str); 3] = [
+        ("csv", write_csv, "x\n1\n2\n"),
         ("json", dataframe_write_json, r#"[{"x":1},{"x":2}]"#),
         ("ndjson", write_ndjson, "{\"x\":1}\n{\"x\":2}\n"),
     ];

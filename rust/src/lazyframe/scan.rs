@@ -44,3 +44,56 @@ pub extern "C" fn lazyframe_scan_parquet_options(
         parquet_scan(path, (has_n_rows != 0).then_some(n_rows))
     })
 }
+
+/// The row index a reader numbers from zero; `offset_rows` and
+/// `offset_frame_rows` add the offset afterwards, checked, because polars'
+/// readers add it unchecked (eager CSV wraps, the streaming node panics).
+pub(crate) fn zero_based(row_index: &Option<RowIndex>) -> Option<RowIndex> {
+    row_index.as_ref().map(|ri| RowIndex {
+        name: ri.name.clone(),
+        offset: 0,
+    })
+}
+
+fn offset_column(column: Column, offset: IdxSize) -> PolarsResult<Column> {
+    let index = column.idx()?;
+    if index
+        .max()
+        .is_some_and(|last| last.checked_add(offset).is_none())
+    {
+        polars_bail!(
+            ComputeError: "row index from offset {offset} overflows {IDX_DTYPE}"
+        );
+    }
+    Ok((index + offset).into_column())
+}
+
+pub(crate) fn offset_rows(
+    lf: LazyFrame,
+    row_index: &Option<RowIndex>,
+) -> LazyFrame {
+    match row_index {
+        Some(RowIndex { name, offset }) if *offset > 0 => {
+            let offset = *offset;
+            lf.with_column(col(name.clone()).map(
+                move |column| offset_column(column, offset),
+                |_, field| Ok(field.clone()),
+            ))
+        }
+        _ => lf,
+    }
+}
+
+pub(crate) fn offset_frame_rows(
+    mut df: DataFrame,
+    row_index: &Option<RowIndex>,
+) -> PolarsResult<DataFrame> {
+    match row_index {
+        Some(RowIndex { name, offset }) if *offset > 0 => {
+            let shifted = offset_column(df.column(name)?.clone(), *offset)?;
+            df.with_column(shifted)?;
+            Ok(df)
+        }
+        _ => Ok(df),
+    }
+}

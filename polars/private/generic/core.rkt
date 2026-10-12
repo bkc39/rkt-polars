@@ -1,6 +1,8 @@
 #lang racket/base
 
 (require racket/generic
+         syntax/parse/define
+         (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
          (only-in polars/private/bulk in-series)
          polars/private/foreign
@@ -107,6 +109,9 @@
 
 (define (lazyframe? v) (lazyframe-rec? v))
 (define (wrap-lazyframe ptr) (lazyframe-rec ptr))
+
+(define-syntax-parse-rule (define-wrapped name:id wrap:expr reader:expr)
+  (define name (procedure-rename (compose1 wrap reader) 'name)))
 
 ;; ---------------------------------------------------------------------------
 ;; dataframe-only accessors (plain functions guarded on dataframe?).
@@ -272,17 +277,8 @@
   (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame))))
 
 (module+ test
-  (require (only-in polars/private/expr dataframe-lazy lazyframe-drop))
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
-  (define (drops-once count drop make)
-    (settle!)
-    (define before (count))
-    (drop (make))
-    (settle!)
-    (- (count) before))
+  (require (only-in polars/private/expr dataframe-lazy lazyframe-drop)
+           (only-in polars/private/test-helpers drops-once settle!))
   (check-equal? (drops-once series-drop-count series-drop (lambda () (series '(1 2)))) 1)
   (check-equal? (drops-once series-drop-count series-drop
                             (lambda () (wrap-series (wrap-series (series-new-i64 "x" '(1))))))

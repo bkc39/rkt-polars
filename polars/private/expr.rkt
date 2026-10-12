@@ -1777,10 +1777,7 @@
   (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))
 
 (module+ test
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
+  (require (only-in polars/private/test-helpers settle!))
 
   (define reclaim-src (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
   (settle!)

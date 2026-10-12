@@ -1,7 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    collect_c_strings, is_pattern, polars_dtype_from_compat, read_path,
-    require_path, scan, CompatCsvOptions, CompatDType, PathRules,
+    collect_c_strings, is_pattern, offset_frame_rows, offset_rows,
+    polars_dtype_from_compat, read_path, require_path, scan, zero_based,
+    CompatCsvOptions, CompatDType, PathRules,
 };
 
 struct CsvArrays {
@@ -221,7 +222,7 @@ fn read_options(
         )
         .with_ignore_errors(options.ignore_errors)
         .with_raise_if_empty(options.raise_if_empty)
-        .with_row_index(request.row_index.clone())
+        .with_row_index(zero_based(&request.row_index))
         .with_schema_overwrite(request.overrides.clone())
         .with_parse_options(parse_options(options, request))
 }
@@ -461,8 +462,10 @@ fn renamed_scan(
     let lf = lazy_reader(path, options, read_options(options, &plain))
         .finish()?
         .rename(from, to, true);
-    Ok(match &request.row_index {
-        Some(ri) => lf.with_row_index(ri.name.clone(), Some(ri.offset)),
+    Ok(match zero_based(&request.row_index) {
+        Some(ri) => {
+            offset_rows(lf.with_row_index(ri.name, Some(0)), &request.row_index)
+        }
         None => lf,
     })
 }
@@ -491,7 +494,7 @@ fn csv_scan(
                 &request,
             )?;
         }
-        lf
+        offset_rows(lf, &request.row_index)
     } else {
         renamed_scan(path, options, &request)?
     };
@@ -513,8 +516,10 @@ fn eager_plain(
             read.with_projection(Some(Arc::new(indices.clone())))
         }
     };
-    read.try_into_reader_with_file_path(Some(path.into()))?
-        .finish()
+    let df = read
+        .try_into_reader_with_file_path(Some(path.into()))?
+        .finish()?;
+    offset_frame_rows(df, &request.row_index)
 }
 
 fn eager_renamed(
@@ -533,8 +538,11 @@ fn eager_renamed(
         .map(|name| renaming.new_name(name))
         .collect();
     df.set_column_names(&names)?;
-    match &request.row_index {
-        Some(ri) => df.with_row_index(ri.name.clone(), Some(ri.offset)),
+    match zero_based(&request.row_index) {
+        Some(ri) => offset_frame_rows(
+            df.with_row_index(ri.name, Some(0))?,
+            &request.row_index,
+        ),
         None => Ok(df),
     }
 }
