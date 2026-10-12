@@ -185,24 +185,23 @@
                         [_ #f]))
       form))
 
-  (define (offending-forms text)
-    (define forms (append-map forms-in (for/list ([datum (in-port read (open-input-string text))])
-                                         datum)))
+  (define (offending-forms data)
+    (define forms (append-map forms-in data))
     (pointer-stores forms (pointer-aliases forms)))
   (check-equal? (offending-forms
-                 (string-append "(define _name _string/utf-8) (define _held (make-ctype _name #f #f))"
-                                "(_list i _held) (_vector io _bytes) (_ptr i _path) (_array _file 2)"
-                                "(_box _symbol) (_list-struct _int _gcpointer)"
-                                "(define-cstruct _S ((n _int) (s _string)))"
-                                "(define-cstruct _T ([r _racket]))"
-                                "(define-series-constructors str _string* \"\")"))
+                 '((define _name _string/utf-8) (define _held (make-ctype _name #f #f))
+                   (_list i _held) (_vector io _bytes) (_ptr i _path) (_array _file 2)
+                   (_box _symbol) (_list-struct _int _gcpointer)
+                   (define-cstruct _S ((n _int) (s _string)))
+                   (define-cstruct _T ([r _racket]))
+                   (define-series-constructors str _string* "")))
                 '((_list i _held) (_vector io _bytes) (_ptr i _path) (_array _file 2) (_box _symbol)
                   (_list-struct _int _gcpointer) (define-cstruct _S ((n _int) (s _string)))
                   (define-cstruct _T ((r _racket))) (define-series-constructors str _string* "")))
   (check-equal? (offending-forms
-                 (string-append "(_fun _string _bytes -> _void) (_list i _Expr-ptr) (_list o _string 3)"
-                                "(_list i _string-list) (define-cstruct _P ((p _pointer)))"
-                                "(define (f _string) (_list i _int)) '(_list i _string)"))
+                 '((_fun _string _bytes -> _void) (_list i _Expr-ptr) (_list o _string 3)
+                   (_list i _string-list) (define-cstruct _P ((p _pointer)))
+                   (define (f _string) (_list i _int)) '(_list i _string)))
                 '())
 
   (define private-forms
