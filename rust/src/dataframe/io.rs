@@ -28,9 +28,14 @@ fn staging_path(dir: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
+pub(crate) fn kept_mode(mode: u32) -> u32 {
+    mode & 0o777
+}
+
+#[cfg(unix)]
 fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::Permissions::from_mode(existing.permissions().mode() & 0o777)
+    std::fs::Permissions::from_mode(kept_mode(existing.permissions().mode()))
 }
 
 #[cfg(not(unix))]
