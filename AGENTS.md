@@ -237,9 +237,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
   a contract error, since `_string/utf-8` would cut it there (#165).
   `write-json` refuses a binary column, where polars hits a `todo!()`.
-- `write_frame` writes to a sibling temp file (`temp_sibling`, which keeps
-  the target's extensions) and renames it onto the target once the write
-  succeeds, so a failed write leaves an existing file as it was.
+- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`),
+  which follows a symlink to the file it names and then, for a regular or
+  missing file, writes `.rkt-polars-<pid>-<n>.partial` in its directory
+  (`create_new`, so never through a planted link; a name no directory or
+  glob read picks up) and renames it onto the target once the write
+  succeeds: a failed write leaves an existing file as it was. A replaced
+  file keeps its permission bits, not its owner, ACLs, extended attributes
+  or hard links, and the directory must be writable. A read-only target is
+  refused before anything is staged; a FIFO or device is written in place.
 - `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
   is, through `dataframe_read_ndjson_with_options`; a directory reads every
   file in it, and they must share one extension (a README or `.DS_Store`
@@ -254,10 +260,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   once a schema is given. The eager NDJSON verbs strip the "Resolved plan
   until failure" dump polars appends to a planning error (`without_plan`).
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
-  `dataframe_write_ndjson_with_options`, so `#:check-extension` matches the
-  name to `#:compression`. The sink opens a path, not a file, so it writes
-  to `temp_sibling` itself and `finish_replacing` renames the result, as
-  `write_frame` does for the other writers. gzip and zstd need the
+  `dataframe_write_ndjson_with_options`, through `write_frame` like the
+  other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
+  since the staging name has no extension `#:check-extension` matches the
+  target's name to `#:compression` in Rust (`ndjson_extension`, polars'
+  own messages) and the sink gets `check_extension: false`. gzip and zstd need the
   `decompress` feature (#176) and a `flate2` newer than 1.0.30, whose
   `zlib-rs` 0.1.1 aborts the process on some gzip streams (#199). Readers
   sniff compression from the first four bytes, not the name

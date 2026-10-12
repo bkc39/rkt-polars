@@ -4,6 +4,7 @@
          ffi/unsafe/alloc
          racket/match
          syntax/parse/define
+         (for-syntax racket/base)
          (only-in racket/contract/base
                   [-> ->/c] ->* ->i and/c cons/c contract-out flat-named-contract integer-in
                   listof or/c unsupplied-arg?)
@@ -13,7 +14,8 @@
                   ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/io-contracts column-name/c positive-size/c size/c))
 
 (provide json-reader json-writer json-reader/c
          ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c ndjson-writer/c
@@ -24,13 +26,6 @@
           [lazyframe-scan-json-lines (ndjson-reader/c LazyFrame-ptr?)]
           [dataframe-write-json-lines (ndjson-writer/c DataFrame-ptr?)]))
 
-(define size-max (sub1 (expt 2 64)))
-
-(define column-name/c
-  (flat-named-contract
-   'column-name/c
-   (lambda (v) (and (string? v) (not (for/or ([c (in-string v)]) (char=? c #\nul)))))))
-
 (define json-dtype/c
   (flat-named-contract
    'json-dtype/c
@@ -40,13 +35,14 @@
   (not (check-duplicates (map car fields))))
 
 (define json-schema/c
-  (and/c (listof (cons/c column-name/c json-dtype/c)) distinct-names?))
+  (flat-named-contract 'json-schema/c
+                       (and/c (listof (cons/c column-name/c json-dtype/c)) distinct-names?)))
 
 (define (json-reader/c result/c)
   (->* (path-string?)
        (#:schema (or/c #f json-schema/c)
         #:schema-overrides json-schema/c
-        #:infer-schema-length (or/c #f (integer-in 1 size-max)))
+        #:infer-schema-length (or/c #f positive-size/c))
        result/c))
 
 (define-cstruct _CompatJsonOptions
@@ -122,39 +118,23 @@
             [_ #f])))))
 
 (define ndjson-schema/c
-  (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?))
+  (flat-named-contract 'ndjson-schema/c
+                       (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)))
 
 (define max-row-index (sub1 (expt 2 32)))
 
-(define (distinct-columns? row-index-name include-file-paths)
-  (define (given v) (and (not (unsupplied-arg? v)) v))
-  (not (and (given row-index-name)
-            (equal? (given row-index-name) (given include-file-paths)))))
+(define (given v default)
+  (if (unsupplied-arg? v) default v))
 
-(define (ndjson-reader/c result/c)
-  (->i ([path path-string?])
-       (#:schema [schema (or/c #f ndjson-schema/c)]
-        #:schema-overrides [schema-overrides ndjson-schema/c]
-        #:infer-schema-length [infer-schema-length (or/c #f (integer-in 1 size-max))]
-        #:batch-size [batch-size (or/c #f (integer-in 1 size-max))]
-        #:n-rows [n-rows (or/c #f (integer-in 0 size-max))]
-        #:low-memory [low-memory boolean?]
-        #:rechunk [rechunk boolean?]
-        #:row-index-name [row-index-name (or/c #f column-name/c)]
-        #:row-index-offset [row-index-offset (integer-in 0 max-row-index)]
-        #:ignore-errors [ignore-errors boolean?]
-        #:include-file-paths [include-file-paths (or/c #f column-name/c)])
-       #:pre/name (row-index-name include-file-paths)
-       "#:row-index-name and #:include-file-paths must name different columns"
-       (distinct-columns? row-index-name include-file-paths)
-       [result result/c]))
+(define (distinct-columns? row-index-name include-file-paths)
+  (define name (given row-index-name #f))
+  (not (and name (equal? name (given include-file-paths #f)))))
 
 (define compression-codes (hasheq 'uncompressed 0 'gzip 1 'zstd 2))
 
 (define compression-levels (hasheq 'gzip '(0 . 9) 'zstd '(1 . 22)))
 
 (define (level-fits? compression compression-level)
-  (define (given v default) (if (unsupplied-arg? v) default v))
   (define level (given compression-level #f))
   (define bounds (hash-ref compression-levels (given compression 'uncompressed) #f))
   (cond
@@ -209,55 +189,66 @@
   (_fun _DataFrame-ptr _string/utf-8 _uint8 _stdbool _uint32 _stdbool -> _int32)
   #:c-id dataframe_write_ndjson_with_options)
 
-(struct ndjson-call (options schema-names schema-dtypes override-names override-dtypes
-                             row-index-name include-file-paths))
+(define-syntax-parse-rule
+  (define-ndjson-options (call:id entry:id path:id) reader/c:id
+    ([kw:keyword name:id contract:expr default:expr] ...)
+    (~seq #:pre (pre-name:id ...) pre-message:str pre-check:expr) ...
+    body:expr)
+  (begin
+    (define (reader/c result/c)
+      (->i ([path path-string?])
+           ((~@ kw [name contract]) ...)
+           (~@ #:pre/name (pre-name ...) pre-message pre-check) ...
+           [result result/c]))
+    (define (call entry path (~@ kw [name default]) ...)
+      body)))
 
-(define (ndjson-options #:schema [schema #f]
-                        #:schema-overrides [schema-overrides '()]
-                        #:infer-schema-length [infer-schema-length 100]
-                        #:batch-size [batch-size 1024]
-                        #:n-rows [n-rows #f]
-                        #:low-memory [low-memory #f]
-                        #:rechunk [rechunk #f]
-                        #:row-index-name [row-index-name #f]
-                        #:row-index-offset [row-index-offset 0]
-                        #:ignore-errors [ignore-errors #f]
-                        #:include-file-paths [include-file-paths #f])
-  (define fields (or schema '()))
-  (ndjson-call (make-CompatNdjsonOptions (and schema #t)
-                                         (and infer-schema-length #t)
-                                         (and batch-size #t)
-                                         (and n-rows #t)
-                                         low-memory
-                                         rechunk
-                                         ignore-errors
-                                         (or infer-schema-length 0)
-                                         (or batch-size 0)
-                                         (or n-rows 0)
-                                         row-index-offset
-                                         (length fields)
-                                         (length schema-overrides))
-               (map car fields)
-               (field-dtypes fields)
-               (map car schema-overrides)
-               (field-dtypes schema-overrides)
-               row-index-name
-               include-file-paths))
+(define-ndjson-options (ndjson-call entry path) ndjson-reader/c
+  ([#:schema schema (or/c #f ndjson-schema/c) #f]
+   [#:schema-overrides schema-overrides ndjson-schema/c '()]
+   [#:infer-schema-length infer-schema-length (or/c #f positive-size/c) 100]
+   [#:batch-size batch-size (or/c #f positive-size/c) 1024]
+   [#:n-rows n-rows (or/c #f size/c) #f]
+   [#:low-memory low-memory boolean? #f]
+   [#:rechunk rechunk boolean? #f]
+   [#:row-index-name row-index-name (or/c #f column-name/c) #f]
+   [#:row-index-offset row-index-offset (integer-in 0 max-row-index) 0]
+   [#:ignore-errors ignore-errors boolean? #f]
+   [#:include-file-paths include-file-paths (or/c #f column-name/c) #f])
+  #:pre (row-index-name include-file-paths)
+  "#:row-index-name and #:include-file-paths must name different columns"
+  (distinct-columns? row-index-name include-file-paths)
+  (let ([fields (or schema '())])
+    (entry path
+           (make-CompatNdjsonOptions (and schema #t)
+                                     (and infer-schema-length #t)
+                                     (and batch-size #t)
+                                     (and n-rows #t)
+                                     low-memory
+                                     rechunk
+                                     ignore-errors
+                                     (or infer-schema-length 0)
+                                     (or batch-size 0)
+                                     (or n-rows 0)
+                                     row-index-offset
+                                     (length fields)
+                                     (length schema-overrides))
+           (map car fields)
+           (field-dtypes fields)
+           (map car schema-overrides)
+           (field-dtypes schema-overrides)
+           row-index-name
+           include-file-paths)))
 
 (define (ndjson-procedure who entry message)
-  (define-values (_ option-keywords) (procedure-keywords ndjson-options))
+  (define-values (_ option-keywords) (procedure-keywords ndjson-call))
   (procedure-rename
    (procedure-reduce-keyword-arity
     (make-keyword-procedure
      (lambda (keywords arguments path)
-       (match-define (ndjson-call options schema-names schema-dtypes override-names
-                                  override-dtypes row-index-name include-file-paths)
-         (keyword-apply ndjson-options keywords arguments '()))
        (define p (path->complete-string who path #:glob? #t))
        (call/foreign-error who
-                           (lambda ()
-                             (entry p options schema-names schema-dtypes override-names
-                                    override-dtypes row-index-name include-file-paths))
+                           (lambda () (keyword-apply ndjson-call keywords arguments (list entry p)))
                            message path)))
     1 '() option-keywords)
    who))
@@ -299,15 +290,13 @@
                     dataframe-column dataframe-column-names dataframe-drop-count
                     dataframe-height dataframe-new last-error-message series-dtype
                     series-new-f64 series-new-i32 series-new-i64 series-new-str
-                    series-sum-f64))
+                    series-sum-f64)
+           (only-in polars/private/generic/test-fixtures
+                    apply-keywords contract-violation-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
-  (define (scratch-file name text)
-    (define path (build-path scratch name))
-    (call-with-output-file path #:exists 'replace (lambda (out) (write-string text out)))
-    path)
 
-  (define rows (scratch-file "rows.json" "[{\"foo\":1,\"bar\":6},{\"foo\":2,\"bar\":7.5}]"))
+  (define rows (scratch-file scratch "rows.json" "[{\"foo\":1,\"bar\":6},{\"foo\":2,\"bar\":7.5}]"))
   (define frame (dataframe-read-json rows))
   (check-equal? (dataframe-column-names frame) '("foo" "bar"))
   (check-equal? (series-dtype (dataframe-column frame "bar")) 'float64)
@@ -323,30 +312,20 @@
              (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
   (check-exn #rx"^dataframe-write-json: failed to write json to [^:]*out.json: cannot create file: "
              (lambda () (dataframe-write-json frame (build-path scratch "no" "out.json"))))
-  (check-equal? (dataframe-column-names (dataframe-read-json rows)) '("foo" "bar"))
-  (check-false (last-error-message))
-  (check-exn exn:fail? (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
-  (dataframe-write-json frame written)
-  (check-false (last-error-message))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows #:infer-schema-length 0)))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows #:schema '(("a" . (enum x y))))))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows
-                                                        #:schema-overrides '(("a" . i32) ("a" . f64)))))
-  (check-exn #rx"^dataframe-write-json: contract violation"
-             (lambda () (contracted:dataframe-write-json 'frame written)))
   (check-equal? (dataframe-column-names
                  (contracted:dataframe-read-json rows #:infer-schema-length (sub1 (expt 2 64))))
                 '("foo" "bar"))
-  (for ([kvs (in-list `(((#:infer-schema-length . ,(expt 2 64)))
+  (check-exn (contract-violation-of 'dataframe-write-json)
+             (lambda () (contracted:dataframe-write-json 'frame written)))
+  (for ([kvs (in-list `(((#:infer-schema-length . 0))
+                        ((#:infer-schema-length . ,(expt 2 64)))
                         ((#:infer-schema-length . ,(add1 (expt 2 64))))
+                        ((#:schema . (("a" . (enum x y)))))
                         ((#:schema . (("a\u0000zzz" . i64))))
+                        ((#:schema-overrides . (("a" . i32) ("a" . f64))))
                         ((#:schema-overrides . (("foo\u0000x" . str))))))])
-    (check-exn #rx"^dataframe-read-json: contract violation"
-               (lambda () (keyword-apply contracted:dataframe-read-json (map car kvs) (map cdr kvs)
-                                         (list rows)))
+    (check-exn (contract-violation-of 'dataframe-read-json)
+               (lambda () (apply-keywords contracted:dataframe-read-json kvs rows))
                (format "~s" kvs)))
 
   (define cities
@@ -380,22 +359,18 @@
                         ((#:row-index-name . "i\u0000x")) ((#:include-file-paths . "p\u0000x"))
                         ((#:row-index-name . "p\u0000x") (#:include-file-paths . "p\u0000y"))
                         ((#:schema . (("a\u0000zzz" . i64))))))])
-    (define sorted (sort kvs keyword<? #:key car))
-    (check-exn #rx"^dataframe-read-json-lines: contract violation"
-               (lambda () (keyword-apply contracted:dataframe-read-json-lines
-                                         (map car sorted) (map cdr sorted) (list cities-ndjson)))
+    (check-exn (contract-violation-of 'dataframe-read-json-lines)
+               (lambda () (apply-keywords contracted:dataframe-read-json-lines kvs cities-ndjson))
                (format "~s" kvs)))
   (for ([kvs (in-list '(((#:infer-schema-length . 0)) ((#:batch-size . 0)) ((#:n-rows . -1))
                         ((#:row-index-offset . -1)) ((#:row-index-offset . 4294967296))
                         ((#:schema . (("a" . i8)))) ((#:schema-overrides . (("a" . time))))
                         ((#:schema . (("a" . (duration microseconds)))))
                         ((#:row-index-name . "i") (#:include-file-paths . "i"))))])
-    (define sorted (sort kvs keyword<? #:key car))
-    (check-exn #rx"^dataframe-read-json-lines: contract violation"
-               (lambda () (keyword-apply contracted:dataframe-read-json-lines
-                                         (map car sorted) (map cdr sorted) (list cities-ndjson)))
+    (check-exn (contract-violation-of 'dataframe-read-json-lines)
+               (lambda () (apply-keywords contracted:dataframe-read-json-lines kvs cities-ndjson))
                (format "~s" kvs)))
-  (check-exn #rx"^dataframe-write-json-lines: contract violation"
+  (check-exn (contract-violation-of 'dataframe-write-json-lines)
              (lambda () (contracted:dataframe-write-json-lines cities cities-ndjson
                                                               #:check-extension 'yes)))
 

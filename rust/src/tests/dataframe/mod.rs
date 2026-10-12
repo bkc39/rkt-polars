@@ -23,3 +23,4 @@ mod ndjson;
 mod reshape;
 mod smoke;
 mod stack;
+mod staged;

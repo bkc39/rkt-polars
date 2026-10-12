@@ -33,31 +33,48 @@
     #'(defproc (name argument ...) result body ...)])
 
 @(begin-for-syntax
+   (define json-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:schema schema (or/c json-schema/c #f) #f]
+       [#:schema-overrides schema-overrides json-schema/c '()]
+       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100])))
    (define ndjson-arguments
      (quote-syntax
       ([path path-string?]
-       [#:schema schema
-                 (or/c (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)
-                       #f)
-                 #f]
-       [#:schema-overrides schema-overrides
-                           (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)
-                           '()]
-       [#:infer-schema-length infer-schema-length
-                              (or/c (integer-in 1 (sub1 (expt 2 64))) #f) 100]
-       [#:batch-size batch-size (or/c (integer-in 1 (sub1 (expt 2 64))) #f) 1024]
-       [#:n-rows n-rows (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
+       [#:schema schema (or/c ndjson-schema/c #f) #f]
+       [#:schema-overrides schema-overrides ndjson-schema/c '()]
+       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]
+       [#:batch-size batch-size (or/c positive-size/c #f) 1024]
+       [#:n-rows n-rows (or/c size/c #f) #f]
        [#:low-memory low-memory boolean? #f]
        [#:rechunk rechunk boolean? #f]
        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
        [#:row-index-offset row-index-offset (integer-in 0 4294967295) 0]
        [#:ignore-errors ignore-errors boolean? #f]
-       [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]))))
+       [#:include-file-paths include-file-paths (or/c column-name/c #f) #f])))
+   (define ndjson-writer-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:compression compression (or/c 'uncompressed 'gzip 'zstd) 'uncompressed]
+       [#:compression-level compression-level (or/c exact-nonnegative-integer? #f) #f]
+       [#:check-extension check-extension boolean? #t]))))
+
+@(define-syntax-parser defjsonproc
+   [(_ (name result) body ...)
+    #:with (argument ...) (replace-context #'name json-arguments)
+    #'(defproc (name argument ...) result body ...)])
 
 @(define-syntax-parser defndjsonproc
    [(_ (name result) body ...)
     #:with (argument ...) (replace-context #'name ndjson-arguments)
     #'(defproc (name argument ...) result body ...)])
+
+@(define-syntax-parser defndjsonwriterproc
+   [(_ (name frame/c) body ...)
+    #:with d (datum->syntax #'name 'd)
+    #:with (argument ...) (replace-context #'name ndjson-writer-arguments)
+    #'(defproc (name [d frame/c] argument ...) void? body ...)])
 
 @title[#:tag "reference"]{Reference}
 
@@ -646,65 +663,47 @@ total
 @deftogether[(@defproc[(write-csv [d dataframe?] [path path-string?]) void?]
               @defproc[(write-parquet [d dataframe?] [path path-string?]) void?])]{
   A dataframe out to CSV or Parquet (@tt{df.write_csv},
-  @tt{df.write_parquet}).}
+  @tt{df.write_parquet}).
 
-@deftogether[(@defproc[(read-json [path path-string?]
-                                  [#:schema schema
-                                            (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                         distinct-names?)
-                                                  #f)
-                                            #f]
-                                  [#:schema-overrides schema-overrides
-                                                      (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                             distinct-names?)
-                                                      '()]
-                                  [#:infer-schema-length infer-schema-length
-                                                         (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
-                                                         100])
-                       dataframe?]
+  A writer writes a staging file in @racket[path]'s directory, which must
+  be writable, and renames it onto @racket[path] once complete, so a failed
+  write leaves an existing file as it was; the new file keeps the old one's
+  permission bits but not its owner, ACLs, extended attributes or hard
+  links. A symbolic link is followed and kept, and a FIFO or device is
+  written in place.}
+
+@deftogether[(@defjsonproc[(read-json dataframe?)]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
-  Read a file that holds one JSON array of objects into a @tech{dataframe}
-  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}):
-  each row is an object whose keys are the column names. A file holding a
-  single object reads as one row. Both are eager: Polars has no scan or sink
-  for a JSON array, only for newline-delimited JSON. @racket[path] is taken
-  literally; a directory is an error. A gzip, zlib or zstd file is
-  decompressed in memory first, recognised by its first bytes as for
-  @racket[read-ndjson].
+  Read a file holding one JSON array of objects into a @tech{dataframe}
+  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}).
+  A lone object reads as one row. @racket[path] is literal; a directory is
+  an error. A gzip, zlib or zstd file is decompressed first, recognised by
+  its first bytes.
 
   Column types are inferred from the first @racket[infer-schema-length]
-  objects, or from every object when it is @racket[#f]; a key first seen
-  after them is an error. A later value of another JSON type is converted
-  where Polars can: a float read as an integer truncates, a boolean reads
-  as 0 or 1, and a number outside the type's range, such as 300 read as an
-  @racket['int8], reads as null. A value that cannot convert, such as a
-  string where a number was inferred, is an error. Python does the same.
-  @racket[schema] gives the columns outright, in its order: a
-  key the schema lacks is skipped, and a column the file lacks reads as
-  nulls. @racket[schema-overrides] changes the types of named columns, the
-  file's or @racket[schema]'s, and naming a column absent from them is an
-  error. A @racket[column-name/c] is a string without a NUL character
-  (#165). A @racket[json-dtype/c] is any spelling @racket[series]'
-  @racket[#:dtype] accepts except an Enum; API gap: read the column as
-  @racket['categorical] or @racket['string] and @racket[cast] it. An ISO
-  8601 date, datetime or time string reads as that type when the schema
-  asks for it; a string that does not parse as the type asked for reads as
-  null, as in Python, and that includes a bare date read as a
-  @racket['datetime].
+  objects, or from all of them for @racket[#f]; a key first seen later is an
+  error. A later value of another JSON type converts where Polars can (a
+  float truncates to an integer, a boolean reads as 0 or 1, a number out of
+  the type's range reads as null) and is an error otherwise.
+  @racket[schema] gives the columns in order: other keys are skipped and a
+  column the file lacks reads as nulls. @racket[schema-overrides] retypes
+  columns of the file or of @racket[schema]; naming any other column is an
+  error. A @racket[json-schema/c] is a list of @racket[(cons name dtype)]
+  pairs with distinct names, a name a string without a NUL
+  (@racket[column-name/c]) and a dtype any @racket[series]
+  @racket[#:dtype] spelling but an Enum. A string reads as the date,
+  datetime or time the schema asks for, and as null where it does not
+  parse. A @racket[positive-size/c] is an integer from @racket[1] to
+  @racket[(sub1 (expt 2 64))].
 
-  @racket[write-json] writes dates, times, datetimes and durations as
-  strings, Categorical and Enum values as their names, and NaN and the
-  infinities as @tt{null}, so reading the file back needs a schema to
-  restore those types. A binary column is an error, where Python's
-  @tt{write_json} panics. The file is written beside @racket[path] and
-  renamed onto it once complete, so a write that fails leaves an existing
-  file as it was. API gap: a path only, no file object or in-memory
-  string in or out.
+  @racket[write-json] writes temporal values as strings, Categorical and
+  Enum values as their names, and NaN and the infinities as @tt{null}, so
+  reading them back needs a schema; a binary column is an error. It
+  replaces a file as @racket[write-csv] does.
 
-  @racket[read-json] and @racket[write-json] keep Python's names, which
-  @racketmodname[json] also provides, so a module that requires both
-  libraries, @racket[(require polars json)], fails with ``identifier already
-  required''. Rename @racketmodname[json]'s pair, or leave it out:
+  @racketmodname[json] provides a @racket[read-json] and @racket[write-json]
+  too, so @racket[(require polars json)] fails with ``identifier already
+  required''. Rename or leave out @racketmodname[json]'s pair:
 
   @racketblock[
   (require polars (prefix-in js: json))
@@ -738,53 +737,32 @@ total
               @defndjsonproc[(scan-ndjson lazyframe?)])]{
   Read newline-delimited JSON, one object a line, into a @tech{dataframe}
   (@tt{pl.read_ndjson}), or start a @tech{lazyframe} plan from it
-  (@tt{pl.scan_ndjson}). @racket[read-ndjson] is
-  @racket[(collect (scan-ndjson path ....))] with the same keywords, as in
-  Python. @racket[path] is always a glob pattern: the matching files stack
-  in sorted filename order, and one that matches nothing is an error, which
-  @racket[scan-ndjson] leaves to @racket[collect], as it does a file that
-  cannot be read. A directory reads every file in it, and they must all
-  have the same extension: a directory holding a stray file, a
-  @filepath{README}, a @filepath{_SUCCESS} marker or a hidden
-  @filepath{.DS_Store}, fails with ``directory contained paths with
-  different file extensions'', as in Python; name the files with a pattern
-  instead. API gaps: no @racket[#:glob], so a literal @litchar{[},
-  @litchar{*} or @litchar{?} in a file name is spelled @litchar{[[]},
-  @litchar{[*]} or @litchar{[?]}, as for @racket[read-parquet] (#36); one
-  path or pattern, not Python's list of paths for @tt{source}; and no
-  @tt{storage_options}, @tt{credential_provider}, @tt{retries} or
-  @tt{file_cache_ttl}, which belong to the cloud sources (#186) and the
-  last of which Python deprecated in 1.39.
+  (@tt{pl.scan_ndjson}); @racket[read-ndjson] is
+  @racket[(collect (scan-ndjson path ....))]. @racket[path] is a glob
+  pattern: the matching files stack in sorted filename order, and a pattern
+  matching nothing is an error, which @racket[scan-ndjson] leaves to
+  @racket[collect]. A directory reads every file in it, and they must share
+  one extension. A literal @litchar{[}, @litchar{*} or @litchar{?} in a
+  file name is spelled @litchar{[[]}, @litchar{[*]} or @litchar{[?]}.
 
   Column types are inferred from the first @racket[infer-schema-length]
-  lines, or from every line when it is @racket[#f]. A key first seen after
-  them is left out, and a later value that does not parse as its column's
-  type is an error, or null with @racket[#:ignore-errors #t].
-  @racket[schema] and @racket[schema-overrides] work as for
-  @racket[read-json]: an override retypes a column of the file or of
-  @racket[schema], where Python's @tt{read_ndjson} ignores every override
-  once a schema is given, and naming a column absent from them is an error,
-  which @racket[scan-ndjson] reports at once, reading the file's schema if
-  it must. An @racket[ndjson-dtype/c] is a boolean, a 32-
-  or 64-bit integer, a float, a string, a date, a datetime or a
-  categorical; Polars' NDJSON reader panics on the other dtypes, which Python
-  passes to it.
+  lines, or from all of them for @racket[#f]. A key first seen later is
+  left out, and a value that does not parse as its column's type is an
+  error, or null with @racket[#:ignore-errors #t]. @racket[schema] and
+  @racket[schema-overrides] work as for @racket[read-json], an override
+  applying even with a schema; @racket[scan-ndjson] reports a bad override
+  at once. An @racket[ndjson-schema/c] is a @racket[json-schema/c] whose
+  dtypes are a boolean, a 32- or 64-bit integer, a float, a string, a date,
+  a datetime or a categorical.
 
   @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
-  column of row numbers, @racket['uint32], counting from
-  @racket[row-index-offset]; @racket[include-file-paths] adds a last column
-  holding each row's file. The two must name different columns.
-  @racket[rechunk] gathers the result into one chunk. @racket[batch-size]
-  and @racket[low-memory] are passed to the reader as Python passes them;
-  Polars 0.55 reads neither.
-
-  A gzip, zlib or zstd file is decompressed as it is read. Polars decides
-  by the file's first bytes, not its name, as Python does: a file that
-  starts with the bytes @tt{1f 8b} (gzip), @tt{78 01}, @tt{78 5e},
-  @tt{78 9c} or @tt{78 da} (zlib, so a first line starting @litchar{x^}),
-  or @tt{28 b5 2f fd} (zstd) is read as compressed. No valid NDJSON line
-  starts that way, so a plain file that does fails with a decompression
-  error rather than a parse error.
+  @racket['uint32] column of row numbers from @racket[row-index-offset];
+  @racket[include-file-paths] adds a last column holding each row's file;
+  the two name different columns. @racket[rechunk] gathers the result into
+  one chunk. Polars ignores @racket[batch-size] and @racket[low-memory].
+  A gzip, zlib or zstd file is decompressed as it is read, recognised by
+  its first bytes rather than its name. A @racket[size/c] is an integer
+  from @racket[0] to @racket[(sub1 (expt 2 64))].
 
   @examples[#:eval ev #:hidden
 (require racket/file)
@@ -808,27 +786,16 @@ total
   @examples[#:eval ev #:hidden
 (delete-directory/files nd-dir)]}
 
-@defproc[(write-ndjson [d dataframe?] [path path-string?]
-                       [#:compression compression (or/c 'uncompressed 'gzip 'zstd)
-                                      'uncompressed]
-                       [#:compression-level compression-level
-                                            (or/c exact-nonnegative-integer? #f) #f]
-                       [#:check-extension check-extension boolean? #t])
-         void?]{
+@defndjsonwriterproc[(write-ndjson dataframe?)]{
   Write @racket[d] as newline-delimited JSON, one object a line
   (@tt{df.write_ndjson}), with values written as @racket[write-json] writes
-  them. @racket[compression] gzips or zstd-compresses the whole file;
-  @racket[compression-level] is 0 to 9 for gzip and 1 to 22 for zstd, and
-  @racket[#f] takes the codec's default. Python ignores a level given
-  without a codec and accepts any zstd level; here both are contract
-  errors. Unless @racket[check-extension] is @racket[#f], the path must end
-  in @filepath{.gz} for gzip and @filepath{.zst} for zstd, and must not end
-  in either for an uncompressed file. @racket[read-ndjson] and
-  @racket[scan-ndjson] read a compressed file back, whatever its name. As
-  with @racket[write-json], a binary column is an error, and the file is
-  written beside @racket[path] and renamed onto it once complete, so a
-  write that fails leaves an existing file as it was. API gap: a path
-  only, no file object or in-memory string.
+  them; a binary column is an error. @racket[compression] gzips or
+  zstd-compresses the whole file at @racket[compression-level], 0 to 9 for
+  gzip and 1 to 22 for zstd, or the codec's default for @racket[#f]; a
+  level without a codec is a contract error. Unless
+  @racket[check-extension] is @racket[#f], the path must end in
+  @filepath{.gz} for gzip and @filepath{.zst} for zstd, and in neither for
+  an uncompressed file. It replaces a file as @racket[write-csv] does.
 
   @examples[#:eval ev #:hidden
 (define nd-dir (make-temporary-directory "polars-doc-~a"))]
@@ -1735,20 +1702,7 @@ generic operations are simply the preferred surface.
 (dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
 (dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
 
-@deftogether[(@defproc[(dataframe-read-json [path path-string?]
-                                            [#:schema schema
-                                                      (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                                   distinct-names?)
-                                                            #f)
-                                                      #f]
-                                            [#:schema-overrides schema-overrides
-                                                                (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                                       distinct-names?)
-                                                                '()]
-                                            [#:infer-schema-length infer-schema-length
-                                                                   (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
-                                                                   100])
-                       DataFrame-ptr?]
+@deftogether[(@defjsonproc[(dataframe-read-json DataFrame-ptr?)]
               @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{
   The raw-pointer JSON-array reader and writer under @racket[read-json] and
   @racket[write-json], with the same keywords and checks.
@@ -1759,16 +1713,7 @@ generic operations are simply the preferred surface.
 
 @deftogether[(@defndjsonproc[(dataframe-read-json-lines DataFrame-ptr?)]
               @defndjsonproc[(lazyframe-scan-json-lines LazyFrame-ptr?)]
-              @defproc[(dataframe-write-json-lines [d DataFrame-ptr?] [path path-string?]
-                                                   [#:compression compression
-                                                                  (or/c 'uncompressed 'gzip 'zstd)
-                                                                  'uncompressed]
-                                                   [#:compression-level compression-level
-                                                                        (or/c exact-nonnegative-integer? #f)
-                                                                        #f]
-                                                   [#:check-extension check-extension
-                                                                      boolean? #t])
-                       void?])]{
+              @defndjsonwriterproc[(dataframe-write-json-lines DataFrame-ptr?)])]{
   The raw-pointer NDJSON reader, scan and writer under @racket[read-ndjson],
   @racket[scan-ndjson] and @racket[write-ndjson], with the same keywords and
   checks.

@@ -16,6 +16,9 @@
 
 (define-runtime-path stations "../polars/scribblings/data/stations.json")
 
+(define (dtypes-of df)
+  (map (lambda (name) (dtype (ref df name))) (column-names df)))
+
 (define readings
   (dataframe (list (series '("north" "south" "north") #:name "station")
                    (series (list 3.5 polars-null 2.25) #:name "reading"))))
@@ -29,11 +32,10 @@
   (read-json stations
              #:schema '(("day" . date) ("station" . categorical) ("reading" . f32))))
 (displayln typed)
-(printf "schema dtypes: ~s\n" (for/list ([name (column-names typed)]) (dtype (ref typed name))))
+(printf "schema dtypes: ~s\n" (dtypes-of typed))
 
 (define overridden (read-json stations #:schema-overrides '(("day" . date))))
-(printf "override dtypes: ~s\n"
-        (for/list ([name (column-names overridden)]) (dtype (ref overridden name))))
+(printf "override dtypes: ~s\n" (dtypes-of overridden))
 
 (printf "one object: ~a\n"
         (with-handlers ([exn:fail? exn-message])

@@ -293,12 +293,50 @@ fn a_failed_write_leaves_the_existing_file() {
     assert_eq!(dataframe_write_json(ok, p.as_ptr()), 0);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"[{"x":1}]"#);
     assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
-    let into_dir = cstr(dir.path().to_str().unwrap());
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    let into_dir = cstr(sub.to_str().unwrap());
     assert_ne!(dataframe_write_json(ok, into_dir.as_ptr()), 0);
     let reason = recorded_error().expect("a reason");
     assert!(reason.starts_with("cannot create file: "), "{}", reason);
-    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    assert_eq!(leftovers(dir.path()), vec!["keep.json", "sub"]);
     dataframe_drop(ok);
     series_drop(xs);
     dataframe_drop(df);
+}
+
+fn refused(column: Column) -> Option<String> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("nested.json");
+    let p = cstr(path.to_str().unwrap());
+    let df = Box::into_raw(Box::new(
+        DataFrame::new_infer_height(vec![column]).unwrap(),
+    ));
+    assert_ne!(dataframe_write_json(df, p.as_ptr()), 0);
+    dataframe_drop(df);
+    assert!(leftovers(dir.path()).is_empty());
+    recorded_error()
+}
+
+#[test]
+fn write_json_refuses_binary_inside_a_list_or_struct() {
+    let bytes: [&[u8]; 2] = [b"p", b"q"];
+    let binary = Series::new("b".into(), &bytes);
+    let list = binary.implode().unwrap().into_series();
+    let fields = DataFrame::new_infer_height(vec![
+        Series::new("a".into(), &[1i64, 2]).into(),
+        binary.clone().into(),
+    ])
+    .unwrap()
+    .into_struct("s".into())
+    .into_series();
+    for (name, series) in [("l", list), ("s", fields)] {
+        assert_eq!(
+            refused(series.with_name(name.into()).into()).as_deref(),
+            Some(
+                format!("cannot write the binary column {name:?} as JSON")
+                    .as_str()
+            )
+        );
+    }
 }
