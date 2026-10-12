@@ -352,9 +352,9 @@ fn a_refused_frame_opens_nothing() {
         #[cfg(unix)]
         {
             let link = format!("link.{ext}");
-            std::os::unix::fs::symlink(format!("made.{ext}"), dir.path().join(&link))
-                .unwrap();
-            let l = cstr(dir.path().join(&link).to_str().unwrap());
+            let at = dir.path().join(&link);
+            std::os::unix::fs::symlink(format!("made.{ext}"), &at).unwrap();
+            let l = cstr(at.to_str().unwrap());
             assert_eq!(writer(df, l.as_ptr()), 4, "{ext}");
             assert_eq!(entries(dir.path()), vec![keep, link]);
         }
