@@ -8,19 +8,31 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 macOS arm64 ship with the package, so users need no Rust toolchain. The
 `dtype-decimal` feature is on because polars' `sign` does not compile
 without it (#106); Decimal columns are read (from Parquet), not built.
-`dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
-as in Python polars' own wheels: its `std::simd` code carries the CSV reader
-(a stable build scans nycflights at 2.5× Python). It compiles on the pinned
-stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
-the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. The committed candidates are built with
-`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
-unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
-104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
-uses it. The nix build, `cargo test` and the bench stay on `release`, because
-under LTO every test and example binary links on one core (the nix check went
-from 30 to 145 minutes on CI), so the bench measures the release build, not
-the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
+`dtype-categorical` carries Categorical and Enum. Every IO feature of the
+crate is on (#176): `csv`, `parquet`, `json`, `ipc`, `ipc_streaming`, `avro`,
+`scan_lines`, `decompress` (gzip, zlib and zstd input) and the cloud sources
+`http`, `aws`, `gcp` and `azure`, which bring `cloud`, `async` and the file
+cache. The `polars` crate has no `catalog` feature; Unity Catalog is reachable
+only through direct `polars-lazy` and `polars-io` dependencies with theirs
+(#191 decides). HTTPS is rustls on ring with the system's root certificates
+(object_store's `rustls-tls-native-roots`); the `rustls-only` gate
+(`scripts/rustls-only.sh`, a flake check and CI's Lint job) fails when
+`rust/Cargo.lock` holds OpenSSL or native-tls, which would link the system's
+libssl, or aws-lc, rustls' default provider, which is C and assembly built
+with cmake. polars' `nightly` feature is on, as in Python polars' own wheels: its
+`std::simd` code carries the CSV reader (a stable build scans nycflights at
+2.5× Python). It compiles on the pinned stable rustc (1.98.1, nixpkgs at
+`flake.lock`) with `RUSTC_BOOTSTRAP=1`, which the flake's build and dev shell
+and `scripts/build-so.sh` set; the release build uses that same rustc version.
+The committed candidates are built with `[profile.dist]` in `rust/Cargo.toml`:
+release plus thin LTO and one codegen unit (#125), which keeps the Linux `.so`
+at 83.9 MB against GitHub's 104,857,600-byte file limit; a local release build
+is 104.6 MB, at the limit (the IO features of #176 add 2.5 MB to the first and
+3.3 MB to the second). Only `scripts/build-so.sh` uses `[profile.dist]`. The nix build,
+`cargo test` and the bench stay on `release`, because under LTO every test and
+example binary links on one core (the nix check went from 30 to 145 minutes on
+CI), so the bench measures the release build, not the shipped one. `panic`
+stays `unwind`: `guard_panic` depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -51,7 +63,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    operators `+ - * / > < >= <= = and or not xor when abs round floor sqrt exp
    log filter sort min max first last reverse` **shadow `racket/base`** and fall
    back to it on plain values. `~>` from `threading` is re-provided so
-   `(require polars)` is enough.
+   `(require polars)` is enough. `read-json` / `write-json` keep Python's
+   names (owner's decision, 2026-10-07), which the `json` library also
+   provides: `(require polars json)` fails with "identifier already
+   required", and `(prefix-in js: json)` or `(except-in json read-json
+   write-json)` is the fix the docs give.
 
 A pipeline reads as `(~> df (filter (> (col "v") 15)) (group-by "g") (agg (sum "v")))`.
 Every fluent verb takes the frame — or the expression — as its **first**
@@ -117,19 +133,21 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
-  calls `clear_last_error()` on entry (the shared `read_frame`, `write_frame`,
+  calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
-  today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
+  today the `dataframe_read_*` and `dataframe_write_*` IO entry points, the
+  `scan_*` family, `lazyframe_collect`,
   `dataframe_sort_with_options`, `series_sort_with_options` and the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
   `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...).
+  hints (`null_values` → `#:null-values`, ...) and in the JSON readers'
+  advice to increase `infer_schema_length` or give a schema.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -140,8 +158,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum` and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`, `scan`) do: 0.41.3 aborted Racket on a
+  `series_sort_with_options`, `series_cast_enum`, the IO helpers
+  (`read_frame`, `read_path`, `write_frame`, `scan`) and the JSON entry points
+  (`dataframe_read_json_with_options`, `lazyframe_scan_ndjson_with_options`,
+  `dataframe_write_ndjson_with_options`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93), and a `scan-csv` that reads
   the header (`#:schema-overrides`) aborted it on a compressed file (#177).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
@@ -222,17 +242,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   wrapped product loops forever. The one read-csv / scan-csv difference is
   the separator guard: when `#:separator`, `#:new-columns` and `#:columns`
   are not given, a one-column result (a row index aside) whose header
-  splits on a tab, `;` or `|` (and whose first row agrees) raises. The eager readers
-  glob like the scans, CSV and Parquet (not NDJSON, #44); `#:glob #f` takes
-  a CSV path literally, and Parquet has no opt-out (#36). An eager CSV read
-  of a directory is an error, as in Python; a scan reads every file in it.
-- A `scan-csv` / `scan-parquet` only builds a plan; a missing or malformed
-  file, an invalid glob pattern, or one that matches no file is reported at
+  splits on a tab, `;` or `|` (and whose first row agrees) raises. The
+  eager readers glob like the scans, CSV, Parquet and NDJSON (#44);
+  `#:glob #f` takes a CSV path literally, and Parquet and NDJSON have no
+  opt-out (#36). An eager CSV read of a directory is an error, as in
+  Python; a scan reads every file in it.
+- A `scan-csv` / `scan-parquet` / `scan-ndjson` only builds a plan; a
+  missing or malformed file, an invalid glob pattern, or one that matches
+  no file is reported at
   `collect`, as in Python (0.55 expands a pattern at collect). Reported at
   scan instead: with `#:schema-overrides`, an override naming a column the
   header lacks. That check reads the header because 0.55 applies overrides
   by name and ignores an absent one, as Python 1.42.1 does; a misspelt
-  override would otherwise do nothing. `#:new-columns` reads the header at
+  override would otherwise do nothing. `scan-ndjson` makes the same check
+  (inferring the schema when none is given), since 0.55 reports an absent
+  override at collect as a bare column name. `#:new-columns` reads the header at
   scan too, to translate names, as Python's `scan_csv` does, so
   either keyword reports a file that cannot be opened at scan, with the
   cause alone. `call/foreign-error` respells 0.55's
@@ -242,6 +266,58 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
+- `read-json` / `write-json` are Python's `read_json` / `write_json`: one
+  JSON array of objects (a lone object reads as one row), eager only, since
+  the crate has no JSON-array scan or sink. The path is literal (no glob) and
+  a directory is an error. `#:infer-schema-length` must be positive or `#f`:
+  Python panics on 0. An override naming a column absent from the file (or
+  from `#:schema`) is an error, as in Python, reworded from 0.55's bare
+  `SchemaFieldNotFound`. The schema dtypes are `series`' `#:dtype` spellings
+  but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
+  a contract error, since `_string/utf-8` would cut it there (#165).
+  `write-json` refuses a binary column, where polars hits a `todo!()`.
+- Every writer goes through `write_checked_frame` (`write_frame` when there
+  is nothing to check; `rust/src/dataframe/io.rs`).
+  Its checks on the frame and the path (a JSON writer's binary column, say)
+  run before the target is opened. It follows a symlink to the file it
+  names; a dangling link is written through in place, creating that file.
+  A directory target is refused, and a FIFO or device is written in place.
+  For a regular or missing file it writes `.rkt-polars-<pid>-<n>.partial`
+  in the target's directory (`create_new`, so never through a planted link)
+  and renames it onto the target once the write succeeds, so a failed write
+  leaves an existing file as it was. That directory, for a symlink the
+  pointee's, must be writable. A read-only target is refused before
+  anything is staged. A replaced file keeps `mode & 0o777`, set before any
+  data is written: its set-ID and sticky bits, owner, ACLs, extended
+  attributes and hard links are not kept. A staging file left by a killed
+  process is skipped by an extension glob such as `dir/*.parquet` and read
+  by a bare `dir/*`; a read of the directory itself skips it while it is
+  empty (polars-io drops zero-length files) and otherwise fails with
+  polars' "different file extensions" error.
+- `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
+  is, through `dataframe_read_ndjson_with_options`; a directory reads every
+  file in it, and they must share one extension (a README or `.DS_Store`
+  fails with "directory contained paths with different file extensions",
+  in Python too). Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
+  Duration and Enum: 0.55's NDJSON buffer panics on the first six, which
+  Python passes through. `#:batch-size` and `#:low-memory` reach
+  `LazyJsonLineReader` as in Python, and 0.55 reads neither.
+  `#:row-index-name` and `#:include-file-paths` must differ (polars panics
+  otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
+  Rust, as for `read-json`: Python's `read_ndjson` ignores the overrides
+  once a schema is given. The eager NDJSON verbs strip the "Resolved plan
+  until failure" dump polars appends to a planning error (`without_plan`).
+- `write-ndjson` is Python's `lazy().sink_ndjson()`, through
+  `dataframe_write_ndjson_with_options`, through `write_frame` like the
+  other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
+  since the staging name has no extension `#:check-extension` matches the
+  target's name to `#:compression` in Rust (`ndjson_extension`, polars'
+  own messages) and the sink gets `check_extension: false`. gzip and zstd
+  need the `decompress` feature (#176) and a `flate2` newer than 1.0.30, whose
+  `zlib-rs` 0.1.1 aborts the process on some gzip streams (#199). Readers
+  sniff compression from the first four bytes, not the name
+  (`SupportedCompression::check`): no valid JSON starts with a signature,
+  so a plain file that does fails with a decompression error.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).

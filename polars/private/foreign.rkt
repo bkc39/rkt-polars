@@ -61,22 +61,23 @@
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
     ("to the `null_values` list" . "to #:null-values")
-    ("'truncate_ragged_lines=true'" . "#:truncate-ragged-lines #t")))
+    ("'truncate_ragged_lines=true'" . "#:truncate-ragged-lines #t")
+    ("Try increasing `infer_schema_length` or specifying a schema."
+     . "Try increasing #:infer-schema-length or passing #:schema.")
+    ("consider increasing infer_schema_length, or manually specifying the full schema"
+     . "consider increasing #:infer-schema-length, or passing the full #:schema")
+    ("use the compression parameter to control compression, or set `check_extension` to `False` if you want to suffix an uncompressed filename with an ending intended for compression"
+     . "pass #:check-extension #f to give an uncompressed file a compressed file's suffix")
+    ("set `check_extension` to `False`" . "pass #:check-extension #f")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
-
-(define without-decompress
-  '("polars panicked: activate 'decompress' feature"
-    "cannot read compressed CSV file; compile with feature 'decompress'"))
 
 (define (respell reason)
   (for/fold ([reason (cond
                        [(or (regexp-match? empty-expansion reason)
                             (equal? reason "no paths specified for this reader"))
                         "no files match the pattern"]
-                       [(member reason without-decompress)
-                        "cannot read compressed input; this build lacks polars' decompress feature"]
                        [else reason])])
             ([(python racket) (in-dict racket-spellings)])
     (string-replace reason python racket)))
@@ -1589,28 +1590,6 @@
                       (lambda () (dataframe-read-parquet/raw p))
                       "failed to read parquet from ~a" path))
 
-(define-compat dataframe-write-json-lines/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_json_lines)
-
-(define (dataframe-write-json-lines df path)
-  (define p (path->complete-string 'dataframe-write-json-lines path))
-  (void (call/foreign-error 'dataframe-write-json-lines
-                            (lambda () (dataframe-write-json-lines/raw df p))
-                            #:ok? zero?
-                            "failed to write json lines to ~a" path)))
-
-(define-compat dataframe-read-json-lines/raw
-  (_fun _string -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_json_lines
-  #:wrap (allocator dataframe-drop))
-
-(define (dataframe-read-json-lines path)
-  (define p (path->complete-string 'dataframe-read-json-lines path))
-  (call/foreign-error 'dataframe-read-json-lines
-                      (lambda () (dataframe-read-json-lines/raw p))
-                      "failed to read json lines from ~a" path))
-
 (define (glob-pattern? p)
   (regexp-match? #rx"[*?[]" (if (path? p) (path->string p) p)))
 
@@ -2292,7 +2271,7 @@
                 '("store" "variable" "value"))
   (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
 
-  ;; --- Parquet and JSON Lines roundtrip ---
+  ;; --- Parquet roundtrip ---
   (define csv-df
     (dataframe-new
      (list (series-new-str "city" '("Boston" "New York" "Chicago"))
@@ -2311,22 +2290,7 @@
   (check-= (series-sum-f64 (dataframe-column parquet-round "population_millions"))
            12.15
            1e-9)
-  (delete-file tmp-parquet)
-
-  (define tmp-jsonl
-    (build-path (find-system-path 'temp-dir) "rkt-polars-test.jsonl"))
-  (dataframe-write-json-lines csv-df tmp-jsonl)
-  (define jsonl-round (dataframe-read-json-lines tmp-jsonl))
-  (define-values (jr jc) (dataframe-shape jsonl-round))
-  (check-equal? jr 3)
-  (check-equal? jc 3)
-  (check-equal? (dataframe-column-names jsonl-round)
-                '("city" "population_millions" "founded"))
-  (check-equal? (series-dtype (dataframe-column jsonl-round "founded")) 'int64)
-  (check-= (series-sum-f64 (dataframe-column jsonl-round "population_millions"))
-           12.15
-           1e-9)
-  (delete-file tmp-jsonl))
+  (delete-file tmp-parquet))
 
 (module+ test
   (define tmp-dir (find-system-path 'temp-dir))
@@ -2334,8 +2298,6 @@
   (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
   (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
              (lambda () (dataframe-write-parquet one-col unwritable)))
-  (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "
-             (lambda () (dataframe-write-json-lines one-col unwritable)))
 
   (define junk (build-path tmp-dir "rkt-polars-junk.bin"))
   (call-with-output-file junk
@@ -2623,6 +2585,13 @@
                                 (parameterize ([read-accept-reader #t] [read-accept-lang #t])
                                   (call-with-input-file file read))))])
       form))
+  (define compat 'define-compat)
+  (check-true (releases-result?
+               `(,compat good (_fun _string -> _DataFrame-ptr/null) #:wrap (allocator dataframe-drop))))
+  (check-false (releases-result?
+                `(,compat swapped (_fun _string -> _DataFrame-ptr/null)
+                          #:wrap (allocator lazyframe-drop))))
+  (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
   (check > (length bindings) 200)
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))

@@ -239,3 +239,17 @@ pub(super) fn assert_dtype(
     assert_eq!(dt.tag, tag as i32, "dtype tag mismatch");
     assert_eq!(dt.time_unit, time_unit as i32, "dtype time_unit mismatch",);
 }
+
+pub(super) fn scratch_dir() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir")
+}
+
+/// The names in `dir`, sorted.
+pub(super) fn entries(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}

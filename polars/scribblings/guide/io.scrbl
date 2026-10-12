@@ -134,10 +134,9 @@ each marker to its column only.
 stations
 ]
 
-API gaps: no compressed input yet (gzip, zlib, zstd; #176); no
+A gzip, zlib or zstd file reads like a plain one. API gaps: no
 @tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
-@tt{missing_columns} (#193); no spelling for the tuning knobs
-(@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
+@tt{missing_columns}; no spelling for the tuning knobs (@tt{n_threads}, @tt{low_memory}, @tt{rechunk}, @tt{batch_size}) or for
 @tt{use_pyarrow} and the encodings Python decodes itself. Polars decides
 from a file's first four bytes whether it is compressed, as in Python, and
 has no switch to say it is not: a plain file that starts like a zlib
@@ -169,7 +168,9 @@ values are written.
 ]
 
 API gap: no compressed output (@tt{compression}), which Python writes
-through @tt{sink_csv} (#184).
+through @tt{sink_csv}.
+
+@include-section["io-json.scrbl"]
 
 @section[#:tag "io-multiple"]{Multiple files}
 

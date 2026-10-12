@@ -18,7 +18,8 @@
                   dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
                   series-ref)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c))
 
 (provide csv-reader/c csv-scanner/c csv-writer/c csv-reader csv-scanner csv-writer
          (contract-out
@@ -38,8 +39,6 @@
 
 (define eol-char/c (flat-named-contract 'eol-char/c ascii-char?))
 
-(define size-max (sub1 (expt 2 64)))
-(define csv-size/c (flat-named-contract 'csv-size/c (integer-in 0 size-max)))
 (define float-precision-max #xFFFF)
 
 (define csv-dtype/c
@@ -62,7 +61,7 @@
 
 (define column-selection/c
   (or/c (and/c (listof string?) distinct?)
-        (and/c (listof csv-size/c) distinct?)))
+        (and/c (listof size/c) distinct?)))
 
 (define (given v default)
   (if (unsupplied-arg? v) default v))
@@ -131,14 +130,14 @@
    [#:quote-char quote-char (or/c #f csv-char/c) #\"]
    [#:eol-char eol-char eol-char/c #\newline]
    [#:comment-prefix comment-prefix (or/c #f non-empty-string?) #f]
-   [#:skip-rows skip-rows csv-size/c 0]
-   [#:skip-lines skip-lines csv-size/c 0]
-   [#:skip-rows-after-header skip-rows-after-header csv-size/c 0]
-   [#:n-rows n-rows (or/c #f csv-size/c) #f]
+   [#:skip-rows skip-rows size/c 0]
+   [#:skip-lines skip-lines size/c 0]
+   [#:skip-rows-after-header skip-rows-after-header size/c 0]
+   [#:n-rows n-rows (or/c #f size/c) #f]
    [#:null-values null-values (or/c #f string? (listof string?) column-null-values/c) #f]
    [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
    [#:infer-schema infer-schema boolean? #t]
-   [#:infer-schema-length infer-schema-length (or/c #f csv-size/c) 100]
+   [#:infer-schema-length infer-schema-length (or/c #f size/c) 100]
    [#:schema-overrides schema-overrides
                        (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
                        '()]
@@ -147,8 +146,8 @@
    [#:decimal-comma decimal-comma boolean? #f]
    [#:truncate-ragged-lines truncate-ragged-lines boolean? #f]
    [#:raise-if-empty raise-if-empty boolean? #t]
-   [#:row-index-name row-index-name (or/c #f string?) #f]
-   [#:row-index-offset row-index-offset (integer-in 0 #xFFFFFFFF) 0]
+   [#:row-index-name row-index-name (or/c #f column-name/c) #f]
+   [#:row-index-offset row-index-offset row-index/c 0]
    [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
    [#:glob glob boolean? #t])
   #:read-only
@@ -357,7 +356,7 @@
    [#:separator separator csv-char/c #\,]
    [#:line-terminator line-terminator string? "\n"]
    [#:quote-char quote-char csv-char/c #\"]
-   [#:batch-size batch-size (integer-in 1 size-max) 1024]
+   [#:batch-size batch-size positive-size/c 1024]
    [#:datetime-format datetime-format (or/c #f string?) #f]
    [#:date-format date-format (or/c #f string?) #f]
    [#:time-format time-format (or/c #f string?) #f]
@@ -401,13 +400,11 @@
            (only-in polars/private/foreign
                     dataframe-column-names dataframe-drop-count dataframe-new
                     dataframe-shape last-error-message
-                    series-new-f64 series-new-i32 series-new-str series-sum-f64))
+                    series-new-f64 series-new-i32 series-new-str series-sum-f64)
+           (only-in polars/private/generic/test-fixtures
+                    contract-violation-of message-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-csv-~a"))
-  (define (scratch-file name . lines)
-    (define path (build-path scratch name))
-    (display-lines-to-file lines path #:exists 'replace)
-    path)
 
   (define cities
     (dataframe-new
@@ -436,28 +433,26 @@
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
              (lambda () (dataframe-write-csv cities unwritable)))
-  (check-exn #rx"^dataframe-write-csv: contract violation"
+  (check-exn (contract-violation-of 'dataframe-write-csv)
              (lambda () (contracted:dataframe-write-csv cities semicolons
                                                         #:quote-style 'sometimes)))
   (check-exn #rx"^dataframe-read-csv: failed to read csv from [^:]*cities.csv: not found: unable to find column \"gate\""
              (lambda () (dataframe-read-csv cities-csv #:columns '("city" "gate"))))
 
   (define missing-csv (build-path scratch "no-such-file.csv"))
-  (define missing-message
-    (with-handlers ([exn:fail? exn-message]) (dataframe-read-csv missing-csv)))
+  (define missing-message (message-of (lambda () (dataframe-read-csv missing-csv))))
   (check-regexp-match
    #rx"^dataframe-read-csv: failed to read csv from .*: cannot open file: [Nn]o such file"
    missing-message)
   (check-equal? (length (regexp-match* #rx"no-such-file" missing-message)) 1)
   (check-regexp-match
    #rx"^lazyframe-scan-csv: failed to scan .*: cannot open file: [Nn]o such file"
-   (with-handlers ([exn:fail? exn-message])
-     (lazyframe-scan-csv missing-csv #:schema-overrides '(("x" . i64)))))
+   (message-of (lambda () (lazyframe-scan-csv missing-csv #:schema-overrides '(("x" . i64))))))
 
-  (define na-csv (scratch-file "na.csv" "x" "1" "NA" "3"))
+  (define na-csv (scratch-file scratch "na.csv" "x\n1\nNA\n3\n"))
   (make-directory (build-path scratch "parts"))
-  (for ([name '("a" "b")] [rows '(("1" "NA") ("NA" "4"))])
-    (apply scratch-file (format "parts/~a.csv" name) "x" rows))
+  (for ([name '("a" "b")] [text '("x\n1\nNA\n" "x\nNA\n4\n")])
+    (scratch-file scratch (format "parts/~a.csv" name) text))
   (define parts (build-path scratch "parts" "*.csv"))
   (check-exn #rx"cannot open file" (lambda () (dataframe-read-csv missing-csv)))
   (check-equal? (dataframe-height (dataframe-read-csv na-csv #:null-values "NA")) 3)
