@@ -401,8 +401,7 @@
                     dataframe-column-names dataframe-drop-count dataframe-new
                     dataframe-shape last-error-message
                     series-new-f64 series-new-i32 series-new-str series-sum-f64)
-           (only-in polars/private/generic/test-fixtures
-                    contract-violation-of message-of scratch-file))
+           (only-in polars/private/test-helpers contract-violation-of message-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-csv-~a"))
 

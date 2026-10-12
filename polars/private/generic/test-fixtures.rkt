@@ -5,15 +5,14 @@
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
-(require (only-in racket/contract exn:fail:contract:blame?)
-         (only-in racket/file display-to-file)
-         (only-in racket/path path-has-extension?)
-         polars/private/generic/core
+(require polars/private/generic/core
+         polars/private/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign polars-null polars-null?)
          (only-in gregor datetime))
 
 (provide (all-defined-out)
+         (all-from-out polars/private/test-helpers)
          col Expr-ptr? expr-add polars-null polars-null? datetime)
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
@@ -47,26 +46,6 @@
 (define (dtypes-of df)
   (for/list ([name (in-list (column-names df))])
     (list name (dtype (ref df name)))))
-
-(define (scratch-file dir name text)
-  (define path (build-path dir name))
-  (display-to-file text path #:exists 'replace)
-  path)
-
-(define ((contract-violation-of who) e)
-  (and (exn:fail:contract:blame? e)
-       (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
-                      (exn-message e))))
-
-(define (message-of thunk)
-  (with-handlers ([exn:fail? exn-message]) (thunk) #f))
-
-(define (apply-keywords proc kvs . args)
-  (define sorted (sort kvs keyword<? #:key car))
-  (keyword-apply proc (map car sorted) (map cdr sorted) args))
-
-(define (staging-files dir)
-  (filter (lambda (name) (path-has-extension? name #".partial")) (directory-list dir)))
 
 (module+ test
   (require rackunit

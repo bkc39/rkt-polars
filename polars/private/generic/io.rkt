@@ -61,9 +61,9 @@
 
   (define (read-and-scan-agree path kvs)
     (define eager
-      (with-handlers ([exn:fail? exn-message]) (apply-keywords read-csv kvs path))
+      (with-handlers ([exn:fail? exn-message]) (apply-keywords read-csv kvs path)))
     (define lazy
-      (with-handlers ([exn:fail? exn-message]) (collect (apply-keywords scan-csv kvs path)))
+      (with-handlers ([exn:fail? exn-message]) (collect (apply-keywords scan-csv kvs path))))
     (if (string? eager)
         (and (string? lazy) (equal? (cause-of eager) (cause-of lazy)))
         (and (not (string? lazy)) (frame=? eager lazy))))
@@ -208,9 +208,11 @@
 
   (define typed
     (scratch-file
+     scratch
      "typed.csv"
-     "i8,i16,i32,i64,u8,u16,u32,u64,f32,f64,b,s,d,dt,dtms"
-     "1,2,3,4,5,6,7,8,1.5,2.5,true,x,2020-01-02,2020-01-02 03:04:05,2020-01-02 03:04:05"))
+     (string-append
+      "i8,i16,i32,i64,u8,u16,u32,u64,f32,f64,b,s,d,dt,dtms\n"
+      "1,2,3,4,5,6,7,8,1.5,2.5,true,x,2020-01-02,2020-01-02 03:04:05,2020-01-02 03:04:05\n")))
   (define typed-frame
     (read-csv typed
               #:schema-overrides
@@ -658,7 +660,7 @@
   (define abc-pattern (build-path csv-dir "[a]bc.csv"))
 
   (define a-only (read-csv abc #:null-values '(("a" . "NA"))))
-  (check-equal? (dtypes-of a-only) '(int64 string string))
+  (check-equal? (map second (dtypes-of a-only)) '(int64 string string))
   (check-equal? (rows-of a-only) (list (list 1 "NA" "x") (list polars-null "2" "-")
                                        (list 3 "4" "y")))
   (check-equal? (rows-of (read-csv abc #:null-values '(("a" . "NA") ("c" . "-"))))
@@ -690,14 +692,14 @@
   (for ([renamed (list (read-csv abc #:new-columns '("x") #:null-values '(("x" . "NA")))
                        (collect (scan-csv abc #:new-columns '("x")
                                           #:null-values '(("x" . "NA")))))])
-    (check-equal? (dtypes-of renamed) '(int64 string string))
+    (check-equal? (map second (dtypes-of renamed)) '(int64 string string))
     (check-true (frame=? renamed (rename na-in-a "a" "x"))))
   (define swapped-keywords
     '((#:new-columns . ("c" "x" "a")) (#:null-values . (("c" . "NA")))
       (#:row-index-name . "b")))
   (define swapped (apply-keywords read-csv swapped-keywords abc))
   (check-equal? (column-names swapped) '("b" "c" "x" "a"))
-  (check-equal? (dtypes-of swapped) '(uint32 int64 string string))
+  (check-equal? (map second (dtypes-of swapped)) '(uint32 int64 string string))
   (check-equal? (column swapped "b") '(0 1 2))
   (check-equal? (for/list ([name '("c" "x" "a")]) (column swapped name))
                 (for/list ([name '("a" "b" "c")]) (column na-in-a name)))
@@ -714,7 +716,7 @@
   (define renamed-typed
     (read-csv abc #:new-columns '("x") #:null-values '(("x" . "NA"))
               #:schema-overrides '(("x" . f64))))
-  (check-equal? (dtypes-of renamed-typed) '(float64 string string))
+  (check-equal? (map second (dtypes-of renamed-typed)) '(float64 string string))
   (check-equal? (column renamed-typed "x") (list 1.0 polars-null 3.0))
   (check-regexp-match #rx"schema overrides name columns not in the file: \"a\"$"
                       (message-of (lambda () (read-csv abc #:new-columns '("x")
@@ -751,7 +753,7 @@
 
   (define eol-fixture (build-path data-dir "eol.csv"))
   (check-equal? (rows-of (read-csv eol-fixture #:eol-char #\;)) '(("UA" 1545) ("AA" 1141)))
-  (check-equal? (dtypes-of (read-csv eol-fixture #:eol-char #\;)) '(string int64))
+  (check-equal? (map second (dtypes-of (read-csv eol-fixture #:eol-char #\;))) '(string int64))
   (check-equal? (rows-of (collect (scan-csv eol-fixture #:eol-char #\; #:row-index-name "row"
                                             #:row-index-offset 1)))
                 '((1 "UA" 1545) (2 "AA" 1141)))
@@ -787,7 +789,7 @@
   (check-equal? (column (read-csv gaps #:missing-utf8-is-empty-string #t) "b") '("" "x"))
   (check-equal? (column (read-csv gaps #:missing-utf8-is-empty-string #t) "a")
                 (list 1 polars-null))
-  (check-equal? (dtypes-of (read-csv abc #:infer-schema #f #:null-values "NA"))
+  (check-equal? (map second (dtypes-of (read-csv abc #:infer-schema #f #:null-values "NA")))
                 '(string string string))
   (check-true (frame=? (read-csv abc #:infer-schema #f #:infer-schema-length 50)
                        (read-csv abc #:infer-schema-length 0)))
@@ -796,7 +798,7 @@
   (define station-frame
     (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
               #:null-values '(("temp" . "-") ("rain" . "n/a")) #:truncate-ragged-lines #t))
-  (check-equal? (dtypes-of station-frame) '(string string string float64 float64 string))
+  (check-equal? (map second (dtypes-of station-frame)) '(string string string float64 float64 string))
   (check-equal? (rows-of (select station-frame "station" "temp" "rain" "note"))
                 (list (list "Oslo" 12.5 0.0 "-") (list "Bergen" polars-null 3.2 polars-null)
                       (list "Tromso" 4.0 polars-null "cold") (list "Narvik" 3.5 1.0 "windy")))
@@ -813,7 +815,7 @@
     (read-csv stations #:skip-lines 1 #:separator #\; #:decimal-comma #t
               #:null-values '(("temp" . "-") ("rain" . "n/a")) #:truncate-ragged-lines #t
               #:try-parse-dates #t))
-  (check-equal? (dtypes-of dated-stations) '(string date time float64 float64 string))
+  (check-equal? (map second (dtypes-of dated-stations)) '(string date time float64 float64 string))
   (define stations-out (build-path csv-dir "stations-out.csv"))
   (define (stations-written frame . kvs)
     (keyword-apply write-csv (map car kvs) (map cdr kvs) (list frame stations-out))
@@ -900,8 +902,8 @@
   (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*zlib-looking.csv: .*corrupt deflate stream"
                       (message-of (lambda () (read-csv zlib-looking))))
   (check-regexp-match #rx"corrupt deflate stream" (scan-message zlib-looking))
-  (check-equal? (shape (read-csv tiny-zlib-looking)) '(0 1))
-  (check-false (equal? (column-names (read-csv tiny-zlib-looking)) '("x^")))
+  (check-regexp-match #rx"^read-csv: failed to read csv from [^:]*tiny-zlib-looking.csv: incomplete deflate stream$"
+                      (message-of (lambda () (read-csv tiny-zlib-looking))))
   (check-equal? (rows-of (read-csv bom-first)) '((1 2) (3 4)))
   (check-equal? (column-names (read-csv bom-first)) '("x^2" "y"))
   (check-true (frame=? (read-csv bom-first) (collect (scan-csv bom-first))))
@@ -944,7 +946,7 @@
                ",1e-10,\"q\"\"t\",,,,false\n"
                "3,12345678.9,,2024-12-31,2024-12-31 00:00:00,23:59:59.999999,\n")))
   (define oracle-frame (read-csv oracle-source #:try-parse-dates #t))
-  (check-equal? (dtypes-of oracle-frame)
+  (check-equal? (map second (dtypes-of oracle-frame))
                 '(int64 float64 string date (datetime microseconds #f) time boolean))
   (define written-path (build-path csv-dir "written.csv"))
   (define (written kvs)

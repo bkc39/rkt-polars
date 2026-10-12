@@ -294,7 +294,7 @@
                     dataframe-height dataframe-new last-error-message series-dtype
                     series-new-f64 series-new-i32 series-new-i64 series-new-str
                     series-sum-f64)
-           (only-in polars/private/generic/test-fixtures
+           (only-in polars/private/test-helpers
                     apply-keywords contract-violation-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
