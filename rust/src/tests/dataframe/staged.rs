@@ -79,6 +79,17 @@ fn a_symlink_target_keeps_the_link() {
             .file_type()
             .is_symlink());
         assert_ne!(std::fs::read(&real).unwrap(), b"OLD");
+        assert_eq!(
+            std::fs::read(&link).unwrap(),
+            std::fs::read(&real).unwrap()
+        );
+        let hard = dir.path().join(format!("hard.{ext}"));
+        std::fs::hard_link(&real, &hard).unwrap();
+        std::fs::write(&real, "SHARED").unwrap();
+        assert_eq!(write_to(writer, &real), 0, "{ext}");
+        assert_eq!(std::fs::read(&hard).unwrap(), b"SHARED");
+        assert_ne!(std::fs::read(&real).unwrap(), b"SHARED");
+        std::fs::remove_file(&hard).unwrap();
         let dangling = dir.path().join(format!("dangling.{ext}"));
         std::os::unix::fs::symlink(format!("made.{ext}"), &dangling).unwrap();
         assert_eq!(write_to(writer, &dangling), 0, "{ext}");
@@ -128,14 +139,24 @@ fn a_replaced_file_keeps_its_permission_bits() {
     use std::os::unix::fs::PermissionsExt;
     for (ext, writer) in WRITERS {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join(format!("private.{ext}"));
-        std::fs::write(&path, "OLD").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        for (before, after) in [
+            (0o600, 0o600),
+            (0o640, 0o640),
+            (0o604, 0o604),
+            (0o4755, 0o755),
+        ] {
+            let path = dir.path().join(format!("kept-{before:o}.{ext}"));
+            std::fs::write(&path, "OLD").unwrap();
+            std::fs::set_permissions(
+                &path,
+                std::fs::Permissions::from_mode(before),
+            )
             .unwrap();
-        assert_eq!(write_to(writer, &path), 0, "{ext}");
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "{ext}");
-        assert_ne!(std::fs::read(&path).unwrap(), b"OLD");
+            assert_eq!(write_to(writer, &path), 0, "{ext}");
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o7777, after, "{ext} {before:o}");
+            assert_ne!(std::fs::read(&path).unwrap(), b"OLD");
+        }
     }
 }
 
