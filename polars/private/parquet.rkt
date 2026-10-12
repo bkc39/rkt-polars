@@ -256,9 +256,9 @@
         [keywords (list (cons '#:columns shared-keywords) (cons '#:cache shared-keywords)
                         '(#:compression #:compression-level #:data-page-size
                           #:row-group-size #:statistics))])
-    (let-values ([(required accepted) (procedure-keywords proc)])
-      (check-equal? required '())
-      (check-equal? accepted keywords)))
+    (define-values (required accepted) (procedure-keywords proc))
+    (check-equal? required '())
+    (check-equal? accepted keywords))
 
   (define numbers
     (dataframe-new
