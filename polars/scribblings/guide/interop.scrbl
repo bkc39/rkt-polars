@@ -77,6 +77,23 @@ column's buffer, and one that stops early converts little more than it reads.
   (cons (series-name column) (dtype column)))
 ]
 
+@racket[in-dataframe-rows] walks a frame's rows, as
+@tt{DataFrame.iter_rows()} does: a vector per row, or with
+@racket[#:named?] a hash from column name to value, as @tt{named=True} gives a
+dict. It converts @racket[#:buffer-size] rows at a time (512, as
+@tt{buffer_size}), with one bulk copy per column, so it streams as
+@racket[in-series] does. @racket[dataframe->rows] is @tt{DataFrame.rows()}:
+every row, in a list.
+
+@examples[#:eval ev #:label #f
+(for/list ([row (in-dataframe-rows df)]) row)
+(for/list ([row (in-dataframe-rows df #:named? #t)]) (hash-ref row "bar"))
+(for/list ([row (in-dataframe-rows people #:columns '("name" "weight"))])
+  (define-values (name weight) (vector->values row))
+  (format "~a: ~a kg" name weight))
+(dataframe->rows df #:columns '("bar" "foo"))
+]
+
 @section[#:tag "interop-columns"]{Columns as Racket data}
 
 @racket[dataframe->hash] is @tt{DataFrame.to_dict(as_series=False)}: a hash
