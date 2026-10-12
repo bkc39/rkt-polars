@@ -643,7 +643,10 @@ total
   write leaves an existing file as it was; the new file keeps the old one's
   read, write and execute bits but not its setuid, setgid or sticky bit,
   owner, ACLs, extended attributes or hard links. A symbolic link is
-  followed and kept, and a FIFO or device is written in place.}
+  followed and kept, and a FIFO or device is written in place.
+  A staging file left by a killed process, @tt{.rkt-polars-}@italic{pid}@tt{-}@italic{n}@tt{.partial},
+  is skipped by a glob such as @tt{dir/*.parquet} and read by @tt{dir/*},
+  and a read of the directory itself fails with an error naming it.}
 
 @deftogether[(@defjsonproc[(read-json dataframe?)]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{

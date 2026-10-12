@@ -237,8 +237,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   which follows a symlink to the file it names (a dangling link is written
   through in place, creating that file) and then, for a regular or missing
   file, writes `.rkt-polars-<pid>-<n>.partial` in its directory
-  (`create_new`, so never through a planted link; a name no glob matches
-  and a directory read refuses rather than reads) and renames it onto the
+  (`create_new`, so never through a planted link; a leftover one is
+  skipped by an extension glob such as `dir/*.parquet`, read by a bare
+  `dir/*`, and refused by a directory read with polars' "different file
+  extensions" error) and renames it onto the
   target once the write succeeds: a failed write leaves an existing file as
   it was. A replaced file keeps its `mode & 0o777`, copied before any data
   is written, not its owner, ACLs, extended attributes or hard links, and
