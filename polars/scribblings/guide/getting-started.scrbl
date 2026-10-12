@@ -17,20 +17,18 @@
 
 @section[#:tag "gs-reading-writing"]{Reading & writing}
 
-A @tech{dataframe} is built from named @tech{series}. gregor datetimes become
-datetime columns; cast to get a date column.
+A @tech{dataframe} is built from named @tech{series}. gregor dates become a
+date column, as Python's @tt{date}s do.
 
 @examples[#:eval ev #:label #f
 (define df
-  (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                     #:name "name")
-             (series (list (datetime 1997 1 10) (datetime 1985 2 15)
-                           (datetime 1983 3 22) (datetime 1981 4 30))
-                     #:name "birthdate")
-             (series '(57.9 72.5 53.6 83.1) #:name "weight")
-             (series '(1.56 1.77 1.65 1.75) #:name "height")))
-      (with-columns (cast "birthdate" 'date))))
+  (dataframe
+   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
+                 #:name "name")
+         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
+                 #:name "birthdate")
+         (series '(57.9 72.5 53.6 83.1) #:name "weight")
+         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
 df
 ]
 
@@ -49,8 +47,6 @@ Round-trip through CSV with @racket[write-csv] and @racket[read-csv];
 @examples[#:eval ev #:hidden
 (delete-file csv-path)
 ]
-
-API gap: no date dtype from gregor @tt{date} values.
 
 @section[#:tag "gs-expressions-contexts"]{Expressions and contexts}
 
@@ -86,15 +82,11 @@ API gaps: no multi-column @tt{col("weight", "height")}; no @tt{name.suffix}.
 @examples[#:eval ev #:label #f
 (~> df (filter (< (dt-year "birthdate") 1990)))
 (~> df
-    (filter (and (is-between "birthdate"
-                             (str->date (lit "1982-12-31"))
-                             (str->date (lit "1996-01-01")))
+    (filter (and (is-between "birthdate" (date 1982 12 31) (date 1996 1 1))
                  (> (col "height") 1.7))))
 ]
 
-API gaps: no date literals, so the bounds parse a string with
-@racket[str->date]; @racket[filter] takes one predicate, so combine with
-@racket[and].
+API gap: @racket[filter] takes one predicate, so combine with @racket[and].
 
 @subsection[#:tag "gs-group-by"]{group-by}
 
@@ -151,15 +143,13 @@ API gap: @racket[#:on] takes a list of names, not a bare name.
 
 @examples[#:eval ev #:label #f
 (define df3
-  (~> (dataframe
-       (list (series '("Ethan Edwards" "Fiona Foster" "Grace Gibson" "Henry Harris")
-                     #:name "name")
-             (series (list (datetime 1977 5 10) (datetime 1975 6 23)
-                           (datetime 1973 7 22) (datetime 1971 8 3))
-                     #:name "birthdate")
-             (series '(67.9 72.5 57.6 93.1) #:name "weight")
-             (series '(1.76 1.6 1.66 1.8) #:name "height")))
-      (with-columns (cast "birthdate" 'date))))
+  (dataframe
+   (list (series '("Ethan Edwards" "Fiona Foster" "Grace Gibson" "Henry Harris")
+                 #:name "name")
+         (series (list (date 1977 5 10) (date 1975 6 23) (date 1973 7 22) (date 1971 8 3))
+                 #:name "birthdate")
+         (series '(67.9 72.5 57.6 93.1) #:name "weight")
+         (series '(1.76 1.6 1.66 1.8) #:name "height"))))
 (vstack df df3)
 ]
 

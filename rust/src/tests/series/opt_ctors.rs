@@ -129,12 +129,14 @@ fn opt_ymdhms_mixed_valid_round_trips() {
     );
     assert!(!s.is_null());
     assert_eq!(series_null_count(s), 1);
-    let v0 = series_ref_ymdhms(s, 0);
-    assert_eq!(v0.valid, 1);
-    assert_eq!(v0.value.year, 2024);
-    assert_eq!(v0.value.month, 1);
-    assert_eq!(v0.value.hour, 3);
-    let v1 = series_ref_ymdhms(s, 1);
-    assert_eq!(v1.valid, 0);
+    let ca = unsafe { &*s }.datetime().expect("a datetime column");
+    assert_eq!(ca.time_unit(), TimeUnit::Milliseconds);
+    let expected = NaiveDate::from_ymd_opt(2024, 1, 2)
+        .and_then(|d| d.and_hms_opt(3, 4, 5))
+        .expect("a valid datetime")
+        .and_utc()
+        .timestamp_millis();
+    assert_eq!(ca.physical().get(0), Some(expected));
+    assert_eq!(ca.physical().get(1), None);
     series_drop(s);
 }

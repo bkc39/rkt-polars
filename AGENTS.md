@@ -11,16 +11,21 @@ without it (#106); Decimal columns are read (from Parquet), not built.
 `dtype-categorical` carries Categorical and Enum. polars' `nightly` feature is on,
 as in Python polars' own wheels: its `std::simd` code carries the CSV reader
 (a stable build scans nycflights at 2.5× Python). It compiles on the pinned
-stable rustc (1.98.1, nixpkgs at `flake.lock`) with `RUSTC_BOOTSTRAP=1`, which
-the flake's build and dev shell and `scripts/build-so.sh` set; the release
-build uses that same rustc version. The committed candidates are built with
-`[profile.dist]` in `rust/Cargo.toml`: release plus thin LTO and one codegen
-unit (#125), which keeps the Linux `.so` at 81.4 MB against GitHub's
-104,857,600-byte file limit (102.2 MB without it). Only `scripts/build-so.sh`
-uses it. The nix build, `cargo test` and the bench stay on `release`, because
-under LTO every test and example binary links on one core (the nix check went
-from 30 to 145 minutes on CI), so the bench measures the release build, not
-the shipped one. `panic` stays `unwind`: `guard_panic` depends on it.
+stable rustc, nixpkgs' at `flake.lock`, with `RUSTC_BOOTSTRAP=1`, which the
+flake's build and dev shell and `scripts/build-so.sh` set.
+`rust/rust-toolchain.toml` names that release for `scripts/build-so.sh`, and
+the `release-toolchain` flake check fails when the two differ. The release
+build is rustup's build of the release, whose LLVM can differ from nixpkgs',
+so `nix flake check` does not test the shipped code generation. The Linux
+build's manylinux2014 image is pinned by digest in the script. The committed
+candidates are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
+thin LTO and one codegen unit (#125), which keeps the Linux `.so` at 81.6 MB
+against GitHub's 104,857,600-byte file limit (102.2 MB without it). Only
+`scripts/build-so.sh` uses it. The nix build, `cargo test` and the bench stay
+on `release`, because under LTO every test and example binary links on one
+core (the nix check went from 30 to 145 minutes on CI), so the bench measures
+the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
+depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -35,8 +40,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
 
 1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
-   lazyframes), `bulk.rkt` (whole-column copies into Racket-allocated
-   buffers, behind `series->list` and its siblings). `define-compat` binds a
+   lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
+   whole or a block of rows at a time, behind `series->list`,
+   `in-dataframe-rows` and their siblings). `define-compat` binds a
    C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
@@ -123,12 +129,24 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options`, `series_sort_with_options` and the three
+  `dataframe_sort_with_options`, `series_sort_with_options`, the three
   Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
+  `expr_dtype_col_enum`) and the nine that take a time zone's name
+  (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
+  `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
+  `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
+  `expr_str_to_datetime_tz`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...).
+  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...;
+  `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
+  'null`, since `str->datetime` and the other verbs that can raise it lack
+  the keyword), and drops the hint to set
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's name through
+  `named_time_zone`, which checks it with `TimeZone::validate_time_zone`
+  after `opt_try_new`, and only `opt_try_new` reads that variable, so setting
+  it changes nothing here.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -139,7 +157,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum` and the IO helpers
+  `series_sort_with_options`, `series_cast_enum`, the three series time-zone
+  entry points (`series_cast_datetime_tz`, `series_dt_convert_time_zone`,
+  `series_dt_replace_time_zone`) and the IO helpers
   (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
@@ -152,7 +172,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
   Racket allocated: a raw buffer of the column's native type (bound with
   `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
-  and the `f64vector` a caller gets back. `series_copy_cat` also returns the
+  and the `f64vector` a caller gets back. `in-dataframe-rows` binds one raw
+  scratch buffer per block of rows, 16 bytes a row, which holds what any dtype
+  needs, and each column's copy reuses it in turn: a `with-raw-buffer` costs a
+  finalizer registration, several microseconds, which a buffer per column
+  would pay for each column of each block. `series_copy_cat` also returns the
   copy's category strings as a new series, held with `with-release` while the
   conversion reads them. The byte strings and the `f64vector` may move: those
   bindings are never `#:blocking?`. Every destination travels with its
@@ -181,8 +205,8 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Behavioural facts to know before changing semantics
 
-- `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
-  `cast` / `series-cast` accept only canonical (#64).
+- `series #:dtype`, `cast` and `series-cast` accept short and canonical
+  spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
   keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
@@ -248,9 +272,54 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
-- `series` infers int64 / float64 / string / datetime / bool, and a list of
-  symbols infers `'categorical`. It cannot build a `date` column from gregor
-  `date`s (#63), and `lit` rejects gregor values.
+- `series` infers int64 / float64 / string / bool, `'categorical` from a list
+  of symbols, and the temporal dtypes from gregor values (#63): `'date`,
+  `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
+  a `period` without years or months (a day is 24 hours). A datetime or period
+  that carries nanoseconds makes the column nanoseconds instead, where
+  Python's `datetime` stops at microseconds, but only when a nanosecond column
+  holds every value (datetimes 1677-09-21 to 2262-04-11, durations under
+  2^63 ns); otherwise it stays microseconds and drops the finer part as
+  `#:dtype` does, so `(series (list (now) (datetime 1600 1 1)))` builds
+  although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
+  part as a polars cast does: a datetime floors, a duration truncates toward
+  zero. A date or datetime outside chrono's years (-262143 to 262142) is
+  refused, since polars panics printing one. `lit`, and so every comparison,
+  `is-between` and `is-in`, takes the same values as literals of the same
+  dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
+- A zoned datetime (#140, polars' `timezones` feature) is the datum
+  `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
+  `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no
+  name, so the zone crosses as a string through its own exports
+  (`series_time_zone`, the `_datetime_tz` cast / selector / literal entry
+  points, `series_dt_*` / `expr_dt_*` convert and replace,
+  `expr_str_to_datetime_tz`); each that takes a zone canonicalises it with
+  polars' `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`), validates
+  it with `TimeZone::validate_time_zone` (which, unlike `opt_try_new`, ignores
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`) and records why it fails;
+  `->compat-dtype` refuses a zoned datum. A list of moments settles
+  its zone as Python does: the first non-null value decides, a named zone is
+  kept, a fixed offset gives UTC, a naive datetime among moments is read as
+  UTC, and a list that starts naive makes a naive column of UTC clock times.
+  `#:dtype` is the column's dtype outright (a naive one takes each moment's
+  UTC clock time), where Python's `pl.Datetime("us")` keeps the values' zone.
+  `%z` parses to UTC; on an expression, an offset with no `#:format` and no
+  `#:time-zone` is an error, as in Python. Every reading is polars'
+  (chrono-tz's compiled database), never tzinfo's: a moment read back is built
+  with the offset polars gives, through gregor's private `make-moment` (#172;
+  `temporal.rkt` checks at compile time that gregor still provides it). The
+  offset is the wall clock `replace_time_zone(None)` gives on a microsecond
+  view of the column, less the floored instant: on a nanosecond column polars'
+  clock overflows i64, unchecked, within a day of either end of the range
+  (1677, 2262), and offsets change on whole seconds, so the floored instant
+  has the value's offset. The series printer takes `%Z` from polars. tzinfo,
+  behind gregor's own functions, ignores the TZif footer (no daylight saving
+  after 2037, or sooner with slim zoneinfo) and some systems lack the
+  backward-compatible names (`US/Pacific`). Series operators refuse datetimes
+  in different zones before the native call, naming the operator, and `is-in`
+  refuses a list whose datetimes differ in zone (or mix naive and zoned), as
+  Python's `is_in` does, though `series` builds a column from the same list. A
+  zoned CSV schema override is refused (the reader would drop the zone).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
   `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
   datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define
@@ -264,9 +333,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.
-- `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
-  datetimes to whole seconds (#100); the conversions raise on an unsupported
-  dtype, `binary` included (#99), even when every entry is null.
+- `ref` and the bulk conversions (`series->list`, `in-series`, …) return a
+  datetime with its column's full precision (#100), as the gregor `datetime`
+  of that instant, where Python's `to_list` stops at microseconds; `ref` reads
+  the physical value through the bulk copy, so the two cannot disagree. The
+  conversions raise on an unsupported dtype, `binary` included (#99), even
+  when every entry is null.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
@@ -275,7 +347,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   literals and ranges itself. `\p{...}` classes follow each side's Unicode
   tables, and Racket misjudges some classes above U+00FF (#85), so the
   oracle's names stay out of both. Lookaround, backreferences, atomic groups
-  and conditionals, which the crate lacks, fail at `collect`.
+  and conditionals, which the crate lacks, are rejected by `col` and
+  `exclude`, naming the construct (#151).
 
 ## Documentation
 
@@ -288,6 +361,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   never hand-pasted `@verbatim` output; `eval:error` for an expected failure;
   `#:hidden` for setup. A broken example fails the build, on the package
   server too.
+- **Every guide or reference example is a test case.** The PR that adds or
+  changes an example adds a test in the module's `test` submodule asserting
+  the same result, or, for an `eval:error`, the failure and its `who:` (#152
+  will run the examples themselves under `raco test`). An `eval:error` shows
+  a failure that is the behaviour being documented, with a message that names
+  the function the reader called; an example that errors because of a gap,
+  or blames an internal binding, is a bug (#151).
 - Every `@section` has an explicit `#:tag`. Guide chapters mirror the upstream
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
@@ -304,9 +384,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
-  Racket build with docs, tests, guide scripts and examples,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
+- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
+  Racket build with docs, tests, guide scripts, examples and bench tests,
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
+  `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -320,7 +401,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
-  paired scripts), `cargo test --manifest-path rust/Cargo.toml` (Rust).
+  paired scripts), `raco test -x bench` (strict mode's comparison),
+  `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
@@ -348,6 +430,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   package; nothing under `polars/` may depend on it. A check for API a leg
   has not landed yet resolves it at run time and reports FAIL with the
   reason, so the harness compiles against master.
+- `nix run .#bench -- --strict` (the `bench-strict` gate, not in the push
+  subset) is the exit gate of the nycflights arc (#88, #90). It exits 1 unless
+  every scoreboard check PASSes and every op's rkt/py ratio, as printed to
+  two decimals, is within its allowance, and it lists each violation with the
+  ratio, the allowance and the issue that owns it. The allowance is 1.2×
+  unless the one table in `bench/allowances.rkt` names the op, with its
+  issue and the measurement it was set from (today only the f64 matrix, #115).
+  An entry is tightened when a run on master moves its op's ratio, and
+  deleted once the op is within 1.2×. An op over its allowance is timed
+  again, on both sides, before it fails. Each ratio is a median of 5 runs,
+  so strict mode needs a quiet host even more than the table does; the
+  verdict repeats the load average, the first thing to read on a red run.
 
 ## Process
 
@@ -359,3 +453,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `master` requires one review and the maintainer is the only reviewer, so
   merges are `gh pr merge --squash --admin` once the owner approves.
 - Follow-ups become issues, never TODO comments.
+- The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
+  crates within the polars minor) moves only in a refresh PR of its own,
+  `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
+  (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.

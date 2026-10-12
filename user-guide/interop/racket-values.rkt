@@ -3,8 +3,9 @@
 ;; rkt-polars user guide — Interoperability: Series to Racket values,
 ;; iterating, and columns as Racket data.
 ;; Mirrors https://docs.pola.rs/user-guide/misc/arrow/ (handing a frame's data
-;; to another library), through Series.to_list, DataFrame.iter_columns and
-;; DataFrame.to_dict, and racket_values.py.
+;; to another library), through Series.to_list, DataFrame.iter_columns,
+;; DataFrame.iter_rows, DataFrame.rows and DataFrame.to_dict, and
+;; racket_values.py.
 ;;
 ;; Inside `nix develop`:
 ;;   racket user-guide/interop/racket-values.rkt
@@ -28,7 +29,7 @@
 (define people
   (~> (dataframe
        (list (series '("Alice Archer" "Ben Brown") #:name "name")
-             (series (list (datetime 1997 1 10 8 30 0) (datetime 1985 2 15 17 0 0))
+             (series (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))
                      #:name "birthdate")
              (series '(57.9 72.5) #:name "weight")
              (series '(#t #f) #:name "parent")))
@@ -36,7 +37,7 @@
                     (alias (cast "birthdate" 'time) "clock"))))
 (for ([name (column-names people)])
   (printf "~a: ~s\n" name (~> people (ref name) series->list)))
-;; API gap: datetimes are floored to the whole second; binary has no value.
+;; API gap: binary has no value.
 
 ;; --- iterating -----------------------------------------------------------
 (writeln (for/list ([word (ref df "bar")]) (string-upcase word)))
@@ -46,6 +47,13 @@
            v))
 (for ([column (in-dataframe-columns df)])
   (printf "~a ~a\n" (series-name column) (dtype column)))
+(for ([row (in-dataframe-rows df)])
+  (writeln row))
+(writeln (for/list ([row (in-dataframe-rows df #:named? #t)]) (hash-ref row "bar")))
+(writeln (for/list ([row (in-dataframe-rows people #:columns '("name" "weight"))])
+           (define-values (name weight) (vector->values row))
+           (format "~a: ~a kg" name weight)))
+(writeln (dataframe->rows df #:columns '("bar" "foo")))
 
 ;; --- columns as Racket data ----------------------------------------------
 (writeln (dataframe->hash df))
