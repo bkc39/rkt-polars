@@ -4,9 +4,9 @@
          ffi/unsafe/alloc
          racket/match
          syntax/parse/define
-         (for-syntax racket/base)
+         (for-syntax racket/base syntax/parse)
          (only-in racket/contract/base
-                  [-> ->/c] ->* ->i and/c cons/c contract-out flat-named-contract integer-in
+                  [-> ->/c] ->* ->i and/c cons/c contract-out flat-named-contract
                   listof or/c unsupplied-arg?)
          (only-in racket/list check-duplicates)
          (only-in polars/private/expr-core _LazyFrame-ptr/null LazyFrame-ptr? lazyframe-drop)
@@ -15,7 +15,7 @@
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/io-contracts column-name/c positive-size/c size/c))
+         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c))
 
 (provide json-reader json-writer json-reader/c
          ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c ndjson-writer/c
@@ -121,8 +121,6 @@
   (flat-named-contract 'ndjson-schema/c
                        (and/c (listof (cons/c column-name/c ndjson-dtype/c)) distinct-names?)))
 
-(define max-row-index (sub1 (expt 2 32)))
-
 (define (given v default)
   (if (unsupplied-arg? v) default v))
 
@@ -189,18 +187,23 @@
   (_fun _DataFrame-ptr _string/utf-8 _uint8 _stdbool _uint32 _stdbool -> _int32)
   #:c-id dataframe_write_ndjson_with_options)
 
+(begin-for-syntax
+  (define-syntax-class option
+    #:description "an option [keyword name contract default]"
+    (pattern [kw:keyword name:id contract:expr default:expr])))
+
 (define-syntax-parse-rule
   (define-ndjson-options (call:id entry:id path:id) reader/c:id
-    ([kw:keyword name:id contract:expr default:expr] ...)
-    (~seq #:pre (pre-name:id ...) pre-message:str pre-check:expr) ...
+    (option:option ...)
+    #:pre (pre-name:id ...) pre-message:str pre-check:expr
     body:expr)
   (begin
     (define (reader/c result/c)
       (->i ([path path-string?])
-           ((~@ kw [name contract]) ...)
-           (~@ #:pre/name (pre-name ...) pre-message pre-check) ...
+           ((~@ option.kw [option.name option.contract]) ...)
+           #:pre/name (pre-name ...) pre-message pre-check
            [result result/c]))
-    (define (call entry path (~@ kw [name default]) ...)
+    (define (call entry path (~@ option.kw [option.name option.default]) ...)
       body)))
 
 (define-ndjson-options (ndjson-call entry path) ndjson-reader/c
@@ -212,7 +215,7 @@
    [#:low-memory low-memory boolean? #f]
    [#:rechunk rechunk boolean? #f]
    [#:row-index-name row-index-name (or/c #f column-name/c) #f]
-   [#:row-index-offset row-index-offset (integer-in 0 max-row-index) 0]
+   [#:row-index-offset row-index-offset row-index/c 0]
    [#:ignore-errors ignore-errors boolean? #f]
    [#:include-file-paths include-file-paths (or/c #f column-name/c) #f])
   #:pre (row-index-name include-file-paths)

@@ -30,26 +30,22 @@
        [#:glob glob boolean? #t]))))
 
 @(begin-for-syntax
-   (define json-arguments
-     (quote-syntax
-      ([path path-string?]
-       [#:schema schema (or/c json-schema/c #f) #f]
-       [#:schema-overrides schema-overrides json-schema/c '()]
-       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100])))
+   (define (json-like-arguments schema/c)
+     #`([path path-string?]
+        [#:schema schema (or/c #,schema/c #f) #f]
+        [#:schema-overrides schema-overrides #,schema/c '()]
+        [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]))
+   (define json-arguments (json-like-arguments #'json-schema/c))
    (define ndjson-arguments
-     (quote-syntax
-      ([path path-string?]
-       [#:schema schema (or/c ndjson-schema/c #f) #f]
-       [#:schema-overrides schema-overrides ndjson-schema/c '()]
-       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]
-       [#:batch-size batch-size (or/c positive-size/c #f) 1024]
-       [#:n-rows n-rows (or/c size/c #f) #f]
-       [#:low-memory low-memory boolean? #f]
-       [#:rechunk rechunk boolean? #f]
-       [#:row-index-name row-index-name (or/c column-name/c #f) #f]
-       [#:row-index-offset row-index-offset (integer-in 0 4294967295) 0]
-       [#:ignore-errors ignore-errors boolean? #f]
-       [#:include-file-paths include-file-paths (or/c column-name/c #f) #f])))
+     #`(#,@(json-like-arguments #'ndjson-schema/c)
+        [#:batch-size batch-size (or/c positive-size/c #f) 1024]
+        [#:n-rows n-rows (or/c size/c #f) #f]
+        [#:low-memory low-memory boolean? #f]
+        [#:rechunk rechunk boolean? #f]
+        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+        [#:row-index-offset row-index-offset row-index/c 0]
+        [#:ignore-errors ignore-errors boolean? #f]
+        [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]))
    (define ndjson-writer-arguments
      (quote-syntax
       ([path path-string?]
@@ -61,17 +57,6 @@
    [(_ arguments:id (name leading ... result) body ...)
     #:with (argument ...) (replace-context #'name (syntax-local-eval #'arguments))
     #'(defproc (name leading ... argument ...) result body ...)])
-
-@(define-syntax-parser defndjsonproc
-   [(_ (name result) body ...)
-    #:with (argument ...) (replace-context #'name ndjson-arguments)
-    #'(defproc (name argument ...) result body ...)])
-
-@(define-syntax-parser defndjsonwriterproc
-   [(_ (name frame/c) body ...)
-    #:with d (datum->syntax #'name 'd)
-    #:with (argument ...) (replace-context #'name ndjson-writer-arguments)
-    #'(defproc (name [d frame/c] argument ...) void? body ...)])
 
 @title[#:tag "reference"]{Reference}
 
@@ -725,8 +710,8 @@ total
   @examples[#:eval ev #:hidden
 (delete-directory/files json-dir)]}
 
-@deftogether[(@defndjsonproc[(read-ndjson dataframe?)]
-              @defndjsonproc[(scan-ndjson lazyframe?)])]{
+@deftogether[(@defproc/arguments[ndjson-arguments (read-ndjson dataframe?)]
+              @defproc/arguments[ndjson-arguments (scan-ndjson lazyframe?)])]{
   Read newline-delimited JSON, one object a line, into a @tech{dataframe}
   (@tt{pl.read_ndjson}), or start a @tech{lazyframe} plan from it
   (@tt{pl.scan_ndjson}); @racket[read-ndjson] is
@@ -754,7 +739,8 @@ total
   one chunk. Polars ignores @racket[batch-size] and @racket[low-memory].
   A gzip, zlib or zstd file is decompressed as it is read, recognised by
   its first bytes rather than its name. A @racket[size/c] is an integer
-  from @racket[0] to @racket[(sub1 (expt 2 64))].
+  from @racket[0] to @racket[(sub1 (expt 2 64))], a @racket[row-index/c]
+  one from @racket[0] to @racket[(sub1 (expt 2 32))].
 
   @examples[#:eval ev #:hidden
 (require racket/file)
@@ -778,7 +764,7 @@ total
   @examples[#:eval ev #:hidden
 (delete-directory/files nd-dir)]}
 
-@defndjsonwriterproc[(write-ndjson dataframe?)]{
+@defproc/arguments[ndjson-writer-arguments (write-ndjson [d dataframe?] void?)]{
   Write @racket[d] as newline-delimited JSON, one object a line
   (@tt{df.write_ndjson}), with values written as @racket[write-json] writes
   them; a binary column is an error. @racket[compression] gzips or
@@ -1703,9 +1689,9 @@ generic operations are simply the preferred surface.
 (dataframe-width (dataframe-read-json "stations.json" #:schema '(("station" . str))))
 (eval:error (dataframe-read-json "stations.json" #:infer-schema-length 0))]}
 
-@deftogether[(@defndjsonproc[(dataframe-read-json-lines DataFrame-ptr?)]
-              @defndjsonproc[(lazyframe-scan-json-lines LazyFrame-ptr?)]
-              @defndjsonwriterproc[(dataframe-write-json-lines DataFrame-ptr?)])]{
+@deftogether[(@defproc/arguments[ndjson-arguments (dataframe-read-json-lines DataFrame-ptr?)]
+              @defproc/arguments[ndjson-arguments (lazyframe-scan-json-lines LazyFrame-ptr?)]
+              @defproc/arguments[ndjson-writer-arguments (dataframe-write-json-lines [d DataFrame-ptr?] void?)])]{
   The raw-pointer NDJSON reader, scan and writer under @racket[read-ndjson],
   @racket[scan-ndjson] and @racket[write-ndjson], with the same keywords and
   checks.

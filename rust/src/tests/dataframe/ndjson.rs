@@ -152,7 +152,7 @@ fn ints(df: &DataFrame, name: &str) -> Vec<Option<i64>> {
 
 #[test]
 fn reads_one_object_a_line() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.ndjson", ROWS);
     let df = Ndjson::default().read(&path);
     assert_eq!(
@@ -168,13 +168,13 @@ fn reads_one_object_a_line() {
 
 #[test]
 fn a_pattern_or_a_directory_reads_every_file_in_order() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let parts = dir.path().join("parts");
     std::fs::create_dir(&parts).unwrap();
     for (name, x) in [("p2", 20), ("p1", 10), ("p3", 30)] {
         write(
             &parts,
-            &format!("{}.ndjson", name),
+            &format!("{name}.ndjson"),
             &format!("{{\"x\":{}}}\n", x),
         );
     }
@@ -185,16 +185,16 @@ fn a_pattern_or_a_directory_reads_every_file_in_order() {
     let scanned = Ndjson::default().scan(&pattern).unwrap().collect().unwrap();
     assert_eq!(ints(&scanned, "x"), expected);
     let none = Ndjson::default().read_err(&parts.join("*.none"));
-    assert!(none.contains("expanded paths were empty"), "{}", none);
+    assert!(none.contains("expanded paths were empty"), "{none}");
     let missing = Ndjson::default().read_err(&parts.join("nope.ndjson"));
-    assert!(missing.starts_with("cannot open file: "), "{}", missing);
+    assert!(missing.starts_with("cannot open file: "), "{missing}");
     assert!(Ndjson::default().scan(&parts.join("nope.ndjson")).is_ok());
 }
 
 #[test]
 fn schema_and_overrides_set_the_dtypes() {
     use CompatDTypeTag as Tag;
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.ndjson", ROWS);
     let df = Ndjson::default()
         .schema(&[("bar", Tag::Float32), ("foo", Tag::Int32)])
@@ -239,15 +239,15 @@ fn schema_and_overrides_set_the_dtypes() {
 
 #[test]
 fn inference_and_errors() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.ndjson", ROWS);
     let one = |o: &mut CompatNdjsonOptions| o.infer_schema_length = 1;
     let err = Ndjson::default().with(one).read_err(&path);
-    assert!(err.contains("as Int64"), "{}", err);
+    assert!(err.contains("as Int64"), "{err}");
     let array = write(dir.path(), "array.json", "[{\"a\":1}]");
     let err = Ndjson::default().read_err(&array);
-    assert!(err.contains("expected to contain JSON object"), "{}", err);
-    assert!(!err.contains("Resolved plan"), "{}", err);
+    assert!(err.contains("expected to contain JSON object"), "{err}");
+    assert!(!err.contains("Resolved plan"), "{err}");
     let ignored = Ndjson::default()
         .with(one)
         .with(|o| o.ignore_errors = true)
@@ -267,7 +267,7 @@ fn inference_and_errors() {
 
 #[test]
 fn rows_index_and_file_paths() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.ndjson", ROWS);
     let first = Ndjson::default()
         .with(|o| {
@@ -293,12 +293,12 @@ fn rows_index_and_file_paths() {
     let src = first.column("src").unwrap().str().unwrap().get(0).unwrap();
     assert_eq!(src, path.to_str().unwrap());
     let err = Ndjson::default().row_index("i", usize::MAX).read_err(&path);
-    assert!(err.starts_with("row index offset "), "{}", err);
+    assert!(err.starts_with("row index offset "), "{err}");
 }
 
 #[test]
 fn write_ndjson_writes_a_line_an_object() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let xs = make_i64("x", &[1, 2, 3]);
     let gs = make_str("g", &["a", "b", "c"]);
     let df = make_df(&[xs, gs]);
@@ -326,13 +326,13 @@ fn write_ndjson_writes_a_line_an_object() {
 
     assert_ne!(write(&at("out.ndjson.gz"), 0, true), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.contains("check_extension"), "{}", reason);
-    assert!(!reason.contains("Resolved plan"), "{}", reason);
+    assert!(reason.contains("check_extension"), "{reason}");
+    assert!(!reason.contains("Resolved plan"), "{reason}");
     assert!(!dir.path().join("out.ndjson.gz").exists());
     assert_eq!(write(&at("out.ndjson.gz"), 0, false), 0);
     assert_ne!(write(&at("out.ndjson"), 1, true), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.contains("expected suffix: (.gz)"), "{}", reason);
+    assert!(reason.contains("expected suffix: (.gz)"), "{reason}");
     assert_ne!(write(&at("no/such/out.ndjson"), 0, true), 0);
     assert!(recorded_error().is_some());
     dataframe_drop(df);
@@ -342,7 +342,7 @@ fn write_ndjson_writes_a_line_an_object() {
 
 #[test]
 fn compressed_output_reads_back() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let xs = make_i64("x", &[1, 2, 3]);
     let df = make_df(&[xs]);
     for (name, compression, magic) in [
@@ -359,10 +359,11 @@ fn compressed_output_reads_back() {
             3,
             true,
         );
-        assert_eq!(status, 0, "{}: {:?}", name, recorded_error());
-        assert!(std::fs::read(&path).unwrap().starts_with(magic), "{}", name);
+        let reason = recorded_error();
+        assert_eq!(status, 0, "{name}: {reason:?}");
+        assert!(std::fs::read(&path).unwrap().starts_with(magic), "{name}");
         let back = Ndjson::default().read(&path);
-        assert!(back.equals_missing(unsafe { &*df }), "{}", name);
+        assert!(back.equals_missing(unsafe { &*df }), "{name}");
     }
     dataframe_drop(df);
     series_drop(xs);
@@ -370,7 +371,7 @@ fn compressed_output_reads_back() {
 
 #[test]
 fn a_compression_signature_reads_as_compressed() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let cases: [(&str, &[u8]); 3] = [
         ("gzip.ndjson", b"\x1f\x8b\x00\x00{\"a\":1}\n"),
         ("zlib.ndjson", b"x^junk\n{\"a\":1}\n"),
@@ -379,12 +380,12 @@ fn a_compression_signature_reads_as_compressed() {
     for (name, bytes) in cases {
         let path = write_bytes(dir.path(), name, bytes);
         let err = Ndjson::default().read_err(&path);
-        assert!(!err.contains("TapeError"), "{}: {}", name, err);
-        assert!(!err.contains("decompress' feature"), "{}: {}", name, err);
+        assert!(!err.contains("TapeError"), "{name}: {err}");
+        assert!(!err.contains("decompress' feature"), "{name}: {err}");
     }
     let late = write_bytes(dir.path(), "late.ndjson", b"{\"a\":1}\nx^junk\n");
     let err = Ndjson::default().read_err(&late);
-    assert!(err.contains("TapeError"), "{}", err);
+    assert!(err.contains("TapeError"), "{err}");
 }
 
 fn write_bytes(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
@@ -393,18 +394,9 @@ fn write_bytes(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
     path
 }
 
-fn leftovers(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    names
-}
-
 #[test]
 fn a_failed_write_leaves_the_existing_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let keep = write(dir.path(), "keep.ndjson", "PRECIOUS");
     let keep_gz = write(dir.path(), "keep.ndjson.gz", "PRECIOUS");
     let bytes: [&[u8]; 2] = [b"p", b"q"];
@@ -435,20 +427,20 @@ fn a_failed_write_leaves_the_existing_file() {
     let ok = make_df(&[xs]);
     assert_ne!(write_to(ok, &keep_gz, true), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.contains("check_extension"), "{}", reason);
-    assert!(!reason.contains(".partial"), "{}", reason);
+    assert!(reason.contains("check_extension"), "{reason}");
+    assert!(!reason.contains(".partial"), "{reason}");
     assert_eq!(std::fs::read_to_string(&keep).unwrap(), "PRECIOUS");
     assert_eq!(std::fs::read_to_string(&keep_gz).unwrap(), "PRECIOUS");
-    assert_eq!(leftovers(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
+    assert_eq!(entries(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
     assert_eq!(write_to(ok, &keep, true), 0);
     assert_eq!(std::fs::read_to_string(&keep).unwrap(), "{\"x\":1}\n");
     let sub = dir.path().join("sub");
     std::fs::create_dir(&sub).unwrap();
     assert_ne!(write_to(ok, &sub, true), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.starts_with("cannot create file: "), "{}", reason);
+    assert!(reason.starts_with("cannot create file: "), "{reason}");
     assert_eq!(
-        leftovers(dir.path()),
+        entries(dir.path()),
         vec!["keep.ndjson", "keep.ndjson.gz", "sub"]
     );
     dataframe_drop(ok);
@@ -458,7 +450,7 @@ fn a_failed_write_leaves_the_existing_file() {
 
 #[test]
 fn write_ndjson_refuses_binary_inside_a_list_or_struct() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("nested.ndjson");
     let p = cstr(path.to_str().unwrap());
     let bytes: [&[u8]; 2] = [b"p", b"q"];
@@ -495,5 +487,5 @@ fn write_ndjson_refuses_binary_inside_a_list_or_struct() {
         );
         dataframe_drop(df);
     }
-    assert!(leftovers(dir.path()).is_empty());
+    assert!(entries(dir.path()).is_empty());
 }
