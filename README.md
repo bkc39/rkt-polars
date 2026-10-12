@@ -193,6 +193,11 @@ scripts/test-local.sh
 
 CI (`.github/workflows/ci.yml`, which calls the reusable `native.yml`) builds
 both candidates with cargo and runs the catalog install on Linux and macOS.
+They are built by rustup's build of the flake's rustc release, which
+`rust/rust-toolchain.toml` pins; its LLVM can differ from nixpkgs', so
+`nix flake check` does not cover the shipped code generation; CI's jobs that
+install the built candidates do. `polars/native-libs/BUILDING.md` has the
+refresh procedures.
 
 ## License
 

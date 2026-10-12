@@ -1,11 +1,13 @@
 """The Python polars side of bench/perf.rkt (#86).
 
 Times each operation as the median of 5 runs after a warm-up and prints one
-`op<TAB>ms` line per operation, or `op<TAB>n/a<TAB>reason`. The argument names
-the inputs perf.rkt used: `original` (the fetched file, `NA` for missing) or
-`nona` (the NA-stripped copies).
+`op<TAB>ms` line per operation, or `op<TAB>n/a<TAB>reason`. The first argument
+names the inputs perf.rkt used: `original` (the fetched file, `NA` for missing)
+or `nona` (the NA-stripped copies). Any further arguments name the only ops to
+time, as `--strict` does to re-time an op over its allowance.
 
     python bench/perf.py original
+    python bench/perf.py original filter describe
 """
 
 import gc
@@ -36,6 +38,11 @@ def median_ms(fn, runs=5):
     return statistics.median(times)
 
 
+def walk(rows):
+    for _ in rows:
+        pass
+
+
 def operations(source):
     stem = "nycflights" if source == "original" else "nycflights-nona"
     tsv, csv = DATA / f"{stem}.tsv", DATA / f"{stem}.csv"
@@ -63,17 +70,25 @@ def operations(source):
             pl.col("dest").count().alias("n"), pl.col("dep_delay").mean().alias("mean_delay")
         ),
         "categorical-list": lambda: cat["dest"].to_list(),
+        "iter-rows": lambda: walk(df.iter_rows()),
+        "iter-rows-named": lambda: walk(df.iter_rows(named=True)),
+        "iter-rows-16": lambda: walk(df.iter_rows(buffer_size=16)),
+        "iter-rows-65536": lambda: walk(df.iter_rows(buffer_size=65536)),
     }
 
 
-def main(source):
+def main(source, keys):
     print(f"version\t{pl.__version__}")
-    for key, fn in operations(source).items():
+    ops = operations(source)
+    for key in keys or ops:
+        if key not in ops:
+            print(f"{key}\tn/a\tperf.py has no op {key}")
+            continue
         try:
-            print(f"{key}\t{median_ms(fn):.3f}")
+            print(f"{key}\t{median_ms(ops[key]):.3f}")
         except Exception as e:
             print(f"{key}\tn/a\t{(str(e).splitlines() or [type(e).__name__])[0]}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "original")
+    main(sys.argv[1] if len(sys.argv) > 1 else "original", sys.argv[2:])

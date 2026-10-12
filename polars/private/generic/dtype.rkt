@@ -4,9 +4,9 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
-         (only-in gregor datetime?)
          polars/private/foreign
          polars/private/series
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -38,22 +38,11 @@
 ;; canonical symbols returned by series-dtype (int32, float64, string,
 ;; boolean).  Maps everything to a canonical symbol.
 (define dtype-aliases
-  (hash 'i8 'int8    'int8 'int8
-        'i16 'int16   'int16 'int16
-        'i32 'int32   'int32 'int32
-        'i64 'int64   'int64 'int64
-        'u8 'uint8    'uint8 'uint8
-        'u16 'uint16  'uint16 'uint16
-        'u32 'uint32  'uint32 'uint32
-        'u64 'uint64  'uint64 'uint64
-        'f32 'float32 'float32 'float32
-        'f64 'float64 'float64 'float64
-        'bool 'boolean 'boolean 'boolean
-        'str 'string   'string 'string
-        'date 'date
-        'time 'time
-        'datetime 'datetime
-        'categorical 'categorical))
+  (for/fold ([aliases dtype-short-names])
+            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
+                                   float32 float64 boolean string
+                                   date time datetime categorical))])
+    (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
   (match v
@@ -62,7 +51,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ (enum-dtype? v)]))
+    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
 
 (define (normalize-dtype dt)
   (cond
@@ -86,7 +75,7 @@
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
-    [(andmap datetime? vals) 'datetime]
+    [(temporal-values-dtype vals)]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 
@@ -106,8 +95,8 @@
     [(string)  (if vec? series-new-str/vec series-new-str)]
     [else
      (match canonical
-       [(or 'datetime `(datetime . ,_))
-        (if vec? series-new-datetime/vec series-new-datetime)]
+       [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))
+        (lambda (name elements) (series-new-temporal 'series name elements canonical))]
        [(or 'categorical (? enum-dtype?))
         (define strings (if vec? series-new-str/vec series-new-str))
         (lambda (name elements)

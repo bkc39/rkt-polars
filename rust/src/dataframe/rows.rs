@@ -49,23 +49,6 @@ pub extern "C" fn dataframe_sort_with_options(
         }
     };
     let df = unsafe { &*df_ptr };
-    guard_panic(|| record(sort_frame(df, names, opts)))
+    guard_panic(|| record(df.sort(names, opts)))
         .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
-}
-
-/// polars sorts a frame of width 1 by its own column with `sort_with`, whose
-/// defects `sort_series` routes around.
-fn sort_frame(
-    df: &DataFrame,
-    names: Vec<String>,
-    opts: SortMultipleOptions,
-) -> PolarsResult<DataFrame> {
-    let by = df.select_to_vec(names)?;
-    if let [key] = by.as_slice() {
-        if df.width() == 1 {
-            let key = key.as_materialized_series();
-            return Ok(sort_series(key, SortOptions::from(&opts))?.into_frame());
-        }
-    }
-    df.sort_impl(by, opts, None)
 }

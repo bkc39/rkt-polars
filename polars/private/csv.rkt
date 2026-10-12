@@ -17,7 +17,7 @@
                   call/foreign-error dataframe-column dataframe-column-name
                   dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
-                  series-ref)
+                  series-ref zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list))
 
@@ -39,6 +39,7 @@
    'csv-dtype/c
    (lambda (v)
      (and (dtype-spec? v)
+          (not (zoned-datetime-dtype? v))
           (match v
             [(cons (or 'duration 'enum) _) #f]
             [_ #t])))))
