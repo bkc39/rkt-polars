@@ -1,3 +1,5 @@
+use std::fs::{File, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -11,61 +13,131 @@ const IO_BAD_PATH: i32 = 2;
 const IO_OPEN_FAILED: i32 = 3;
 const IO_WRITE_FAILED: i32 = 4;
 
-fn open_file(path: &str) -> Option<std::fs::File> {
-    record(
-        std::fs::File::open(path)
-            .map_err(|err| format!("cannot open file: {}", err)),
-    )
+fn open_file(path: &str) -> Option<File> {
+    record(File::open(path).map_err(|err| format!("cannot open file: {}", err)))
 }
 
-fn create_file(path: &Path) -> Option<std::fs::File> {
-    record(
-        std::fs::File::create(path)
-            .map_err(|err| format!("cannot create file: {}", err)),
-    )
+fn cannot_create(err: std::io::Error) -> String {
+    format!("cannot create file: {}", err)
 }
 
-static TEMP_FILES: AtomicUsize = AtomicUsize::new(0);
+static STAGING_FILES: AtomicUsize = AtomicUsize::new(0);
 
-/// A writer writes here and `finish_replacing` renames it onto `target`, so
-/// a failed write leaves an existing file as it was. The name keeps
-/// `target`'s extensions, which polars' sinks check.
-pub(crate) fn temp_sibling(target: &Path) -> PathBuf {
-    let name = target
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    target.with_file_name(format!(
-        ".rkt-polars-{}-{}-{}",
+fn staging_path(dir: &Path) -> PathBuf {
+    dir.join(format!(
+        ".rkt-polars-{}-{}.partial",
         std::process::id(),
-        TEMP_FILES.fetch_add(1, Ordering::Relaxed),
-        name
+        STAGING_FILES.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
-pub(crate) fn finish_replacing(
-    temp: &Path,
-    target: &Path,
-    written: Option<()>,
-) -> i32 {
-    let renamed = written.and_then(|()| {
-        record(
-            std::fs::rename(temp, target)
-                .map_err(|err| format!("cannot create file: {}", err)),
-        )
-    });
-    match renamed {
-        Some(()) => IO_OK,
-        None => {
-            let _ = std::fs::remove_file(temp);
-            IO_WRITE_FAILED
+fn resolve_links(path: &Path) -> std::io::Result<PathBuf> {
+    let mut target = path.to_path_buf();
+    for _ in 0..40 {
+        let is_link = std::fs::symlink_metadata(&target)
+            .is_ok_and(|meta| meta.file_type().is_symlink());
+        if !is_link {
+            return Ok(target);
+        }
+        let link = std::fs::read_link(&target)?;
+        target = target.parent().unwrap_or(Path::new("")).join(link);
+    }
+    Err(std::io::Error::other("too many levels of symbolic links"))
+}
+
+/// Where a writer's bytes go: a staging file that `finish` renames onto
+/// `target`, or `target` itself when it is not a regular file.
+struct Staged {
+    file: File,
+    staging: Option<PathBuf>,
+    target: PathBuf,
+}
+
+fn stage(
+    target: PathBuf,
+    permissions: Option<std::fs::Permissions>,
+) -> Result<Staged, String> {
+    let dir = match target.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let (staging, file) = loop {
+        let staging = staging_path(&dir);
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)
+        {
+            Ok(file) => break (staging, file),
+            Err(err) if err.kind() == ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(cannot_create(err)),
+        }
+    };
+    let staged = Staged {
+        file,
+        staging: Some(staging),
+        target,
+    };
+    match permissions
+        .map(|permissions| staged.file.set_permissions(permissions))
+    {
+        Some(Err(err)) => {
+            staged.finish(None);
+            Err(cannot_create(err))
+        }
+        _ => Ok(staged),
+    }
+}
+
+fn create_staged(path: &str) -> Result<Staged, String> {
+    let target = resolve_links(Path::new(path)).map_err(cannot_create)?;
+    match std::fs::metadata(&target) {
+        Err(err) if err.kind() == ErrorKind::NotFound => stage(target, None),
+        Err(err) => Err(cannot_create(err)),
+        Ok(meta) if meta.is_file() => {
+            OpenOptions::new()
+                .write(true)
+                .open(&target)
+                .map_err(cannot_create)?;
+            stage(target, Some(meta.permissions()))
+        }
+        Ok(_) => File::create(&target)
+            .map(|file| Staged {
+                file,
+                staging: None,
+                target,
+            })
+            .map_err(cannot_create),
+    }
+}
+
+impl Staged {
+    fn finish(self, written: Option<()>) -> i32 {
+        let Staged {
+            file,
+            staging,
+            target,
+        } = self;
+        drop(file);
+        let Some(staging) = staging else {
+            return written.map_or(IO_WRITE_FAILED, |()| IO_OK);
+        };
+        let renamed = written.and_then(|()| {
+            record(std::fs::rename(&staging, &target).map_err(cannot_create))
+        });
+        match renamed {
+            Some(()) => IO_OK,
+            None => {
+                let _ = std::fs::remove_file(&staging);
+                IO_WRITE_FAILED
+            }
         }
     }
 }
 
 fn read_frame(
     path: *const c_char,
-    read: impl FnOnce(std::fs::File) -> PolarsResult<DataFrame>,
+    read: impl FnOnce(File) -> PolarsResult<DataFrame>,
 ) -> *mut DataFrame {
     clear_last_error();
     decode_path(path)
@@ -123,7 +195,7 @@ pub(crate) fn collect_frame(
 pub(crate) fn write_frame(
     df_ptr: *mut DataFrame,
     path: *const c_char,
-    write: impl FnOnce(&mut std::fs::File, &mut DataFrame) -> PolarsResult<()>,
+    write: impl FnOnce(&mut File, &mut DataFrame) -> PolarsResult<()>,
 ) -> i32 {
     clear_last_error();
     if df_ptr.is_null() {
@@ -137,15 +209,12 @@ pub(crate) fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
-    let target = Path::new(path_str);
-    let temp = temp_sibling(target);
-    let Some(mut file) = create_file(&temp) else {
+    let Some(mut staged) = record(create_staged(path_str)) else {
         return IO_OPEN_FAILED;
     };
     let df = unsafe { &mut *df_ptr };
-    let written = guard_panic(|| record(write(&mut file, df)));
-    drop(file);
-    finish_replacing(&temp, target, written)
+    let written = guard_panic(|| record(write(&mut staged.file, df)));
+    staged.finish(written)
 }
 
 #[no_mangle]

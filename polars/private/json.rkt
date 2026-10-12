@@ -3,26 +3,19 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          (only-in racket/contract/base
-                  [-> ->/c] ->* and/c cons/c contract-out flat-named-contract integer-in
-                  listof or/c)
+                  [-> ->/c] ->* and/c cons/c contract-out flat-named-contract listof or/c)
          (only-in racket/list check-duplicates)
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/io-contracts column-name/c positive-size/c))
 
 (provide json-reader json-writer json-reader/c
          (contract-out
           [dataframe-read-json (json-reader/c DataFrame-ptr?)]
           [dataframe-write-json (->/c DataFrame-ptr? path-string? void?)]))
-
-(define size-max (sub1 (expt 2 64)))
-
-(define column-name/c
-  (flat-named-contract
-   'column-name/c
-   (lambda (v) (and (string? v) (not (for/or ([c (in-string v)]) (char=? c #\nul)))))))
 
 (define json-dtype/c
   (flat-named-contract
@@ -33,13 +26,14 @@
   (not (check-duplicates (map car fields))))
 
 (define json-schema/c
-  (and/c (listof (cons/c column-name/c json-dtype/c)) distinct-names?))
+  (flat-named-contract 'json-schema/c
+                       (and/c (listof (cons/c column-name/c json-dtype/c)) distinct-names?)))
 
 (define (json-reader/c result/c)
   (->* (path-string?)
        (#:schema (or/c #f json-schema/c)
         #:schema-overrides json-schema/c
-        #:infer-schema-length (or/c #f (integer-in 1 size-max)))
+        #:infer-schema-length (or/c #f positive-size/c))
        result/c))
 
 (define-cstruct _CompatJsonOptions
@@ -110,15 +104,13 @@
            (only-in polars/private/foreign
                     dataframe-column dataframe-column-names dataframe-drop-count
                     dataframe-new last-error-message series-dtype series-new-i64
-                    series-new-str))
+                    series-new-str)
+           (only-in polars/private/generic/test-fixtures
+                    apply-keywords contract-violation-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
-  (define (scratch-file name text)
-    (define path (build-path scratch name))
-    (call-with-output-file path #:exists 'replace (lambda (out) (write-string text out)))
-    path)
 
-  (define rows (scratch-file "rows.json" "[{\"foo\":1,\"bar\":6},{\"foo\":2,\"bar\":7.5}]"))
+  (define rows (scratch-file scratch "rows.json" "[{\"foo\":1,\"bar\":6},{\"foo\":2,\"bar\":7.5}]"))
   (define frame (dataframe-read-json rows))
   (check-equal? (dataframe-column-names frame) '("foo" "bar"))
   (check-equal? (series-dtype (dataframe-column frame "bar")) 'float64)
@@ -134,30 +126,20 @@
              (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
   (check-exn #rx"^dataframe-write-json: failed to write json to [^:]*out.json: cannot create file: "
              (lambda () (dataframe-write-json frame (build-path scratch "no" "out.json"))))
-  (check-equal? (dataframe-column-names (dataframe-read-json rows)) '("foo" "bar"))
-  (check-false (last-error-message))
-  (check-exn exn:fail? (lambda () (dataframe-read-json (build-path scratch "nope.json"))))
-  (dataframe-write-json frame written)
-  (check-false (last-error-message))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows #:infer-schema-length 0)))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows #:schema '(("a" . (enum x y))))))
-  (check-exn #rx"^dataframe-read-json: contract violation"
-             (lambda () (contracted:dataframe-read-json rows
-                                                        #:schema-overrides '(("a" . i32) ("a" . f64)))))
-  (check-exn #rx"^dataframe-write-json: contract violation"
-             (lambda () (contracted:dataframe-write-json 'frame written)))
   (check-equal? (dataframe-column-names
                  (contracted:dataframe-read-json rows #:infer-schema-length (sub1 (expt 2 64))))
                 '("foo" "bar"))
-  (for ([kvs (in-list `(((#:infer-schema-length . ,(expt 2 64)))
+  (check-exn (contract-violation-of 'dataframe-write-json)
+             (lambda () (contracted:dataframe-write-json 'frame written)))
+  (for ([kvs (in-list `(((#:infer-schema-length . 0))
+                        ((#:infer-schema-length . ,(expt 2 64)))
                         ((#:infer-schema-length . ,(add1 (expt 2 64))))
+                        ((#:schema . (("a" . (enum x y)))))
                         ((#:schema . (("a\u0000zzz" . i64))))
+                        ((#:schema-overrides . (("a" . i32) ("a" . f64))))
                         ((#:schema-overrides . (("foo\u0000x" . str))))))])
-    (check-exn #rx"^dataframe-read-json: contract violation"
-               (lambda () (keyword-apply contracted:dataframe-read-json (map car kvs) (map cdr kvs)
-                                         (list rows)))
+    (check-exn (contract-violation-of 'dataframe-read-json)
+               (lambda () (apply-keywords contracted:dataframe-read-json kvs rows))
                (format "~s" kvs)))
 
   (define (settle!)

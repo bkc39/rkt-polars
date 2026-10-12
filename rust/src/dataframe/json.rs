@@ -54,18 +54,17 @@ fn json_read(
     options: &CompatJsonOptions,
     arrays: &JsonArrays,
 ) -> PolarsResult<DataFrame> {
-    let schema = if options.has_schema {
-        Some(unsafe {
+    let schema = options
+        .has_schema
+        .then(|| unsafe {
             decode_schema(
                 arrays.schema_names,
                 arrays.schema_dtypes,
                 options.schema_len,
                 "schema",
             )
-        }?)
-    } else {
-        None
-    };
+        })
+        .transpose()?;
     let overrides = unsafe {
         decode_schema(
             arrays.override_names,
@@ -128,17 +127,15 @@ fn holds_binary(dtype: &DataType) -> bool {
 }
 
 pub(crate) fn refuse_binary(df: &DataFrame) -> PolarsResult<()> {
-    match df
-        .columns()
+    df.columns()
         .iter()
         .find(|column| holds_binary(column.dtype()))
-    {
-        Some(column) => Err(polars_err!(
-            ComputeError: "cannot write the binary column {:?} as JSON",
-            column.name().as_str()
-        )),
-        None => Ok(()),
-    }
+        .map_or(Ok(()), |column| {
+            Err(polars_err!(
+                ComputeError: "cannot write the binary column {:?} as JSON",
+                column.name().as_str()
+            ))
+        })
 }
 
 #[no_mangle]

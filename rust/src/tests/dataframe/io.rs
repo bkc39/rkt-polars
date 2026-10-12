@@ -30,6 +30,17 @@ extern "C" fn read_csv(path: *const c_char) -> *mut DataFrame {
     )
 }
 
+fn read_json(path: *const c_char) -> *mut DataFrame {
+    dataframe_read_json_with_options(
+        path,
+        CompatJsonOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    )
+}
+
 fn scan_csv(path: *const c_char) -> *mut LazyFrame {
     lazyframe_scan_csv_with_options(
         path,
@@ -200,7 +211,8 @@ fn null_arguments_say_which_one() {
 fn every_entry_point_clears_a_stale_reason() {
     let dir = tempfile::tempdir().expect("tempdir");
     let at = |name: &str| cstr(dir.path().join(name).to_str().unwrap());
-    let (csv, parquet, ndjson) = (at("f.csv"), at("f.parquet"), at("f.ndjson"));
+    let (csv, parquet, ndjson, json) =
+        (at("f.csv"), at("f.parquet"), at("f.ndjson"), at("f.json"));
     let xs = make_i64("x", &[1, 2, 3]);
     let df = make_df(&[xs]);
 
@@ -224,6 +236,8 @@ fn every_entry_point_clears_a_stale_reason() {
     cleared("dataframe_write_parquet");
     assert_eq!(dataframe_write_json_lines(df, ndjson.as_ptr()), 0);
     cleared("dataframe_write_json_lines");
+    assert_eq!(dataframe_write_json(df, json.as_ptr()), 0);
+    cleared("dataframe_write_json");
     frame("dataframe_read_csv_with_options", read_csv(csv.as_ptr()));
     cleared("dataframe_read_csv_with_options");
     frame(
@@ -236,6 +250,8 @@ fn every_entry_point_clears_a_stale_reason() {
         dataframe_read_json_lines(ndjson.as_ptr()),
     );
     cleared("dataframe_read_json_lines");
+    frame("dataframe_read_json_with_options", read_json(json.as_ptr()));
+    cleared("dataframe_read_json_with_options");
     plan("lazyframe_scan_csv_with_options", scan_csv(csv.as_ptr()));
     cleared("lazyframe_scan_csv_with_options");
     plan(

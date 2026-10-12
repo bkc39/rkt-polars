@@ -5,7 +5,9 @@
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
-(require polars/private/generic/core
+(require racket/file
+         (only-in racket/contract exn:fail:contract:blame?)
+         polars/private/generic/core
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign polars-null polars-null?)
          (only-in gregor datetime))
@@ -40,3 +42,17 @@
        (for/and ([name (in-list (column-names a))])
          (and (equal? (dtype (ref a #:columns name)) (dtype (ref b #:columns name)))
               (equal? (column a name) (column b name))))))
+
+(define (scratch-file dir name text)
+  (define path (build-path dir name))
+  (display-to-file text path #:exists 'replace)
+  path)
+
+(define ((contract-violation-of who) e)
+  (and (exn:fail:contract:blame? e)
+       (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
+                      (exn-message e))))
+
+(define (apply-keywords proc kvs . args)
+  (define sorted (sort kvs keyword<? #:key car))
+  (keyword-apply proc (map car sorted) (map cdr sorted) args))

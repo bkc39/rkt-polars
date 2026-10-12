@@ -2,21 +2,20 @@
 
 (require (only-in racket/contract/base -> contract-out)
          (only-in polars/private/json json-reader json-reader/c json-writer)
-         (only-in polars/private/generic/core dataframe? wrap-dataframe))
+         (only-in polars/private/generic/core dataframe? wrap-dataframe)
+         (only-in polars/private/generic/io define-wrapped))
 
 (provide (contract-out
           [read-json (json-reader/c dataframe?)]
           [write-json (-> dataframe? path-string? void?)]))
 
-(define read-json
-  (procedure-rename (compose1 wrap-dataframe (json-reader 'read-json)) 'read-json))
+(define-wrapped read-json wrap-dataframe (json-reader 'read-json))
 (define write-json (json-writer 'write-json))
 
 (module+ test
   (require rackunit
            racket/file
            racket/runtime-path
-           (only-in racket/contract exn:fail:contract:blame?)
            (only-in gregor date)
            (prefix-in contracted: (submod ".."))
            (only-in polars/private/generic/core
@@ -27,14 +26,44 @@
   (define-runtime-path data-dir "../../scribblings/data")
   (define stations (build-path data-dir "stations.json"))
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
-  (define (scratch-file name text)
-    (define path (build-path scratch name))
-    (call-with-output-file path #:exists 'replace (lambda (out) (write-string text out)))
-    path)
   (define (dtypes-of df)
     (for/list ([name (column-names df)]) (list name (dtype (ref df name)))))
   (define (message-of thunk)
     (with-handlers ([exn:fail? exn-message]) (thunk) #f))
+  (define (staging-files dir)
+    (filter (lambda (name) (regexp-match? #rx"[.]partial$" (path->string name)))
+            (directory-list dir)))
+  (define (check-staged-write write! ext)
+    (define dir (make-temporary-directory "rkt-polars-staged-~a"))
+    (define (named stem) (format "~a.~a" stem ext))
+    (define (failure cause)
+      (pregexp (format "^~a: failed to write [^ ]+ to [^:]*: cannot create file: ~a"
+                       (object-name write!) cause)))
+    (define real (scratch-file dir (named "real") "OLD"))
+    (define link (build-path dir (named "link")))
+    (make-file-or-directory-link (named "real") link)
+    (write! guide-df link)
+    (check-true (link-exists? link))
+    (check-not-equal? (file->string real) "OLD")
+    (define locked (scratch-file dir (named "locked") "OLD"))
+    (file-or-directory-permissions locked #o444)
+    (unless (memq 'write (file-or-directory-permissions locked))
+      (check-exn (failure "Permission denied") (lambda () (write! guide-df locked)))
+      (check-equal? (file->string locked) "OLD"))
+    (define private (scratch-file dir (named "private") "OLD"))
+    (file-or-directory-permissions private #o600)
+    (write! guide-df private)
+    (check-equal? (file-or-directory-permissions private 'bits) #o600)
+    (write! guide-df "/dev/null")
+    (define long (build-path dir (named (make-string (- 249 (string-length ext)) #\x))))
+    (write! guide-df long)
+    (check-true (file-exists? long))
+    (define sub (build-path dir "sub"))
+    (make-directory sub)
+    (check-exn (failure "") (lambda () (write! guide-df sub)))
+    (check-equal? (staging-files dir) '())
+    (check-equal? (directory-list sub) '())
+    (delete-directory/files dir))
 
   (define-values (required accepted) (procedure-keywords contracted:read-json))
   (check-equal? required '())
@@ -110,7 +139,7 @@
   (check-equal? (shape (read-json stations #:infer-schema-length #f)) '(4 5))
   (check-equal? (shape (read-json stations #:infer-schema-length 4)) '(4 5))
 
-  (define mixed (scratch-file "mixed.json" "[{\"a\":1},{\"a\":2},{\"a\":\"x\"}]"))
+  (define mixed (scratch-file scratch "mixed.json" "[{\"a\":1},{\"a\":2},{\"a\":\"x\"}]"))
   (check-equal? (column (read-json mixed) "a") '("1" "2" "x"))
   (define mixed-message (message-of (lambda () (read-json mixed #:infer-schema-length 1))))
   (check-regexp-match #rx"^read-json: failed to read json from [^:]*mixed.json: " mixed-message)
@@ -127,41 +156,39 @@
   (check-exn #rx"^read-json: failed to read json from [^:]*: cannot open file: it is a directory$"
              (lambda () (read-json scratch)))
   (check-exn #rx"^read-json: failed to read json from [^:]*numbers.json: can only deserialize json objects$"
-             (lambda () (read-json (scratch-file "numbers.json" "[1,2,3]"))))
+             (lambda () (read-json (scratch-file scratch "numbers.json" "[1,2,3]"))))
   (check-exn #rx"^read-json: failed to read json from [^:]*lines.json: "
-             (lambda () (read-json (scratch-file "lines.json" "{\"a\":1}\n{\"a\":2}\n"))))
+             (lambda () (read-json (scratch-file scratch "lines.json" "{\"a\":1}\n{\"a\":2}\n"))))
   (check-exn #rx"^read-json: failed to read json from [^:]*/[*][.]json: cannot open file: [Nn]o such file"
              (lambda () (read-json (build-path scratch "*.json"))))
   (check-exn #rx"^write-json: failed to write json to [^:]*out.json: cannot create file: [Nn]o such file"
              (lambda () (write-json frame (build-path scratch "no" "out.json"))))
 
-  (define keep (scratch-file "keep.json" "PRECIOUS"))
+  (define keep (scratch-file scratch "keep.json" "PRECIOUS"))
   (define binary-frame
     (dataframe (list (series '(1 2) #:name "a") (cast (series '("p" "q") #:name "b") 'binary))))
   (check-exn #rx"^write-json: failed to write json to [^:]*keep.json: cannot write the binary column \"b\" as JSON$"
              (lambda () (write-json binary-frame keep)))
   (check-equal? (file->string keep) "PRECIOUS")
-  (check-false (for/or ([name (directory-list scratch)])
-                 (regexp-match? #rx"^[.]rkt-polars-" (path->string name))))
+  (check-equal? (staging-files scratch) '())
   (write-json guide-df keep)
   (check-true (frame=? (read-json keep) guide-df))
-  (check-exn #rx"^write-json: failed to write json to [^:]*: cannot create file: "
-             (lambda () (write-json guide-df scratch)))
+  (check-staged-write write-json "json")
 
-  (define promoted (scratch-file "promoted.json" "[{\"a\":1},{\"a\":2.5},{\"a\":true}]"))
+  (define promoted (scratch-file scratch "promoted.json" "[{\"a\":1},{\"a\":2.5},{\"a\":true}]"))
   (check-equal? (column (read-json promoted #:infer-schema-length 1) "a") '(1 2 1))
   (check-equal? (column (read-json stations #:schema-overrides '(("reading" . i64))) "reading")
                 '(3 4 2 5))
   (check-equal? (column (read-json promoted) "a") '(1.0 2.5 1.0))
-  (check-equal? (column (read-json (scratch-file "wide.json" "[{\"a\":300},{\"a\":-1}]")
+  (check-equal? (column (read-json (scratch-file scratch "wide.json" "[{\"a\":300},{\"a\":-1}]")
                                    #:schema '(("a" . i8)))
                         "a")
                 (list polars-null -1))
 
-  (check-equal? (shape (read-json (scratch-file "empty.json" "[]"))) '(0 0))
+  (check-equal? (shape (read-json (scratch-file scratch "empty.json" "[]"))) '(0 0))
   (check-equal? (dtypes-of (read-json (build-path scratch "empty.json") #:schema '(("a" . i64))))
                 '(("a" int64)))
-  (check-equal? (column (read-json (scratch-file "object.json" "{\"a\":[1,2],\"b\":\"x\"}")) "b")
+  (check-equal? (column (read-json (scratch-file scratch "object.json" "{\"a\":[1,2],\"b\":\"x\"}")) "b")
                 '("x"))
 
   (parameterize ([current-directory scratch])
@@ -169,25 +196,21 @@
     (write-json guide-df "relative.json")
     (check-true (file-exists? (build-path scratch "relative.json"))))
 
-  (define (clash-module name . requires)
-    `(module ,name racket/base
-       (require polars ,@requires)
-       (provide result)
-       (define result
-         (list (shape (read-json ,(path->string stations)))
-               ,(if (memq 'prefix-in (map (lambda (r) (and (pair? r) (car r))) requires))
-                    '(js:read-json (open-input-string "[1, 2]"))
-                    '(string->jsexpr "[1, 2]"))))))
-  (define (clash-result form)
+  (define (clash-result name requires json-call)
     (parameterize ([current-namespace (make-base-namespace)])
-      (eval form)
-      (dynamic-require `(quote ,(cadr form)) 'result)))
-  (check-equal? (clash-result (clash-module 'prefixed '(prefix-in js: json)))
+      (eval `(module ,name racket/base
+               (require polars ,@requires)
+               (provide result)
+               (define result (list (shape (read-json ,(path->string stations))) ,json-call))))
+      (dynamic-require `(quote ,name) 'result)))
+  (check-equal? (clash-result 'prefixed '((prefix-in js: json))
+                              '(js:read-json (open-input-string "[1, 2]")))
                 '((4 5) (1 2)))
-  (check-equal? (clash-result (clash-module 'excepted '(except-in json read-json write-json)))
+  (check-equal? (clash-result 'excepted '((except-in json read-json write-json))
+                              '(string->jsexpr "[1, 2]"))
                 '((4 5) (1 2)))
   (check-exn #rx"identifier already required"
-             (lambda () (clash-result (clash-module 'clashing 'json))))
+             (lambda () (clash-result 'clashing '(json) '(string->jsexpr "[1, 2]"))))
 
   (define bad-keywords
     `((#:schema . (("a" . (enum x y)))) (#:schema . (("a" . bogus))) (#:schema . ((a . i32)))
@@ -197,10 +220,8 @@
       (#:infer-schema-length . 0) (#:infer-schema-length . -1) (#:infer-schema-length . 1.5)
       (#:infer-schema-length . ,(expt 2 64))))
   (for ([kv (in-list bad-keywords)])
-    (check-exn (lambda (e) (and (exn:fail:contract:blame? e)
-                                (regexp-match? #rx"^read-json: contract violation" (exn-message e))))
-               (lambda () (keyword-apply contracted:read-json (list (car kv)) (list (cdr kv))
-                                         (list stations)))
+    (check-exn (contract-violation-of 'read-json)
+               (lambda () (apply-keywords contracted:read-json (list kv) stations))
                (format "~s" kv)))
   (check-exn #rx"^read-json: contract violation" (lambda () (contracted:read-json 'sym)))
   (check-exn #rx"^write-json: contract violation" (lambda () (contracted:write-json 5 "x")))

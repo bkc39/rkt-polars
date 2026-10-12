@@ -32,6 +32,19 @@
     #:with (argument ...) (replace-context #'name csv-arguments)
     #'(defproc (name argument ...) result body ...)])
 
+@(begin-for-syntax
+   (define json-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:schema schema (or/c json-schema/c #f) #f]
+       [#:schema-overrides schema-overrides json-schema/c '()]
+       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]))))
+
+@(define-syntax-parser defjsonproc
+   [(_ (name result) body ...)
+    #:with (argument ...) (replace-context #'name json-arguments)
+    #'(defproc (name argument ...) result body ...)])
+
 @title[#:tag "reference"]{Reference}
 
 @racketmodname[polars] is written to read as ordinary Racket. The operators
@@ -623,63 +636,46 @@ total
   Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
   CSV, Parquet or newline-delimited JSON (@tt{df.write_csv} and friends).
   API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
-  file and takes no glob pattern (#44).}
+  file and takes no glob pattern (#44).
 
-@deftogether[(@defproc[(read-json [path path-string?]
-                                  [#:schema schema
-                                            (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                         distinct-names?)
-                                                  #f)
-                                            #f]
-                                  [#:schema-overrides schema-overrides
-                                                      (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                             distinct-names?)
-                                                      '()]
-                                  [#:infer-schema-length infer-schema-length
-                                                         (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
-                                                         100])
-                       dataframe?]
+  A writer writes a staging file in @racket[path]'s directory, which must
+  be writable, and renames it onto @racket[path] once complete, so a failed
+  write leaves an existing file as it was; the new file keeps the old one's
+  permission bits but not its owner, ACLs, extended attributes or hard
+  links. A symbolic link is followed and kept, and a FIFO or device is
+  written in place.}
+
+@deftogether[(@defjsonproc[(read-json dataframe?)]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
-  Read a file that holds one JSON array of objects into a @tech{dataframe}
-  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}):
-  each row is an object whose keys are the column names. A file holding a
-  single object reads as one row. Both are eager: Polars has no scan or sink
-  for a JSON array, only for newline-delimited JSON. @racket[path] is taken
-  literally; a directory is an error.
+  Read a file holding one JSON array of objects into a @tech{dataframe}
+  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}).
+  A lone object reads as one row. @racket[path] is literal; a directory is
+  an error.
 
   Column types are inferred from the first @racket[infer-schema-length]
-  objects, or from every object when it is @racket[#f]; a key first seen
-  after them is an error. A later value of another JSON type is converted
-  where Polars can: a float read as an integer truncates, a boolean reads
-  as 0 or 1, and a number outside the type's range, such as 300 read as an
-  @racket['int8], reads as null. A value that cannot convert, such as a
-  string where a number was inferred, is an error. Python does the same.
-  @racket[schema] gives the columns outright, in its order: a
-  key the schema lacks is skipped, and a column the file lacks reads as
-  nulls. @racket[schema-overrides] changes the types of named columns, the
-  file's or @racket[schema]'s, and naming a column absent from them is an
-  error. A @racket[column-name/c] is a string without a NUL character
-  (#165). A @racket[json-dtype/c] is any spelling @racket[series]'
-  @racket[#:dtype] accepts except an Enum; API gap: read the column as
-  @racket['categorical] or @racket['string] and @racket[cast] it. An ISO
-  8601 date, datetime or time string reads as that type when the schema
-  asks for it; a string that does not parse as the type asked for reads as
-  null, as in Python, and that includes a bare date read as a
-  @racket['datetime].
+  objects, or from all of them for @racket[#f]; a key first seen later is an
+  error. A later value of another JSON type converts where Polars can (a
+  float truncates to an integer, a boolean reads as 0 or 1, a number out of
+  the type's range reads as null) and is an error otherwise.
+  @racket[schema] gives the columns in order: other keys are skipped and a
+  column the file lacks reads as nulls. @racket[schema-overrides] retypes
+  columns of the file or of @racket[schema]; naming any other column is an
+  error. A @racket[json-schema/c] is a list of @racket[(cons name dtype)]
+  pairs with distinct names, a name a string without a NUL
+  (@racket[column-name/c]) and a dtype any @racket[series]
+  @racket[#:dtype] spelling but an Enum. A string reads as the date,
+  datetime or time the schema asks for, and as null where it does not
+  parse. A @racket[positive-size/c] is an integer from @racket[1] to
+  @racket[(sub1 (expt 2 64))].
 
-  @racket[write-json] writes dates, times, datetimes and durations as
-  strings, Categorical and Enum values as their names, and NaN and the
-  infinities as @tt{null}, so reading the file back needs a schema to
-  restore those types. A binary column is an error, where Python's
-  @tt{write_json} panics. The file is written beside @racket[path] and
-  renamed onto it once complete, so a write that fails leaves an existing
-  file as it was. API gap: a path only, no file object or in-memory
-  string in or out.
+  @racket[write-json] writes temporal values as strings, Categorical and
+  Enum values as their names, and NaN and the infinities as @tt{null}, so
+  reading them back needs a schema; a binary column is an error. It
+  replaces a file as @racket[write-csv] does.
 
-  @racket[read-json] and @racket[write-json] keep Python's names, which
-  @racketmodname[json] also provides, so a module that requires both
-  libraries, @racket[(require polars json)], fails with ``identifier already
-  required''. Rename @racketmodname[json]'s pair, or leave it out:
+  @racketmodname[json] provides a @racket[read-json] and @racket[write-json]
+  too, so @racket[(require polars json)] fails with ``identifier already
+  required''. Rename or leave out @racketmodname[json]'s pair:
 
   @racketblock[
   (require polars (prefix-in js: json))
@@ -1602,20 +1598,7 @@ generic operations are simply the preferred surface.
 (dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
 (dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
 
-@deftogether[(@defproc[(dataframe-read-json [path path-string?]
-                                            [#:schema schema
-                                                      (or/c (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                                   distinct-names?)
-                                                            #f)
-                                                      #f]
-                                            [#:schema-overrides schema-overrides
-                                                                (and/c (listof (cons/c column-name/c json-dtype/c))
-                                                                       distinct-names?)
-                                                                '()]
-                                            [#:infer-schema-length infer-schema-length
-                                                                   (or/c (integer-in 1 (sub1 (expt 2 64))) #f)
-                                                                   100])
-                       DataFrame-ptr?]
+@deftogether[(@defjsonproc[(dataframe-read-json DataFrame-ptr?)]
               @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{
   The raw-pointer JSON-array reader and writer under @racket[read-json] and
   @racket[write-json], with the same keywords and checks.

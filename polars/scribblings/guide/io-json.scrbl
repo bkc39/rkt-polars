@@ -39,11 +39,9 @@ Reading a JSON file should look familiar:
 (read-json path)
 ]
 
-Racket's @racketmodname[json] library also provides @racket[read-json] and
-@racket[write-json], so @racket[(require polars json)] fails with
-``identifier already required''. Rename @racketmodname[json]'s pair with
-@racket[(require polars (prefix-in js: json))], or leave it out with
-@racket[(require polars (except-in json read-json write-json))].
+Racket's @racketmodname[json] library has a @racket[read-json] and
+@racket[write-json] of its own; @racket[read-json]'s reference entry shows
+how to require both libraries.
 
 @section[#:tag "io-json-options"]{Reading options}
 

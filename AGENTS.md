@@ -233,9 +233,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
   a contract error, since `_string/utf-8` would cut it there (#165).
   `write-json` refuses a binary column, where polars hits a `todo!()`.
-- `write_frame` writes to a sibling temp file (`temp_sibling`, which keeps
-  the target's extensions) and renames it onto the target once the write
-  succeeds, so a failed write leaves an existing file as it was.
+- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`),
+  which follows a symlink to the file it names and then, for a regular or
+  missing file, writes `.rkt-polars-<pid>-<n>.partial` in its directory
+  (`create_new`, so never through a planted link; a name no directory or
+  glob read picks up) and renames it onto the target once the write
+  succeeds: a failed write leaves an existing file as it was. A replaced
+  file keeps its permission bits, not its owner, ACLs, extended attributes
+  or hard links, and the directory must be writable. A read-only target is
+  refused before anything is staged; a FIFO or device is written in place.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).

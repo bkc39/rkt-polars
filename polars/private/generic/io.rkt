@@ -10,7 +10,8 @@
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
          syntax/parse/define)
 
-(provide (contract-out
+(provide define-wrapped
+         (contract-out
           [read-csv (csv-reader/c dataframe?)]
           [scan-csv (csv-reader/c lazyframe?)]
           [read-parquet (-> path-string? dataframe?)]
