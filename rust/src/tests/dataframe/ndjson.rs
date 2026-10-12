@@ -395,7 +395,7 @@ fn write_bytes(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 }
 
 #[test]
-fn a_failed_write_leaves_the_existing_file() {
+fn a_refused_write_leaves_the_existing_file() {
     let dir = scratch_dir();
     let keep = write(dir.path(), "keep.ndjson", "PRECIOUS");
     let keep_gz = write(dir.path(), "keep.ndjson.gz", "PRECIOUS");
