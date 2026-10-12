@@ -45,7 +45,7 @@ strings, and gregor values for the temporal dtypes.
 (define people
   (~> (dataframe
        (list (series '("Alice Archer" "Ben Brown") #:name "name")
-             (series (list (datetime 1997 1 10 8 30 0) (datetime 1985 2 15 17 0 0))
+             (series (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))
                      #:name "birthdate")
              (series '(57.9 72.5) #:name "weight")
              (series '(#t #f) #:name "parent")))
@@ -55,8 +55,10 @@ strings, and gregor values for the temporal dtypes.
   (~> people (ref name) series->list))
 ]
 
-API gaps: datetimes come out floored to the whole second, where
-@tt{to_list} keeps microseconds; a @racket['binary] column has no Racket value.
+A datetime keeps its column's full precision, down to the nanosecond, where
+@tt{to_list} stops at the microsecond.
+
+API gap: a @racket['binary] column has no Racket value.
 
 @section[#:tag "interop-iterating"]{Iterating}
 

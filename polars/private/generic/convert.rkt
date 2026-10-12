@@ -48,6 +48,7 @@
 (module+ test
   (require rackunit
            racket/match
+           (only-in gregor datetime)
            racket/runtime-path
            (only-in ffi/vector f64vector->list f64vector-length f64vector-ref)
            (only-in racket/contract exn:fail:contract:blame?)
@@ -144,6 +145,16 @@
                   (ref-list s polars-null)
                   (format "~s by ~a" (dtype s) chunk-rows)))
   (check-false (~> frame (ref "user") series->vector immutable?))
+
+  (for ([s (in-list temporal-series)])
+    (define xs (series->list s))
+    (check-equal? (series->list (series xs #:dtype (dtype s))) xs (format "~s" (dtype s))))
+  (for ([unit '(milliseconds microseconds nanoseconds)]
+        [after '((1 500000000) (0 1500000) (0 1500))]
+        [before '(999000000 999999000 999999999)])
+    (check-equal? (~> '(1500 -1) (series #:dtype 'int64) (cast (list 'datetime unit)) series->list)
+                  (list (apply datetime 1970 1 1 0 0 after)
+                        (datetime 1969 12 31 23 59 59 before))))
 
   (define numeric-variants
     (filter (lambda (s)

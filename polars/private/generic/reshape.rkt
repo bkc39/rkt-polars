@@ -119,9 +119,9 @@
   (wrap-dataframe (dataframe-with-column d s)))
 
 (define (cast x dtype)
-  (cond [(Expr-ptr? x) (expr-cast x dtype)]
-        [(series? x)   (wrap-series (series-cast x dtype))]
-        [else          (expr-cast (col x) dtype)]))
+  (cond [(Expr-ptr? x) (expr-cast-to 'cast x dtype)]
+        [(series? x)   (wrap-series (series-cast-to 'cast x dtype))]
+        [else          (expr-cast-to 'cast (col x) dtype)]))
 
 ;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
 ;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
@@ -363,7 +363,7 @@
   (check-equal? (column-names (select coded (col '(enum JFK MIA)))) '())
   (check-equal? (series-cells (= (ref coded "carrier") 'UA)) '(#t #f #t #f))
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
-  (check-exn #rx"^series-cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
+  (check-exn #rx"^cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^lazyframe-collect: .*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
