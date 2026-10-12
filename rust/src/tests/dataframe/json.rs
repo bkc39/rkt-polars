@@ -260,7 +260,7 @@ fn write_json_writes_an_array_that_reads_back() {
 }
 
 #[test]
-fn a_failed_write_leaves_the_existing_file() {
+fn a_refused_write_leaves_the_existing_file() {
     let dir = scratch_dir();
     let path = write(dir.path(), "keep.json", "PRECIOUS");
     let p = cstr(path.to_str().unwrap());

@@ -237,7 +237,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
   a contract error, since `_string/utf-8` would cut it there (#165).
   `write-json` refuses a binary column, where polars hits a `todo!()`.
-- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`).
+- Every writer goes through `write_checked_frame` (`write_frame` when there
+  is nothing to check; `rust/src/dataframe/io.rs`).
   Its checks on the frame and the path (a JSON writer's binary column, say)
   run before the target is opened. It follows a symlink to the file it
   names; a dangling link is written through in place, creating that file.

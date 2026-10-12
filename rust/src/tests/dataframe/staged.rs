@@ -321,6 +321,32 @@ fn a_failed_write_removes_its_staging_file() {
 }
 
 #[test]
+fn a_failed_csv_write_keeps_the_existing_file() {
+    let dir = scratch_dir();
+    let path = dir.path().join("keep.csv");
+    std::fs::write(&path, "PRECIOUS").unwrap();
+    let rows = [
+        Series::new("".into(), &[1i64]),
+        Series::new("".into(), &[2i64]),
+    ];
+    let df = Box::into_raw(Box::new(
+        DataFrame::new_infer_height(
+            vec![Series::new("l".into(), &rows).into()],
+        )
+        .unwrap(),
+    ));
+    let p = cstr(path.to_str().unwrap());
+    assert_eq!(dataframe_write_csv(df, p.as_ptr()), 4);
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("CSV format does not support nested data")
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "PRECIOUS");
+    assert_eq!(entries(dir.path()), vec!["keep.csv"]);
+    dataframe_drop(df);
+}
+
+#[test]
 fn a_failed_rename_removes_its_staging_file() {
     let dir = scratch_dir();
     let target = dir.path().join("out.json");
