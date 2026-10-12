@@ -12,7 +12,7 @@ the project repository, paired with the equivalent Python program:
 }|
 
 The exception is the closing case study, @secref["nycflights"], which replays
-a blog post rather than an upstream page; @tt{examples/68-nycflights-replay.rkt}
+a blog post rather than an upstream page; @tt{examples/69-nycflights-replay.rkt}
 runs its main steps as a script.
 
 Snippets use the fluent, thread-first style: each verb takes the frame --- or

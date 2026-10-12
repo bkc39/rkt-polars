@@ -8,7 +8,7 @@
 ;; CC0), 5,434 rows. `nix run .#bench` runs the same steps on the full file.
 ;;
 ;; Inside `nix develop`:
-;;   racket examples/68-nycflights-replay.rkt
+;;   racket examples/69-nycflights-replay.rkt
 
 (require racket/runtime-path
          polars)
