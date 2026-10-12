@@ -242,8 +242,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   missing file, writes `.rkt-polars-<pid>-<n>.partial` in its directory
   (`create_new`, so never through a planted link; a name no glob matches
   and a directory read refuses rather than reads) and renames it onto the
-  target once the write
-  succeeds: a failed write leaves an existing file as it was. A replaced
+  target once the write succeeds: a failed write leaves an existing file as it was. A replaced
   file keeps its permission bits, not its owner, ACLs, extended attributes
   or hard links, and the directory must be writable. A read-only target is
   refused before anything is staged; a FIFO or device is written in place.
