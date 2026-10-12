@@ -760,7 +760,10 @@ total
   replaced. Ownership, access control lists, extended attributes and hard
   links are not kept, and the directory must be writable. A file the caller
   cannot write is refused. A FIFO or device, such as @tt{/dev/null}, is
-  written in place.}
+  written in place.
+  A temporary file left by a killed process, @tt{.rkt-polars-}@italic{pid}@tt{-}@italic{n}@tt{.partial},
+  is skipped by a glob such as @tt{dir/*.parquet} and read by @tt{dir/*},
+  and a read of the directory itself fails with an error naming it.}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{

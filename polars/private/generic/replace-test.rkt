@@ -68,8 +68,11 @@
   (make-directory data)
   (write-parquet frame (build-path data "a.parquet"))
   (copy-file (build-path data "a.parquet") (build-path data ".rkt-polars-1-0.partial"))
-  (for ([source (list data (build-path data "*.parquet") (build-path data "*"))])
-    (check-equal? (height (read-parquet source)) 3 (path->string source)))
+  (check-equal? (height (read-parquet (build-path data "*.parquet"))) 3)
+  (check-equal? (height (read-parquet (build-path data "*"))) 6)
+  (check-regexp-match
+   #rx"directory contained paths with different file extensions: first path: [^,]*/[.]rkt-polars-1-0[.]partial,"
+   (message (lambda () (read-parquet data))))
 
   (define parent (in-dir "parent"))
   (define sub (build-path parent "sub"))

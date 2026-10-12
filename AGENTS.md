@@ -247,8 +247,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   as it was and no partial file behind. `create_staged` resolves a symlink
   first; refuses a regular file it cannot open for writing; writes a FIFO
   or device in place; otherwise stages `.rkt-polars-<pid>-<n>.partial`
-  (`create_new`, a name no glob or directory read picks up, never near the
-  255-byte limit) with the target's permission bits. Not kept on replace:
+  (`create_new`, never near the 255-byte limit; a leftover one is skipped
+  by an extension glob such as `dir/*.parquet`, read by a bare `dir/*`,
+  and refused by a directory read with polars' "different file extensions"
+  error) with the target's permission bits. Not kept on replace:
   ownership, ACLs, extended attributes, hard links; the directory must be
   writable. `rust/src/tests/dataframe/replace.rs` covers each case. The
   Parquet verbs report under the verb's own name (`read-parquet:`), the

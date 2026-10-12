@@ -187,7 +187,7 @@ fn a_250_byte_name_is_written() {
 }
 
 #[test]
-fn a_leftover_staging_file_is_not_read_back() {
+fn a_leftover_staging_file_is_refused_by_a_directory_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     let data = dir.path().join("data");
     std::fs::create_dir(&data).unwrap();
@@ -196,9 +196,19 @@ fn a_leftover_staging_file_is_not_read_back() {
         assert_eq!(write(df, &real, dataframe_write_parquet), 0);
     });
     std::fs::copy(&real, data.join(".rkt-polars-1-0.partial")).unwrap();
-    assert_eq!(parquet_height(&data), 3);
     assert_eq!(parquet_height(&data.join("*.parquet")), 3);
-    assert_eq!(parquet_height(&data.join("*")), 3);
+    assert_eq!(parquet_height(&data.join("*")), 6);
+    let p = cstr(data.to_str().unwrap());
+    assert!(dataframe_read_parquet(p.as_ptr()).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(
+        reason.starts_with(
+            "directory contained paths with different file extensions"
+        ),
+        "{}",
+        reason
+    );
+    assert!(reason.contains(".rkt-polars-1-0.partial"), "{}", reason);
 }
 
 #[test]
