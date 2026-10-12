@@ -233,19 +233,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
   a contract error, since `_string/utf-8` would cut it there (#165).
   `write-json` refuses a binary column, where polars hits a `todo!()`.
-- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`),
-  which follows a symlink to the file it names (a dangling link is written
-  through in place, creating that file) and then, for a regular or missing
-  file, writes `.rkt-polars-<pid>-<n>.partial` in its directory
-  (`create_new`, so never through a planted link; a leftover one is
-  skipped by an extension glob such as `dir/*.parquet`, read by a bare
-  `dir/*`, and refused by a directory read with polars' "different file
-  extensions" error) and renames it onto the
-  target once the write succeeds: a failed write leaves an existing file as
-  it was. A replaced file keeps its `mode & 0o777`, copied before any data
-  is written, not its owner, ACLs, extended attributes or hard links, and
-  the directory must be writable. A read-only target is refused before
-  anything is staged; a FIFO or device is written in place.
+- Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`).
+  Its checks on the frame and the path (a JSON writer's binary column, say)
+  run before the target is opened. It follows a symlink to the file it
+  names; a dangling link is written through in place, creating that file.
+  A directory target is refused, and a FIFO or device is written in place.
+  For a regular or missing file it writes `.rkt-polars-<pid>-<n>.partial`
+  in the target's directory (`create_new`, so never through a planted link)
+  and renames it onto the target once the write succeeds, so a failed write
+  leaves an existing file as it was. That directory, for a symlink the
+  pointee's, must be writable. A read-only target is refused before
+  anything is staged. A replaced file keeps `mode & 0o777`, set before any
+  data is written: its set-ID and sticky bits, owner, ACLs, extended
+  attributes and hard links are not kept. A staging file left by a killed
+  process is skipped by an extension glob such as `dir/*.parquet` and read
+  by a bare `dir/*`; a read of the directory itself skips it while it is
+  empty (polars-io drops zero-length files) and otherwise fails with
+  polars' "different file extensions" error.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).

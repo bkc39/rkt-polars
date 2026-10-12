@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use crate::prelude::*;
 use crate::{
     clear_last_error, decode_path, decode_schema, guard_panic, record,
-    write_frame, CompatDType, CompatJsonOptions,
+    write_checked_frame, CompatDType, CompatJsonOptions,
 };
 use polars::prelude::{SerReader, SerWriter};
 
@@ -143,13 +143,17 @@ pub extern "C" fn dataframe_write_json(
     df_ptr: *mut DataFrame,
     path: *const c_char,
 ) -> i32 {
-    write_frame(df_ptr, path, |file, df| {
-        refuse_binary(df)?;
-        let mut buffer = std::io::BufWriter::new(file);
-        JsonWriter::new(&mut buffer)
-            .with_json_format(JsonFormat::Json)
-            .finish(df)?;
-        buffer.flush()?;
-        Ok(())
-    })
+    write_checked_frame(
+        df_ptr,
+        path,
+        |_, df| refuse_binary(df),
+        |(), file, df| {
+            let mut buffer = std::io::BufWriter::new(file);
+            JsonWriter::new(&mut buffer)
+                .with_json_format(JsonFormat::Json)
+                .finish(df)?;
+            buffer.flush()?;
+            Ok(())
+        },
+    )
 }

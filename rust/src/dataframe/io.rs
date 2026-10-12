@@ -48,11 +48,14 @@ fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
 }
 
 /// Where a writer's bytes go: a staging file that `finish` renames onto
-/// `target`, or `target` itself when it is not a regular file.
-struct Staged {
-    file: File,
-    staging: Option<PathBuf>,
-    target: PathBuf,
+/// `target`, or the target itself when it is not a regular file.
+pub(crate) enum Staged {
+    Replace {
+        file: File,
+        staging: PathBuf,
+        target: PathBuf,
+    },
+    InPlace(File),
 }
 
 fn stage(
@@ -75,29 +78,25 @@ fn stage(
             Err(err) => return Err(cannot_create(err)),
         }
     };
-    let staged = Staged {
+    let kept = permissions
+        .map_or(Ok(()), |permissions| file.set_permissions(permissions));
+    let staged = Staged::Replace {
         file,
-        staging: Some(staging),
+        staging,
         target,
     };
-    match permissions
-        .map(|permissions| staged.file.set_permissions(permissions))
-    {
-        Some(Err(err)) => {
+    match kept {
+        Ok(()) => Ok(staged),
+        Err(err) => {
             staged.finish(None);
             Err(cannot_create(err))
         }
-        _ => Ok(staged),
     }
 }
 
 fn in_place(target: PathBuf) -> Result<Staged, String> {
-    File::create(&target)
-        .map(|file| Staged {
-            file,
-            staging: None,
-            target,
-        })
+    File::create(target)
+        .map(Staged::InPlace)
         .map_err(cannot_create)
 }
 
@@ -105,6 +104,9 @@ fn stage_existing(target: PathBuf) -> Result<Staged, String> {
     match std::fs::metadata(&target) {
         Err(err) if err.kind() == ErrorKind::NotFound => stage(target, None),
         Err(err) => Err(cannot_create(err)),
+        Ok(meta) if meta.is_dir() => {
+            Err("cannot create file: it is a directory".to_string())
+        }
         Ok(meta) if meta.is_file() => {
             OpenOptions::new()
                 .write(true)
@@ -116,7 +118,7 @@ fn stage_existing(target: PathBuf) -> Result<Staged, String> {
     }
 }
 
-fn create_staged(path: &str) -> Result<Staged, String> {
+pub(crate) fn create_staged(path: &str) -> Result<Staged, String> {
     let given = PathBuf::from(path);
     match std::fs::symlink_metadata(&given) {
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -128,24 +130,34 @@ fn create_staged(path: &str) -> Result<Staged, String> {
 }
 
 impl Staged {
-    fn finish(self, written: Option<()>) -> i32 {
-        let Staged {
-            file,
-            staging,
-            target,
-        } = self;
-        drop(file);
-        let Some(staging) = staging else {
-            return written.map_or(IO_WRITE_FAILED, |()| IO_OK);
-        };
-        let renamed = written.and_then(|()| {
-            record(std::fs::rename(&staging, &target).map_err(cannot_create))
-        });
-        match renamed {
-            Some(()) => IO_OK,
-            None => {
-                let _ = std::fs::remove_file(&staging);
-                IO_WRITE_FAILED
+    fn file(&mut self) -> &mut File {
+        match self {
+            Staged::Replace { file, .. } | Staged::InPlace(file) => file,
+        }
+    }
+
+    pub(crate) fn finish(self, written: Option<()>) -> i32 {
+        match self {
+            Staged::InPlace(_) => written.map_or(IO_WRITE_FAILED, |()| IO_OK),
+            Staged::Replace {
+                file,
+                staging,
+                target,
+            } => {
+                drop(file);
+                let renamed = written.and_then(|()| {
+                    record(
+                        std::fs::rename(&staging, &target)
+                            .map_err(cannot_create),
+                    )
+                });
+                match renamed {
+                    Some(()) => IO_OK,
+                    None => {
+                        let _ = std::fs::remove_file(&staging);
+                        IO_WRITE_FAILED
+                    }
+                }
             }
         }
     }
@@ -213,6 +225,22 @@ pub(crate) fn write_frame(
     path: *const c_char,
     write: impl FnOnce(&mut File, &mut DataFrame) -> PolarsResult<()>,
 ) -> i32 {
+    write_checked_frame(
+        df_ptr,
+        path,
+        |_, _| Ok(()),
+        |(), file, df| write(file, df),
+    )
+}
+
+/// `check` runs before the target is opened; what it returns is handed to
+/// `write`.
+pub(crate) fn write_checked_frame<T>(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+    check: impl FnOnce(&str, &DataFrame) -> PolarsResult<T>,
+    write: impl FnOnce(T, &mut File, &mut DataFrame) -> PolarsResult<()>,
+) -> i32 {
     clear_last_error();
     if df_ptr.is_null() {
         set_last_error("dataframe is null");
@@ -225,11 +253,14 @@ pub(crate) fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
+    let df = unsafe { &mut *df_ptr };
+    let Some(checked) = guard_panic(|| record(check(path_str, df))) else {
+        return IO_WRITE_FAILED;
+    };
     let Some(mut staged) = record(create_staged(path_str)) else {
         return IO_OPEN_FAILED;
     };
-    let df = unsafe { &mut *df_ptr };
-    let written = guard_panic(|| record(write(&mut staged.file, df)));
+    let written = guard_panic(|| record(write(checked, staged.file(), df)));
     staged.finish(written)
 }
 

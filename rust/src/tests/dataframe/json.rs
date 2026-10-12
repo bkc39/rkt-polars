@@ -101,7 +101,7 @@ fn dtypes(df: &DataFrame) -> Vec<(String, DataType)> {
 
 #[test]
 fn reads_an_array_of_objects() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.json", ROWS);
     let df = Json::default().read(&path);
     assert_eq!(
@@ -117,7 +117,7 @@ fn reads_an_array_of_objects() {
 #[test]
 fn a_schema_sets_the_columns_and_their_order() {
     use CompatDTypeTag as Tag;
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.json", ROWS);
     let df = Json::default()
         .schema(&[
@@ -142,7 +142,7 @@ fn a_schema_sets_the_columns_and_their_order() {
 #[test]
 fn overrides_change_inferred_dtypes() {
     use CompatDTypeTag as Tag;
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.json", ROWS);
     let df = Json::default()
         .overrides(&[("foo", Tag::String)])
@@ -170,7 +170,7 @@ fn overrides_change_inferred_dtypes() {
 #[test]
 fn an_override_for_an_absent_column_is_named() {
     use CompatDTypeTag as Tag;
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.json", ROWS);
     assert_eq!(
         Json::default()
@@ -189,7 +189,7 @@ fn an_override_for_an_absent_column_is_named() {
 
 #[test]
 fn inference_reads_the_rows_it_is_given() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "rows.json", ROWS);
     let one = Json::default().infer_schema_length(Some(1)).read(&path);
     assert_eq!(one.column("bar").unwrap().dtype(), &DataType::Int64);
@@ -199,7 +199,7 @@ fn inference_reads_the_rows_it_is_given() {
     let err = Json::default()
         .infer_schema_length(Some(1))
         .read_err(&ragged);
-    assert!(err.contains("infer_schema_length"), "{}", err);
+    assert!(err.contains("infer_schema_length"), "{err}");
     assert_eq!(
         Json::default().infer_schema_length(Some(0)).read_err(&path),
         "infer schema length must be positive"
@@ -208,9 +208,9 @@ fn inference_reads_the_rows_it_is_given() {
 
 #[test]
 fn failures_record_their_cause() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let missing = Json::default().read_err(&dir.path().join("nope.json"));
-    assert!(missing.starts_with("cannot open file: "), "{}", missing);
+    assert!(missing.starts_with("cannot open file: "), "{missing}");
     assert_eq!(
         Json::default().read_err(dir.path()),
         "cannot open file: it is a directory"
@@ -226,7 +226,7 @@ fn failures_record_their_cause() {
 
 #[test]
 fn an_empty_array_is_an_empty_frame() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "empty.json", "[]");
     assert_eq!(Json::default().read(&path).shape(), (0, 0));
     let typed = Json::default()
@@ -237,7 +237,7 @@ fn an_empty_array_is_an_empty_frame() {
 
 #[test]
 fn write_json_writes_an_array_that_reads_back() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("out.json");
     let xs = make_i64("x", &[1, 2, 3]);
     let gs = make_str("g", &["a", "b", "c"]);
@@ -253,24 +253,15 @@ fn write_json_writes_an_array_that_reads_back() {
     let nowhere = cstr(dir.path().join("no/such/out.json").to_str().unwrap());
     assert_ne!(dataframe_write_json(df, nowhere.as_ptr()), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.starts_with("cannot create file: "), "{}", reason);
+    assert!(reason.starts_with("cannot create file: "), "{reason}");
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
 }
 
-fn leftovers(dir: &Path) -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    names
-}
-
 #[test]
 fn a_failed_write_leaves_the_existing_file() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = write(dir.path(), "keep.json", "PRECIOUS");
     let p = cstr(path.to_str().unwrap());
     let bytes: [&[u8]; 2] = [b"p", b"q"];
@@ -287,26 +278,26 @@ fn a_failed_write_leaves_the_existing_file() {
         Some("cannot write the binary column \"b\" as JSON")
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "PRECIOUS");
-    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    assert_eq!(entries(dir.path()), vec!["keep.json"]);
     let xs = make_i64("x", &[1]);
     let ok = make_df(&[xs]);
     assert_eq!(dataframe_write_json(ok, p.as_ptr()), 0);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"[{"x":1}]"#);
-    assert_eq!(leftovers(dir.path()), vec!["keep.json"]);
+    assert_eq!(entries(dir.path()), vec!["keep.json"]);
     let sub = dir.path().join("sub");
     std::fs::create_dir(&sub).unwrap();
     let into_dir = cstr(sub.to_str().unwrap());
     assert_ne!(dataframe_write_json(ok, into_dir.as_ptr()), 0);
     let reason = recorded_error().expect("a reason");
-    assert!(reason.starts_with("cannot create file: "), "{}", reason);
-    assert_eq!(leftovers(dir.path()), vec!["keep.json", "sub"]);
+    assert!(reason.starts_with("cannot create file: "), "{reason}");
+    assert_eq!(entries(dir.path()), vec!["keep.json", "sub"]);
     dataframe_drop(ok);
     series_drop(xs);
     dataframe_drop(df);
 }
 
 fn refused(column: Column) -> Option<String> {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = scratch_dir();
     let path = dir.path().join("nested.json");
     let p = cstr(path.to_str().unwrap());
     let df = Box::into_raw(Box::new(
@@ -314,7 +305,7 @@ fn refused(column: Column) -> Option<String> {
     ));
     assert_ne!(dataframe_write_json(df, p.as_ptr()), 0);
     dataframe_drop(df);
-    assert!(leftovers(dir.path()).is_empty());
+    assert!(entries(dir.path()).is_empty());
     recorded_error()
 }
 
