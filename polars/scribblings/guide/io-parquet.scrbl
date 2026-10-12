@@ -116,7 +116,7 @@ pages; each keyword here keeps Python's name. @racket[#:columns],
 (shape (read-parquet (build-path dir "flights.parquet")))
 ]
 
-API gaps: no @tt{schema}, @tt{extra_columns} or @tt{metadata} (#197).
+API gaps: no @tt{schema}, @tt{extra_columns} or @tt{metadata}.
 
 @examples[#:eval ev #:hidden
 (delete-directory/files dir)

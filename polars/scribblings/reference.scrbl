@@ -2,35 +2,108 @@
 @(require "utils.rkt"
           racket/runtime-path
           syntax/parse/define
-          (for-syntax racket/base syntax/strip-context))
+          (for-syntax racket/base
+                      (only-in racket/syntax syntax-local-eval)
+                      syntax/strip-context))
 
 @(define-runtime-path data-dir "data")
 @(define ev (make-polars-eval #:directory data-dir))
 
 @(begin-for-syntax
-   (define csv-arguments
+   (define csv-columns-argument
+     (quote-syntax
+      [#:columns columns
+                 (or/c (and/c (listof string?) distinct?)
+                       (and/c (listof size/c) distinct?))
+                 '()]))
+   (define csv-shared-arguments
+     (syntax->list
+      (quote-syntax
+       ([#:new-columns new-columns (and/c (listof string?) distinct?) '()]
+        [#:separator separator (or/c csv-char/c #f) #f]
+        [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
+        [#:quote-char quote-char (or/c csv-char/c #f) #\"]
+        [#:skip-rows skip-rows size/c 0]
+        [#:skip-lines skip-lines size/c 0]
+        [#:schema-overrides schema-overrides
+                            (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
+                            '()]
+        [#:null-values null-values
+                       (or/c string? (listof string?)
+                             (and/c (listof (cons/c string? string?)) distinct-names?)
+                             #f)
+                       #f]
+        [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
+        [#:ignore-errors ignore-errors boolean? #f]
+        [#:try-parse-dates try-parse-dates boolean? #f]
+        [#:infer-schema infer-schema boolean? #t]
+        [#:infer-schema-length infer-schema-length (or/c size/c #f) 100]
+        [#:n-rows n-rows (or/c size/c #f) #f]
+        [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
+        [#:skip-rows-after-header skip-rows-after-header size/c 0]
+        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+        [#:row-index-offset row-index-offset row-index/c 0]
+        [#:eol-char eol-char eol-char/c #\newline]
+        [#:raise-if-empty raise-if-empty boolean? #t]
+        [#:truncate-ragged-lines truncate-ragged-lines boolean? #f]
+        [#:decimal-comma decimal-comma boolean? #f]
+        [#:glob glob boolean? #t]))))
+   (define (csv-arguments read?)
+     (datum->syntax
+      #f
+      (append (list (quote-syntax [path path-string?])
+                    (quote-syntax [#:has-header has-header boolean? #t]))
+              (if read? (list csv-columns-argument) '())
+              csv-shared-arguments)))
+   (define csv-read-arguments (csv-arguments #t))
+   (define csv-scan-arguments (csv-arguments #f))
+   (define csv-write-arguments
      (quote-syntax
       ([path path-string?]
-       [#:has-header has-header boolean? #t]
-       [#:separator separator (or/c csv-char/c #f) #f]
-       [#:quote-char quote-char (or/c csv-char/c #f) #\"]
-       [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
-       [#:skip-rows skip-rows exact-nonnegative-integer? 0]
-       [#:n-rows n-rows (or/c exact-nonnegative-integer? #f) #f]
-       [#:null-values null-values (or/c string? (listof string?) #f) #f]
-       [#:infer-schema-length infer-schema-length (or/c exact-nonnegative-integer? #f) 100]
-       [#:schema-overrides schema-overrides
-                           (and/c (listof (cons/c string? csv-dtype/c)) distinct-names?)
-                           '()]
-       [#:ignore-errors ignore-errors boolean? #f]
-       [#:try-parse-dates try-parse-dates boolean? #f]
-       [#:encoding encoding (or/c 'utf8 'utf8-lossy) 'utf8]
-       [#:glob glob boolean? #t]))))
+       [#:include-bom include-bom boolean? #f]
+       [#:include-header include-header boolean? #t]
+       [#:separator separator csv-char/c #\,]
+       [#:line-terminator line-terminator string? "\n"]
+       [#:quote-char quote-char csv-char/c #\"]
+       [#:batch-size batch-size positive-size/c 1024]
+       [#:datetime-format datetime-format (or/c string? #f) #f]
+       [#:date-format date-format (or/c string? #f) #f]
+       [#:time-format time-format (or/c string? #f) #f]
+       [#:float-scientific float-scientific (or/c 'auto boolean?) 'auto]
+       [#:float-precision float-precision (or/c (integer-in 0 65535) #f) #f]
+       [#:decimal-comma decimal-comma boolean? #f]
+       [#:null-value null-value string? ""]
+       [#:quote-style quote-style (or/c 'necessary 'always 'non-numeric 'never)
+                      'necessary]))))
 
-@(define-syntax-parser defcsvproc
-   [(_ (name result) body ...)
-    #:with (argument ...) (replace-context #'name csv-arguments)
-    #'(defproc (name argument ...) result body ...)])
+@(begin-for-syntax
+   (define (json-like-arguments schema/c)
+     #`([path path-string?]
+        [#:schema schema (or/c #,schema/c #f) #f]
+        [#:schema-overrides schema-overrides #,schema/c '()]
+        [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]))
+   (define json-arguments (json-like-arguments #'json-schema/c))
+   (define ndjson-arguments
+     #`(#,@(json-like-arguments #'ndjson-schema/c)
+        [#:batch-size batch-size (or/c positive-size/c #f) 1024]
+        [#:n-rows n-rows (or/c size/c #f) #f]
+        [#:low-memory low-memory boolean? #f]
+        [#:rechunk rechunk boolean? #f]
+        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+        [#:row-index-offset row-index-offset row-index/c 0]
+        [#:ignore-errors ignore-errors boolean? #f]
+        [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]))
+   (define ndjson-writer-arguments
+     (quote-syntax
+      ([path path-string?]
+       [#:compression compression (or/c 'uncompressed 'gzip 'zstd) 'uncompressed]
+       [#:compression-level compression-level (or/c exact-nonnegative-integer? #f) #f]
+       [#:check-extension check-extension boolean? #t]))))
+
+@(define-syntax-parser defproc/arguments
+   [(_ arguments:id (name leading ... result) body ...)
+    #:with (argument ...) (replace-context #'name (syntax-local-eval #'arguments))
+    #'(defproc (name leading ... argument ...) result body ...)])
 
 @title[#:tag "reference"]{Reference}
 
@@ -436,7 +509,7 @@ total
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)]}
 
-@defcsvproc[(read-csv dataframe?)]{
+@defproc/arguments[csv-read-arguments (read-csv dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
   a glob pattern (@litchar{*}, @litchar{?}, @litchar{[...]}): every matching
   file is read, in sorted filename order, and the files must share a header;
@@ -445,14 +518,32 @@ total
   against @racket[current-directory], whose own name is never read as a
   pattern. A directory is an error: name its files with a pattern.
 
-  A @racket[csv-char/c] is one ASCII character other than newline or return.
+  A @racket[csv-char/c] is one ASCII character other than newline or
+  return. A @racket[size/c] is a count or position Polars takes as a native
+  size, from @racket[0] to @racket[(sub1 (expt 2 64))], a
+  @racket[positive-size/c] one from @racket[1], a @racket[row-index/c] one
+  from @racket[0] to @racket[(sub1 (expt 2 32))], and a
+  @racket[column-name/c] a string without a NUL.
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
-  differ from it, and @racket[#:quote-char #f] turns quoting off.
-  Lines that start with @racket[comment-prefix] are skipped, as are the first
-  @racket[skip-rows] lines of each file; @racket[n-rows] caps the rows read.
-  A field equal to one of @racket[null-values] reads as null. Column types
+  differ from it, and @racket[#:quote-char #f] turns quoting off. An
+  @racket[eol-char/c] is any ASCII character; @racket[eol-char] ends a line
+  and must differ from both (a return before a newline is dropped, so
+  @litchar{\r\n} files need no option).
+  Lines that start with @racket[comment-prefix] are skipped. The first
+  @racket[skip-rows] rows of each file are skipped, quoting respected;
+  @racket[skip-lines] skips lines instead, ignoring quotes, and only one of
+  the two may be set. @racket[skip-rows-after-header] skips rows after the
+  header, and @racket[n-rows] caps the rows read.
+  A field equal to one of @racket[null-values] reads as null; given as an
+  association list of column names and markers (Python's @tt{dict}), each
+  marker applies to its column only, and naming a column the file lacks is
+  an error. A missing field reads as null, or as @racket[""] in a string
+  column with @racket[#:missing-utf8-is-empty-string #t]. Column types
   are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
-  reads every row, and @racket[0] makes every column a string.
+  reads every row, and @racket[0], or @racket[#:infer-schema #f], makes every
+  column a string. Polars reserves room for that many rows first, so an
+  enormous count can exhaust memory and abort the process, as in Python;
+  use @racket[#f] to read every row.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
   accepts except a duration, which Polars cannot parse from CSV, and an
@@ -462,14 +553,43 @@ total
   file lacks is an error, where Python ignores the override. With
   @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
-  @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
-  U+FFFD.
+  @racket['datetime] columns, and @racket[#:decimal-comma #t] reads
+  @litchar{1,5} as @racket[1.5]. @racket['utf8-lossy] replaces invalid UTF-8 with
+  U+FFFD. A line with more fields than the header is an error, unless
+  @racket[#:truncate-ragged-lines #t] drops the extra fields; an empty file is
+  an error, unless @racket[#:raise-if-empty #f] reads it as an empty frame.
+
+  @racket[new-columns] renames the file's first columns, header or
+  @racket["column_1"]-style names alike; more names than the file has
+  columns, or a name that ends up twice, is an error. @racket[columns] reads
+  only the named columns, or those at the given zero-based positions, in the
+  file's order; the empty list reads them all. @racket[row-index-name] adds
+  a first column, @racket['uint32], numbering the rows from
+  @racket[row-index-offset]; a name the file already uses is an error, and so
+  is a row number past @racket[#xFFFFFFFF]. Every keyword that names a
+  column --- @racket[columns], @racket[schema-overrides], a per-column
+  @racket[null-values] --- names it as @racket[new-columns] leaves it, as
+  Python's @tt{scan_csv} does; unlike there, a marker so named also counts
+  when the column's type is inferred. Python's @tt{read_csv} instead selects
+  @tt{columns} and applies a @tt{null_values} mapping by the file's names,
+  then renames the first columns of its result, the row index among them.
+
+  A gzip, zlib or zstd file is decompressed as it is read. API gaps: no
+  @tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
+  @tt{missing_columns}. Polars decides from a file's first four bytes whether it is
+  compressed, as in Python, with no switch to say it is not, so a plain
+  file that starts like a zlib stream (a header beginning @litchar{x^}) is
+  taken for compressed data and fails to read or reads as garbage; a UTF-8
+  byte order mark at the start of the file avoids it.
 
   The result is @racket[(collect (scan-csv path ....))] with the same
-  keywords; as in Python, a single file is read eagerly rather than through
-  a plan, which is faster. There is one extra check, stricter than Python's
-  @tt{read_csv}, which returns the one column. When @racket[separator] is @racket[#f] and the
-  file reads as one column whose header splits on a tab, @litchar{;} or
+  keywords but @racket[#:columns], which @racket[scan-csv] lacks, as Python's
+  does: @racket[select] from the plan instead. As in Python, a single file is
+  read eagerly rather than through a plan, which is faster. There is one
+  extra check, stricter than Python's
+  @tt{read_csv}, which returns the one column. When @racket[separator] is
+  @racket[#f], @racket[new-columns] and @racket[columns] are empty and the
+  file reads as one column, a row index aside, whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to
   pass --- unless the first row is not a string, or splits into a different
   number of fields. Passing a @racket[separator], even @racket[#\,], turns
@@ -559,16 +679,75 @@ total
 (read-csv "parts/*.csv")
 (eval:error (read-csv "parts/*.tsv"))
 (eval:error (read-csv "parts/part-?.csv" #:glob #f))
-(eval:error (read-csv "parts"))]}
+(eval:error (read-csv "parts"))]
 
-@defcsvproc[(scan-csv lazyframe?)]{
+  Columns. @racket[#:columns] picks columns by name or position, in the
+  file's order; @racket[#:new-columns] renames the first ones, and
+  @racket[#:row-index-name] numbers the rows:
+
+  @examples[#:eval ev #:label #f
+(read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
+          #:columns '("carrier" "flight" "dep_delay")
+          #:row-index-name "row" #:row-index-offset 1 #:n-rows 3)
+(read-csv "flights.tsv" #:separator #\tab #:columns '(9 10) #:n-rows 2)
+(eval:error (read-csv "flights.tsv" #:separator #\tab #:columns '(42)))
+(read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1
+          #:new-columns '("from" "to" "delay"))
+(eval:error (read-csv "parts/part-1.csv" #:new-columns '("a" "b" "c" "d")))
+(eval:error (read-csv "parts/part-1.csv" #:row-index-name "origin"))]
+
+  Messy files. @filepath{stations.csv} opens with a line that is not data
+  and holds a quote, separates fields with @litchar{;}, writes decimals
+  with a comma, marks a missing temperature @litchar{-} and missing rain
+  @litchar{n/a}, and has a line with a field too many. The note
+  @litchar{-} is text, so the markers are per column:
+
+  @examples[#:eval ev #:label #f
+(eval:error (read-csv "stations.csv" #:skip-lines 1 #:separator #\;))
+(define stations
+  (read-csv "stations.csv" #:skip-lines 1 #:separator #\; #:decimal-comma #t
+            #:null-values '(("temp" . "-") ("rain" . "n/a"))
+            #:truncate-ragged-lines #t #:try-parse-dates #t))
+stations
+(~> (read-csv "stations.csv" #:skip-lines 1 #:separator #\; #:decimal-comma #t
+              #:null-values '(("temp" . "-") ("rain" . "n/a"))
+              #:truncate-ragged-lines #t #:missing-utf8-is-empty-string #t)
+    (select "station" "note"))
+(eval:error (read-csv "stations.csv" #:skip-lines 1 #:separator #\;
+                      #:null-values '(("temperature" . "-"))))
+(read-csv "parts/part-1.csv" #:skip-rows-after-header 1)
+(~> (read-csv "flights.tsv" #:separator #\tab #:infer-schema #f)
+    (ref #:columns "year")
+    dtype)]
+
+  Line ends and empty files. @filepath{eol.csv} ends each line with
+  @litchar{;}, and @racket[nothing] is an empty file in the temporary
+  directory:
+
+  @examples[#:eval ev #:hidden
+(define nothing (build-path (find-system-path 'temp-dir) "polars-doc-nothing.csv"))
+(call-with-output-file nothing #:exists 'replace void)]
+
+  @examples[#:eval ev #:label #f
+(read-csv "eol.csv" #:eol-char #\;)
+(collect (scan-csv "eol.csv" #:eol-char #\; #:row-index-name "row" #:row-index-offset 1))
+(eval:error (read-csv nothing))
+(read-csv nothing #:raise-if-empty #f)]
+
+  @examples[#:eval ev #:hidden
+(delete-file nothing)]}
+
+@defproc/arguments[csv-scan-arguments (scan-csv lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
-  (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s. @racket[collect]
+  (@tt{pl.scan_csv}); the keywords are @racket[read-csv]'s but
+  @racket[#:columns], which @racket[select] replaces. @racket[collect]
   runs the plan, and that is where a file that cannot be read, or a glob
-  pattern that matches no file, is reported. One thing is reported here
-  instead: when @racket[schema-overrides] is given, a column it names that
-  the header lacks, which reads the header. The separator check does not
-  apply, and a directory reads every file in it.
+  pattern that matches no file, is reported. Two keywords read the header
+  here instead, and so report a file that cannot be read at once:
+  @racket[schema-overrides], to report a column it names that the header
+  lacks, and @racket[new-columns], to rename the header, which also reports
+  a @racket[row-index-name] that one of the new names takes. The separator
+  check does not apply, and a directory reads every file in it.
 
   @examples[#:eval ev
 (~> (scan-csv "flights.tsv" #:separator #\tab #:null-values "NA")
@@ -582,21 +761,98 @@ total
 (define no-match (scan-csv "parts/*.tsv"))
 (eval:error (collect no-match))
 (eval:error (scan-csv "flights.tsv" #:separator #\tab
-                      #:schema-overrides '(("dep_dealy" . f64))))]}
+                      #:schema-overrides '(("dep_dealy" . f64))))
+(~> (scan-csv "parts/part-1.csv" #:new-columns '("from" "to") #:row-index-name "row")
+    (filter (> (col "dep_delay") 3))
+    collect)
+(eval:error (scan-csv "/no/such/file.csv" #:new-columns '("from" "to")))]}
+
+@defproc/arguments[csv-write-arguments (write-csv [d dataframe?] void?)]{
+  Writes @racket[d] to @racket[path] as CSV (@tt{df.write_csv}), replacing
+  the file. The header row comes first unless @racket[#:include-header #f],
+  after a UTF-8 byte order mark with @racket[#:include-bom #t].
+  @racket[separator] and @racket[quote-char] are @racket[csv-char/c]s that
+  must differ; @racket[line-terminator] ends every row; a null is written as
+  @racket[null-value]. @racket[quote-style] quotes a field only when it
+  holds the separator, the quote or a line end (@racket['necessary]),
+  always, when it is not a number (@racket['non-numeric]), or never, which
+  can write a file that does not read back. @racket[batch-size] is the rows
+  each thread formats at a time, as in Python; a batch larger than
+  @racket[d] writes it in one.
+
+  @racket[datetime-format], @racket[date-format] and @racket[time-format]
+  are @hyperlink["https://docs.rs/chrono/latest/chrono/format/strftime/index.html"]{chrono}
+  format strings, by default ISO 8601 at the column's precision.
+  @racket[float-precision] fixes the digits after the decimal point, at
+  most 65535, the most Rust formats;
+  @racket[float-scientific] writes every float in scientific notation
+  (@racket[#t]), none (@racket[#f]), or as Polars does by default
+  (@racket['auto], Python's @tt{None}): the shortest digits that read back
+  exactly, in scientific notation for very small or large magnitudes.
+  @racket[#:decimal-comma #t] writes @litchar{1,5}, quoting it when the
+  separator is a comma.
+
+  An existing file is replaced atomically, keeping its permission bits but
+  not its owner, ACLs, extended attributes or hard links; the directory
+  must be writable. A failure names the path and the cause, the operating
+  system's for a path that cannot be created and Polars' for a value it
+  cannot format, and leaves an existing file as it was. API gap: no
+  compressed output (Python's @tt{compression}), which Python writes
+  through @tt{sink_csv}.
+
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define out (build-path (find-system-path 'temp-dir) "polars-doc-out.csv"))]
+  Here @racket[out] is a path in the temporary directory, and
+  @racket[stations] the frame read above:
+
+  @examples[#:eval ev #:label #f
+(write-csv stations out #:separator #\; #:decimal-comma #t #:null-value "-"
+           #:date-format "%d.%m.%Y" #:time-format "%H:%M")
+(display (file->string out))
+(write-csv (select stations "station" "note") out #:include-header #f
+           #:quote-style 'always #:line-terminator "\r\n")
+(file->string out)
+(write-csv (select stations "station" "temp") out #:float-precision 2)
+(display (file->string out))
+(write-csv (select stations "station" "temp") out #:float-scientific #t)
+(display (file->string out))
+(write-csv (~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
+                         #:try-parse-dates #t #:n-rows 2)
+               (select "carrier" "flight" "time_hour"))
+           out #:datetime-format "%Y-%m-%dT%H:%M" #:quote-style 'non-numeric
+           #:include-bom #t #:batch-size 1)
+(file->string out)
+(eval:error (write-csv stations out #:date-format "%H"))
+(eval:error (write-csv stations "/no/such/dir/out.csv"))]
+
+  @examples[#:eval ev #:hidden
+(delete-file out)]}
 
 @(begin-for-syntax
+   (define parquet-shared-arguments
+     (syntax->list
+      (quote-syntax
+       ([#:n-rows n-rows (or/c size/c #f) #f]
+        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+        [#:row-index-offset row-index-offset row-index/c 0]
+        [#:parallel parallel (or/c 'auto 'columns 'row-groups 'prefiltered 'none) 'auto]
+        [#:use-statistics use-statistics boolean? #t]
+        [#:glob glob boolean? #t]
+        [#:rechunk rechunk boolean? #f]
+        [#:low-memory low-memory boolean? #f]
+        [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]
+        [#:missing-columns missing-columns (or/c 'raise 'insert) 'raise]))))
+   (define parquet-read-arguments
+     #`([path path-string?]
+        [#:columns columns
+                   (or/c (listof column-name/c)
+                         (listof (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
+                         #f)
+                   #f]
+        #,@parquet-shared-arguments))
    (define parquet-scan-arguments
-     (quote-syntax
-      ([#:n-rows n-rows (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
-       [#:row-index-name row-index-name (or/c string? #f) #f]
-       [#:row-index-offset row-index-offset (integer-in 0 4294967295) 0]
-       [#:parallel parallel (or/c 'auto 'columns 'row-groups 'prefiltered 'none) 'auto]
-       [#:use-statistics use-statistics boolean? #t]
-       [#:glob glob boolean? #t]
-       [#:rechunk rechunk boolean? #f]
-       [#:low-memory low-memory boolean? #f]
-       [#:include-file-paths include-file-paths (or/c string? #f) #f]
-       [#:missing-columns missing-columns (or/c 'raise 'insert) 'raise])))
+     #`([path path-string?] #,@parquet-shared-arguments [#:cache cache boolean? #t]))
    (define parquet-write-arguments
      (quote-syntax
       ([path path-string?]
@@ -607,29 +863,10 @@ total
                            (and/c (listof (or/c 'min 'max 'distinct-count 'null-count))
                                   complete-statistics?))
                      #t]
-       [#:row-group-size row-group-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f]
-       [#:data-page-size data-page-size (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])))
-   (define (parquet-arguments kind)
-     (syntax-case parquet-scan-arguments ()
-       [(scan ...)
-        (case kind
-          [(read) #'([path path-string?]
-                     [#:columns columns
-                                (or/c (listof string?)
-                                      (listof (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
-                                      #f)
-                                #f]
-                     scan ...)]
-          [(scan) #'([path path-string?] scan ... [#:cache cache boolean? #t])]
-          [(write) #`([d dataframe?] #,@(syntax->list parquet-write-arguments))]
-          [(raw-write) #`([d DataFrame-ptr?] #,@(syntax->list parquet-write-arguments))])])))
+       [#:row-group-size row-group-size (or/c size/c #f) #f]
+       [#:data-page-size data-page-size (or/c size/c #f) #f]))))
 
-@(define-syntax-parser defparquetproc
-   [(_ (name:id kind:id result:expr) body ...)
-    #:with (argument ...) (replace-context #'name (parquet-arguments (syntax-e #'kind)))
-    #'(defproc (name argument ...) result body ...)])
-
-@defparquetproc[(read-parquet read dataframe?)]{
+@defproc/arguments[parquet-read-arguments (read-parquet dataframe?)]{
   Reads Parquet into a @tech{dataframe} (@tt{pl.read_parquet}): it is
   @racket[(collect (scan-parquet path ....))] with the same keywords, then
   @racket[columns]. @racket[path] is a glob pattern: the matching files stack
@@ -661,8 +898,8 @@ total
   Categorical, Enum and Decimal columns keep their dtypes
   (@secref["ref-categorical"]). A file Polars cannot read raises
   @racket[exn:fail] with Polars' reason, even where Polars itself panics.
-  API gaps: no @tt{schema} or @tt{extra_columns} (#197), no
-  @tt{use_pyarrow}; hive options are #185.
+  API gaps: no @tt{schema}, @tt{extra_columns}, @tt{use_pyarrow} or hive
+  options.
 
   @examples[#:eval ev #:hidden
 (require racket/file)
@@ -692,7 +929,7 @@ total
 (parameterize ([current-directory parquet-dir])
   (read-parquet "mixed/*.parquet" #:missing-columns 'insert))]}
 
-@defparquetproc[(scan-parquet scan lazyframe?)]{
+@defproc/arguments[parquet-scan-arguments (scan-parquet lazyframe?)]{
   Starts a @tech{lazyframe} plan from Parquet without reading it
   (@tt{pl.scan_parquet}); the keywords are @racket[read-parquet]'s, without
   @racket[#:columns] (@racket[select] instead) and with @racket[cache],
@@ -711,7 +948,7 @@ total
 (collect (scan-parquet "produce.parquet" #:cache #f #:row-index-name "row"))
 (eval:error (scan-parquet "flights.parquet" #:parallel 'row_groups))]}
 
-@defparquetproc[(write-parquet write void?)]{
+@defproc/arguments[parquet-write-arguments (write-parquet [d dataframe?] void?)]{
   Writes @racket[d] to Parquet (@tt{df.write_parquet}). @racket[compression]
   picks the codec; @racket[compression-level] sets its level, within 0 to 9
   for @racket['gzip] (default 6), 0 to 11 for @racket['brotli] (default 1)
@@ -723,7 +960,7 @@ total
   must name @racket['min], @racket['max] and @racket['null-count], where
   Python takes any set: without the minimum and maximum, Polars writes a
   page index that marks pages holding values as null pages, so a reader that
-  prunes pages by it can skip rows a filter keeps (#203); without the
+  prunes pages by it can skip rows a filter keeps; without the
   null count, it fails on a column it does not dictionary-encode.
   @racket[row-group-size] puts that many rows in each row group, the last
   taking the rest. By default, or with @racket[0] (which Python also takes
@@ -731,7 +968,7 @@ total
   Python's streaming writer makes about 122,880. @racket[data-page-size]
   sets the bytes a data page aims for (default 1 MiB). It replaces a file
   as @racket[write-csv] does. API gaps: no
-  @tt{partition_by} (#185), @tt{metadata} or @tt{mkdir} (#197).
+  @tt{partition_by}, @tt{metadata} or @tt{mkdir}.
 
   @examples[#:eval ev
 (define out (build-path parquet-dir "produce.parquet"))
@@ -744,26 +981,142 @@ total
 (eval:error (write-parquet produce out #:statistics '(null-count)))
 (eval:error (write-parquet produce "/no/such/dir/out.parquet"))]}
 
-@deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
-              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
-  Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
-  CSV or newline-delimited JSON (@tt{df.write_csv} and friends).
-  API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
-  file and takes no glob pattern (#44).
+@deftogether[(@defproc/arguments[json-arguments (read-json dataframe?)]
+              @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{
+  Read a file holding one JSON array of objects into a @tech{dataframe}
+  (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}).
+  A lone object reads as one row. @racket[path] is literal; a directory is
+  an error. A gzip, zlib or zstd file is decompressed first, recognised by
+  its first bytes.
 
-  Every writer, @racket[write-parquet] and @racket[dataframe-write-csv] and
-  its kin included, replaces a file through a temporary file beside it,
-  renamed over @racket[path] only when the write succeeds, so a failed write
-  leaves the file as it was; the replaced file keeps its permission bits,
-  and a symbolic link at @racket[path] stays while the file it names is
-  replaced. Ownership, access control lists, extended attributes and hard
-  links are not kept, and the directory must be writable. A file the caller
-  cannot write is refused. A FIFO or device, such as @tt{/dev/null}, is
-  written in place.
-  A temporary file left by a killed process, @tt{.rkt-polars-}@italic{pid}@tt{-}@italic{n}@tt{.partial},
-  is skipped by a glob such as @tt{dir/*.parquet} and read by @tt{dir/*},
-  and a read of the directory itself fails with an error naming it.}
+  Column types are inferred from the first @racket[infer-schema-length]
+  objects, or from all of them for @racket[#f]; a key first seen later is an
+  error. A later value of another JSON type converts where Polars can (a
+  float truncates to an integer, a boolean reads as 0 or 1, a number out of
+  the type's range reads as null) and is an error otherwise.
+  @racket[schema] gives the columns in order: other keys are skipped and a
+  column the file lacks reads as nulls. @racket[schema-overrides] retypes
+  columns of the file or of @racket[schema]; naming any other column is an
+  error. A @racket[json-schema/c] is a list of @racket[(cons name dtype)]
+  pairs with distinct names, a name a string without a NUL
+  (@racket[column-name/c]) and a dtype any @racket[series]
+  @racket[#:dtype] spelling but an Enum. A string reads as the date,
+  datetime or time the schema asks for, and as null where it does not
+  parse.
+
+  @racket[write-json] writes temporal values as strings, Categorical and
+  Enum values as their names, and NaN and the infinities as @tt{null}, so
+  reading them back needs a schema; a binary column is an error. It
+  replaces a file as @racket[write-csv] does.
+
+  @racketmodname[json] provides a @racket[read-json] and @racket[write-json]
+  too, so @racket[(require polars json)] fails with ``identifier already
+  required''. Rename or leave out @racketmodname[json]'s pair:
+
+  @racketblock[
+  (require polars (prefix-in js: json))
+  (require polars (except-in json read-json write-json))
+  ]
+
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define json-dir (make-temporary-directory "polars-doc-~a"))
+(define path (build-path json-dir "frame.json"))]
+  @examples[#:eval ev
+(define df (dataframe (list (series '(1 2 3) #:name "foo")
+                            (series (list polars-null "bak" "baz") #:name "bar"))))
+(write-json df path)
+(file->string path)
+(read-json path)
+(read-json "stations.json")
+(read-json "stations.json"
+           #:schema '(("day" . date) ("station" . categorical) ("reading" . f32)))
+(~> (read-json "stations.json" #:schema-overrides '(("day" . date)))
+    (select "day" "reading"))
+(~> (read-json "stations.json" #:schema '(("day" . datetime))) (head 1))
+(~> (read-json "stations.json" #:schema-overrides '(("reading" . i64)))
+    (select "station" "reading"))
+(eval:error (read-json "stations.json" #:infer-schema-length 1))
+(eval:error (read-json "stations.json" #:schema-overrides '(("dya" . date))))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files json-dir)]}
+
+@deftogether[(@defproc/arguments[ndjson-arguments (read-ndjson dataframe?)]
+              @defproc/arguments[ndjson-arguments (scan-ndjson lazyframe?)])]{
+  Read newline-delimited JSON, one object a line, into a @tech{dataframe}
+  (@tt{pl.read_ndjson}), or start a @tech{lazyframe} plan from it
+  (@tt{pl.scan_ndjson}); @racket[read-ndjson] is
+  @racket[(collect (scan-ndjson path ....))]. @racket[path] is a glob
+  pattern: the matching files stack in sorted filename order, and a pattern
+  matching nothing is an error, which @racket[scan-ndjson] leaves to
+  @racket[collect]. A directory reads every file in it, and they must share
+  one extension. A literal @litchar{[}, @litchar{*} or @litchar{?} in a
+  file name is spelled @litchar{[[]}, @litchar{[*]} or @litchar{[?]}.
+
+  Column types are inferred from the first @racket[infer-schema-length]
+  lines, or from all of them for @racket[#f]. A key first seen later is
+  left out, and a value that does not parse as its column's type is an
+  error, or null with @racket[#:ignore-errors #t]. @racket[schema] and
+  @racket[schema-overrides] work as for @racket[read-json], an override
+  applying even with a schema; @racket[scan-ndjson] reports a bad override
+  at once. An @racket[ndjson-schema/c] is a @racket[json-schema/c] whose
+  dtypes are a boolean, a 32- or 64-bit integer, a float, a string, a date,
+  a datetime or a categorical.
+
+  @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
+  @racket['uint32] column of row numbers from @racket[row-index-offset];
+  @racket[include-file-paths] adds a last column holding each row's file;
+  the two name different columns. @racket[rechunk] gathers the result into
+  one chunk. Polars ignores @racket[batch-size] and @racket[low-memory].
+  A gzip, zlib or zstd file is decompressed as it is read, recognised by
+  its first bytes rather than its name.
+
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define nd-dir (make-temporary-directory "polars-doc-~a"))
+(for ([i '(1 2 3)])
+  (write-ndjson (read-csv (format "parts/part-~a.csv" i))
+                (build-path nd-dir (format "part-~a.ndjson" i))))]
+  @examples[#:eval ev
+(read-ndjson "stations.ndjson")
+(~> (scan-ndjson "stations.ndjson")
+    (filter (> (col "reading") 3))
+    (select "station" "reading")
+    collect)
+(read-ndjson (build-path nd-dir "part-*.ndjson") #:n-rows 4 #:row-index-name "row")
+(column-names (read-ndjson "stations.ndjson" #:include-file-paths "file"))
+(eval:error (read-ndjson "stations.ndjson" #:infer-schema-length 1))
+(~> (read-ndjson "stations.ndjson" #:infer-schema-length 1 #:ignore-errors #t)
+    (select "station" "reading"))
+(eval:error (scan-ndjson "stations.ndjson" #:schema-overrides '(("dya" . date))))
+(eval:error (read-ndjson (build-path nd-dir "*.json")))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files nd-dir)]}
+
+@defproc/arguments[ndjson-writer-arguments (write-ndjson [d dataframe?] void?)]{
+  Write @racket[d] as newline-delimited JSON, one object a line
+  (@tt{df.write_ndjson}), with values written as @racket[write-json] writes
+  them; a binary column is an error. @racket[compression] gzips or
+  zstd-compresses the whole file at @racket[compression-level], 0 to 9 for
+  gzip and 1 to 22 for zstd, or the codec's default for @racket[#f]; a
+  level without a codec is a contract error. Unless
+  @racket[check-extension] is @racket[#f], the path must end in
+  @filepath{.gz} for gzip and @filepath{.zst} for zstd, and in neither for
+  an uncompressed file. It replaces a file as @racket[write-csv] does.
+
+  @examples[#:eval ev #:hidden
+(define nd-dir (make-temporary-directory "polars-doc-~a"))]
+  @examples[#:eval ev
+(define small (dataframe (list (series '(1 2) #:name "a"))))
+(write-ndjson small (build-path nd-dir "small.ndjson"))
+(file->string (build-path nd-dir "small.ndjson"))
+(write-ndjson small (build-path nd-dir "small.ndjson.gz") #:compression 'gzip)
+(read-ndjson (build-path nd-dir "small.ndjson.gz"))
+(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")))
+(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")
+                          #:compression 'zstd #:compression-level 30))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files nd-dir)]}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
@@ -1662,15 +2015,10 @@ generic operations are simply the preferred surface.
 
 @subsection[#:tag "ref-reading-writing"]{Reading & writing}
 
-@deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
-  Round-trip a dataframe through CSV or newline-delimited JSON; the
-  fluent @racket[read-csv] and friends are the surface.}
-
-@deftogether[(@defparquetproc[(dataframe-read-parquet read DataFrame-ptr?)]
-              @defparquetproc[(lazyframe-scan-parquet scan LazyFrame-ptr?)]
-              @defparquetproc[(dataframe-write-parquet raw-write void?)])]{
+@deftogether[(@defproc/arguments[parquet-read-arguments (dataframe-read-parquet DataFrame-ptr?)]
+              @defproc/arguments[parquet-scan-arguments (lazyframe-scan-parquet LazyFrame-ptr?)]
+              @defproc/arguments[parquet-write-arguments
+                                 (dataframe-write-parquet [d DataFrame-ptr?] void?)])]{
   The raw-pointer reader, scan and writer under @racket[read-parquet],
   @racket[scan-parquet] and @racket[write-parquet], with the same keywords
   and checks.
@@ -1691,14 +2039,42 @@ generic operations are simply the preferred surface.
   @examples[#:eval ev #:hidden
 (delete-directory/files parquet-dir)]}
 
-@deftogether[(@defcsvproc[(dataframe-read-csv DataFrame-ptr?)]
-              @defcsvproc[(lazyframe-scan-csv LazyFrame-ptr?)])]{
-  The raw-pointer reader and scan under @racket[read-csv] and
-  @racket[scan-csv], with the same keywords and checks.
+@deftogether[(@defproc/arguments[csv-read-arguments (dataframe-read-csv DataFrame-ptr?)]
+              @defproc/arguments[csv-scan-arguments (lazyframe-scan-csv LazyFrame-ptr?)]
+              @defproc/arguments[csv-write-arguments
+                                 (dataframe-write-csv [d DataFrame-ptr?] void?)])]{
+  The raw-pointer reader, scan and writer under @racket[read-csv],
+  @racket[scan-csv] and @racket[write-csv], with the same keywords and
+  checks; a failure names these.
 
   @examples[#:eval ev
 (dataframe-height (dataframe-read-csv "flights.tsv" #:separator #\tab #:null-values "NA"))
-(dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))]}
+(dataframe-height (lazyframe-collect (lazyframe-scan-csv "parts/*.csv")))
+(eval:error (dataframe-read-csv "parts/part-1.csv" #:columns '("origin" "gate")))
+(eval:error (dataframe-write-csv (dataframe-read-csv "parts/part-1.csv")
+                                 "/no/such/dir/out.csv" #:separator #\;))]}
+
+@deftogether[(@defproc/arguments[json-arguments (dataframe-read-json DataFrame-ptr?)]
+              @defproc[(dataframe-write-json [d DataFrame-ptr?] [path path-string?]) void?])]{
+  The raw-pointer JSON-array reader and writer under @racket[read-json] and
+  @racket[write-json], with the same keywords and checks.
+
+  @examples[#:eval ev
+(dataframe-width (dataframe-read-json "stations.json" #:schema '(("station" . str))))
+(eval:error (dataframe-read-json "stations.json" #:infer-schema-length 0))]}
+
+@deftogether[(@defproc/arguments[ndjson-arguments (dataframe-read-json-lines DataFrame-ptr?)]
+              @defproc/arguments[ndjson-arguments (lazyframe-scan-json-lines LazyFrame-ptr?)]
+              @defproc/arguments[ndjson-writer-arguments (dataframe-write-json-lines [d DataFrame-ptr?] void?)])]{
+  The raw-pointer NDJSON reader, scan and writer under @racket[read-ndjson],
+  @racket[scan-ndjson] and @racket[write-ndjson], with the same keywords and
+  checks.
+
+  @examples[#:eval ev
+(dataframe-height (dataframe-read-json-lines "stations.ndjson" #:n-rows 3))
+(dataframe-width (lazyframe-collect (lazyframe-scan-json-lines "stations.ndjson"
+                                                               #:infer-schema-length 2)))
+(eval:error (dataframe-read-json-lines "stations.ndjson" #:schema '(("reading" . i8))))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 

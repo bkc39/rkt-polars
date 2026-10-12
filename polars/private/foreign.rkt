@@ -61,6 +61,15 @@
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
     ("to the `null_values` list" . "to #:null-values")
+    ("'truncate_ragged_lines=true'" . "#:truncate-ragged-lines #t")
+    ("Try increasing `infer_schema_length` or specifying a schema."
+     . "Try increasing #:infer-schema-length or passing #:schema.")
+    ("consider increasing infer_schema_length, or manually specifying the full schema"
+     . "consider increasing #:infer-schema-length, or passing the full #:schema")
+    ("use the compression parameter to control compression, or set `check_extension` to `False` if you want to suffix an uncompressed filename with an ending intended for compression"
+     . "pass #:check-extension #f to give an uncompressed file a compressed file's suffix")
+    ("set `check_extension` to `False`" . "pass #:check-extension #f")
+
     ("`missing_columns='insert'`" . "#:missing-columns 'insert")
     ("hint: specify this column in the schema, or pass extra_columns='ignore' in scan options. "
      . "")))
@@ -69,9 +78,11 @@
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
 (define (respell reason)
-  (for/fold ([reason (if (regexp-match? empty-expansion reason)
-                         "no files match the pattern"
-                         reason)])
+  (for/fold ([reason (cond
+                       [(or (regexp-match? empty-expansion reason)
+                            (equal? reason "no paths specified for this reader"))
+                        "no files match the pattern"]
+                       [else reason])])
             ([(python racket) (in-dict racket-spellings)])
     (string-replace reason python racket)))
 
@@ -1561,38 +1572,6 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
-(define-compat dataframe-write-csv/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_csv)
-
-(define (dataframe-write-csv df path)
-  (define p (path->complete-string 'dataframe-write-csv path))
-  (void (call/foreign-error 'dataframe-write-csv
-                            (lambda () (dataframe-write-csv/raw df p))
-                            #:ok? zero?
-                            "failed to write csv to ~a" path)))
-
-(define-compat dataframe-write-json-lines/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_json_lines)
-
-(define (dataframe-write-json-lines df path)
-  (define p (path->complete-string 'dataframe-write-json-lines path))
-  (void (call/foreign-error 'dataframe-write-json-lines
-                            (lambda () (dataframe-write-json-lines/raw df p))
-                            #:ok? zero?
-                            "failed to write json lines to ~a" path)))
-
-(define-compat dataframe-read-json-lines/raw
-  (_fun _string -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_json_lines
-  #:wrap (allocator dataframe-drop))
-
-(define (dataframe-read-json-lines path)
-  (define p (path->complete-string 'dataframe-read-json-lines path))
-  (call/foreign-error 'dataframe-read-json-lines
-                      (lambda () (dataframe-read-json-lines/raw p))
-                      "failed to read json lines from ~a" path))
 
 (define (glob-pattern? p)
   (regexp-match? #rx"[*?[]" (if (path? p) (path->string p) p)))
@@ -2273,36 +2252,7 @@
   (check-equal? (dataframe-height unpivoted-sales) 4)
   (check-equal? (dataframe-column-names unpivoted-sales)
                 '("store" "variable" "value"))
-  (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
-
-  ;; --- JSON Lines roundtrip ---
-  (define csv-df
-    (dataframe-new
-     (list (series-new-str "city" '("Boston" "New York" "Chicago"))
-           (series-new-f64 "population_millions" '(0.65 8.8 2.7))
-           (series-new-i32 "founded" '(1630 1624 1837)))))
-  (define tmp-jsonl
-    (build-path (find-system-path 'temp-dir) "rkt-polars-test.jsonl"))
-  (dataframe-write-json-lines csv-df tmp-jsonl)
-  (define jsonl-round (dataframe-read-json-lines tmp-jsonl))
-  (define-values (jr jc) (dataframe-shape jsonl-round))
-  (check-equal? jr 3)
-  (check-equal? jc 3)
-  (check-equal? (dataframe-column-names jsonl-round)
-                '("city" "population_millions" "founded"))
-  (check-equal? (series-dtype (dataframe-column jsonl-round "founded")) 'int64)
-  (check-= (series-sum-f64 (dataframe-column jsonl-round "population_millions"))
-           12.15
-           1e-9)
-  (delete-file tmp-jsonl))
-
-(module+ test
-  (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
-  (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
-  (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
-             (lambda () (dataframe-write-csv one-col unwritable)))
-  (check-exn #rx"^dataframe-write-json-lines: failed to write json lines to .*: cannot create file: "
-             (lambda () (dataframe-write-json-lines one-col unwritable))))
+  (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100))
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
@@ -2580,6 +2530,13 @@
                                 (parameterize ([read-accept-reader #t] [read-accept-lang #t])
                                   (call-with-input-file file read))))])
       form))
+  (define compat 'define-compat)
+  (check-true (releases-result?
+               `(,compat good (_fun _string -> _DataFrame-ptr/null) #:wrap (allocator dataframe-drop))))
+  (check-false (releases-result?
+                `(,compat swapped (_fun _string -> _DataFrame-ptr/null)
+                          #:wrap (allocator lazyframe-drop))))
+  (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
   (check > (length bindings) 200)
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))

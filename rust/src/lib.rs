@@ -28,7 +28,7 @@ pub use types::*;
 
 pub(crate) use ffi::{
     clear_last_error, collect_c_strings, collect_exprs, decode_path,
-    guard_panic, record, rust_string_to_ptr, set_last_error,
+    decode_schema, guard_panic, record, rust_string_to_ptr, set_last_error,
     sort_multiple_options,
 };
 #[cfg(test)]
