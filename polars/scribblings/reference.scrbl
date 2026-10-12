@@ -729,7 +729,8 @@ total
   taking the rest. By default, or with @racket[0] (which Python also takes
   as the default), the writer makes groups of about 512² rows, where
   Python's streaming writer makes about 122,880. @racket[data-page-size]
-  sets the bytes a data page aims for (default 1 MiB). API gaps: no
+  sets the bytes a data page aims for (default 1 MiB). It replaces a file
+  as @racket[write-csv] does. API gaps: no
   @tt{partition_by} (#185), @tt{metadata} or @tt{mkdir} (#197).
 
   @examples[#:eval ev
@@ -749,7 +750,17 @@ total
   Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
   CSV or newline-delimited JSON (@tt{df.write_csv} and friends).
   API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
-  file and takes no glob pattern (#44).}
+  file and takes no glob pattern (#44).
+
+  Every writer, @racket[write-parquet] and @racket[dataframe-write-csv] and
+  its kin included, replaces a file through a temporary file beside it,
+  renamed over @racket[path] only when the write succeeds, so a failed write
+  leaves the file as it was; the replaced file keeps its permission bits,
+  and a symbolic link at @racket[path] stays while the file it names is
+  replaced. Ownership, access control lists, extended attributes and hard
+  links are not kept, and the directory must be writable. A file the caller
+  cannot write is refused. A FIFO or device, such as @tt{/dev/null}, is
+  written in place.}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{

@@ -19,45 +19,101 @@ fn open_file(path: &str) -> Option<std::fs::File> {
 
 fn staging_path(target: &Path) -> PathBuf {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let name = target
-        .file_name()
-        .map_or_else(|| "frame".into(), |name| name.to_string_lossy());
     let dir = target
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     dir.join(format!(
-        ".{}.{}-{}.tmp",
-        name,
+        ".rkt-polars-{}-{}.partial",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ))
 }
 
-/// A writer writes a staging file beside `path` and renames it over `path`
-/// only once the write succeeds, so a failed write leaves `path` as it was.
-struct Staged {
-    file: std::fs::File,
-    staging: PathBuf,
-    target: PathBuf,
+/// A writer replaces a regular file through a staging file beside it,
+/// renamed over it only once the write succeeds, so a failed write leaves
+/// the file as it was. Anything else that exists and is not a directory (a
+/// FIFO, a device) is written in place.
+enum Staged {
+    Replace {
+        file: std::fs::File,
+        staging: PathBuf,
+        target: PathBuf,
+    },
+    InPlace(std::fs::File),
 }
 
-fn create_staged(path: &str) -> Option<Staged> {
-    let target =
-        std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+#[cfg(unix)]
+fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::Permissions::from_mode(existing.permissions().mode() & 0o777)
+}
+
+#[cfg(not(unix))]
+fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
+    existing.permissions()
+}
+
+fn open_staging(
+    staging: &Path,
+    existing: Option<&std::fs::Metadata>,
+) -> std::io::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(staging)?;
+    let Some(existing) = existing else {
+        return Ok(file);
+    };
+    match file.set_permissions(permission_bits(existing)) {
+        Ok(()) => Ok(file),
+        Err(err) => {
+            drop(file);
+            let _ = std::fs::remove_file(staging);
+            Err(err)
+        }
+    }
+}
+
+fn replace(
+    target: PathBuf,
+    existing: Option<&std::fs::Metadata>,
+) -> std::io::Result<Staged> {
     let staging = staging_path(&target);
-    let file = record(
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&staging)
-            .map_err(|err| format!("cannot create file: {}", err)),
-    )?;
-    Some(Staged {
+    let file = open_staging(&staging, existing)?;
+    Ok(Staged::Replace {
         file,
         staging,
         target,
     })
+}
+
+fn stage(target: PathBuf) -> std::io::Result<Staged> {
+    match std::fs::metadata(&target) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            replace(target, None)
+        }
+        Err(err) => Err(err),
+        Ok(existing) if existing.is_file() || existing.is_dir() => {
+            drop(std::fs::OpenOptions::new().write(true).open(&target)?);
+            replace(target, Some(&existing))
+        }
+        Ok(_) => std::fs::File::create(&target).map(Staged::InPlace),
+    }
+}
+
+fn create_staged(path: &str) -> Option<Staged> {
+    let given = PathBuf::from(path);
+    let staged = match std::fs::symlink_metadata(&given) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::canonicalize(&given).map_or_else(
+                |_| std::fs::File::create(&given).map(Staged::InPlace),
+                stage,
+            )
+        }
+        _ => stage(given),
+    };
+    record(staged.map_err(|err| format!("cannot create file: {}", err)))
 }
 
 fn read_frame(
@@ -134,17 +190,23 @@ pub(crate) fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
-    let Some(Staged {
-        mut file,
-        staging,
-        target,
-    }) = create_staged(path_str)
-    else {
+    let Some(staged) = create_staged(path_str) else {
         return IO_OPEN_FAILED;
     };
     let df = unsafe { &mut *df_ptr };
+    let (mut file, renamed) = match staged {
+        Staged::Replace {
+            file,
+            staging,
+            target,
+        } => (file, Some((staging, target))),
+        Staged::InPlace(file) => (file, None),
+    };
     let written = guard_panic(|| record(write(&mut file, df)));
     drop(file);
+    let Some((staging, target)) = renamed else {
+        return written.map_or(IO_WRITE_FAILED, |()| IO_OK);
+    };
     let status = match written.map(|()| std::fs::rename(&staging, &target)) {
         Some(Ok(())) => IO_OK,
         Some(Err(err)) => {

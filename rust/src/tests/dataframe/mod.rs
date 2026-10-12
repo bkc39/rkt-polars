@@ -19,6 +19,8 @@ mod groupby;
 mod io;
 mod join;
 mod parquet;
+#[cfg(unix)]
+mod replace;
 mod reshape;
 mod smoke;
 mod stack;

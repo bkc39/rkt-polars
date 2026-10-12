@@ -244,7 +244,13 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Every writer goes through `write_frame` (`rust/src/dataframe/io.rs`): it
   writes a staging file beside the target and renames it over the target
   only once the write succeeds, so a failed write leaves an existing file
-  as it was and no partial file behind. The
+  as it was and no partial file behind. `create_staged` resolves a symlink
+  first; refuses a regular file it cannot open for writing; writes a FIFO
+  or device in place; otherwise stages `.rkt-polars-<pid>-<n>.partial`
+  (`create_new`, a name no glob or directory read picks up, never near the
+  255-byte limit) with the target's permission bits. Not kept on replace:
+  ownership, ACLs, extended attributes, hard links; the directory must be
+  writable. `rust/src/tests/dataframe/replace.rs` covers each case. The
   Parquet verbs report under the verb's own name (`read-parquet:`), the
   low-level bindings under theirs (#153). `dataframe_read_parquet`,
   `dataframe_write_parquet`, `lazyframe_scan_parquet` and
