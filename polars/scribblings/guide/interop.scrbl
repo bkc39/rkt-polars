@@ -47,7 +47,7 @@ strings, and gregor values for the temporal dtypes.
 (define people
   (~> (dataframe
        (list (series '("Alice Archer" "Ben Brown") #:name "name")
-             (series (list (datetime 1997 1 10 8 30 0) (datetime 1985 2 15 17 0 0))
+             (series (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))
                      #:name "birthdate")
              (series '(57.9 72.5) #:name "weight")
              (series '(#t #f) #:name "parent")))
@@ -57,8 +57,10 @@ strings, and gregor values for the temporal dtypes.
   (~> people (ref name) series->list))
 ]
 
-API gaps: datetimes come out floored to the whole second, where
-@tt{to_list} keeps microseconds; a @racket['binary] column has no Racket value.
+A datetime keeps its column's full precision, down to the nanosecond, where
+@tt{to_list} stops at the microsecond.
+
+API gap: a @racket['binary] column has no Racket value.
 
 @section[#:tag "interop-iterating"]{Iterating}
 
@@ -77,6 +79,23 @@ column's buffer, and one that stops early converts little more than it reads.
   v)
 (for/list ([column (in-dataframe-columns df)])
   (cons (series-name column) (dtype column)))
+]
+
+@racket[in-dataframe-rows] walks a frame's rows, as
+@tt{DataFrame.iter_rows()} does: a vector per row, or with
+@racket[#:named?] a hash from column name to value, as @tt{named=True} gives a
+dict. It converts @racket[#:buffer-size] rows at a time (512, as
+@tt{buffer_size}), with one bulk copy per column, so it streams as
+@racket[in-series] does. @racket[dataframe->rows] is @tt{DataFrame.rows()}:
+every row, in a list.
+
+@examples[#:eval ev #:label #f
+(for/list ([row (in-dataframe-rows df)]) row)
+(for/list ([row (in-dataframe-rows df #:named? #t)]) (hash-ref row "bar"))
+(for/list ([row (in-dataframe-rows people #:columns '("name" "weight"))])
+  (define-values (name weight) (vector->values row))
+  (format "~a: ~a kg" name weight))
+(dataframe->rows df #:columns '("bar" "foo"))
 ]
 
 @section[#:tag "interop-columns"]{Columns as Racket data}

@@ -11,15 +11,13 @@
          polars)
 
 (define df
-  (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                     #:name "name")
-             (series (list (datetime 1997 1 10) (datetime 1985 2 15)
-                           (datetime 1983 3 22) (datetime 1981 4 30))
-                     #:name "birthdate")
-             (series '(57.9 72.5 53.6 83.1) #:name "weight")
-             (series '(1.56 1.77 1.65 1.75) #:name "height")))
-      (with-columns (cast "birthdate" 'date))))
+  (dataframe
+   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
+                 #:name "name")
+         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
+                 #:name "birthdate")
+         (series '(57.9 72.5 53.6 83.1) #:name "weight")
+         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
 
 ;; --- select --------------------------------------------------------------
 (displayln
@@ -46,13 +44,11 @@
 (displayln
  (~> df (filter (< (dt-year "birthdate") 1990))))
 
-;; API gaps: no date literals (parse a string with str->date), and filter
-;; takes a single predicate, so the two conditions are joined with `and`.
+;; API gap: filter takes a single predicate, so the two conditions are joined
+;; with `and`.
 (displayln
  (~> df
-     (filter (and (is-between "birthdate"
-                              (str->date (lit "1982-12-31"))
-                              (str->date (lit "1996-01-01")))
+     (filter (and (is-between "birthdate" (date 1982 12 31) (date 1996 1 1))
                   (> (col "height") 1.7)))))
 
 ;; --- group-by ------------------------------------------------------------

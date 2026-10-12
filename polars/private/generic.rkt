@@ -44,6 +44,7 @@
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
          series->list series->vector series->f64vector in-series
          dataframe->columns dataframe->hash dataframe->f64vector in-dataframe-columns
+         in-dataframe-rows dataframe->rows
          gen:has-ref has-ref?
          gen:sized sized?
          gen:has-shape has-shape?
@@ -77,6 +78,7 @@
          dt-is-leap-year dt-date dt-time
          dt-millisecond dt-microsecond dt-nanosecond
          dt-timestamp dt-strftime dt-truncate
+         dt-convert-time-zone dt-replace-time-zone
          rename rename! clone series-clone
          then otherwise else-when
          all exclude

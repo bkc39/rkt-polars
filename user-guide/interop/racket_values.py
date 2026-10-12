@@ -1,8 +1,9 @@
 """rkt-polars user guide — Interoperability: Series to Python values (Python reference).
 
 Mirrors https://docs.pola.rs/user-guide/misc/arrow/ (handing a frame's data to
-another library), through Series.to_list, DataFrame.iter_columns and
-DataFrame.to_dict, and racket-values.rkt.
+another library), through Series.to_list, DataFrame.iter_columns,
+DataFrame.iter_rows, DataFrame.rows and DataFrame.to_dict, and
+racket-values.rkt.
 
 Inside `nix develop`:
     python user-guide/interop/racket_values.py
@@ -26,7 +27,7 @@ print(gappy.fill_null(0).to_list())
 people = pl.DataFrame(
     {
         "name": ["Alice Archer", "Ben Brown"],
-        "birthdate": [dt.datetime(1997, 1, 10, 8, 30), dt.datetime(1985, 2, 15, 17, 0)],
+        "birthdate": [dt.datetime(1997, 1, 10, 8, 30, 0, 250000), dt.datetime(1985, 2, 15, 17, 0)],
         "weight": [57.9, 72.5],
         "parent": [True, False],
     }
@@ -43,6 +44,11 @@ print(sum(gappy.fill_null(0)))
 print(next(v for v in pl.Series(range(1_000_000)) if v > 41))
 for column in df.iter_columns():
     print(column.name, column.dtype)
+for row in df.iter_rows():
+    print(row)
+print([row["bar"] for row in df.iter_rows(named=True)])
+print([f"{name}: {weight} kg" for name, weight in people.select("name", "weight").iter_rows()])
+print(df.select("bar", "foo").rows())
 
 # --- columns as Python data ----------------------------------------------
 print(df.to_dict(as_series=False))

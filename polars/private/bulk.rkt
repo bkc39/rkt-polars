@@ -1,27 +1,29 @@
 #lang racket/base
 
 (require (only-in ffi/unsafe
-                  -> _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
-                  _uint16 _uint32 _uint64 _uint8 ptr-ref)
+                  -> _byte _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
+                  _uint16 _uint32 _uint64 _uint8 ptr-add ptr-ref)
          (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
-         (only-in gregor jdn->date posix->datetime)
-         (only-in gregor/time time)
          (only-in racket/match match)
-         (only-in syntax/parse/define define-syntax-parse-rule)
-         (for-syntax (only-in syntax/parse expr id))
+         syntax/parse/define
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr _Series-ptr/null dataframe-column dataframe-column-names
-                  dataframe-height decimal-ref define-compat duration-value->period
-                  polars-null series-copy-decimal series-drop series-dtype series-len
-                  series-name series-null-count)
-         (only-in polars/private/resource with-raw-buffer with-release))
+                  _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
+                  dataframe-column-names dataframe-height decimal-ref define-compat
+                  duration-value->period polars-null series-copy-decimal series-copy-i64
+                  series-copy-str series-drop series-dtype series-len series-name
+                  series-null-count series-str-byte-len)
+         (only-in polars/private/resource with-raw-buffer with-release)
+         (only-in polars/private/temporal
+                  days->date epoch->datetime epoch->moment nanoseconds->time))
 
 (provide check-column-names
          dataframe->columns
          dataframe->f64vector
          dataframe->hash
+         dataframe->rows
+         in-dataframe-rows
          in-series
          series->f64vector
          series->list
@@ -35,15 +37,9 @@
     ...))
 
 (define-copies
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
+  series-copy-i8 series-copy-i16 series-copy-i32
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
-
-(define-compat series-str-byte-len
-  (_fun _Series-ptr _size _size -> _int64))
-
-(define-compat series-copy-str
-  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
 
 (define-compat series-copy-cat
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
@@ -55,27 +51,6 @@
         (dst : _f64vector) (_size = (f64vector-length dst))
         (offset : _size) (stride : _size) (null-value : _double)
         -> _int64))
-
-(define unix-epoch-jdn 2440588)
-
-(define (days->date days)
-  (jdn->date (+ days unix-epoch-jdn)))
-
-(define (per-second unit)
-  (case unit
-    [(nanoseconds) 1000000000]
-    [(microseconds) 1000000]
-    [else 1000]))
-
-(define (epoch->datetime unit value)
-  (define k (per-second unit))
-  (posix->datetime (quotient (- value (modulo value k)) k)))
-
-(define (nanoseconds->time value)
-  (define-values (seconds nanosecond) (quotient/remainder value 1000000000))
-  (define-values (minutes second) (quotient/remainder seconds 60))
-  (define-values (hour minute) (quotient/remainder minutes 60))
-  (time hour minute second nanosecond))
 
 (define (convertible? dtype)
   (match dtype
@@ -99,8 +74,8 @@
     (reject who "unsupported dtype" field s dtype))
   dtype)
 
-(define (validity s count)
-  (and (positive? (series-null-count s)) (make-bytes count)))
+(define (has-nulls? s)
+  (positive? (series-null-count s)))
 
 (define (valid-len valid)
   (if valid (bytes-length valid) 0))
@@ -120,9 +95,17 @@
      (for/vector #:length count ([i (in-range count)])
        element)]))
 
+(define-syntax-parse-rule (with-scratch scratch:expr ([name:id count:expr ctype:expr])
+                            body:expr ...+)
+  (let ([given scratch]
+        [run (lambda (name) body ...)])
+    (if given
+        (run given)
+        (with-raw-buffer ([name count ctype]) (run name)))))
+
 (define-syntax-parse-rule (define-physical-rows name:id ctype:id copy!:id convert:expr)
-  (define (name shape who s dtype arg start count valid null-value)
-    (with-raw-buffer ([dst count ctype])
+  (define (name shape who s dtype arg start count valid null-value scratch)
+    (with-scratch scratch ([dst count ctype])
       (checked who dtype (copy! s start count dst count valid (valid-len valid)))
       (collect shape count valid null-value i (convert arg (ptr-ref dst ctype i))))))
 
@@ -142,9 +125,16 @@
 (define-physical-rows datetime-rows _int64 series-copy-i64 epoch->datetime)
 (define-physical-rows duration-rows _int64 series-copy-i64 duration-value->period)
 
-(define (string-rows shape who s dtype start count valid null-value)
+(define (zoned-rows shape who s dtype unit zone start count valid null-value scratch)
+  (with-scratch scratch ([instants (* 2 count) _int64])
+    (define walls (ptr-add instants count _int64))
+    (copy-zoned-datetimes who s dtype start count instants walls valid)
+    (collect shape count valid null-value i
+             (epoch->moment unit (ptr-ref instants _int64 i) (ptr-ref walls _int64 i) zone))))
+
+(define (string-rows shape who s dtype start count valid null-value scratch)
   (define buf (~>> (series-str-byte-len s start count) (checked who dtype) make-bytes))
-  (with-raw-buffer ([offsets (add1 count) _int64])
+  (with-scratch scratch ([offsets (add1 count) _int64])
     (checked who dtype (series-copy-str s start count buf (bytes-length buf)
                                         offsets (add1 count) valid (valid-len valid)))
     (collect shape count valid null-value i
@@ -152,26 +142,40 @@
                                   (ptr-ref offsets _int64 i)
                                   (ptr-ref offsets _int64 (add1 i))))))
 
-(define (categorical-rows shape who s dtype start count valid null-value)
-  (with-raw-buffer ([codes count _uint32])
+;; A scratch buffer of this many bytes per row, plus one row, holds what any
+;; dtype needs: a decimal's two words per row, or a categorical's code per row
+;; followed by its table's offsets (the table has at most a row per row).
+(define scratch-bytes-per-row 16)
+
+(define (scratch-bytes count)
+  (* scratch-bytes-per-row (add1 count)))
+
+(define (codes-bytes count)
+  (* 8 (quotient (add1 count) 2)))
+
+(define (categorical-rows shape who s dtype start count valid null-value scratch)
+  (with-scratch scratch ([codes count _uint32])
     (with-release ([table (series-copy-cat s start count codes count valid (valid-len valid))
                           series-drop])
       (unless table
         (checked who dtype -1))
-      (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null))
+      (define names (string-rows 'vector who table 'string 0 (series-len table) #f polars-null
+                                 (and scratch (ptr-add scratch (codes-bytes count)))))
       (define symbols (for/vector #:length (vector-length names) ([name (in-vector names)])
                         (string->symbol name)))
       (collect shape count valid null-value i (vector-ref symbols (ptr-ref codes _uint32 i))))))
 
-(define (decimal-rows shape who s dtype scale start count valid null-value)
-  (with-raw-buffer ([words (* 2 count) _uint64])
+(define (decimal-rows shape who s dtype scale start count valid null-value scratch)
+  (with-scratch scratch ([words (* 2 count) _uint64])
     (checked who dtype (series-copy-decimal s start count words (* 2 count) valid (valid-len valid)))
     (collect shape count valid null-value i (decimal-ref words i scale))))
 
-(define (rows shape who s dtype start count null-value)
-  (define valid (validity s count))
+(define (rows shape who s dtype start count null-value
+              #:scratch [scratch #f]
+              #:nulls? [nulls? (has-nulls? s)])
+  (define valid (and nulls? (make-bytes count)))
   (define (physical typed-rows [arg #f])
-    (typed-rows shape who s dtype arg start count valid null-value))
+    (typed-rows shape who s dtype arg start count valid null-value scratch))
   (match dtype
     ['int8 (physical int8-rows)]
     ['int16 (physical int16-rows)]
@@ -186,12 +190,15 @@
     ['boolean (physical boolean-rows)]
     ['date (physical date-rows)]
     ['time (physical time-rows)]
-    [`(datetime ,unit ,_) (physical datetime-rows unit)]
+    [`(datetime ,unit #f) (physical datetime-rows unit)]
+    [`(datetime ,unit ,zone)
+     (zoned-rows shape who s dtype unit zone start count valid null-value scratch)]
     [`(duration ,_) (physical duration-rows dtype)]
-    ['string (string-rows shape who s dtype start count valid null-value)]
+    ['string (string-rows shape who s dtype start count valid null-value scratch)]
     [(or 'categorical `(enum . ,_))
-     (categorical-rows shape who s dtype start count valid null-value)]
-    [`(decimal ,_ ,scale) (decimal-rows shape who s dtype scale start count valid null-value)]
+     (categorical-rows shape who s dtype start count valid null-value scratch)]
+    [`(decimal ,_ ,scale)
+     (decimal-rows shape who s dtype scale start count valid null-value scratch)]
     ['null (if (eq? shape 'list)
                (for/list ([_ (in-range count)]) null-value)
                (make-vector count null-value))]))
@@ -284,6 +291,54 @@
                          #:null [null-value polars-null])
   (make-immutable-hash (frame-columns 'dataframe->hash d names null-value)))
 
+(define row-buffer-size 512)
+
+(define (frame-rows who d names named? null-value buffer-size)
+  (check-column-names who d names)
+  (define columns (for/list ([name (in-list names)]) (dataframe-column d name)))
+  (define dtypes (for/list ([s (in-list columns)]) (convertible-dtype who "column" s)))
+  (define nullable (for/list ([s (in-list columns)]) (has-nulls? s)))
+  (define keys (for/list ([name (in-list names)]) (string->immutable-string name)))
+  (define width (length columns))
+  (define n (dataframe-height d))
+  (define (buffer start)
+    (define count (min buffer-size (- n start)))
+    (with-raw-buffer ([scratch (scratch-bytes count) _byte])
+      (for/vector #:length width ([s (in-list columns)]
+                                  [dtype (in-list dtypes)]
+                                  [nulls? (in-list nullable)])
+        (rows 'vector who s dtype start count null-value #:scratch scratch #:nulls? nulls?))))
+  (define (row block j)
+    (if named?
+        (for/hash ([key (in-list keys)] [column (in-vector block)])
+          (values key (vector-ref column j)))
+        (for/vector #:length width ([column (in-vector block)])
+          (vector-ref column j))))
+  (make-do-sequence
+   (lambda ()
+     (define start 0)
+     (define block #f)
+     (define (element i)
+       (unless (and block (< (- i start) buffer-size))
+         (set! start i)
+         (set! block (buffer i)))
+       (row block (- i start)))
+     (values element add1 0 (lambda (i) (< i n)) #f #f))))
+
+(define (in-dataframe-rows d
+                           #:columns [names (dataframe-column-names d)]
+                           #:named? [named? #f]
+                           #:null [null-value polars-null]
+                           #:buffer-size [buffer-size row-buffer-size])
+  (frame-rows 'in-dataframe-rows d names named? null-value buffer-size))
+
+(define (dataframe->rows d
+                         #:columns [names (dataframe-column-names d)]
+                         #:named? [named? #f]
+                         #:null [null-value polars-null])
+  (for/list ([row (frame-rows 'dataframe->rows d names named? null-value row-buffer-size)])
+    row))
+
 (define (dataframe->f64vector d
                               #:columns [names (dataframe-column-names d)]
                               #:order [order 'fortran]
@@ -307,10 +362,12 @@
 
 (module+ test
   (require rackunit
+           (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    series-cast series-drop-count series-head series-new-i64 series-new-str
-                    series-ref))
+                    dataframe-new polars-null? series-cast series-drop-count series-head
+                    series-new-i64 series-new-str series-new-str/vec series-ref)
+           (only-in polars/private/gc-pressure call-with-collections))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -330,6 +387,53 @@
     (define refs (for/list ([i (in-range n)]) (series-ref s i)))
     (check-equal? (sequence->list (in-series s #:chunk-rows chunk-rows)) refs)
     (check-equal? (series->list s) refs))
+
+  (define many-strings
+    (for/list ([i (in-range 300000)])
+      (case (modulo i 5)
+        [(0) polars-null]
+        [(1) ""]
+        [(2) (format "ünïcödé ~a 東京 😀" i)]
+        [(3) (string #\a #\nul #\b)]
+        [else (number->string i)])))
+  (for ([build (list series-new-str
+                     (lambda (name strings) (series-new-str/vec name (list->vector strings))))])
+    (define-values (many-series collections)
+      (call-with-collections (lambda () (build "many" many-strings))))
+    (check > collections 1)
+    (check-equal? (series->list many-series) many-strings))
+
+  (for* ([chunk-rows '(1 3 7)]
+         [unit '(milliseconds microseconds nanoseconds)]
+         [zone '("Europe/Brussels" "America/New_York" "UTC")])
+    (define n 11)
+    (define zoned
+      (series-cast (series-new-i64 "t" (for/list ([i (in-range n)])
+                                         (if (= i 4) polars-null (* (- i 5) 1800000 i))))
+                   (list 'datetime unit zone)))
+    (define refs (for/list ([i (in-range n)]) (series-ref zoned i)))
+    (check-equal? (sequence->list (in-series zoned #:chunk-rows chunk-rows)) refs)
+    (check-equal? (series->list zoned) refs)
+    (check-equal? (vector->list (series->vector zoned)) refs)
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list zoned))
+                                                     #:buffer-size chunk-rows)])
+                    (vector-ref row 0))
+                  refs))
+
+  (define (wall-clock v)
+    (if (polars-null? v) v (list (->datetime/local v) (->utc-offset v) (->tzid v))))
+  (for ([value (list 9223369200000000001 (+ (- (sub1 (expt 2 63))) 3600000000000))]
+        [zone '("Asia/Tokyo" "America/New_York")]
+        [expected (list (list (datetime 2262 4 12 8 0 0 1) 32400 "Asia/Tokyo")
+                        (list (datetime 1677 9 20 20 16 41 145224193) -17762
+                              "America/New_York"))])
+    (define edge (series-cast (series-new-i64 "t" (list polars-null value))
+                              (list 'datetime 'nanoseconds zone)))
+    (check-equal? (map wall-clock (series->list edge)) (list polars-null expected))
+    (check-equal? (for/list ([row (in-dataframe-rows (dataframe-new (list edge))
+                                                     #:buffer-size 1)])
+                    (wall-clock (vector-ref row 0)))
+                  (list polars-null expected)))
 
   (define carriers (series-cast (series-new-str "c" '("UA" "AA" "UA")) 'categorical))
   (define (released-by thunk)
