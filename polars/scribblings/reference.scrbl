@@ -668,9 +668,9 @@ total
   A writer writes a staging file in @racket[path]'s directory, which must
   be writable, and renames it onto @racket[path] once complete, so a failed
   write leaves an existing file as it was; the new file keeps the old one's
-  permission bits but not its owner, ACLs, extended attributes or hard
-  links. A symbolic link is followed and kept, and a FIFO or device is
-  written in place.}
+  read, write and execute bits but not its setuid, setgid or sticky bit,
+  owner, ACLs, extended attributes or hard links. A symbolic link is
+  followed and kept, and a FIFO or device is written in place.}
 
 @deftogether[(@defjsonproc[(read-json dataframe?)]
               @defproc[(write-json [d dataframe?] [path path-string?]) void?])]{

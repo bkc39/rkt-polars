@@ -27,18 +27,15 @@ fn staging_path(dir: &Path) -> PathBuf {
     ))
 }
 
-fn resolve_links(path: &Path) -> std::io::Result<PathBuf> {
-    let mut target = path.to_path_buf();
-    for _ in 0..40 {
-        let is_link = std::fs::symlink_metadata(&target)
-            .is_ok_and(|meta| meta.file_type().is_symlink());
-        if !is_link {
-            return Ok(target);
-        }
-        let link = std::fs::read_link(&target)?;
-        target = target.parent().unwrap_or(Path::new("")).join(link);
-    }
-    Err(std::io::Error::other("too many levels of symbolic links"))
+#[cfg(unix)]
+fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::Permissions::from_mode(existing.permissions().mode() & 0o777)
+}
+
+#[cfg(not(unix))]
+fn permission_bits(existing: &std::fs::Metadata) -> std::fs::Permissions {
+    existing.permissions()
 }
 
 /// Where a writer's bytes go: a staging file that `finish` renames onto
@@ -85,8 +82,17 @@ fn stage(
     }
 }
 
-fn create_staged(path: &str) -> Result<Staged, String> {
-    let target = resolve_links(Path::new(path)).map_err(cannot_create)?;
+fn in_place(target: PathBuf) -> Result<Staged, String> {
+    File::create(&target)
+        .map(|file| Staged {
+            file,
+            staging: None,
+            target,
+        })
+        .map_err(cannot_create)
+}
+
+fn stage_existing(target: PathBuf) -> Result<Staged, String> {
     match std::fs::metadata(&target) {
         Err(err) if err.kind() == ErrorKind::NotFound => stage(target, None),
         Err(err) => Err(cannot_create(err)),
@@ -95,15 +101,20 @@ fn create_staged(path: &str) -> Result<Staged, String> {
                 .write(true)
                 .open(&target)
                 .map_err(cannot_create)?;
-            stage(target, Some(meta.permissions()))
+            stage(target, Some(permission_bits(&meta)))
         }
-        Ok(_) => File::create(&target)
-            .map(|file| Staged {
-                file,
-                staging: None,
-                target,
-            })
-            .map_err(cannot_create),
+        Ok(_) => in_place(target),
+    }
+}
+
+fn create_staged(path: &str) -> Result<Staged, String> {
+    let given = PathBuf::from(path);
+    match std::fs::symlink_metadata(&given) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::canonicalize(&given)
+                .map_or_else(|_| in_place(given), stage_existing)
+        }
+        _ => stage_existing(given),
     }
 }
 
