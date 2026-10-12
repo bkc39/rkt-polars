@@ -338,7 +338,7 @@
     (check-false (cast-target? target) (format "~v" target)))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
              (lambda () (contracted:cast 5 'f64)))
-  (check-exn #rx"^series-cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"
+  (check-exn #rx"^cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"
              (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
 
   ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
