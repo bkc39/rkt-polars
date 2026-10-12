@@ -126,8 +126,11 @@ glob pattern, as for Parquet:
 
 API gaps: a path only, no file object or in-memory string in or out; an
 Enum in @racket[#:schema], read as @racket['categorical] and
-@racket[cast] instead. Compressed input is recognised by its first bytes,
-not its name, as in Python, so a plain file that happens to start like a
+@racket[cast] instead; no @tt{glob} for @racket[read-ndjson], so a literal
+@litchar{[}, @litchar{*} or @litchar{?} is escaped as @litchar{[[]}; one
+path or pattern, not a list; no cloud @tt{storage_options},
+@tt{credential_provider} or @tt{retries}. Compressed input is recognised by
+its first bytes, not its name, so a plain file that happens to start like a
 gzip, zlib or zstd stream fails with a decompression error.
 
 @examples[#:eval ev #:hidden

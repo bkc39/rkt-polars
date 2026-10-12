@@ -436,17 +436,64 @@ fn a_failed_write_leaves_the_existing_file() {
     assert_ne!(write_to(ok, &keep_gz, true), 0);
     let reason = recorded_error().expect("a reason");
     assert!(reason.contains("check_extension"), "{}", reason);
-    assert!(!reason.contains(".rkt-polars-"), "{}", reason);
+    assert!(!reason.contains(".partial"), "{}", reason);
     assert_eq!(std::fs::read_to_string(&keep).unwrap(), "PRECIOUS");
     assert_eq!(std::fs::read_to_string(&keep_gz).unwrap(), "PRECIOUS");
     assert_eq!(leftovers(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
     assert_eq!(write_to(ok, &keep, true), 0);
     assert_eq!(std::fs::read_to_string(&keep).unwrap(), "{\"x\":1}\n");
-    assert_ne!(write_to(ok, dir.path(), true), 0);
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    assert_ne!(write_to(ok, &sub, true), 0);
     let reason = recorded_error().expect("a reason");
     assert!(reason.starts_with("cannot create file: "), "{}", reason);
-    assert_eq!(leftovers(dir.path()), vec!["keep.ndjson", "keep.ndjson.gz"]);
+    assert_eq!(
+        leftovers(dir.path()),
+        vec!["keep.ndjson", "keep.ndjson.gz", "sub"]
+    );
     dataframe_drop(ok);
     series_drop(xs);
     dataframe_drop(binary);
+}
+
+#[test]
+fn write_ndjson_refuses_binary_inside_a_list_or_struct() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("nested.ndjson");
+    let p = cstr(path.to_str().unwrap());
+    let bytes: [&[u8]; 2] = [b"p", b"q"];
+    let binary = Series::new("b".into(), &bytes);
+    let list = binary.implode().unwrap().into_series();
+    let fields = DataFrame::new_infer_height(vec![
+        Series::new("a".into(), &[1i64, 2]).into(),
+        binary.clone().into(),
+    ])
+    .unwrap()
+    .into_struct("s".into())
+    .into_series();
+    for (name, series) in [("l", list), ("s", fields)] {
+        let df = Box::into_raw(Box::new(
+            DataFrame::new_infer_height(vec![series
+                .with_name(name.into())
+                .into()])
+            .unwrap(),
+        ));
+        assert_ne!(
+            dataframe_write_ndjson_with_options(
+                df,
+                p.as_ptr(),
+                0,
+                false,
+                0,
+                true
+            ),
+            0
+        );
+        assert_eq!(
+            recorded_error(),
+            Some(format!("cannot write the binary column {name:?} as JSON"))
+        );
+        dataframe_drop(df);
+    }
+    assert!(leftovers(dir.path()).is_empty());
 }

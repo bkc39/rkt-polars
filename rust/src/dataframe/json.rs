@@ -1,13 +1,14 @@
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::prelude::*;
 use crate::{
-    clear_last_error, decode_path, decode_schema, finish_replacing,
-    guard_panic, record, set_last_error, temp_sibling, write_frame,
-    CompatDType, CompatJsonOptions, IO_BAD_PATH, IO_NULL_ARG,
+    clear_last_error, decode_path, decode_schema, guard_panic, record,
+    write_checked_frame, write_frame, CompatDType, CompatJsonOptions,
 };
+use polars::prelude::file::Writable;
 use polars::prelude::{SerReader, SerWriter};
 
 struct JsonArrays {
@@ -177,18 +178,42 @@ fn ndjson_compression(
     }
 }
 
+fn ndjson_extension(
+    path: &str,
+    compression: ExternalCompression,
+) -> PolarsResult<()> {
+    let extension = Path::new(path).extension().and_then(|ext| ext.to_str());
+    match compression.file_suffix() {
+        Some(suffix) => polars_ensure!(
+            extension.is_none_or(|ext| ext == suffix.trim_start_matches('.')),
+            InvalidOperation: "the path ({}) does not conform to standard naming, expected suffix: ({}), set `check_extension` to `False` if you don't want this behavior", path, suffix
+        ),
+        None => polars_ensure!(
+            !matches!(extension, Some("gz" | "zst" | "zstd")),
+            InvalidOperation: "use the compression parameter to control compression, or set `check_extension` to `False` if you want to suffix an uncompressed filename with an ending intended for compression"
+        ),
+    }
+    Ok(())
+}
+
 fn ndjson_write(
     df: &DataFrame,
-    path: &str,
-    options: NDJsonWriterOptions,
+    file: &std::fs::File,
+    compression: ExternalCompression,
 ) -> PolarsResult<()> {
+    let target = Writable::Local(file.try_clone()?);
     df.clone()
         .lazy()
         .sink(
             SinkDestination::File {
-                target: SinkTarget::Path(path.into()),
+                target: SinkTarget::Dyn(SpecialEq::new(Arc::new(Mutex::new(
+                    Some(target),
+                )))),
             },
-            FileWriteFormat::NDJson(options),
+            FileWriteFormat::NDJson(NDJsonWriterOptions {
+                compression,
+                check_extension: false,
+            }),
             UnifiedSinkArgs::default(),
         )?
         .collect()
@@ -205,37 +230,21 @@ pub extern "C" fn dataframe_write_ndjson_with_options(
     compression_level: u32,
     check_extension: bool,
 ) -> i32 {
-    clear_last_error();
-    if df_ptr.is_null() {
-        set_last_error("dataframe is null");
-        return IO_NULL_ARG;
-    }
-    let Some(path) = decode_path(path) else {
-        return IO_BAD_PATH;
-    };
-    let df = unsafe { &*df_ptr };
     let level = has_compression_level.then_some(compression_level);
-    let target = Path::new(path);
-    let temp = temp_sibling(target);
-    let temp_name = temp.to_string_lossy().into_owned();
-    let written = guard_panic(|| {
-        record(
-            refuse_binary(df)
-                .and_then(|()| ndjson_compression(compression, level))
-                .and_then(|compression| {
-                    ndjson_write(
-                        df,
-                        &temp_name,
-                        NDJsonWriterOptions {
-                            compression,
-                            check_extension,
-                        },
-                    )
-                })
-                .map_err(|err| {
-                    err.wrap_msg(|msg| msg.replace(&temp_name, path))
-                }),
-        )
-    });
-    finish_replacing(&temp, target, written)
+    write_checked_frame(
+        df_ptr,
+        path,
+        |path| {
+            let compression = ndjson_compression(compression, level)?;
+            if check_extension {
+                ndjson_extension(path, compression)
+            } else {
+                Ok(())
+            }
+        },
+        |file, df| {
+            refuse_binary(df)?;
+            ndjson_write(df, file, ndjson_compression(compression, level)?)
+        },
+    )
 }

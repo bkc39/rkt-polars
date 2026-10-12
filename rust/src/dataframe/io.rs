@@ -7,11 +7,11 @@ use crate::prelude::*;
 use crate::*;
 use polars::prelude::SerWriter;
 
-pub(crate) const IO_OK: i32 = 0;
-pub(crate) const IO_NULL_ARG: i32 = 1;
-pub(crate) const IO_BAD_PATH: i32 = 2;
+const IO_OK: i32 = 0;
+const IO_NULL_ARG: i32 = 1;
+const IO_BAD_PATH: i32 = 2;
 const IO_OPEN_FAILED: i32 = 3;
-pub(crate) const IO_WRITE_FAILED: i32 = 4;
+const IO_WRITE_FAILED: i32 = 4;
 
 fn cannot_create(err: std::io::Error) -> String {
     format!("cannot create file: {}", err)
@@ -182,6 +182,15 @@ pub(crate) fn write_frame(
     path: *const c_char,
     write: impl FnOnce(&mut File, &mut DataFrame) -> PolarsResult<()>,
 ) -> i32 {
+    write_checked_frame(df_ptr, path, |_| Ok(()), write)
+}
+
+pub(crate) fn write_checked_frame(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+    check: impl FnOnce(&str) -> PolarsResult<()>,
+    write: impl FnOnce(&mut File, &mut DataFrame) -> PolarsResult<()>,
+) -> i32 {
     clear_last_error();
     if df_ptr.is_null() {
         set_last_error("dataframe is null");
@@ -194,6 +203,9 @@ pub(crate) fn write_frame(
     let Some(path_str) = decode_path(path) else {
         return IO_BAD_PATH;
     };
+    if record(check(path_str)).is_none() {
+        return IO_WRITE_FAILED;
+    }
     let Some(mut staged) = record(create_staged(path_str)) else {
         return IO_OPEN_FAILED;
     };

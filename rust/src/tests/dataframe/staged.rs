@@ -4,10 +4,15 @@ use std::path::Path;
 
 type Writer = extern "C" fn(*mut DataFrame, *const c_char) -> i32;
 
-const WRITERS: [(&str, Writer); 3] = [
+extern "C" fn write_ndjson(df: *mut DataFrame, path: *const c_char) -> i32 {
+    dataframe_write_ndjson_with_options(df, path, 0, false, 0, true)
+}
+
+const WRITERS: [(&str, Writer); 4] = [
     ("csv", dataframe_write_csv),
     ("parquet", dataframe_write_parquet),
     ("json", dataframe_write_json),
+    ("ndjson", write_ndjson),
 ];
 
 fn names(dir: &Path) -> Vec<String> {
@@ -46,6 +51,20 @@ fn read_csv(path: &str) -> *mut DataFrame {
 fn read_parquet(path: &str) -> *mut DataFrame {
     let p = cstr(path);
     dataframe_read_parquet(p.as_ptr())
+}
+
+fn read_ndjson(path: &str) -> *mut DataFrame {
+    let p = cstr(path);
+    dataframe_read_ndjson_with_options(
+        p.as_ptr(),
+        CompatNdjsonOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    )
 }
 
 fn height_of(df: *mut DataFrame) -> usize {
@@ -158,30 +177,36 @@ fn a_new_file_gets_default_permissions() {
 fn a_fifo_is_written_in_place() {
     use std::io::Read;
     use std::os::unix::fs::FileTypeExt;
-    let dir = tempfile::tempdir().expect("tempdir");
-    let fifo = dir.path().join("pipe.json");
-    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-    if !made.is_ok_and(|status| status.success()) {
-        return;
+    let cases: [(&str, Writer, &str); 2] = [
+        ("json", dataframe_write_json, r#"[{"x":1},{"x":2}]"#),
+        ("ndjson", write_ndjson, "{\"x\":1}\n{\"x\":2}\n"),
+    ];
+    for (ext, writer, expected) in cases {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fifo = dir.path().join(format!("pipe.{ext}"));
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|status| status.success()) {
+            return;
+        }
+        let reader = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                std::fs::File::open(fifo)
+                    .unwrap()
+                    .read_to_string(&mut text)
+                    .unwrap();
+                text
+            })
+        };
+        assert_eq!(write_to(writer, &fifo), 0, "{ext}");
+        assert_eq!(reader.join().unwrap(), expected);
+        assert!(std::fs::symlink_metadata(&fifo)
+            .unwrap()
+            .file_type()
+            .is_fifo());
+        assert_eq!(names(dir.path()), vec![format!("pipe.{ext}")]);
     }
-    let reader = {
-        let fifo = fifo.clone();
-        std::thread::spawn(move || {
-            let mut text = String::new();
-            std::fs::File::open(fifo)
-                .unwrap()
-                .read_to_string(&mut text)
-                .unwrap();
-            text
-        })
-    };
-    assert_eq!(write_to(dataframe_write_json, &fifo), 0);
-    assert_eq!(reader.join().unwrap(), r#"[{"x":1},{"x":2}]"#);
-    assert!(std::fs::symlink_metadata(&fifo)
-        .unwrap()
-        .file_type()
-        .is_fifo());
-    assert_eq!(names(dir.path()), vec!["pipe.json"]);
 }
 
 #[cfg(unix)]
@@ -228,6 +253,17 @@ fn a_leftover_staging_file_is_not_read() {
         ),
         "{reason}"
     );
+    assert!(reason.contains(".partial"), "{reason}");
+    let ndjson_dir = dir.path().join("lines");
+    std::fs::create_dir(&ndjson_dir).unwrap();
+    assert_eq!(write_to(write_ndjson, &ndjson_dir.join("a.ndjson")), 0);
+    std::fs::write(ndjson_dir.join(".rkt-polars-1-2.partial"), "{\"x\":99}\n")
+        .unwrap();
+    let lines =
+        |name: &str| ndjson_dir.join(name).to_str().unwrap().to_string();
+    assert_eq!(height_of(read_ndjson(&lines("*.ndjson"))), 2);
+    assert!(read_ndjson(&lines("")).is_null());
+    let reason = recorded_error().expect("a reason");
     assert!(reason.contains(".partial"), "{reason}");
 }
 

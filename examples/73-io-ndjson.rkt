@@ -12,13 +12,14 @@
 ;;   racket examples/73-io-ndjson.rkt
 
 (require racket/file
+         (only-in racket/list make-list)
          polars)
 
 (define dir (make-temporary-directory "rkt-polars-ndjson-~a"))
 (define (part i) (build-path dir (format "part-~a.ndjson" i)))
 
 (for ([i '(1 2 3)] [readings '((3.5 2.25) (4.0) (1.75 5.0))])
-  (write-ndjson (dataframe (list (series (for/list ([_ (in-list readings)]) (format "s~a" i))
+  (write-ndjson (dataframe (list (series (make-list (length readings) (format "s~a" i))
                                          #:name "station")
                                  (series readings #:name "reading")))
                 (part i)))
@@ -36,8 +37,7 @@
                collect))
 
 (define mixed (build-path dir "mixed.jsonl"))
-(call-with-output-file mixed
-  (lambda (out) (void (write-string "{\"n\":1}\n{\"n\":\"two\"}\n{\"n\":3}\n" out))))
+(display-to-file "{\"n\":1}\n{\"n\":\"two\"}\n{\"n\":3}\n" mixed)
 (printf "strict: ~a\n"
         (with-handlers ([exn:fail? exn-message])
           (read-ndjson mixed #:infer-schema-length 1)))
