@@ -268,7 +268,7 @@
                     polars-null series-dtype series-new-f64 series-new-i32 series-new-i64
                     series-new-str series-ref series-sum-f64)
            (prefix-in contracted: (submod ".."))
-           (only-in polars/private/generic/test-fixtures
+           (only-in polars/private/test-helpers
                     apply-keywords contract-violation-of message-of))
 
   (define scratch (make-temporary-directory "rkt-polars-parquet-~a"))
