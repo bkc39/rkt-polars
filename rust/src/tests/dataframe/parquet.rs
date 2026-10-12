@@ -364,9 +364,9 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
     assert!(unsafe { (*back).equals_missing(&*floats) });
     assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
 
-    std::fs::create_dir(dir.path().join("sub")).unwrap();
-    let sub = cstr(dir.path().join("sub").to_str().unwrap());
-    assert_eq!(dataframe_write_csv(df, sub.as_ptr()), 3);
+    let sub = dir.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    assert_eq!(write_with(df, &sub, Default::default()), 3);
     let reason = recorded_error().expect("a reason");
     assert!(reason.starts_with("cannot create file: "), "{:?}", reason);
     assert_eq!(entries(dir.path()), vec!["keep.parquet", "sub"]);
