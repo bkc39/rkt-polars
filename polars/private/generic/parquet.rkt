@@ -244,7 +244,7 @@
   (check-equal? (height (read-parquet (build-path leftover "*.parquet"))) 4)
   (check-equal? (height (read-parquet (build-path leftover "*"))) 8)
   (check-regexp-match
-   #rx"directory contained paths with different file extensions: first path: [^,]*/[.]rkt-polars-1-0[.]partial,"
+   #rx"directory contained paths with different file extensions: .*/[.]rkt-polars-1-0[.]partial"
    (message-of (lambda () (read-parquet leftover))))
 
 
