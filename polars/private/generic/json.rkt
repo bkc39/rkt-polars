@@ -380,9 +380,9 @@
   (define leftover (build-path scratch "leftover"))
   (make-directory leftover)
   (write-ndjson guide-df (build-path leftover "a.ndjson"))
-  (scratch-file leftover ".rkt-polars-1-0.partial" "{\"foo\":99}\n")
+  (void (scratch-file leftover ".rkt-polars-1-0.partial" "{\"foo\":99}\n"))
   (check-true (frame=? (read-ndjson (build-path leftover "*.ndjson")) guide-df))
-  (check-exn #rx"directory contained paths with different file extensions: [^,]*[.]partial"
+  (check-exn #rx"directory contained paths with different file extensions: .*/[.]rkt-polars-1-0[.]partial"
              (lambda () (read-ndjson leftover)))
 
   (define strays (build-path scratch "strays"))
