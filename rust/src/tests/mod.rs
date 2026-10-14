@@ -10,3 +10,4 @@ mod series;
 #[path = "util.rs"]
 mod test_util;
 mod test_util_smoke;
+mod time_zone;

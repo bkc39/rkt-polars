@@ -1,18 +1,53 @@
 #lang racket/base
 
 (require racket/bool
+         (only-in racket/contract flat-contract-with-explanation raise-blame-error)
          racket/list
          racket/match
          racket/promise
          racket/string
          threading)
 
-(provide ->column-pattern)
+(provide ->column-pattern column-pattern/c column-spec-contract)
 
 (define (->column-pattern v)
   (if (regexp? v)
       (string-append "^(?s).*(?:" (regexp->rust v) ").*$")
       v))
+
+(define (column-spec-contract name accepts?)
+  (flat-contract-with-explanation
+   (lambda (v)
+     (define construct (and (regexp? v) (unsupported-construct (tokens v) (pregexp? v))))
+     (cond
+       [construct
+        (lambda (blame)
+          (raise-blame-error
+           blame v
+           (list (string-append "Polars' regex engine has no " construct "; to select by this"
+                                " regexp, match column-names with regexp-match? and select the names")
+                 'given: "~e")
+           v))]
+       [(accepts? v) #t]
+       [else
+        (lambda (blame) (raise-blame-error blame v '(expected: "~a" given: "~e") name v))]))
+   #:name name))
+
+(define column-pattern/c
+  (column-spec-contract '(or/c string? regexp?) (lambda (v) (or (string? v) (regexp? v)))))
+
+(define (unsupported-construct tokens px?)
+  (match tokens
+    ['() #f]
+    [(list* "(" "?" next _)
+     #:when (not (equal? next ":"))
+     (match next
+       [(or "=" "!") "lookahead"]
+       ["<" "lookbehind"]
+       [">" "atomic groups"]
+       [_ "conditionals"])]
+    [(cons (regexp #rx"^\\\\[0-9]$") _) #:when px? "backreferences"]
+    [(cons _ rest) (unsupported-construct rest px?)]))
 
 (define posix-classes
   (hash "alpha" "a-zA-Z" "upper" "A-Z" "lower" "a-z" "digit" "0-9" "xdigit" "0-9a-fA-F"
@@ -61,10 +96,13 @@
       (remove-duplicates (list ch (char-upcase ch) (char-downcase ch) (char-foldcase ch)))
       (list ch)))
 
+(define (tokens rx)
+  (regexp-match* (if (pregexp? rx) px-token rx-token) (object-name rx)))
+
 (define (regexp->rust rx)
   (define px? (pregexp? rx))
   (for/fold ([folds '(#f)] [out '()] #:result (string-append* (reverse out)))
-            ([token (in-list (regexp-match* (if px? px-token rx-token) (object-name rx)))])
+            ([token (in-list (tokens rx))])
     (match-define (cons fold? outer) folds)
     (match token
       [(regexp #rx"^\\(\\?([-ims]+):$" (list _ flags))
@@ -104,7 +142,6 @@
     [(not px?) (literal (string-ref c 0) #f)]
     [(ascii-class c #f)]
     [(member c '("b" "B")) (string-append "(?-u:\\" c ")")]
-    [(regexp-match? #rx"^[0-9]$" c) (string-append "\\" c)]
     [else (literal (string-ref c 0) #f)]))
 
 (define (property p caret name)

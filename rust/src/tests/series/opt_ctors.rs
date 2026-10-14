@@ -42,19 +42,7 @@ fn opt_f64_mixed_valid_round_trips() {
 
 #[test]
 fn opt_str_mixed_valid_round_trips() {
-    // series_new_opt_str: parallel data + valid arrays. NULL
-    // entries in the data slot are tolerated when valid=0.
-    let owned = [cstr("hi"), cstr("there")];
-    let data = [owned[0].as_ptr(), ptr::null(), owned[1].as_ptr()];
-    let valid = [1u8, 0, 1];
-    let n = cstr("ws");
-    let s = series_new_opt_str(
-        n.as_ptr(),
-        data.as_ptr(),
-        valid.as_ptr(),
-        data.len(),
-    );
-    assert!(!s.is_null());
+    let s = make_opt_str("ws", &[Some("hi"), None, Some("there")]);
     assert_eq!(series_null_count(s), 1);
     assert_eq!(take_cstring(series_ref_str(s, 0)), "hi");
     assert!(series_ref_str(s, 1).is_null());
@@ -129,12 +117,14 @@ fn opt_ymdhms_mixed_valid_round_trips() {
     );
     assert!(!s.is_null());
     assert_eq!(series_null_count(s), 1);
-    let v0 = series_ref_ymdhms(s, 0);
-    assert_eq!(v0.valid, 1);
-    assert_eq!(v0.value.year, 2024);
-    assert_eq!(v0.value.month, 1);
-    assert_eq!(v0.value.hour, 3);
-    let v1 = series_ref_ymdhms(s, 1);
-    assert_eq!(v1.valid, 0);
+    let ca = unsafe { &*s }.datetime().expect("a datetime column");
+    assert_eq!(ca.time_unit(), TimeUnit::Milliseconds);
+    let expected = NaiveDate::from_ymd_opt(2024, 1, 2)
+        .and_then(|d| d.and_hms_opt(3, 4, 5))
+        .expect("a valid datetime")
+        .and_utc()
+        .timestamp_millis();
+    assert_eq!(ca.physical().get(0), Some(expected));
+    assert_eq!(ca.physical().get(1), None);
     series_drop(s);
 }

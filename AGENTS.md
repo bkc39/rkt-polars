@@ -19,20 +19,26 @@ only through direct `polars-lazy` and `polars-io` dependencies with theirs
 (`scripts/rustls-only.sh`, a flake check and CI's Lint job) fails when
 `rust/Cargo.lock` holds OpenSSL or native-tls, which would link the system's
 libssl, or aws-lc, rustls' default provider, which is C and assembly built
-with cmake. polars' `nightly` feature is on, as in Python polars' own wheels: its
-`std::simd` code carries the CSV reader (a stable build scans nycflights at
-2.5× Python). It compiles on the pinned stable rustc (1.98.1, nixpkgs at
-`flake.lock`) with `RUSTC_BOOTSTRAP=1`, which the flake's build and dev shell
-and `scripts/build-so.sh` set; the release build uses that same rustc version.
-The committed candidates are built with `[profile.dist]` in `rust/Cargo.toml`:
-release plus thin LTO and one codegen unit (#125), which keeps the Linux `.so`
-at 83.9 MB against GitHub's 104,857,600-byte file limit; a local release build
-is 104.6 MB, at the limit (the IO features of #176 add 2.5 MB to the first and
-3.3 MB to the second). Only `scripts/build-so.sh` uses `[profile.dist]`. The nix build,
-`cargo test` and the bench stay on `release`, because under LTO every test and
-example binary links on one core (the nix check went from 30 to 145 minutes on
-CI), so the bench measures the release build, not the shipped one. `panic`
-stays `unwind`: `guard_panic` depends on it.
+with cmake. polars' `nightly` feature is on,
+as in Python polars' own wheels: its `std::simd` code carries the CSV reader
+(a stable build scans nycflights at 2.5× Python). It compiles on the pinned
+stable rustc, nixpkgs' at `flake.lock`, with `RUSTC_BOOTSTRAP=1`, which the
+flake's build and dev shell and `scripts/build-so.sh` set.
+`rust/rust-toolchain.toml` names that release for `scripts/build-so.sh`, and
+the `release-toolchain` flake check fails when the two differ. The release
+build is rustup's build of the release, whose LLVM can differ from nixpkgs',
+so `nix flake check` does not test the shipped code generation. The Linux
+build's manylinux2014 image is pinned by digest in the script. The committed
+candidates are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
+thin LTO and one codegen unit (#125), which keeps the Linux `.so` at 81.6 MB
+against GitHub's 104,857,600-byte file limit (102.2 MB without it), before
+the IO features of #176, which added 2.5 MB to the first and 3.3 MB to the
+second on the previous toolchain. Only
+`scripts/build-so.sh` uses it. The nix build, `cargo test` and the bench stay
+on `release`, because under LTO every test and example binary links on one
+core (the nix check went from 30 to 145 minutes on CI), so the bench measures
+the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
+depends on it.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -49,8 +55,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
    lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
    whole or a block of rows at a time, behind `series->list`,
-   `in-dataframe-rows` and their siblings). `define-compat` binds a
-   C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
+   `in-dataframe-rows` and their siblings; it binds the numeric, boolean and
+   categorical copies, and takes the String and Decimal ones,
+   `series-copy-str` / `series-str-byte-len` and `series-copy-decimal`, from
+   `foreign.rkt`, where `series-ref` reads through them). `define-compat`
+   binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
@@ -141,25 +150,39 @@ it. Racket side: `define-compat` with `#:c-id`.
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` and `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options`, `series_sort_with_options` and the three
-  Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) — or it attaches a stale reason from an unrelated
+  `dataframe_sort_with_options`, `series_sort_with_options`,
+  `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
+  `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
+  zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
+  `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
+  `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
+  `expr_str_to_datetime_tz`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, ...) and in the JSON readers'
-  advice to increase `infer_schema_length` or give a schema.
+  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...;
+  `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
+  'null`, since `str->datetime` and the other verbs that can raise it lack
+  the keyword) and in the JSON readers' advice to increase
+  `infer_schema_length` or give a schema, and drops the hint to set
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's name through
+  `named_time_zone`, which checks it with `TimeZone::validate_time_zone`
+  after `opt_try_new`, and only `opt_try_new` reads that variable, so setting
+  it changes nothing here.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
   did so on a nulls-last boolean sort and a null-dtype `arg_sort`; 0.55.2
-  does neither, `rust/src/tests/crate_sort.rs`, and #108 removes the
-  routing around them).
+  does neither, and `rust/src/tests/crate_sort.rs` pins that, so the sorts
+  call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum`, the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) and
+  `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
+  the three series time-zone entry points (`series_cast_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`), the IO
+  helpers (`read_frame`, `read_path`, `write_frame`) and
   `dataframe_read_json_with_options` do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
@@ -182,6 +205,38 @@ it. Racket side: `define-compat` with `#:c-id`.
   bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
+- **Strings cross into Rust in one allocation, never as `(_list i _string)`.**
+  That type turns each element into a fresh byte string and stores its
+  address in an array the collector does not trace, so a collection while the
+  array fills moves or frees the strings already stored, and Rust reads stale
+  memory (#143: wrong values from about 300,000 strings, an abort at a
+  million). A string series is the bulk copy in reverse: `series-new-str`
+  passes one UTF-8 byte string, row offsets in a `with-raw-buffer` and a
+  validity byte string to `series_new_str_packed`, which checks every offset
+  against the buffer and a character boundary. The byte strings may move, so
+  the binding is never `#:blocking?`. A list of names (`by`, `on`,
+  `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
+  `const char **` table and every NUL-terminated string share one
+  `'atomic-interior` block, which the collector never moves. Its elements are
+  what `_string` took: a string (as UTF-8), a byte string, or a path.
+  `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
+  retains the values it is given and not what a ctype converts them to: as a
+  ctype the block could be freed by a collection during a `#:blocking?` call
+  or a callback. `series-ref` reads a String value by length, through
+  `series_copy_str`, since a C string ends at a NUL the value may hold.
+  Categorical and Enum values are still read as C strings, and Enum categories
+  cross as one, so `series` refuses a NUL in a categorical or Enum value, and
+  `series`, `cast`, `col`, `series-cast`, `expr-cast` and `expr-dtype-col`
+  refuse one in an Enum category (`check-enum-categories`); `define-enum`
+  refuses it at compile time. Names, single string arguments and categoricals
+  cast from a String series still stop at a NUL (#165). A test in
+  `resource.rkt` reads every module under `polars/private` as data and fails
+  on a pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`,
+  `_symbol`, `_gcpointer`, `_racket`, their `/` and `*` variants, or a name
+  `define`d as one, directly or through `make-ctype`) as the element of a
+  `_list` / `_vector` / `_ptr` in mode `i` or `io`, of an `_array`,
+  `_array/list`, `_array/vector`, `_box` or `_list-struct`, as a
+  `define-cstruct` field, or in `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
@@ -205,8 +260,8 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Behavioural facts to know before changing semantics
 
-- `series #:dtype` accepts short and canonical spellings (`'f64`, `'float64`);
-  `cast` / `series-cast` accept only canonical (#64).
+- `series #:dtype`, `cast` and `series-cast` accept short and canonical
+  spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
 - `/` on an integer column is integer division, unlike Python's `/` (#65).
 - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
   keywords, as Python's `read_csv` does: `dataframe_read_csv_with_options`
@@ -276,6 +331,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `maintain_order='none'`; sort the result when order matters.
 - `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
   aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
+- Inside `agg` or `over`, the crate's `SortExpr` reads out of bounds when its
+  input holds one value per group: it gathers each group's row indices from
+  that one value (#167). The read segfaults on a string or a large frame, and
+  Python 1.42.1 segfaults on the same query. `cargo test` builds with debug
+  assertions, where the read is a `check_bounds` panic instead, so a Rust
+  test catches it without needing a crash. So an expression `sort` is
+  decided by the input's structure. An input that is one value per group (an
+  aggregation, `len`, a scalar literal, or an alias, cast, operator or `when`
+  over those alone) comes back unsorted. An input that keeps a value per row
+  (a column or selector, or an alias, cast, sort, operator or `when` with one
+  among its operands) gets `Expr::sort`, because polars evaluates it per group
+  as a column or a list. Anything else, a function of one value per group
+  such as `(abs (sum "v"))` among them, becomes `e.sort_by([e])`.
+  `SortByExpr` repoints such groups at the values before it gathers. This
+  path evaluates the input twice and prints as `sort_by`. A new form goes
+  into the per-row set only after its evaluation in `polars-expr` has been
+  checked.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
@@ -283,9 +355,54 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
-- `series` infers int64 / float64 / string / datetime / bool, and a list of
-  symbols infers `'categorical`. It cannot build a `date` column from gregor
-  `date`s (#63), and `lit` rejects gregor values.
+- `series` infers int64 / float64 / string / bool, `'categorical` from a list
+  of symbols, and the temporal dtypes from gregor values (#63): `'date`,
+  `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
+  a `period` without years or months (a day is 24 hours). A datetime or period
+  that carries nanoseconds makes the column nanoseconds instead, where
+  Python's `datetime` stops at microseconds, but only when a nanosecond column
+  holds every value (datetimes 1677-09-21 to 2262-04-11, durations under
+  2^63 ns); otherwise it stays microseconds and drops the finer part as
+  `#:dtype` does, so `(series (list (now) (datetime 1600 1 1)))` builds
+  although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
+  part as a polars cast does: a datetime floors, a duration truncates toward
+  zero. A date or datetime outside chrono's years (-262143 to 262142) is
+  refused, since polars panics printing one. `lit`, and so every comparison,
+  `is-between` and `is-in`, takes the same values as literals of the same
+  dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
+- A zoned datetime (#140, polars' `timezones` feature) is the datum
+  `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
+  `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no
+  name, so the zone crosses as a string through its own exports
+  (`series_time_zone`, the `_datetime_tz` cast / selector / literal entry
+  points, `series_dt_*` / `expr_dt_*` convert and replace,
+  `expr_str_to_datetime_tz`); each that takes a zone canonicalises it with
+  polars' `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`), validates
+  it with `TimeZone::validate_time_zone` (which, unlike `opt_try_new`, ignores
+  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`) and records why it fails;
+  `->compat-dtype` refuses a zoned datum. A list of moments settles
+  its zone as Python does: the first non-null value decides, a named zone is
+  kept, a fixed offset gives UTC, a naive datetime among moments is read as
+  UTC, and a list that starts naive makes a naive column of UTC clock times.
+  `#:dtype` is the column's dtype outright (a naive one takes each moment's
+  UTC clock time), where Python's `pl.Datetime("us")` keeps the values' zone.
+  `%z` parses to UTC; on an expression, an offset with no `#:format` and no
+  `#:time-zone` is an error, as in Python. Every reading is polars'
+  (chrono-tz's compiled database), never tzinfo's: a moment read back is built
+  with the offset polars gives, through gregor's private `make-moment` (#172;
+  `temporal.rkt` checks at compile time that gregor still provides it). The
+  offset is the wall clock `replace_time_zone(None)` gives on a microsecond
+  view of the column, less the floored instant: on a nanosecond column polars'
+  clock overflows i64, unchecked, within a day of either end of the range
+  (1677, 2262), and offsets change on whole seconds, so the floored instant
+  has the value's offset. The series printer takes `%Z` from polars. tzinfo,
+  behind gregor's own functions, ignores the TZif footer (no daylight saving
+  after 2037, or sooner with slim zoneinfo) and some systems lack the
+  backward-compatible names (`US/Pacific`). Series operators refuse datetimes
+  in different zones before the native call, naming the operator, and `is-in`
+  refuses a list whose datetimes differ in zone (or mix naive and zoned), as
+  Python's `is_in` does, though `series` builds a column from the same list. A
+  zoned CSV schema override is refused (the reader would drop the zone).
 - Categorical and Enum values surface as symbols (`ref`, every conversion);
   `lit` and `is-in` read a symbol as its name's string. An Enum dtype is the
   datum `'(enum sym ...)`, as `dtype` prints it; user code and the docs define
@@ -299,9 +416,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.
-- `ref` and the bulk conversions (`series->list`, `in-series`, …) floor
-  datetimes to whole seconds (#100); the conversions raise on an unsupported
-  dtype, `binary` included (#99), even when every entry is null.
+- `ref` and the bulk conversions (`series->list`, `in-series`, …) return a
+  datetime with its column's full precision (#100), as the gregor `datetime`
+  of that instant, where Python's `to_list` stops at microseconds; `ref` reads
+  the physical value through the bulk copy, so the two cannot disagree. The
+  conversions raise on an unsupported dtype, `binary` included (#99), even
+  when every entry is null.
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
@@ -310,7 +430,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   literals and ranges itself. `\p{...}` classes follow each side's Unicode
   tables, and Racket misjudges some classes above U+00FF (#85), so the
   oracle's names stay out of both. Lookaround, backreferences, atomic groups
-  and conditionals, which the crate lacks, fail at `collect`.
+  and conditionals, which the crate lacks, are rejected by `col` and
+  `exclude`, naming the construct (#151).
 
 ## Documentation
 
@@ -323,6 +444,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   never hand-pasted `@verbatim` output; `eval:error` for an expected failure;
   `#:hidden` for setup. A broken example fails the build, on the package
   server too.
+- **Every guide or reference example is a test case.** The PR that adds or
+  changes an example adds a test in the module's `test` submodule asserting
+  the same result, or, for an `eval:error`, the failure and its `who:` (#152
+  will run the examples themselves under `raco test`). An `eval:error` shows
+  a failure that is the behaviour being documented, with a message that names
+  the function the reader called; an example that errors because of a gap,
+  or blames an internal binding, is a bug (#151).
 - Every `@section` has an explicit `#:tag`. Guide chapters mirror the upstream
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
@@ -339,9 +467,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (five checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`).
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
+  `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -407,3 +536,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `master` requires one review and the maintainer is the only reviewer, so
   merges are `gh pr merge --squash --admin` once the owner approves.
 - Follow-ups become issues, never TODO comments.
+- The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
+  crates within the polars minor) moves only in a refresh PR of its own,
+  `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
+  (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
