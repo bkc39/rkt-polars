@@ -14,7 +14,9 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      version = "0.1.0";
+      version = "0.1";
+      rustVersion =
+        (builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).package.version;
       # The Racket release this flake targets; nixpkgs supplies the actual
       # toolchain, and the `racket-version` check asserts it is at least this.
       minRacketVersion = "9.3";
@@ -101,7 +103,7 @@
 
           rust = pkgs.rustPlatform.buildRustPackage {
             pname = "rkt-polars-compat";
-            inherit version;
+            version = rustVersion;
             src = pkgs.lib.cleanSource ./rust;
             cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
 
