@@ -19,18 +19,14 @@
 (printf "~a ~a\n" (dtype s1) (dtype s2))
 
 ;; --- dataframe -----------------------------------------------------------
-;; API gap: `series` cannot build a Date column from gregor dates, so build
-;; datetimes and cast.
 (define df
-  (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                     #:name "name")
-             (series (list (datetime 1997 1 10) (datetime 1985 2 15)
-                           (datetime 1983 3 22) (datetime 1981 4 30))
-                     #:name "birthdate")
-             (series '(57.9 72.5 53.6 83.1) #:name "weight")
-             (series '(1.56 1.77 1.65 1.75) #:name "height")))
-      (with-columns (cast "birthdate" 'date))))
+  (dataframe
+   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
+                 #:name "name")
+         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
+                 #:name "birthdate")
+         (series '(57.9 72.5 53.6 83.1) #:name "weight")
+         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
 
 (displayln df)
 

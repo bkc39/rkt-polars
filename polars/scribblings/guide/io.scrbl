@@ -78,7 +78,7 @@ list of them:
 spelling @racket[series] accepts; @racket[#:infer-schema-length] sets how
 many rows inference reads (@racket[#f] for all of them, @racket[0] for
 strings throughout); @racket[#:ignore-errors] reads what does not parse as
-null; @racket[#:try-parse-dates] reads ISO dates and datetimes as such.
+null. Dates have their own keyword (@secref["io-csv-dates"]).
 
 @examples[#:eval ev #:label #f
 (~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
@@ -91,10 +91,6 @@ null; @racket[#:try-parse-dates] reads ISO dates and datetimes as such.
 (~> (read-csv "flights.tsv" #:separator #\tab #:ignore-errors #t)
     (ref #:columns "dep_delay")
     null-count)
-(~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
-              #:try-parse-dates #t)
-    (select "time_hour")
-    (head 2))
 ]
 
 @bold{Layout.} @filepath{notes.csv} starts with a comment line, separates
@@ -111,6 +107,28 @@ and @racket[#:n-rows] frame the rows to read.
 API gaps: @tt{null_values} takes no per-column mapping (#101); no
 @tt{columns}, @tt{new_columns}, @tt{eol_char}, @tt{row_index_name},
 @tt{truncate_ragged_lines} or @tt{decimal_comma}.
+
+@subsection[#:tag "io-csv-dates"]{Parsing dates}
+
+Without help a date column reads as strings. @racket[#:try-parse-dates]
+parses each column whose values look like dates, times or datetimes (ISO
+8601 and a handful of other formats) as it is read, on @racket[read-csv] and
+@racket[scan-csv] alike. @filepath{apple_stock.csv} holds upstream's hundred
+closing prices of Apple stock:
+
+@examples[#:eval ev #:label #f
+(read-csv "apple_stock.csv" #:try-parse-dates #t)
+(~> (read-csv "flights.tsv" #:separator #\tab #:null-values "NA"
+              #:try-parse-dates #t)
+    (select "time_hour")
+    (head 2))
+]
+
+Inference reads the first @racket[#:infer-schema-length] rows, 100 by
+default. A binary format such as Parquet carries its schema, which is used
+as it is. A column in a format the parser does not recognise stays a
+string; @racket[str->date] and its siblings parse it with an explicit
+format (@secref["ts-parsing-cast"]).
 
 @section[#:tag "io-multiple"]{Multiple files}
 

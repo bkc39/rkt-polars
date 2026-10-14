@@ -32,15 +32,13 @@ A @deftech{dataframe} is a collection of equal-length, uniquely named series.
 
 @examples[#:eval ev #:label #f
 (define df
-  (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                     #:name "name")
-             (series (list (datetime 1997 1 10) (datetime 1985 2 15)
-                           (datetime 1983 3 22) (datetime 1981 4 30))
-                     #:name "birthdate")
-             (series '(57.9 72.5 53.6 83.1) #:name "weight")
-             (series '(1.56 1.77 1.65 1.75) #:name "height")))
-      (with-columns (cast "birthdate" 'date))))
+  (dataframe
+   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
+                 #:name "name")
+         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
+                 #:name "birthdate")
+         (series '(57.9 72.5 53.6 83.1) #:name "weight")
+         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
 df
 ]
 
@@ -92,9 +90,18 @@ Dtype spellings accepted by @racket[series]' @racket[#:dtype]:
         (list @racket['date] "Date")
         (list @racket['time] "Time")
         (list @elem{@racket['datetime] or @racket['(datetime milliseconds)]} "Datetime")
+        (list @racket['(datetime microseconds "Europe/Brussels")]
+              "Datetime with a time zone")
+        (list @racket['(duration microseconds)] "Duration")
         (list @racket['categorical] "Categorical")
         (list @racket['(enum low mid high)] "Enum")
-        (list "—" "Decimal, Binary, Duration, Array, List, Struct"))]
+        (list "—" "Decimal, Binary, Array, List, Struct"))]
+
+@racket[series] builds the temporal dtypes from gregor @tt{date}, @tt{time},
+@tt{datetime}, @tt{moment} and @tt{period} values, and infers them from those
+values too: microseconds, or nanoseconds when a value carries them and a
+nanosecond column holds every value, and a moment's time zone
+(@secref["ref-temporal-values"]).
 
 Categorical and Enum values read back as symbols (@secref["ref-categorical"]).
 A Decimal column, read from Parquet, has dtype @racket['(decimal precision scale)]
@@ -157,15 +164,11 @@ binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}
 
 @examples[#:eval ev #:label #f
 (~> df
-    (filter (and (is-between "birthdate"
-                             (str->date (lit "1982-12-31"))
-                             (str->date (lit "1996-01-01")))
+    (filter (and (is-between "birthdate" (date 1982 12 31) (date 1996 1 1))
                  (> (col "height") 1.7))))
 ]
 
-API gaps: no date literals, so the bounds parse a string with
-@racket[str->date]; @racket[filter] takes one predicate, so combine with
-@racket[and].
+API gap: @racket[filter] takes one predicate, so combine with @racket[and].
 
 @subsubsection[#:tag "concepts-group-by"]{group-by and aggregations}
 

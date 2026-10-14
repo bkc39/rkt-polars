@@ -72,7 +72,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?)]) Expr-ptr?]
+              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?
+                                     #,(tt "gregor-value"))])
+                       Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
   column or to several at once, by the shape of @racket[spec]:
@@ -84,9 +86,17 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     @item{A dtype is every column of that dtype (@tt{pl.col(pl.Float64)}).
       @racket[dtype-spec?] is any spelling @racket[series]'
       @racket[#:dtype] accepts, so @racket['float64] and @racket['f64]
-      alike. A bare @racket['datetime] means microseconds, so match a
-      column @racket[series] built from gregor datetimes with
-      @racket['(datetime milliseconds)] or with its @racket[dtype].
+      alike. A bare @racket['datetime] means microseconds: the unit
+      @racket[#:try-parse-dates] gives parsed datetimes, and the unit
+      @racket[series] gives gregor datetimes unless one carries a
+      sub-microsecond part and a nanosecond column holds them all, which
+      makes the column nanoseconds (@secref["ref-temporal-values"]). Match
+      another unit with its @racket[dtype]. A datetime dtype without a zone
+      matches only naive columns, and @racket['(datetime unit "Zone/Name")]
+      only the columns of that unit in exactly that zone, as
+      @tt{pl.col(pl.Datetime("us", "Europe/Brussels"))} does. API gap: no
+      spelling selects every datetime column whatever its unit or zone, as
+      @tt{pl.col(pl.Datetime)} and @tt{pl.Datetime("us", "*")} do (#171).
       @racket['categorical] is every categorical column, and an
       @racket['(enum ....)] dtype the columns of exactly that Enum
       (@secref["ref-categorical"]).}
@@ -111,8 +121,15 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
   exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
   @racket['float64]) and strings. A symbol is the string of its name, so a
-  categorical column compares with the symbols it reads back as. Every
-  operator below lifts a
+  categorical column compares with the symbols it reads back as. A
+  @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
+  @tt{moment} or @tt{period}, and becomes a literal of the dtype
+  @racket[series] infers for it (@secref["ref-temporal-values"]), so a
+  temporal column compares with gregor values as Python's compares with
+  @tt{date}, @tt{time}, @tt{datetime} and @tt{timedelta}. A moment is a
+  zoned literal: in its named zone, or in UTC for a fixed offset. A zoned
+  column compares only with a literal in its own zone, as in Python.
+  Every operator below lifts a
   non-expression operand with @racket[lit] automatically, so it is rarely
   needed explicitly.
 
@@ -128,6 +145,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (select people (col #px"^\\w+t$"))
 (select people (~> (col "id") (* 10) (alias "id10"))
                (alias (lit 0) "zero"))
+(lit (date 2013 6 1))
+(select people (alias (lit (datetime 2013 6 1 12 30)) "noon"))
+(select people (alias (lit (moment 2013 6 1 12 30 #:tz "Europe/Paris")) "noon"))
 (eval:error (select people (col #px"^(?!id)")))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))]}
@@ -378,13 +398,23 @@ total
   categories, as Python's default @tt{strict=True} does (on an expression,
   when the plan runs).
 
+  A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each
+  instant: a naive datetime, or an integer count since the epoch, is read
+  as UTC, as Python reads it. A cast from a zoned datetime to a naive one
+  gives its UTC clock time; @racket[dt-replace-time-zone] keeps the local
+  clock instead. A zone polars does not know raises, with the nearest name
+  it does.
+
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
 (cast (series '("UA" "AA" "UA")) 'categorical)
 (eval:error (cast (series '(1 2 3)) 'f64))
 (define-enum carriers UA AA)
-(eval:error (cast (series '("UA" "B6")) carriers))]}
+(eval:error (cast (series '("UA" "B6")) carriers))
+(cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
+(eval:error (cast (series (list (datetime 2021 3 27 12)))
+                  '(datetime microseconds "Europe/Brusels")))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
@@ -455,15 +485,17 @@ total
   reads every row, and @racket[0] makes every column a string.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
-  accepts except a duration, which Polars cannot parse from CSV, and an
-  Enum; API gap: read the column as @racket['categorical] or
-  @racket['string] and @racket[cast] it. Each column
+  accepts except a duration, which Polars cannot parse from CSV, an Enum
+  and a zoned datetime (#170); API gap: read the column as
+  @racket['categorical], @racket['string] or a naive datetime and
+  @racket[cast] it. Each column
   appears at most once (@racket[distinct-names?]), and naming a column the
   file lacks is an error, where Python ignores the override. With
   @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
-  @racket['datetime] columns. @racket['utf8-lossy] replaces invalid UTF-8 with
-  U+FFFD.
+  @racket['datetime] columns, and datetimes with a UTC offset as
+  @racket['(datetime microseconds "UTC")], as Python does.
+  @racket['utf8-lossy] replaces invalid UTF-8 with U+FFFD.
 
   The result is @racket[(collect (scan-csv path ....))] with the same
   keywords; as in Python, a single file is read eagerly rather than through
@@ -622,6 +654,9 @@ total
               @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
   Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
   CSV, Parquet or newline-delimited JSON (@tt{df.write_csv} and friends).
+  CSV writes a zoned datetime as its local time and UTC offset,
+  @tt{2021-03-27T12:00:00.000000+0100}, as Python does; Parquet keeps the
+  zone in the column's type.
   API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
   file and takes no glob pattern (#44).}
 
@@ -784,10 +819,13 @@ total
               @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
-  lifted with @racket[lit], which has no date spelling; parse a string instead:
-  @racket[(str->date (lit "1982-12-31"))]. A list @racket[rhs] holds integers,
-  reals, strings, symbols (read as strings, as @racket[lit] reads them) or
-  booleans, all of one kind.}
+  lifted with @racket[lit], so gregor dates and datetimes bound a temporal
+  column (@secref["ref-temporal-values"]). A list @racket[rhs] holds integers,
+  reals, strings, symbols (read as strings, as @racket[lit] reads them),
+  booleans or gregor values, all of one kind. Its datetimes share one zone, or
+  none: a list that mixes naive datetimes and moments, or moments in two
+  zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
+  a column from the same list.}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -815,6 +853,9 @@ total
               @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
                                       [#:format format (or/c string? #f) #f]
                                       [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
+                                      [#:time-zone time-zone (or/c non-empty-string? #f) #f]
+                                      [#:ambiguous ambiguous
+                                       (or/c 'raise 'earliest 'latest 'null) 'raise]
                                       [#:strict strict boolean? #t]
                                       [#:exact exact boolean? #t]
                                       [#:cache cache boolean? #t])
@@ -824,7 +865,84 @@ total
   @racket[str->datetime] parse strings with a chrono @tt{strptime}
   @racket[#:format], inferred when omitted (@tt{.str.to_date},
   @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
-  on unparseable values.}
+  on unparseable values. A UTC offset parsed with @litchar{%z} converts each
+  value to UTC, so the column is @racket['(datetime unit "UTC")], as in
+  Python; without a @racket[#:format] or a @racket[#:time-zone], an offset
+  in the data is an error, as it is on Python's expressions.
+  @racket[#:time-zone] parses into that zone: a value with an offset
+  converts to it, and one without is read as a wall-clock time there, with
+  @racket[#:ambiguous] as @racket[dt-replace-time-zone] takes it (a
+  @racket['null] counts as a value that did not parse, so it needs
+  @racket[#:strict #f]). A wall-clock time the zone skips raises when the
+  plan runs; Python's @tt{to_datetime} has no @tt{non_existent} either, so
+  parse without @racket[#:time-zone] and give the column to
+  @racket[dt-replace-time-zone] with @racket[#:non-existent] @racket['null]
+  to read it as null.
+
+  @examples[#:eval ev
+(define stamps
+  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")
+                           #:name "at")
+                   (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock"))))
+(select stamps (str->datetime "at" #:format "%Y-%m-%dT%H:%M:%S%z"))
+(select stamps
+        (str->datetime "at" #:time-zone "Asia/Tokyo")
+        (str->datetime "clock" #:time-zone "Europe/Brussels" #:ambiguous 'latest))
+(select (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock")))
+        (~> (str->datetime "clock")
+            (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
+(eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
+
+@deftogether[(@defproc[(dt-convert-time-zone [x (or/c series? Expr-ptr? string?)]
+                                             [zone non-empty-string?])
+                       (or/c series? Expr-ptr?)]
+              @defproc[(dt-replace-time-zone [x (or/c series? Expr-ptr? string?)]
+                                             [zone (or/c non-empty-string? #f)]
+                                             [#:ambiguous ambiguous
+                                              (or/c 'raise 'earliest 'latest 'null) 'raise]
+                                             [#:non-existent non-existent (or/c 'raise 'null)
+                                              'raise])
+                       (or/c series? Expr-ptr?)])]{
+  Move a datetime series, or the datetime column an expression or a column
+  name gives, between zones (@tt{.dt.convert_time_zone},
+  @tt{.dt.replace_time_zone}). @racket[dt-convert-time-zone] keeps each
+  instant and changes the clock it reads in; a naive datetime is read as
+  UTC. @racket[dt-replace-time-zone] keeps each wall-clock time and changes
+  the instant: @racket[zone] @racket[#f] makes the column naive, and a zone
+  sets one on a naive column or replaces a column's zone. Polars computes
+  that wall clock without an overflow check, so on a nanosecond column a
+  value within a day of either end of the range (1677-09-21, 2262-04-11)
+  wraps around, as it does in Python; reading the zoned value itself, with
+  @racket[ref] or a conversion, does not.
+
+  A wall-clock time can name two instants, when the clocks go back, or
+  none, when they go forward. @racket[#:ambiguous] picks the
+  @racket['earliest] or @racket['latest] of two, or @racket['null];
+  @racket[#:non-existent] @racket['null] gives null for a time that does not
+  exist. Both default to @racket['raise], as Python's do. Zones are named as
+  the tz database names them; a zone polars does not know raises, with the
+  nearest name it does. On an expression, an ambiguous or non-existent time
+  is reported when the plan runs. API gap: Python's @tt{ambiguous} may also
+  be an expression, resolving each row its own way; here it is one symbol
+  for the whole column (#171).
+
+  @examples[#:eval ev
+(define clocks
+  (dataframe (list (series (list (datetime 2021 3 27 3) (datetime 2021 10 31 2 30))
+                           #:name "clock"))))
+(select clocks
+        (~> "clock" (dt-replace-time-zone "UTC") (alias "utc"))
+        (~> "clock" (dt-replace-time-zone "UTC") (dt-convert-time-zone "Asia/Kathmandu")
+            (alias "kathmandu"))
+        (~> "clock" (dt-replace-time-zone "Europe/Brussels" #:ambiguous 'earliest)
+            (alias "brussels")))
+(dt-replace-time-zone (ref clocks "clock") "Europe/Brussels" #:ambiguous 'latest)
+(eval:error (dt-replace-time-zone (ref clocks "clock") "Europe/Brussels"))
+(define skipped (series (list (datetime 2021 3 28 1 30) (datetime 2021 3 28 2 30))
+                        #:name "clock"))
+(dt-replace-time-zone skipped "Europe/Brussels" #:non-existent 'null)
+(eval:error (dt-replace-time-zone skipped "Europe/Brussels"))
+(eval:error (dt-convert-time-zone "clock" "Asia/Kathmando"))]}
 
 @subsection[#:tag "fluent-shadowing"]{Shadowed bindings}
 
@@ -877,13 +995,18 @@ an implementation detail and not part of the public series API.)
   flonums when the target dtype is floating point. Symbols infer
   @racket['categorical]; a @racket['categorical] or Enum (@racket[define-enum])
   series is built from strings or symbols alike, and an Enum raises on a
-  value outside its categories (@secref["ref-categorical"]).
+  value outside its categories (@secref["ref-categorical"]). gregor dates,
+  times, datetimes, moments and periods infer the temporal dtypes; a
+  datetime or duration column is microseconds, or nanoseconds when a value
+  carries a sub-microsecond part and a nanosecond column holds every value,
+  and moments make a zoned datetime column (@secref["ref-temporal-values"]).
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")
+(series (list (date 1997 1 10) (date 1985 2 15)) #:name "birthdate")
 (define-enum severity debug info error)
 (series '("debug" "error") #:dtype severity)
 (eval:error (series '(debug fatal) #:dtype severity))]}
@@ -907,8 +1030,9 @@ an implementation detail and not part of the public series API.)
               @defproc[(null-count [s has-null-count?]) exact-nonnegative-integer?])]{
   Generic series accessors. @racket[dtype] returns the canonical dtype symbol
   (e.g. @racket['int32], @racket['float64], @racket['categorical]) or list
-  (@racket['(datetime milliseconds #f)], @racket['(enum low mid high)],
-  @racket['(decimal 10 2)]).
+  (@racket['(datetime milliseconds #f)],
+  @racket['(datetime microseconds "Europe/Brussels")],
+  @racket['(enum low mid high)], @racket['(decimal 10 2)]).
   @racket[len] returns the number of elements (and, on a dataframe, the number of
   rows). @racket[null-count] returns the number of null entries.}
 
@@ -948,7 +1072,7 @@ it:
        (list @elem{@racket['categorical], @racket['(enum cat ...)]} @racket[symbol?])
        (list @racket['(decimal precision scale)] @elem{an exact rational, as @racket[exact?]})
        (list @racket['date] @elem{a gregor @tt{date}})
-       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, floored to the second})
+       (list @racket['(datetime unit tz)] @elem{a gregor @tt{datetime}, to the column's unit})
        (list @racket['(duration unit)] @elem{a gregor @tt{period} in that unit})
        (list @racket['time] @elem{a gregor @tt{time}})
        (list @racket['null] "the null value"))]
@@ -964,7 +1088,7 @@ chapter of the guide walks through all of them.
 (series->list (series (list 1.5 polars-null)))
 (series->list (series (list "a" polars-null "")))
 (series->list (series (list #t #f polars-null)))
-(series->list (series (list (datetime 2024 1 2 3 4 5) polars-null)))
+(series->list (series (list (datetime 2024 1 2 3 4 5 678000000) polars-null)))
 (series->list (cast (series '(19724) #:dtype 'i32) 'date))
 (series->list (cast (series '(11045000000000) #:dtype 'i64) 'time))
 (series->list (cast (series '(1500) #:dtype 'i64) '(duration milliseconds)))
@@ -1023,6 +1147,114 @@ chapter of the guide walks through all of them.
 (for/first ([x (in-series (series (build-list 100000 values)))]
             #:when (> x 41))
   x)]}
+
+@subsection[#:tag "ref-temporal-values"]{Dates, times, datetimes and durations}
+
+The temporal dtypes cross the boundary as gregor values, both ways: a
+@racket['date] column holds gregor @tt{date}s, a @racket['time] column gregor
+@tt{time}s, a @racket['(datetime unit #f)] column gregor @tt{datetime}s, a
+zoned @racket['(datetime unit "Zone/Name")] column gregor @tt{moment}s in its
+zone and a @racket['(duration unit)] column gregor @tt{period}s.
+@racket[series] infers the dtype from the values, as Python's
+@tt{pl.Series} does from @tt{date}, @tt{time}, @tt{datetime} and
+@tt{timedelta}, and @racket[lit] makes the literal of the same dtype:
+
+@tabular[#:style 'boxed #:sep @hspace[2]
+ (list (list @bold{gregor value} @bold{inferred dtype})
+       (list @tt{date} @racket['date])
+       (list @tt{time} @racket['time])
+       (list @tt{datetime} @elem{@racket['(datetime microseconds #f)], or
+                                 @racket['(datetime nanoseconds #f)]})
+       (list @tt{moment} @elem{@racket['(datetime microseconds "Zone/Name")],
+                               or nanoseconds})
+       (list @elem{@tt{period} without years or months}
+             @elem{@racket['(duration microseconds)], or
+                   @racket['(duration nanoseconds)]}))]
+
+Python's @tt{datetime} and @tt{timedelta} stop at the microsecond, so
+Python's unit is always microseconds; gregor's go to the nanosecond. A column
+(or a literal) is nanoseconds, so nothing is lost, when a value has a nonzero
+sub-microsecond part and a nanosecond column holds every value: datetimes
+from 1677-09-21 00:12:43.145224192 to 2262-04-11 23:47:16.854775807,
+durations shorter than 2@superscript{63} nanoseconds (about 292 years) either
+way. Otherwise it is microseconds, which hold every datetime Polars can
+print, and the sub-microsecond part is dropped as @racket[#:dtype] drops it
+(below). gregor's @tt{now} reads a flonum clock and nearly always has a
+sub-microsecond part: a column of @tt{now}s alone is then nanoseconds, and
+one that also holds a datetime from 1600 is microseconds.
+
+A period's weeks, days, hours and smaller fields add up to one fixed length
+(a day is 24 hours, as in Polars); years and months have no fixed length and
+are refused. With @racket[#:dtype], a value is converted to the dtype's unit
+and a finer part dropped as Polars' own casts drop it: a datetime is floored,
+a duration truncated toward zero. A value the dtype cannot hold raises, and
+so does a date or datetime outside the years -262143 to 262142, which Polars
+cannot print.
+
+A gregor @tt{moment} is an instant with a time zone, and makes a zoned
+column, as Python's aware @tt{datetime} does. A column has one zone, so a
+list settles it as Python settles a list: the first value that is not null
+decides. A moment in a named zone gives that zone, @racket["Europe/Brussels"]
+or @racket["UTC"]; a moment at a fixed offset (gregor's @racket[#:tz 3600])
+gives @racket["UTC"]; and each other moment keeps its instant in that zone.
+A naive gregor @tt{datetime} in a zoned column is read as UTC, and a list
+whose first value is naive makes a naive column of each moment's UTC clock
+time. @racket[#:dtype] names the column's dtype outright, under the same
+reading: a zoned dtype converts every moment to its zone, and a naive one
+takes each moment's UTC clock time, where Python's
+@tt{pl.Datetime("us")} keeps the values' zone.
+
+Polars reads zones from chrono-tz's compiled copy of the tz database, and
+every reading here is Polars': a moment read back carries the offset Polars
+gives its instant, and a printed series or dataframe and @racket[describe]
+show what Python shows. gregor's own functions --- @tt{moment}, and its
+arithmetic on a moment --- read zones through tzinfo instead, from the
+system's zoneinfo (or the tzdata package's copy, when it is installed), and
+the two can disagree. tzinfo ignores the rule a zoneinfo file gives for
+times after its last listed change, so it misses daylight saving after 2037,
+and on a system whose zoneinfo is built "slim", sooner; many systems merge
+zones' histories before 1970; and some lack the old names, such as
+@racket["US/Pacific"], that a column may still carry (#172). The instant is never
+in doubt: a moment you build stores the instant its own offset gives, and a
+moment read back is the column's instant.
+
+Reading back, @racket[ref] and every conversion in
+@secref["ref-series-convert"] return each value with its column's full
+precision: a millisecond, microsecond or nanosecond datetime as the gregor
+@tt{datetime} (or, for a zoned column, @tt{moment} in the column's zone) of
+exactly that instant, where Python's @tt{to_list} stops at the
+microsecond. A date column's years may be negative, as gregor's and
+Polars' may.
+
+@examples[#:eval ev #:hidden (require gregor/period gregor/time)]
+
+@examples[#:eval ev #:label #f
+(series (list (date 2013 1 1) polars-null (date -1300 5 23)) #:name "d")
+(series (list (time 5 6 7 123456789)) #:name "t")
+(series (list (datetime 2013 1 1 5 6 7 123456000)) #:name "dt")
+(series (list (datetime 2013 1 1 5 6 7 123456789)) #:name "dt")
+(series (list (datetime 2013 1 1 5 6 7 123456789) (datetime 1600 1 1)) #:name "dt")
+(series (list (hours 36) (minutes 90)) #:name "wait")
+(series (list (datetime 2013 1 1 5 6 7 123456789))
+        #:name "dt" #:dtype '(datetime milliseconds))
+(series->list (cast (series '(1500 -1) #:dtype 'i64) '(datetime milliseconds)))
+(define calendar
+  (dataframe (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))
+                           #:name "d")
+                   (series '(1 2 3) #:name "v"))))
+(filter calendar (> (col "d") (date 2013 6 1)))
+(filter calendar (is-between "d" (date 2013 5 31) (datetime 2013 6 1 12)))
+(filter calendar (is-in "d" (list (date 2013 5 31) (date 2013 6 2))))
+(eval:error (is-in "d" (list (datetime 2013 5 31) (moment 2013 6 2 #:tz "UTC"))))
+(series (list (moment 2021 3 27 #:tz "Europe/Brussels")
+              (moment 2021 3 28 5 #:tz "Europe/Brussels")
+              (moment 2021 3 27 #:tz "Asia/Kathmandu"))
+        #:name "zoned")
+(series->list (series (list (moment 2021 3 27 #:tz 3600)) #:name "offset"))
+(series (list (datetime 2021 3 27 12)) #:dtype '(datetime milliseconds "Europe/Brussels"))
+(eval:error (series (list (datetime 2021 3 27)) #:dtype '(datetime microseconds "Mars/Base")))
+(eval:error (series (list (months 1))))
+(eval:error (series (list (datetime 1500 1 1)) #:dtype '(datetime nanoseconds)))]
 
 @subsection[#:tag "ref-categorical"]{Categorical, Enum and Decimal}
 
@@ -1171,8 +1403,10 @@ dtype or a specific typed result.
   @racket['(datetime milliseconds)], @racket['(duration nanoseconds)] — where
   the unit is one of @racket['nanoseconds], @racket['microseconds] or
   @racket['milliseconds]. Bare @racket['datetime] and @racket['duration]
-  default to microseconds. Raises an error when Polars cannot perform the
-  cast. The fluent @racket[cast] wraps this for the generic layer.}
+  default to microseconds. A zoned datetime is
+  @racket['(datetime unit "Zone/Name")], with an explicit unit. Raises an
+  error when Polars cannot perform the cast. The fluent @racket[cast] wraps
+  this for the generic layer.}
 
 @defproc[(series-sort [s Series-ptr?]
                       [#:descending descending boolean? #f]
@@ -1250,12 +1484,11 @@ renders it with no separate display call.
 
   Numeric, boolean, null and nested columns summarise as @racket['float64],
   every other column as strings; temporal values are written as Python prints
-  them. Quantiles use nearest interpolation. Every statistic of every column
-  comes from one query, so Polars computes the columns in parallel.
+  them, a zoned datetime as its local time and UTC offset. Quantiles use
+  nearest interpolation. Every statistic of every column comes from one
+  query, so Polars computes the columns in parallel.
 
-  API gaps: a time-zone-aware datetime is written as its UTC clock time with no
-  offset, where Python writes the local time and the offset; a binary column
-  gets no @racket["min"] or @racket["max"].
+  API gap: a binary column gets no @racket["min"] or @racket["max"].
 
   Numeric, string and boolean columns, with nulls:
 
@@ -1282,6 +1515,13 @@ renders it with no separate display call.
       (with-columns (alias (- (col "departed") (col "scheduled")) "delay")
                     (alias (cast "scheduled" 'date) "day"))))
 (describe times)]
+
+  A zoned datetime column's statistics carry the offset in force at each:
+
+  @examples[#:eval ev #:label #f
+(describe (series (list (moment 2021 3 27 12 #:tz "Europe/Brussels")
+                        (moment 2021 7 1 #:tz "Europe/Brussels"))
+                  #:name "local"))]
 
   A series keeps only the rows its dtype has:
 

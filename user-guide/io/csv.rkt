@@ -51,6 +51,9 @@
 (displayln (~> (read-csv flights-tsv #:separator #\tab #:ignore-errors #t)
                (ref #:columns "dep_delay")
                null-count))
+
+;; --- parsing dates (upstream: Time series, Parsing) ------------------------
+(displayln (read-csv (data "apple_stock.csv") #:try-parse-dates #t))
 (displayln (~> (read-csv flights-tsv #:separator #\tab #:null-values "NA"
                          #:try-parse-dates #t)
                (select "time_hour")

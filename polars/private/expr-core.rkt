@@ -9,12 +9,15 @@
          (only-in racket/contract
                   [-> ->/c] ->i any/c contract-out flat-named-contract non-empty-listof or/c
                   rename-contract)
+         racket/match
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring call/foreign-error enum-dtype?
-                  owned-pointer-arg sort-flags-mismatch sort-flags/c)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype))
+                  ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
+                  enum-dtype? owned-pointer-arg sort-flags-mismatch sort-flags/c
+                  time-unit-symbol->code zoned-datetime-dtype?)
+         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
          define-compat
@@ -104,6 +107,25 @@
   (_fun _Expr-ptr _string -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
+(define-compat expr-lit-temporal
+  (_fun _int64 _CompatDType -> _Expr-ptr/null)
+  #:wrap (allocator/or-fail expr-drop 'expr-lit-temporal))
+
+(define-compat expr-lit-datetime-tz/raw
+  (_fun _int64 _int32 _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_lit_datetime_tz
+  #:wrap (allocator expr-drop))
+
+(define (temporal-lit v dtype)
+  (define value ((temporal-encoder 'lit dtype) v))
+  (match dtype
+    [(list 'datetime unit (? string? zone))
+     (define code (time-unit-symbol->code unit))
+     (call/foreign-error 'lit
+                         (lambda () (expr-lit-datetime-tz/raw value code zone))
+                         "no literal of ~v" dtype)]
+    [_ (expr-lit-temporal value (->compat-dtype dtype))]))
+
 (define (lit v)
   (cond
     [(boolean? v) (expr-lit-bool v)]
@@ -114,6 +136,7 @@
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
+    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit v dtype))]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
 (define-compat expr-all
@@ -151,17 +174,31 @@
   #:c-id expr_dtype_col_enum
   #:wrap (allocator expr-drop))
 
+(define-compat expr-dtype-col-datetime-tz/raw
+  (_fun _int32 _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_dtype_col_datetime_tz
+  #:wrap (allocator expr-drop))
+
 (define (expr-dtype-col dtype)
-  (if (enum-dtype? dtype)
-      (call/foreign-error 'expr-dtype-col
-                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
-                          "cannot select ~v" dtype)
-      (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
-          (error 'expr-dtype-col "operation failed"))))
+  (dtype-col 'expr-dtype-col dtype))
+
+(define (dtype-col who dtype)
+  (match dtype
+    [(? enum-dtype?)
+     (call/foreign-error who
+                         (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
+                         "cannot select ~v" dtype)]
+    [(? zoned-datetime-dtype? (list _ unit zone))
+     (define code (time-unit-symbol->code unit))
+     (call/foreign-error who
+                         (lambda () (expr-dtype-col-datetime-tz/raw code zone))
+                         "cannot select ~v" dtype)]
+    [_ (or (expr-dtype-col/raw (->compat-dtype (normalize-dtype dtype)))
+           (error who "operation failed"))]))
 
 (define (col spec)
   (if (dtype-spec? spec)
-      (expr-dtype-col spec)
+      (dtype-col 'col spec)
       (expr-col (->column-pattern spec))))
 
 (define (->expr v)
@@ -209,8 +246,15 @@
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
-  (check-exn #rx"^col: contract violation"
-             (lambda () (contracted:col '(datetime microseconds "UTC")))))
+  (check-pred Expr-ptr? (contracted:col '(datetime microseconds "UTC")))
+  (check-pred multi-column-expr? (expr-dtype-col '(datetime nanoseconds "Asia/Kathmandu")))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime microseconds ""))))
+  (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime #f "UTC"))))
+  (check-exn (regexp (string-append "^col: cannot select '\\(datetime microseconds \"Mars/Base\"\\):"
+                                    " unable to parse time zone: 'Mars/Base'"))
+             (lambda () (col '(datetime microseconds "Mars/Base"))))
+  (check-exn #rx"^expr-dtype-col: cannot select .*not a time zone: '\\*'"
+             (lambda () (expr-dtype-col '(datetime microseconds "*")))))
 
 (module+ test
   (require rackunit)

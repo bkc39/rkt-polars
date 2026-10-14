@@ -13,7 +13,7 @@
          is-unique is-duplicated is-first-distinct is-last-distinct)
 
 ;; is-in: membership against a homogeneous Racket list, a Series, or an Expr.
-(define (is-in x rhs) (expr-is-in (->col-expr 'is-in x) rhs))
+(define (is-in x rhs) (expr-is-in (->col-expr 'is-in x) rhs #:who 'is-in))
 ;; is-between: lower..upper, #:closed 'both | 'left | 'right | 'none.
 (define (is-between x lower upper #:closed [closed 'both])
   (expr-is-between (->col-expr 'is-between x) lower upper #:closed closed))
