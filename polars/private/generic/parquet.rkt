@@ -22,9 +22,10 @@
            racket/file
            racket/runtime-path
            (only-in racket/list second)
+           (only-in gregor moment)
            (only-in threading ~>)
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/generic/core column-names dataframe height ref series)
+           (only-in polars/private/generic/core column-names dataframe dtype height ref series)
            (only-in polars/private/generic/printing series->string)
            (only-in polars/private/generic/csv read-csv)
            (only-in polars/private/generic/reshape collect)
@@ -88,5 +89,15 @@
   (define produce-copy (build-path scratch "produce.parquet"))
   (write-parquet produce produce-copy)
   (check-true (frame=? (read-parquet produce-copy) produce))
+
+  (define brussels
+    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
+                             #:name "t"))))
+  (define brussels-parquet (build-path scratch "brussels.parquet"))
+  (write-parquet brussels brussels-parquet)
+  (check-true (frame=? (read-parquet brussels-parquet) brussels))
+  (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
+                '(datetime microseconds "Europe/Brussels"))
 
   (delete-directory/files scratch))
