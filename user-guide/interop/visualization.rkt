@@ -3,7 +3,7 @@
 ;; rkt-polars user guide — Interoperability: Data for a plot.
 ;; Mirrors the Matplotlib scatter of
 ;; https://docs.pola.rs/user-guide/misc/visualization/ and visualization.py.
-;; Racket's `plot` is not a dependency, so this builds the points a
+;; Racket's `plot` is not a runtime dependency, so this builds the points a
 ;; `(plot (points sepals))` call takes and prints the first few.
 ;;
 ;; Inside `nix develop`:
@@ -23,4 +23,4 @@
 
 (writeln (length sepals))
 (writeln (for/list ([p sepals] [_ 3]) p))
-;; API gap: no plotting namespace (df.plot, hvPlot).
+;; Non-goal: no plotting namespace (df.plot, hvPlot); plotting is client code (#121).

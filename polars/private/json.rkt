@@ -15,7 +15,8 @@
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c))
+         (only-in polars/private/io-contracts column-name/c positive-size/c row-index/c size/c)
+         (only-in polars/private/resource _string-list))
 
 (provide json-reader json-writer json-reader/c
          ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c ndjson-writer/c
@@ -55,9 +56,9 @@
 (define-compat dataframe-read-json/raw
   (_fun _string/utf-8
         _CompatJsonOptions
-        (_list i _string/utf-8)
+        _string-list
         (_list i _CompatDType)
-        (_list i _string/utf-8)
+        _string-list
         (_list i _CompatDType)
         -> _DataFrame-ptr/null)
   #:c-id dataframe_read_json_with_options
@@ -167,8 +168,8 @@
 
 (define-compat dataframe-read-ndjson/raw
   (_fun _string/utf-8 _CompatNdjsonOptions
-        (_list i _string/utf-8) (_list i _CompatDType)
-        (_list i _string/utf-8) (_list i _CompatDType)
+        _string-list (_list i _CompatDType)
+        _string-list (_list i _CompatDType)
         _string/utf-8 _string/utf-8
         -> _DataFrame-ptr/null)
   #:c-id dataframe_read_ndjson_with_options
@@ -176,8 +177,8 @@
 
 (define-compat lazyframe-scan-ndjson/raw
   (_fun _string/utf-8 _CompatNdjsonOptions
-        (_list i _string/utf-8) (_list i _CompatDType)
-        (_list i _string/utf-8) (_list i _CompatDType)
+        _string-list (_list i _CompatDType)
+        _string-list (_list i _CompatDType)
         _string/utf-8 _string/utf-8
         -> _LazyFrame-ptr/null)
   #:c-id lazyframe_scan_ndjson_with_options

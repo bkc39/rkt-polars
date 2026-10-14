@@ -197,3 +197,46 @@ pub extern "C" fn expr_dt_truncate(
     let ev = unsafe { (*every).clone() };
     Box::into_raw(Box::new(ee.dt().truncate(ev)))
 }
+
+#[no_mangle]
+pub extern "C" fn expr_dt_convert_time_zone(
+    e: *const Expr,
+    tz: *const c_char,
+) -> *mut Expr {
+    clear_last_error();
+    let Some(e) = (unsafe { e.as_ref() }) else {
+        set_last_error("expression is null");
+        return ptr::null_mut();
+    };
+    named_time_zone(tz).map_or(ptr::null_mut(), |tz| {
+        Box::into_raw(Box::new(e.clone().dt().convert_time_zone(tz)))
+    })
+}
+
+/// A NULL `tz` unsets the zone.
+#[no_mangle]
+pub extern "C" fn expr_dt_replace_time_zone(
+    e: *const Expr,
+    tz: *const c_char,
+    ambiguous: *const c_char,
+    non_existent: *const c_char,
+) -> *mut Expr {
+    clear_last_error();
+    let Some(e) = (unsafe { e.as_ref() }) else {
+        set_last_error("expression is null");
+        return ptr::null_mut();
+    };
+    let Some(tz) = optional_time_zone(tz) else {
+        return ptr::null_mut();
+    };
+    tz_resolution(ambiguous, non_existent).map_or(
+        ptr::null_mut(),
+        |(ambiguous, non_existent)| {
+            Box::into_raw(Box::new(e.clone().dt().replace_time_zone(
+                tz,
+                lit(ambiguous),
+                non_existent,
+            )))
+        },
+    )
+}
