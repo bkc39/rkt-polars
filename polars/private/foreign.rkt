@@ -12,8 +12,8 @@
                   rename-contract)
          racket/match
          (only-in racket/dict in-dict)
-         (only-in racket/list check-duplicates remove-duplicates)
-         (only-in racket/string string-join string-replace)
+         (only-in racket/list check-duplicates)
+         (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
@@ -25,8 +25,7 @@
   (require rackunit))
 
 (provide (except-out (all-defined-out)
-                     series-sort dataframe-sort series-ref-string strings->series
-                     enum-misses enum-misses-shown raise-enum-misses)
+                     series-sort dataframe-sort series-ref-string strings->series)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -95,7 +94,8 @@
     (string-replace reason python racket)))
 
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
-(define (call/foreign-error who thunk #:ok? [ok? values] fmt . args)
+(define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
+                            fmt . args)
   (define-values (result reason)
     (call-as-atomic
      (lambda ()
@@ -103,6 +103,7 @@
        (values result (and (not (ok? result)) (last-error-message))))))
   (cond
     [(ok? result) result]
+    [(explain) => (lambda (message) (error who "~a" message))]
     [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
 
@@ -1355,52 +1356,111 @@
   #:c-id series_cast_enum
   #:wrap (allocator series-drop))
 
-(define enum-misses-shown 10)
+(module enum-misses racket/base
+  (require (only-in racket/string string-join))
+  (provide enum-misses-message enum-misses-shown)
 
-(define (enum-misses s categories)
-  (define known (for/hash ([category (in-list categories)]) (values category #t)))
-  (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
-                 [present (series-drop-nulls strings) series-drop])
-    (define n (series-len present))
-    (define buf (make-bytes (series-str-byte-len present 0 n)))
-    (with-raw-buffer ([offsets (add1 n) _int64])
-      (series-copy-str present 0 n buf (bytes-length buf) offsets (add1 n) #f 0)
-      (values (for*/list ([i (in-range n)]
-                          [value (in-value (bytes->string/utf-8
-                                            buf #f
-                                            (ptr-ref offsets _int64 i)
-                                            (ptr-ref offsets _int64 (add1 i))))]
-                          #:unless (hash-ref known value #f))
-                value)
-              n))))
+  (define enum-misses-shown 10)
 
-(define (raise-enum-misses who dtype misses total)
-  (define distinct (remove-duplicates misses))
-  (define shown
-    (for/list ([value (in-list distinct)]
-               [_ (in-range enum-misses-shown)])
-      (format "~s" (string->symbol value))))
-  (error who "~a of ~a ~a ~a not in ~v: ~a"
-         (length misses) total (if (= total 1) "value" "values")
-         (if (= (length misses) 1) "is" "are") dtype
-         (string-join (if (> (length distinct) enum-misses-shown)
-                          (append shown '("..."))
-                          shown))))
+  (define (spell value)
+    (cond
+      [(for/or ([c (in-string value)]) (char-iso-control? c)) (format "~s" value)]
+      [else (format "~s" (string->symbol value))]))
+
+  (define (enum-misses-message dtype missing total named distinct)
+    (define noun (if (= total 1) "value" "values"))
+    (define verb (if (= missing 1) "is" "are"))
+    (define listed (string-join (map spell named)))
+    (define more (- distinct (length named)))
+    (define tail (if (positive? more) (format "~a, and ~a more" listed more) listed))
+    (format "~a of ~a ~a ~a not in ~v: ~a" missing total noun verb dtype tail)))
+
+(require 'enum-misses)
 
 (define (series-cast-enum who s dtype)
-  (check-enum-categories who dtype)
   (define categories (map symbol->string (cdr dtype)))
-  (define coded (series-cast-enum/raw s categories))
-  (define-values (misses total)
-    (match (and (not coded) (series-dtype s))
-      [(or 'string 'categorical (cons 'enum _)) (enum-misses s categories)]
-      [_ (values '() 0)]))
-  (cond
-    [coded coded]
-    [(pair? misses) (raise-enum-misses who dtype misses total)]
-    [else (call/foreign-error who
-                              (lambda () (series-cast-enum/raw s categories))
-                              "cannot convert to ~v" dtype)]))
+  (define (misses)
+    (match (series-dtype s)
+      [(or 'string 'categorical (cons 'enum _))
+       (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
+                      [present (series-drop-nulls strings) series-drop])
+         (series-rename present "value")
+         (with-release ([known (match categories
+                                 ['() (series-head present 0)]
+                                 [_ (strings->series who "value" categories)])
+                               series-drop]
+                        [left (dataframe-new (list present)) dataframe-drop]
+                        [right (dataframe-new (list known)) dataframe-drop]
+                        [missed (dataframe-join left right #:on '("value") #:how 'anti)
+                                dataframe-drop]
+                        [column (dataframe-column missed "value") series-drop]
+                        [distinct (series-unique column) series-drop]
+                        [sorted (series-sort distinct) series-drop]
+                        [shown (series-head sorted enum-misses-shown) series-drop])
+           (define named
+             (for/list ([i (in-range (series-len shown))])
+               (series-ref-string shown i)))
+           (cond
+             [(zero? (dataframe-height missed)) #f]
+             [(memv #f named) #f]
+             [else (enum-misses-message dtype (dataframe-height missed) (series-len present)
+                                        named (series-len distinct))])))]
+      [_ #f]))
+  (check-enum-categories who dtype)
+  (call/foreign-error who
+                      (lambda () (series-cast-enum/raw s categories))
+                      #:explain misses
+                      "cannot convert to ~v" dtype))
+
+(module+ test
+  (require (only-in racket/string string-join))
+  (define (cast-message s dtype)
+    (with-handlers ([exn:fail? exn-message])
+      (series-cast s dtype)
+      #f))
+  (define (strings . values)
+    (series-new-str "s" values))
+  (define (numbered n)
+    (for/list ([i (in-range n)])
+      (format "v~a" (+ 100 i))))
+
+  (check-equal? (cast-message (strings "TEB" polars-null "XYZ" "TEB" "EWR") '(enum EWR JFK LGA))
+                "series-cast: 3 of 4 values are not in '(enum EWR JFK LGA): TEB XYZ")
+  (check-equal? (cast-message (strings "Very High") '(enum))
+                "series-cast: 1 of 1 value is not in '(enum): |Very High|")
+  (check-equal? (cast-message (series-cast (strings "high" "high") '(enum high)) '(enum low))
+                "series-cast: 2 of 2 values are not in '(enum low): high")
+  (check-equal? (cast-message (series-cast (strings "low" "mid") 'categorical) '(enum low))
+                "series-cast: 1 of 2 values is not in '(enum low): mid")
+  (check-equal? (cast-message (strings "..." "b") '(enum b))
+                "series-cast: 1 of 2 values is not in '(enum b): ...")
+  (check-equal? (cast-message (strings "a\u0000b") '(enum b))
+                "series-cast: 1 of 1 value is not in '(enum b): \"a\\u0000b\"")
+  (check-equal? (cast-message (apply strings (numbered enum-misses-shown)) '(enum a))
+                (format "series-cast: ~a of ~a values are not in '(enum a): ~a"
+                        enum-misses-shown enum-misses-shown
+                        (string-join (numbered enum-misses-shown))))
+  (check-equal? (cast-message (apply strings (reverse (numbered (add1 enum-misses-shown))))
+                              '(enum a))
+                (format "series-cast: ~a of ~a values are not in '(enum a): ~a, and 1 more"
+                        (add1 enum-misses-shown) (add1 enum-misses-shown)
+                        (string-join (numbered enum-misses-shown))))
+  (check-equal? (cast-message (series-new-bool "b" '(#t)) '(enum a))
+                "series-cast: cannot convert to '(enum a): cannot cast Boolean to Categorical")
+
+  (define distinct 100000)
+  (define many
+    (series-new-str "s" (for/list ([i (in-range (* 2 distinct))])
+                          (format "k~a" (+ distinct (quotient i 2))))))
+  (collect-garbage)
+  (define allocated (current-memory-use 'cumulative))
+  (check-equal? (cast-message many '(enum a))
+                (format "series-cast: ~a of ~a values are not in '(enum a): ~a, and ~a more"
+                        (* 2 distinct) (* 2 distinct)
+                        (string-join (for/list ([i (in-range enum-misses-shown)])
+                                       (format "k~a" (+ distinct i))))
+                        (- distinct enum-misses-shown)))
+  (check < (- (current-memory-use 'cumulative) allocated) 1000000))
 
 (define-compat series-cast-datetime-tz/raw
   (_fun _Series-ptr _int32 _string/utf-8 -> _Series-ptr/null)

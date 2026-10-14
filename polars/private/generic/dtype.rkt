@@ -5,6 +5,7 @@
 
 (require racket/match
          polars/private/foreign
+         (only-in polars/private/resource with-release)
          polars/private/series
          (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define
@@ -100,11 +101,10 @@
        [(or 'categorical (? enum-dtype?))
         (define strings (if vec? series-new-str/vec series-new-str))
         (lambda (name elements)
-          (define s (strings name elements))
-          (begin0 (if (eq? canonical 'categorical)
-                      (series-cast s 'categorical)
-                      (series-cast-enum 'series s canonical))
-                  (series-drop s)))]
+          (with-release ([s (strings name elements) series-drop])
+            (if (eq? canonical 'categorical)
+                (series-cast s 'categorical)
+                (series-cast-enum 'series s canonical))))]
        [_ (error 'series "no constructor for dtype ~v" canonical)])]))
 
 ;; ref reads categorical and Enum values back as C strings, which end at a NUL (#165).

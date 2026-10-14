@@ -413,8 +413,8 @@ total
   @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
   in a cast to an Enum, which raises naming the values outside its
-  categories, as Python's default @tt{strict=True} does (on an expression,
-  when the plan runs).
+  categories (the first ten in sorted order), as Python's default
+  @tt{strict=True} does (on an expression, when the plan runs).
 
   A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each
   instant: a naive datetime, or an integer count since the epoch, is read
