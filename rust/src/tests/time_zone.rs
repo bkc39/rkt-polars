@@ -541,7 +541,17 @@ fn csv_writes_the_local_time_and_its_offset() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.csv");
     let p = cstr(path.to_str().unwrap());
-    assert_eq!(dataframe_write_csv(df, p.as_ptr()), 0);
+    let status = dataframe_write_csv_with_options(
+        df,
+        p.as_ptr(),
+        CompatCsvWriteOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    );
+    assert_eq!(status, 0);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "t\n2021-03-27T12:00:00.500000+0100\n\n2021-07-01T00:00:00.000000+0200\n"
