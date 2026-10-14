@@ -566,8 +566,22 @@ fn parquet_keeps_the_zone() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.parquet");
     let p = cstr(path.to_str().unwrap());
-    assert_eq!(dataframe_write_parquet(df, p.as_ptr()), 0);
-    let back = dataframe_read_parquet(p.as_ptr());
+    let status = dataframe_write_parquet_with_options(
+        df,
+        p.as_ptr(),
+        CompatParquetWriteOptions::default(),
+    );
+    assert_eq!(status, 0);
+    let back = dataframe_read_parquet_with_options(
+        p.as_ptr(),
+        CompatParquetReadOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        0,
+        ptr::null(),
+        ptr::null(),
+        0,
+    );
     assert!(!back.is_null(), "{:?}", recorded_error());
     let t = unsafe { (*back).column("t").unwrap().dtype().clone() };
     assert_eq!(
