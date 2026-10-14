@@ -66,3 +66,14 @@
                     check-enum-categories decimal-ref series-copy-decimal series-copy-str
                     series-new-str/raw series-str-byte-len string-has-nul?)])
     (check-false (memq internal exported) (format "~a is internal" internal))))
+
+(module+ test
+  (require racket/runtime-path
+           (only-in setup/getinfo get-info/full)
+           (only-in version/utils valid-version?))
+  (define-runtime-path collection-dir ".")
+  (define-runtime-path package-dir "..")
+  (define (version-of dir)
+    ((get-info/full dir) 'version))
+  (check-pred valid-version? (version-of collection-dir))
+  (check-equal? (version-of package-dir) (version-of collection-dir)))

@@ -634,9 +634,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Follow-ups become issues, never TODO comments.
 - A PR that adds a public export bumps `version` in `polars/info.rkt` (the
   third number; the second for a breaking change), so that a dependent can
-  require a polars new enough to have it. The repo-root `info.rkt` and
-  `flake.nix` carry the same string; `rust/Cargo.toml` keeps its own, since
-  changing it changes the shipped binary.
+  require a polars new enough to have it. Racket's version form has no
+  trailing `.0`: `0.1`, `0.1.1`, `0.2`. The repo-root `info.rkt` and
+  `flake.nix`'s `version` carry the same string. `rust/Cargo.toml` keeps its
+  own, and `flake.nix` reads it for the `rkt-polars-compat` derivation, so a
+  Racket-side bump does not rebuild the native library.
 - The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
