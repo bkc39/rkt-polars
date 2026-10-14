@@ -156,6 +156,8 @@
                 "shape: (2,)\nSeries: 'bears' [cat]\n[\n\t\"Polar\"\n\t\"Brown\"\n]")
   (check-true (regexp-match? #rx"\\[enum\\]"
                              (series->string (series-cast bears '(enum Brown Polar)))))
+  (check-true (regexp-match? (regexp-quote "\t\"a\\u0000b\"\n")
+                             (series->string (series-new-str "nul" '("a\u0000b")))))
   (define (cells s) (cdddr (string-split (series->string s) #rx"\n\t?")))
   (check-equal? (cells (series-cast (series-new-i32 "d" '(15706 -1 2932897 -719893)) 'date))
                 '("2013-01-01" "1969-12-31" "+10000-01-01" "-0001-01-01" "]"))

@@ -42,8 +42,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
    lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
    whole or a block of rows at a time, behind `series->list`,
-   `in-dataframe-rows` and their siblings). `define-compat` binds a
-   C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
+   `in-dataframe-rows` and their siblings; it binds the numeric, boolean and
+   categorical copies, and takes the String and Decimal ones,
+   `series-copy-str` / `series-str-byte-len` and `series-copy-decimal`, from
+   `foreign.rkt`, where `series-ref` reads through them). `define-compat`
+   binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
@@ -129,10 +132,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the six IO entry points, the `scan_*` family, `lazyframe_collect`,
-  `dataframe_sort_with_options`, `series_sort_with_options`, the three
-  Enum entry points (`series_cast_enum`, `expr_cast_enum`,
-  `expr_dtype_col_enum`) and the nine that take a time zone's name
-  (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
+  `dataframe_sort_with_options`, `series_sort_with_options`,
+  `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
+  `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
+  zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
   `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
   `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
@@ -157,10 +160,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
   `lazyframe_collect`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum`, the three series time-zone
-  entry points (`series_cast_datetime_tz`, `series_dt_convert_time_zone`,
-  `series_dt_replace_time_zone`) and the IO helpers
-  (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
+  `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
+  the three series time-zone entry points (`series_cast_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`) and the IO
+  helpers (`read_frame`, `read_path`, `write_frame`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93).
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
@@ -182,6 +185,38 @@ it. Racket side: `define-compat` with `#:c-id`.
   bindings are never `#:blocking?`. Every destination travels with its
   length, Rust checks the rows it writes against it, and a refused copy writes
   nothing.
+- **Strings cross into Rust in one allocation, never as `(_list i _string)`.**
+  That type turns each element into a fresh byte string and stores its
+  address in an array the collector does not trace, so a collection while the
+  array fills moves or frees the strings already stored, and Rust reads stale
+  memory (#143: wrong values from about 300,000 strings, an abort at a
+  million). A string series is the bulk copy in reverse: `series-new-str`
+  passes one UTF-8 byte string, row offsets in a `with-raw-buffer` and a
+  validity byte string to `series_new_str_packed`, which checks every offset
+  against the buffer and a character boundary. The byte strings may move, so
+  the binding is never `#:blocking?`. A list of names (`by`, `on`,
+  `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
+  `const char **` table and every NUL-terminated string share one
+  `'atomic-interior` block, which the collector never moves. Its elements are
+  what `_string` took: a string (as UTF-8), a byte string, or a path.
+  `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
+  retains the values it is given and not what a ctype converts them to: as a
+  ctype the block could be freed by a collection during a `#:blocking?` call
+  or a callback. `series-ref` reads a String value by length, through
+  `series_copy_str`, since a C string ends at a NUL the value may hold.
+  Categorical and Enum values are still read as C strings, and Enum categories
+  cross as one, so `series` refuses a NUL in a categorical or Enum value, and
+  `series`, `cast`, `col`, `series-cast`, `expr-cast` and `expr-dtype-col`
+  refuse one in an Enum category (`check-enum-categories`); `define-enum`
+  refuses it at compile time. Names, single string arguments and categoricals
+  cast from a String series still stop at a NUL (#165). A test in
+  `resource.rkt` reads every module under `polars/private` as data and fails
+  on a pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`,
+  `_symbol`, `_gcpointer`, `_racket`, their `/` and `*` variants, or a name
+  `define`d as one, directly or through `make-ctype`) as the element of a
+  `_list` / `_vector` / `_ptr` in mode `i` or `io`, of an `_array`,
+  `_array/list`, `_array/vector`, `_box` or `_list-struct`, as a
+  `define-cstruct` field, or in `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which

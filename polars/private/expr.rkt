@@ -24,8 +24,9 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   frame-sort/c sort-flags
-                  _CompatDType ->compat-dtype enum-dtype? time-unit-symbol->code
-                  zoned-datetime-dtype?)
+                  _CompatDType ->compat-dtype check-enum-categories enum-dtype?
+                  time-unit-symbol->code zoned-datetime-dtype?)
+         (only-in polars/private/resource _string-list)
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
@@ -782,7 +783,7 @@
 
 (define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
@@ -859,9 +860,9 @@
 
 (define-compat lazyframe-join/c
   (_fun _LazyFrame-ptr _LazyFrame-ptr
-        (left-on : (_list i _string))
+        (left-on : _string-list)
         (_size = (length left-on))
-        (right-on : (_list i _string))
+        (right-on : _string-list)
         (_size = (length right-on))
         _int32
         -> _LazyFrame-ptr)
@@ -891,7 +892,7 @@
 
 (define-compat expr-cast-enum/raw
   (_fun _Expr-ptr
-        (categories : (_list i _string/utf-8))
+        (categories : _string-list)
         (_size = (length categories))
         -> _Expr-ptr/null)
   #:c-id expr_cast_enum
@@ -908,6 +909,7 @@
 (define (expr-cast-to who e dtype)
   (cond
     [(enum-dtype? dtype)
+     (check-enum-categories who dtype)
      (call/foreign-error who
                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
                          "cannot convert to ~v" dtype)]
@@ -926,6 +928,8 @@
 
   (define lf (dataframe-lazy df))
   (check-pred LazyFrame-ptr? lf)
+  (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 
   (define tmp-scan-csv
     (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))

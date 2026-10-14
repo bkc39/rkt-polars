@@ -42,19 +42,7 @@ fn opt_f64_mixed_valid_round_trips() {
 
 #[test]
 fn opt_str_mixed_valid_round_trips() {
-    // series_new_opt_str: parallel data + valid arrays. NULL
-    // entries in the data slot are tolerated when valid=0.
-    let owned = [cstr("hi"), cstr("there")];
-    let data = [owned[0].as_ptr(), ptr::null(), owned[1].as_ptr()];
-    let valid = [1u8, 0, 1];
-    let n = cstr("ws");
-    let s = series_new_opt_str(
-        n.as_ptr(),
-        data.as_ptr(),
-        valid.as_ptr(),
-        data.len(),
-    );
-    assert!(!s.is_null());
+    let s = make_opt_str("ws", &[Some("hi"), None, Some("there")]);
     assert_eq!(series_null_count(s), 1);
     assert_eq!(take_cstring(series_ref_str(s, 0)), "hi");
     assert!(series_ref_str(s, 1).is_null());

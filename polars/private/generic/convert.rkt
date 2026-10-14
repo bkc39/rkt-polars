@@ -59,7 +59,7 @@
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/io read-parquet)
-           (only-in polars/private/generic/reshape cast head lazy rename slice vstack)
+           (only-in polars/private/generic/reshape cast head lazy rename slice unique vstack)
            (only-in polars/private/generic/test-fixtures frame withnull)
            (only-in threading ~>))
 
@@ -492,3 +492,20 @@
       row)
     (settle!)
     (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2))))
+
+(module+ test
+  (define repro-rows 300000)
+  (define two-strings
+    (series (for/list ([i (in-range repro-rows)]) (if (< i 2) "a" "b")) #:name "g"))
+  (define digit-strings
+    (series (for/list ([i (in-range repro-rows)]) (number->string i)) #:name "s"))
+  (check-equal? (sort (contracted:series->list (unique two-strings)) string<?) '("a" "b"))
+  (check-equal? (ref digit-strings (sub1 repro-rows)) (number->string (sub1 repro-rows)))
+  (define digit-list (contracted:series->list digit-strings))
+  (check-true (for/and ([s (in-list digit-list)] [i (in-naturals)])
+                (equal? s (number->string i))))
+  (define two-symbols
+    (series (for/list ([i (in-range repro-rows)]) (if (< i 2) 'a 'b)) #:name "c"))
+  (check-equal? (dtype two-symbols) 'categorical)
+  (check-equal? (contracted:series->list (head two-symbols 3)) '(a a b))
+  (check-equal? (len (unique two-symbols)) 2))

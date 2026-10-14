@@ -14,9 +14,10 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  enum-dtype? owned-pointer-arg sort-flags-mismatch sort-flags/c
-                  time-unit-symbol->code zoned-datetime-dtype?)
+                  check-enum-categories enum-dtype? owned-pointer-arg sort-flags-mismatch
+                  sort-flags/c time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)])
@@ -150,7 +151,7 @@
 
 (define-compat expr-exclude/raw
   (_fun _Expr-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _Expr-ptr/null)
   #:c-id expr_exclude
@@ -166,7 +167,7 @@
       (error 'expr-exclude "operation failed")))
 
 (define-compat expr-dtype-col-enum/raw
-  (_fun (categories : (_list i _string/utf-8))
+  (_fun (categories : _string-list)
         (_size = (length categories))
         -> _Expr-ptr/null)
   #:c-id expr_dtype_col_enum
@@ -183,6 +184,7 @@
 (define (dtype-col who dtype)
   (match dtype
     [(? enum-dtype?)
+     (check-enum-categories who dtype)
      (call/foreign-error who
                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
                          "cannot select ~v" dtype)]
@@ -256,7 +258,12 @@
                                     " unable to parse time zone: 'Mars/Base'"))
              (lambda () (col '(datetime microseconds "Mars/Base"))))
   (check-exn #rx"^expr-dtype-col: cannot select .*not a time zone: '\\*'"
-             (lambda () (expr-dtype-col '(datetime microseconds "*")))))
+             (lambda () (expr-dtype-col '(datetime microseconds "*"))))
+  (define nul-enum (list 'enum 'a (string->symbol "b\u0000c")))
+  (check-exn #rx"^col: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (contracted:col nul-enum)))
+  (check-exn #rx"^expr-dtype-col: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (contracted:expr-dtype-col nul-enum))))
 
 (module+ test
   (require rackunit)

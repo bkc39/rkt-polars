@@ -367,6 +367,10 @@
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^lazyframe-collect: .*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
+  (define nul-dests (list 'enum 'JFK (string->symbol "MI\u0000A") 'IAH))
+  (for ([target (list (ref flights "dest") "dest")])
+    (check-exn #rx"^cast: contract violation\n  expected: an enum category without a NUL"
+               (lambda () (cast target nul-dests))))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)
