@@ -4,6 +4,7 @@
 
 @(define-runtime-path data-dir "../data")
 @(define ev (make-polars-eval #:directory data-dir))
+@(define shell (make-shell #:directory data-dir))
 
 @title[#:tag "io" #:style 'toc]{IO}
 
@@ -47,8 +48,9 @@ desirable.
 Upstream documents @tt{read_csv}'s options on its reference page; here they
 are with their Racket spellings. Each keyword keeps Python's name and works
 the same on @racket[read-csv] and @racket[scan-csv]. The file,
-@filepath{flights.tsv}, is 102 rows of nycflights13, tab-separated, with
-@litchar{NA} for a missing value.
+@filepath{flights.tsv}, is 102 rows of nycflights13:
+
+@shell['(head "flights.tsv")]
 
 @bold{Separator.} Read with the default comma, a tab-separated file is one
 column whose name is the whole header line. Python's @tt{read_csv} returns
@@ -62,8 +64,11 @@ off, and @racket[scan-csv] does not check.
 ]
 
 @bold{Missing values.} Types are inferred from the first 100 rows, and the
-first @litchar{NA} comes later. @racket[#:null-values] takes one marker or a
-list of them:
+first @litchar{NA} is in row 101:
+
+@shell['(tail "flights.tsv" 2)]
+
+@racket[#:null-values] takes one marker or a list of them:
 
 @examples[#:eval ev #:label #f
 (eval:error (read-csv "flights.tsv" #:separator #\tab))
@@ -93,14 +98,30 @@ null. Dates have their own keyword (@secref["io-csv-dates"]).
     null-count)
 ]
 
-@bold{Layout.} @filepath{notes.csv} starts with a comment line, separates
-fields with @litchar{;} and quotes a field that holds one with @litchar{'};
-@filepath{latin1.csv} is not UTF-8. @racket[#:has-header], @racket[#:skip-rows]
-and @racket[#:n-rows] frame the rows to read.
+@bold{Layout.} A comment line, a separator and a quote character each have
+a keyword:
+
+@shell['(head "notes.csv")]
 
 @examples[#:eval ev #:label #f
 (read-csv "notes.csv" #:separator #\; #:comment-prefix "#" #:quote-char #\')
+]
+
+@filepath{latin1.csv} is not UTF-8; its @tt{é} is one byte, which a UTF-8
+terminal shows as @litchar["\uFFFD"]:
+
+@shell['(head "latin1.csv")]
+
+@examples[#:eval ev #:label #f
 (read-csv "latin1.csv" #:encoding 'utf8-lossy)
+]
+
+@racket[#:has-header], @racket[#:skip-rows] and @racket[#:n-rows] frame the
+rows to read:
+
+@shell['(head "parts/part-1.csv")]
+
+@examples[#:eval ev #:label #f
 (read-csv "parts/part-1.csv" #:has-header #f #:skip-rows 1 #:n-rows 1)
 ]
 
@@ -116,11 +137,15 @@ adds a row number.
           #:new-columns '("from" "to" "delay"))
 ]
 
-@bold{Messy files.} @filepath{stations.csv} opens with a stray line,
-writes decimals with a comma, marks missing values differently per column
-and has a line with a field too many. @racket[#:skip-lines] skips lines
-without parsing them; a @racket[#:null-values] association list applies
-each marker to its column only.
+@bold{Messy files.} @filepath{stations.csv} has a title line, decimal
+commas, a missing-value marker per column and a line with a field too many:
+
+@shell['(head "stations.csv" 6)]
+
+@racket[#:skip-lines] skips lines without parsing them;
+@racket[#:decimal-comma] reads @litchar{12,5} as 12.5; a
+@racket[#:null-values] association list applies each marker to its column
+only; @racket[#:truncate-ragged-lines] drops the extra field.
 
 @examples[#:eval ev #:label #f
 (define stations
@@ -166,6 +191,8 @@ parses each column whose values look like dates, times or datetimes (ISO
 8601 and a handful of other formats) as it is read, on @racket[read-csv] and
 @racket[scan-csv] alike. @filepath{apple_stock.csv} holds upstream's hundred
 closing prices of Apple stock:
+
+@shell['(head "apple_stock.csv")]
 
 @examples[#:eval ev #:label #f
 (read-csv "apple_stock.csv" #:try-parse-dates #t)

@@ -4,6 +4,7 @@
 
 @(define-runtime-path data-dir "../data")
 @(define ev (make-polars-eval #:directory data-dir))
+@(define shell (make-shell #:directory data-dir))
 
 @title[#:tag "io-json"]{JSON files}
 
@@ -26,6 +27,8 @@ Polars can read and write both standard JSON and newline-delimited JSON
 
 Reading a JSON file should look familiar:
 
+@shell['(head "stations.json" 6)]
+
 @examples[#:eval ev #:label #f
 (read-json "stations.json")
 ]
@@ -37,6 +40,8 @@ more performant way than standard JSON.
 
 Polars can read an NDJSON file into a @tech{dataframe} using
 @racket[read-ndjson]:
+
+@shell['(head "stations.ndjson" 6)]
 
 @examples[#:eval ev #:label #f
 (read-ndjson "stations.ndjson")
@@ -76,10 +81,9 @@ parsing of the file and instead returns a lazy computation holder called a
 @section[#:tag "io-json-options"]{Reading options}
 
 Upstream documents @tt{read_json}'s and @tt{read_ndjson}'s options on its
-reference pages; here they are with their Racket spellings.
-@filepath{stations.json} and @filepath{stations.ndjson} hold the same
-objects: a @litchar{reading} that starts as an integer, and a
-@litchar{note} key that only the last object carries.
+reference pages; here they are with their Racket spellings. Both files hold
+the four objects shown above: the first @litchar{reading} is an integer, and
+only the last object has a @litchar{note}.
 
 @bold{Types.} @racket[#:schema] gives the columns and their types outright;
 @racket[#:schema-overrides] changes the types of some inferred columns.

@@ -27,11 +27,19 @@
 
 (require scribble/manual
          scribble/example
-         scribble/core
-         scribble/decode
-         racket/sandbox
-         syntax/parse/define
-         (for-syntax racket/base))
+         (for-syntax racket/base (only-in syntax/parse id))
+         (only-in racket/contract/base -> contract-out list/c or/c)
+         (only-in racket/file file->lines)
+         (only-in racket/list append-map take take-right)
+         (only-in racket/match match)
+         (only-in racket/sandbox
+                  sandbox-error-output sandbox-eval-limits sandbox-memory-limit sandbox-output
+                  sandbox-path-permissions sandbox-security-guard)
+         (only-in scribble/core
+                  block? make-element make-nested-flow make-paragraph make-style make-table)
+         (only-in scribble/decode decode-content)
+         (only-in scribble/html-properties attributes)
+         (only-in syntax/parse/define define-syntax-parse-rule))
 
 (require (for-label polars
                     ffi/vector
@@ -50,7 +58,9 @@
                                   racket/base))
          make-polars-eval
          see-reference
-         exnraise)
+         exnraise
+         (contract-out
+          [make-shell (-> #:directory path-string? (-> command/c command/c ... block?))]))
 
 (define (make-polars-eval #:directory [directory (current-directory)])
   (parameterize ([current-directory directory]
@@ -78,3 +88,38 @@
          (decode-content (append (list "See " (secref tag) " for ")
                                  what
                                  (list ".")))))
+
+(define command/c
+  (or/c (list/c (or/c 'head 'tail) relative-path?)
+        (list/c (or/c 'head 'tail) relative-path? exact-nonnegative-integer?)))
+
+(define default-lines 5)
+
+(define ((make-shell #:directory directory) . commands)
+  (terminal (append-map (lambda (command) (command->lines directory command)) commands)))
+
+(define (command->lines directory command)
+  (match command
+    [(list verb file) (command->lines directory (list verb file default-lines))]
+    [(list verb file n)
+     (define lines (file->lines (build-path directory file) #:line-mode 'linefeed))
+     (define pick (match verb ['head take] ['tail take-right]))
+     (cons (format "$ ~a -n ~a ~a" verb n file)
+           (pick lines (min n (length lines))))]))
+
+(define terminal-style
+  (make-style 'code-inset (list (attributes '((style . "overflow-x: auto"))))))
+(define terminal-lines-style
+  (make-style "SVerbatim" (list (attributes '((style . "white-space: pre"))))))
+(define row-style (make-style 'omitable null))
+
+(define (terminal lines)
+  (make-nested-flow terminal-style (list (make-table terminal-lines-style (map row lines)))))
+
+(define (row line)
+  (list (make-paragraph row-style (list (make-element 'tt (list (blank->space line)))))))
+
+(define (blank->space line)
+  (cond
+    [(string=? line "") " "]
+    [else line]))
