@@ -87,7 +87,7 @@ copy:
 ]
 
 API gap: @racket[read-csv] reads a local file, not a URL as the post's first
-reader does and Python's @tt{read_csv} can (#159); fetch the file first.
+reader does and Python's @tt{read_csv} can (#186); fetch the file first.
 
 The sample's first lines and its last:
 

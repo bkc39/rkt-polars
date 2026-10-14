@@ -77,8 +77,9 @@
             #:truncate-ragged-lines #t #:try-parse-dates #t))
 (displayln stations)
 
-;; API gaps: schema, with_column_names, include_file_paths, missing_columns,
-;; the tuning knobs (n_threads, low_memory, rechunk, batch_size), use_pyarrow.
+;; API gaps: schema, with_column_names, include_file_paths, missing_columns.
+;; The tuning knobs (n_threads, low_memory, rechunk, batch_size) and
+;; use_pyarrow change no result and are not bound.
 
 ;; --- writing options ---------------------------------------------------------
 (write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"
