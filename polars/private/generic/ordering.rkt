@@ -2,9 +2,9 @@
 
 (require (prefix-in base: (only-in racket/base sort))
          (only-in racket/contract/base
-                  ->i contract-out flat-named-contract non-empty-listof none/c or/c
-                  procedure-arity-includes/c rename-contract the-unsupplied-arg
-                  unsupplied-arg?)
+                  ->* ->i contract-out flat-named-contract integer-in
+                  non-empty-listof none/c or/c procedure-arity-includes/c
+                  rename-contract the-unsupplied-arg unsupplied-arg?)
          (only-in polars/private/expr
                   Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort)
          (only-in polars/private/expr-core sort-by/c)
@@ -14,8 +14,14 @@
                   dataframe? lazyframe? series? wrap-dataframe wrap-lazyframe wrap-series)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
-(provide (contract-out [sort sort/c] [sort-by (sort-by/c col-expr/c 'sort-by/c)])
-         rank gather)
+(provide (contract-out [sort sort/c]
+                       [sort-by (sort-by/c col-expr/c 'sort-by/c)]
+                       [rank (->* (col-expr/c)
+                                  (#:method (or/c 'average 'min 'max 'dense 'ordinal)
+                                   #:descending boolean?
+                                   #:seed (or/c #f (integer-in 0 (sub1 (expt 2 64)))))
+                                  Expr-ptr?)])
+         gather)
 
 (define (sort-frame? x) (or (dataframe? x) (lazyframe? x)))
 
@@ -42,7 +48,7 @@
         ([by (x) (cond [(sort-frame? x) sort-keys/c]
                        [(list? x) (procedure-arity-includes/c 2)]
                        [else frame-or-list-only/c])]
-         #:descending [descending (x) (polars-flag/c x)]
+         #:descending [descending (x) (if (list? x) boolean? (polars-flag/c x))]
          #:nulls-last [nulls-last (x) (polars-flag/c x)]
          #:maintain-order [maintain-order (x) (if (sort-frame? x) boolean? frame-only/c)]
          #:key [extract-key (x)
@@ -79,7 +85,9 @@
                       #:maintain-order maintain-order))]
     [(series? x)
      (wrap-series (series-sort x #:descending descending #:nulls-last nulls-last))]
-    [(list? x) (base:sort x by #:key extract-key #:cache-keys? cache-keys?)]
+    [(list? x)
+     (base:sort x (if descending (lambda (a b) (by b a)) by)
+                #:key extract-key #:cache-keys? cache-keys?)]
     [else
      (expr-sort (->col-expr 'sort x) #:descending descending #:nulls-last nulls-last)]))
 
@@ -102,7 +110,8 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
-           polars/private/generic/reshape)     ; with-columns / select
+           polars/private/generic/reshape      ; with-columns / select
+           (prefix-in contracted: (submod "..")))
   (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
                               (series '("b" "a" "b" "a" "b") #:name "g"))))
   ;; rank is length-preserving -> with-columns
@@ -116,7 +125,23 @@
                 '(10 20 30 40 50))
   (define gathered (select df (alias (gather "x" '(0 2 4)) "xg")))
   (check-equal? (for/list ([i (in-range 3)]) (ref (ref gathered #:columns "xg") i))
-                '(30 50 40)))
+                '(30 50 40))
+
+  (check-equal? (contracted:sort '(3 1 2) <) '(1 2 3))
+  (check-equal? (contracted:sort '(3 1 2) < #:descending #t) '(3 2 1))
+  (check-equal? (contracted:sort '((a . 1) (b . 2) (c . 1)) < #:key cdr #:descending #t)
+                '((b . 2) (a . 1) (c . 1)))
+  (check-equal? (contracted:sort '((a . 1) (b . 2) (c . 1) (d . 2)) < #:key cdr #:descending #t)
+                '((b . 2) (d . 2) (a . 1) (c . 1)))
+  (check-equal? (contracted:sort '("b" "c" "a") string<? #:descending #f) '("a" "b" "c"))
+  (check-exn #rx"^sort: contract violation\n  expected: boolean\\?\n  given: '\\(#t\\)"
+             (lambda () (contracted:sort '(3 1 2) < #:descending '(#t))))
+  (check-exn #rx"^rank: contract violation\n  expected: \\(or/c .*ordinal\\)+\n  given: 'first"
+             (lambda () (contracted:rank "x" #:method 'first)))
+  (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7))
+  (check-pred Expr-ptr? (contracted:rank "x" #:seed (sub1 (expt 2 64))))
+  (check-exn #rx"^rank: contract violation\n  expected: \\(or/c #f \\(integer-in 0 18446744073709551615\\)\\)\n  given: 18446744073709551616"
+             (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
 
 (module+ test
   (require racket/match
@@ -127,7 +152,11 @@
            (only-in syntax/parse/define define-syntax-parse-rule)
            (for-syntax (only-in syntax/parse expr))
            (prefix-in contracted: (submod ".."))
+           (only-in polars/private/expr-core expr->string lit)
            (only-in polars/private/generic/cumulative diff shift)
+           (only-in polars/private/generic/math p-abs p-round)
+           (only-in polars/private/generic/operators p+)
+           (only-in polars/private/generic/strings str-to-uppercase)
            (only-in polars/private/generic/window over)
            polars/private/generic/test-fixtures)
 
@@ -338,10 +367,70 @@
                   (vector (vector 1 polars-null) (vector 5 polars-null)))
     (check-equal? (over-g shifted-by-itself)
                   (list 1 3 polars-null 5 polars-null polars-null)))
-  (let ([nulls (~> (dataframe (list (series (list polars-null polars-null) #:name "n" #:dtype 'int64)))
+  (let ([nulls (~> (dataframe (list (series (list polars-null polars-null polars-null)
+                                            #:name "n" #:dtype 'int64)
+                                    (series '(3 1 2) #:name "v")))
                    (with-columns (cast "n" 'null)))])
-    (check-equal? (~> nulls (select (sort "n" #:descending #t #:nulls-last #t)) (column "n"))
-                  (list polars-null polars-null)))
+    (for* ([d '(#f #t)] [l '(#f #t)])
+      (define (sorted x) (sort x "n" #:descending d #:nulls-last l #:maintain-order #t))
+      (define why (format "~s" (list d l)))
+      (check-equal? (~> nulls (select (sort "n" #:descending d #:nulls-last l)) (column "n"))
+                    (list polars-null polars-null polars-null)
+                    why)
+      (check-equal? (~> nulls sorted (column "v")) '(3 1 2) why)
+      (check-equal? (~> nulls lazy sorted collect (column "v")) '(3 1 2) why)))
+
+  (for* ([d '(#f #t)] [l '(#f #t)])
+    (check-equal? (expr->string (sort "v" #:descending d #:nulls-last l))
+                  (if d "col(\"v\").sort(desc)" "col(\"v\").sort(asc)"))
+    (check-equal? (expr->string (sort (sum "v") #:descending d #:nulls-last l))
+                  "col(\"v\").sum()")
+    (check-equal? (expr->string (sort (p+ (col "v") (sum "v")) #:descending d #:nulls-last l))
+                  (format "[(col(\"v\")) + (col(\"v\").sum())].sort(~a)" (if d "desc" "asc")))
+    (check-regexp-match #rx"^col[(]\"v\"[)][.]sum[(][)][.]abs[(][)][.]sort_by[(]by=[[]col"
+                        (expr->string (sort (p-abs (sum "v")) #:descending d #:nulls-last l))))
+  (let ([flights (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
+                                  (series (list 12 polars-null 340 -3 polars-null) #:name "delay")))]
+        [rounded (sort (p-round (mean "delay")) #:descending #t)])
+    (check-regexp-match #rx"^col[(]\"delay\"[)][.]mean[(][)][.]round[(].*[)][.]sort_by[(]by=[[]col"
+                        (expr->string rounded))
+    (check-equal? (~> flights (group-by "carrier") (agg rounded) (sort "carrier") frame-rows)
+                  (vector (vector "AA" -3.0) (vector "B6" polars-null) (vector "UA" 176.0))))
+  (let ([g (dataframe (list (series '("a" "a" "b" "b" "c") #:name "g")
+                            (series (list 1 polars-null 3 4 polars-null) #:name "v")))])
+    (for* ([d '(#f #t)] [l '(#f #t)])
+      (define total (sort (sum "v") #:descending d #:nulls-last l))
+      (define why (format "~s" (list d l)))
+      (define out (~> g (group-by "g") (agg (alias total "s")) (sort "g")))
+      (check-equal? (dtype (ref out #:columns "s")) 'int64 why)
+      (check-equal? (column out "s") '(1 7 0) why)
+      (check-equal? (~> g (select (alias (over total "g") "s")) (column "s")) '(1 1 7 7 0) why)))
+  (let ([words (dataframe (list (series (for/list ([i (in-range 1000)]) (if (< i 2) "a" "b"))
+                                        #:name "g")
+                                (series (for/list ([i (in-range 1000)]) (format "w~a" i))
+                                        #:name "s")
+                                (series (for/list ([i (in-range 1000)]) (- i)) #:name "v")))])
+    (for* ([d '(#f #t)] [l '(#f #t)])
+      (define (sorted e) (sort e #:descending d #:nulls-last l))
+      (define why (format "~s" (list d l)))
+      (define (check-one-per-group e want)
+        (check-equal? (~> words (group-by "g") (agg (alias (sorted e) "x")) (sort "g") (column "x"))
+                      want
+                      why)
+        (check-equal? (~> words (select (alias (over (sorted e) "g") "x")) (head 3) (column "x"))
+                      (list (car want) (car want) (cadr want))
+                      why))
+      (check-one-per-group (first "s") '("w0" "w2"))
+      (check-one-per-group (lit "x") '("x" "x"))
+      (check-one-per-group (str-to-uppercase (first "s")) '("W0" "W2"))
+      (check-one-per-group (p-abs (sum "v")) '(1 499499))
+      (define per-row (sorted (p+ (col "v") (sum "v"))))
+      (check-equal? (~> words (group-by "g") (agg (alias (first per-row) "x")) (sort "g") (column "x"))
+                    (if d '(-1 -499501) '(-2 -500498))
+                    why)
+      (check-equal? (~> words (select (alias (over per-row "g") "w")) (head 2) (column "w"))
+                    (if d '(-1 -2) '(-2 -1))
+                    why)))
   (let* ([delays (for/list ([i (in-range 300)])
                    (if (zero? (modulo i 7)) polars-null (- (modulo (* i 37) 211) 100)))]
          [d (dataframe (list (series delays #:name "delay") (series (range 300) #:name "id")))]
@@ -372,8 +461,8 @@
   (check-blame #rx"^sort: contract violation.*expected: sortable/c" (contracted:sort 42))
   (check-blame #rx"^sort: contract violation.*racket/base sort needs a less-than\\? procedure"
                (contracted:sort '(3 1 2)))
-  (check-blame #rx"^sort: contract violation.*expected: polars-only/c"
-               (contracted:sort '(3 1 2) < #:descending #t))
+  (check-blame #rx"^sort: contract violation.*expected: boolean\\?"
+               (contracted:sort '(3 1 2) < #:descending 1))
   (check-blame #rx"^sort: contract violation.*expected: polars-only/c"
                (contracted:sort '(3 1 2) < #:nulls-last #t))
   (check-blame #rx"^sort: contract violation.*expected: frame-only/c"

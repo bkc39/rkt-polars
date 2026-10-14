@@ -39,5 +39,8 @@
           (alias (sort "dep_delay" #:nulls-last #t) "delays"))
      (sort "carrier")))
 
+;; The expression is Polars' own sort, and prints as one.
+(displayln (sort "dep_delay" #:descending #t #:nulls-last #t))
+
 ;; The same top five from a lazy plan.
 (displayln (~> flights lazy (sort "dep_delay" #:descending #t #:nulls-last #t) (head 5) collect))
