@@ -411,11 +411,6 @@
   (write-csv brussels brussels-csv)
   (check-equal? (file->string brussels-csv)
                 "t\n2021-03-27T12:00:00.500000+0100\n\n2021-07-01T00:00:00.000000+0200\n")
-  (define brussels-parquet (build-path scratch "brussels.parquet"))
-  (write-parquet brussels brussels-parquet)
-  (check-true (frame=? (read-parquet brussels-parquet) brussels))
-  (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
-                '(datetime microseconds "Europe/Brussels"))
   (define offsets (scratch-file "offsets.csv" "t,u"
                                 "2021-03-27T00:00:00+01:00,2021-03-27 00:00"
                                 "2021-03-29T00:00:00+02:00,2021-03-29 00:00"))

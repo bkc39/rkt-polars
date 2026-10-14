@@ -22,6 +22,7 @@
            racket/runtime-path
            (only-in racket/list second)
            (only-in racket/string string-contains?)
+           (only-in gregor moment)
            (only-in threading ~>)
            (prefix-in contracted: (submod ".."))
            (only-in polars/private/bulk series->list)
@@ -285,4 +286,15 @@
   (check-pred exact-positive-integer? (written-size '(#:data-page-size . 0)))
 
   (delete-directory/files pq-dir)
+
+  (define brussels
+    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
+                             #:name "t"))))
+  (define brussels-parquet (build-path scratch "brussels.parquet"))
+  (write-parquet brussels brussels-parquet)
+  (check-true (frame=? (read-parquet brussels-parquet) brussels))
+  (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
+                '(datetime microseconds "Europe/Brussels"))
+
   (delete-directory/files scratch))
