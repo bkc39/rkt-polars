@@ -245,7 +245,7 @@
            (only-in gregor moment)
            (only-in racket/list make-list)
            (only-in racket/math nan?)
-           (only-in polars/private/generic/io read-parquet)
+           (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/foreign series-quantile)
            (only-in polars/private/generic/math p-abs)
            (only-in polars/private/generic/reshape agg group-by head)

@@ -5,8 +5,7 @@
                   json-reader json-reader/c json-writer ndjson-reader ndjson-reader/c
                   ndjson-scanner ndjson-writer ndjson-writer/c)
          (only-in polars/private/generic/core
-                  dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
-         (only-in polars/private/generic/io define-wrapped))
+                  dataframe? define-wrapped lazyframe? wrap-dataframe wrap-lazyframe))
 
 (provide (contract-out
           [read-json (json-reader/c dataframe?)]
@@ -26,7 +25,6 @@
            racket/file
            racket/runtime-path
            (only-in racket/list make-list)
-           (only-in file/gzip gzip-through-ports)
            (only-in gregor date moment)
            (prefix-in contracted: (submod ".."))
            (only-in threading ~>)
@@ -40,11 +38,6 @@
   (define-runtime-path data-dir "../../scribblings/data")
   (define stations (build-path data-dir "stations.json"))
   (define scratch (make-temporary-directory "rkt-polars-json-~a"))
-  (define (message-of thunk)
-    (with-handlers ([exn:fail? exn-message]) (thunk) #f))
-  (define (gzip-file from to)
-    (call-with-output-file to
-      (lambda (out) (call-with-input-file from (lambda (in) (gzip-through-ports in out #f 0))))))
 
   (define-values (required accepted) (procedure-keywords contracted:read-json))
   (check-equal? required '())
@@ -160,7 +153,7 @@
              (lambda () (write-json binary-frame dangling)))
   (check-false (file-exists? (build-path scratch "made.json")))
   (delete-file dangling)
-  (check-staged-write write-json "json" guide-df)
+  (check-staged-write write-json read-json "json" guide-df)
 
   (define promoted (scratch-file scratch "promoted.json" "[{\"a\":1},{\"a\":2.5},{\"a\":true}]"))
   (check-equal? (column (read-json promoted #:infer-schema-length 1) "a") '(1 2 1))
@@ -375,7 +368,7 @@
              (lambda () (write-ndjson binary-frame dangling-nd)))
   (check-false (file-exists? (build-path scratch "made.ndjson")))
   (delete-file dangling-nd)
-  (check-staged-write write-ndjson "ndjson" guide-df)
+  (check-staged-write write-ndjson read-ndjson "ndjson" guide-df)
 
   (define leftover (build-path scratch "leftover"))
   (make-directory leftover)

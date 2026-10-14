@@ -5,15 +5,14 @@
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
-(require (only-in racket/contract exn:fail:contract:blame?)
-         (only-in racket/file display-to-file)
-         (only-in racket/path path-has-extension?)
-         polars/private/generic/core
+(require polars/private/generic/core
+         polars/private/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign polars-null polars-null?)
          (only-in gregor datetime))
 
 (provide (all-defined-out)
+         (all-from-out polars/private/test-helpers)
          col Expr-ptr? expr-add polars-null polars-null? datetime)
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
@@ -44,26 +43,23 @@
          (and (equal? (dtype (ref a #:columns name)) (dtype (ref b #:columns name)))
               (equal? (column a name) (column b name))))))
 
+(define (cause-of message)
+  (cadr (regexp-match #rx"^[^:]*: [^:]*: ([^\n]*)" message)))
+
+(define (reads-agree? read scan collect path kvs)
+  (define eager (with-handlers ([exn:fail? exn-message]) (apply-keywords read kvs path)))
+  (define lazy (with-handlers ([exn:fail? exn-message]) (collect (apply-keywords scan kvs path))))
+  (if (string? eager)
+      (and (string? lazy) (equal? (cause-of eager) (cause-of lazy)))
+      (and (not (string? lazy)) (frame=? eager lazy))))
+
+(define (one-file-pattern path)
+  (define-values (dir name _) (split-path path))
+  (build-path dir (regexp-replace #rx"^." (path->string name) "[&]")))
+
 (define (dtypes-of df)
   (for/list ([name (in-list (column-names df))])
     (list name (dtype (ref df name)))))
-
-(define (scratch-file dir name text)
-  (define path (build-path dir name))
-  (display-to-file text path #:exists 'replace)
-  path)
-
-(define ((contract-violation-of who) e)
-  (and (exn:fail:contract:blame? e)
-       (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
-                      (exn-message e))))
-
-(define (apply-keywords proc kvs . args)
-  (define sorted (sort kvs keyword<? #:key car))
-  (keyword-apply proc (map car sorted) (map cdr sorted) args))
-
-(define (staging-files dir)
-  (filter (lambda (name) (path-has-extension? name #".partial")) (directory-list dir)))
 
 (module+ test
   (require rackunit
@@ -71,31 +67,38 @@
 
   (provide check-staged-write)
 
-  (define (check-staged-write write! ext df)
+  (define char-device #o020000)
+
+  (define (check-staged-write write! read ext df)
     (define dir (make-temporary-directory "rkt-polars-staged-~a"))
     (define (named stem) (format "~a.~a" stem ext))
     (define (failure cause)
       (pregexp (format "^~a: failed to write [^ ]+ to [^:]*: cannot create file: ~a"
                        (object-name write!) cause)))
+    (define (check-replaced path)
+      (write! df path)
+      (check-true (frame=? (read path) df) (format "~a" path)))
     (define real (scratch-file dir (named "real") "OLD"))
     (define link (build-path dir (named "link")))
     (make-file-or-directory-link (named "real") link)
-    (write! df link)
+    (check-replaced link)
     (check-true (link-exists? link))
-    (check-not-equal? (file->string real) "OLD")
+    (check-true (frame=? (read real) df))
     (define locked (scratch-file dir (named "locked") "OLD"))
     (file-or-directory-permissions locked #o444)
     (unless (memq 'write (file-or-directory-permissions locked))
+      (define listing (directory-list dir))
       (check-exn (failure "Permission denied") (lambda () (write! df locked)))
-      (check-equal? (file->string locked) "OLD"))
+      (check-equal? (file->string locked) "OLD")
+      (check-equal? (directory-list dir) listing))
     (define private (scratch-file dir (named "private") "OLD"))
     (file-or-directory-permissions private #o600)
-    (write! df private)
+    (check-replaced private)
     (check-equal? (file-or-directory-permissions private 'bits) #o600)
     (write! df "/dev/null")
-    (define long (build-path dir (named (make-string (- 249 (string-length ext)) #\x))))
-    (write! df long)
-    (check-true (file-exists? long))
+    (check-equal? (bitwise-and (hash-ref (file-or-directory-stat "/dev/null") 'mode) #o170000)
+                  char-device)
+    (check-replaced (build-path dir (named (make-string (- 249 (string-length ext)) #\x))))
     (define sub (build-path dir "sub"))
     (make-directory sub)
     (check-exn (failure "it is a directory$") (lambda () (write! df sub)))

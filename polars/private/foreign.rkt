@@ -64,6 +64,7 @@
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
     ("to the `null_values` list" . "to #:null-values")
+    ("'truncate_ragged_lines=true'" . "#:truncate-ragged-lines #t")
     ("Try increasing `infer_schema_length` or specifying a schema."
      . "Try increasing #:infer-schema-length or passing #:schema.")
     ("consider increasing infer_schema_length, or manually specifying the full schema"
@@ -81,9 +82,11 @@
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
 (define (respell reason)
-  (for/fold ([reason (if (regexp-match? empty-expansion reason)
-                         "no files match the pattern"
-                         reason)])
+  (for/fold ([reason (cond
+                       [(or (regexp-match? empty-expansion reason)
+                            (equal? reason "no paths specified for this reader"))
+                        "no files match the pattern"]
+                       [else reason])])
             ([(python racket) (in-dict racket-spellings)])
     (string-replace reason python racket)))
 
@@ -1780,17 +1783,6 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
-(define-compat dataframe-write-csv/raw
-  (_fun _DataFrame-ptr _string -> _int32)
-  #:c-id dataframe_write_csv)
-
-(define (dataframe-write-csv df path)
-  (define p (path->complete-string 'dataframe-write-csv path))
-  (void (call/foreign-error 'dataframe-write-csv
-                            (lambda () (dataframe-write-csv/raw df p))
-                            #:ok? zero?
-                            "failed to write csv to ~a" path)))
-
 (define-compat dataframe-write-parquet/raw
   (_fun _DataFrame-ptr _string -> _int32)
   #:c-id dataframe_write_parquet)
@@ -2522,8 +2514,6 @@
   (define tmp-dir (find-system-path 'temp-dir))
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (define one-col (dataframe-new (list (series-new-i32 "x" '(1 2 3)))))
-  (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
-             (lambda () (dataframe-write-csv one-col unwritable)))
   (check-exn #rx"^dataframe-write-parquet: failed to write parquet to .*: cannot create file: "
              (lambda () (dataframe-write-parquet one-col unwritable)))
 
@@ -2539,11 +2529,8 @@
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
-           (prefix-in contracted: (submod "..")))
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
+           (prefix-in contracted: (submod ".."))
+           (only-in polars/private/test-helpers settle!))
   (define ((sort-blame? rx) e)
     (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
@@ -2808,7 +2795,7 @@
 
   (define (releases-result? form)
     (match form
-      [(list* 'define-compat _ (list* '_fun signature) options)
+      [(list* 'define-compat _ (list* _ signature) options)
        (define type (result-type signature))
        (define drop (hash-ref owned-drops type #f))
        (cond
@@ -2834,6 +2821,17 @@
                           #:wrap (allocator lazyframe-drop))))
   (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
   (check > (length bindings) 200)
+  (define (shared-signature-result form)
+    (match form
+      [(list* 'define-compat (or 'dataframe-read-csv/raw 'lazyframe-scan-ndjson/raw)
+              (cons _ signature) _)
+       (result-type signature)]
+      [_ #f]))
+  (check-equal? (for*/list ([form (in-list bindings)]
+                            [type (in-value (shared-signature-result form))]
+                            #:when type)
+                  type)
+                '(_DataFrame-ptr/null _LazyFrame-ptr/null))
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))
                   (cadr form))

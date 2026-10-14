@@ -1,3 +1,4 @@
+use super::io::write_csv;
 use super::test_util::*;
 use super::*;
 use std::path::Path;
@@ -9,7 +10,7 @@ extern "C" fn write_ndjson(df: *mut DataFrame, path: *const c_char) -> i32 {
 }
 
 const WRITERS: [(&str, Writer); 4] = [
-    ("csv", dataframe_write_csv),
+    ("csv", write_csv),
     ("parquet", dataframe_write_parquet),
     ("json", dataframe_write_json),
     ("ndjson", write_ndjson),
@@ -27,16 +28,7 @@ fn write_to(writer: Writer, path: &Path) -> i32 {
 
 fn read_csv(path: &str) -> *mut DataFrame {
     let p = cstr(path);
-    dataframe_read_csv_with_options(
-        p.as_ptr(),
-        CompatCsvOptions::default(),
-        ptr::null(),
-        ptr::null(),
-        0,
-        ptr::null(),
-        ptr::null(),
-        0,
-    )
+    super::io::read_csv(p.as_ptr())
 }
 
 fn read_parquet(path: &str) -> *mut DataFrame {
@@ -198,7 +190,8 @@ fn a_new_file_gets_default_permissions() {
 #[test]
 fn a_fifo_is_written_in_place() {
     use std::os::unix::fs::FileTypeExt;
-    let cases: [(&str, Writer, &str); 2] = [
+    let cases: [(&str, Writer, &str); 3] = [
+        ("csv", write_csv, "x\n1\n2\n"),
         ("json", dataframe_write_json, r#"[{"x":1},{"x":2}]"#),
         ("ndjson", write_ndjson, "{\"x\":1}\n{\"x\":2}\n"),
     ];
@@ -247,7 +240,7 @@ fn a_long_file_name_is_written() {
 fn a_leftover_staging_file_is_not_read() {
     let dir = scratch_dir();
     let at = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
-    assert_eq!(write_to(dataframe_write_csv, Path::new(&at("a.csv"))), 0);
+    assert_eq!(write_to(write_csv, Path::new(&at("a.csv"))), 0);
     assert_eq!(
         write_to(dataframe_write_parquet, Path::new(&at("a.parquet"))),
         0
@@ -336,7 +329,7 @@ fn a_failed_csv_write_keeps_the_existing_file() {
         .unwrap(),
     ));
     let p = cstr(path.to_str().unwrap());
-    assert_eq!(dataframe_write_csv(df, p.as_ptr()), 4);
+    assert_eq!(write_csv(df, p.as_ptr()), 4);
     assert_eq!(
         recorded_error().as_deref(),
         Some("CSV format does not support nested data")

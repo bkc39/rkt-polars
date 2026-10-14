@@ -58,9 +58,9 @@
            (prefix-in contracted: (submod ".."))
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
-           (only-in polars/private/generic/io read-parquet)
+           (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/reshape cast head lazy rename slice unique vstack)
-           (only-in polars/private/generic/test-fixtures frame withnull)
+           (only-in polars/private/generic/test-fixtures frame settle! withnull)
            (only-in threading ~>))
 
   (random-seed 88)
@@ -352,10 +352,6 @@
   (check-equal? (sort (hash-keys (dataframe->hash mixed)) string<?)
                 (sort (column-names mixed) string<?))
 
-  (define (settle!)
-    (for ([_ (in-range 4)])
-      (collect-garbage)
-      (sleep 0.1)))
   (define (drops-during thunk)
     (settle!)
     (define before (series-drop-count))

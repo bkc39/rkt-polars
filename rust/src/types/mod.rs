@@ -6,7 +6,7 @@ mod optionals;
 mod shape;
 mod temporal;
 
-pub use self::csv::CompatCsvOptions;
+pub use self::csv::{CompatCsvOptions, CompatCsvWriteOptions};
 #[cfg(test)]
 pub(crate) use self::dtype::compat_time_unit_from_polars;
 pub(crate) use self::dtype::{
