@@ -1,19 +1,19 @@
 #lang racket/base
 
-;; The raw-file blocks of io.scrbl, io-json.scrbl and nycflights.scrbl: what
-;; `shell-head` and `shell-tail` render against the bytes on disk.
-
 (module+ test
   (require rackunit
            racket/runtime-path
-           (only-in racket/match match-define)
-           (only-in racket/file file->bytes)
-           (only-in racket/list drop-right last take take-right)
+           (only-in racket/contract exn:fail:contract:blame?)
+           (only-in racket/file delete-directory/files file->bytes-lines make-temporary-directory)
+           (only-in racket/list take take-right)
+           (only-in racket/match match match-define)
+           (only-in racket/string string-join)
            (only-in scribble/core
                     content->string
                     nested-flow-blocks
                     paragraph-content
                     table-blockss)
+           (only-in polars/private/test-helpers scratch-file)
            "../utils.rkt")
 
   (define-runtime-path data-dir "../data")
@@ -22,59 +22,86 @@
     (for/list ([row (table-blockss (car (nested-flow-blocks block)))])
       (content->string (paragraph-content (car row)))))
 
-  (define (disk-lines file)
-    (define lines
-      (for/list ([line (regexp-split #rx#"\n" (file->bytes (build-path data-dir file)))])
-        (bytes->string/utf-8 line #\uFFFD)))
-    (cond
-      [(equal? (last lines) "") (drop-right lines 1)]
-      [else lines]))
+  (define (disk-lines directory file)
+    (for/list ([line (file->bytes-lines (build-path directory file) #:line-mode 'linefeed)])
+      (bytes->string/utf-8 line #\uFFFD)))
 
-  (define (check-head file n)
-    (define lines (disk-lines file))
-    (check-equal? (rendered (shell-head file n #:directory data-dir))
-                  (cons (format "$ head -n ~a ~a" n file)
-                        (take lines (min n (length lines))))))
+  (define (expected directory command)
+    (match-define (list verb file n) command)
+    (define lines (disk-lines directory file))
+    (define pick (match verb ['head take] ['tail take-right]))
+    (cons (format "$ ~a -n ~a ~a" verb n file)
+          (for/list ([line (pick lines (min n (length lines)))])
+            (cond
+              [(string=? line "") " "]
+              [else line]))))
 
-  (define (check-tail file n)
-    (check-equal? (rendered (shell-tail file n #:directory data-dir))
-                  (cons (format "$ tail -n ~a ~a" n file)
-                        (take-right (disk-lines file) n))))
+  (define (check-command directory command)
+    (check-equal? (rendered ((make-shell #:directory directory) command))
+                  (expected directory command)
+                  (format "~s" command)))
 
-  (check-head "flights.tsv" 5)
-  (check-tail "flights.tsv" 2)
-  (match-define (list _ header) (rendered (shell-head "flights.tsv" 1 #:directory data-dir)))
-  (check-equal? header
-                (string-append "year\tmonth\tday\tdep_time\tsched_dep_time\tdep_delay\t"
-                               "arr_time\tsched_arr_time\tarr_delay\tcarrier\tflight\t"
-                               "tailnum\torigin\tdest\tair_time\tdistance\thour\tminute\t"
-                               "time_hour"))
-  (match-define (list _ last-line) (rendered (shell-tail "flights.tsv" 1 #:directory data-dir)))
-  (check-equal? last-line
-                (string-append "2013\t1\t1\tNA\t1630\tNA\tNA\t1815\tNA\tEV\t4308\tN18120\t"
-                               "EWR\tRDU\tNA\t416\t16\t30\t2013-01-01 16:00:00"))
+  (define shell (make-shell #:directory data-dir))
 
-  (check-head "notes.csv" 5)
-  (check-equal? (rendered (shell-head "notes.csv" #:directory data-dir))
+  (for ([command (in-list '((head "flights.tsv" 5)
+                            (tail "flights.tsv" 2)
+                            (head "parts/part-1.csv" 5)
+                            (head "stations.csv" 6)
+                            (head "apple_stock.csv" 5)
+                            (head "stations.json" 6)
+                            (head "stations.ndjson" 6)
+                            (head "nycflights-sample.tsv" 3)
+                            (tail "nycflights-sample.tsv" 1)
+                            (head "nycflights-sample.tsv" 0)))])
+    (check-command data-dir command))
+
+  (check-equal? (rendered (shell '(head "nycflights-sample.tsv" 3)
+                                 '(tail "nycflights-sample.tsv" 1)))
+                (append (expected data-dir '(head "nycflights-sample.tsv" 3))
+                        (expected data-dir '(tail "nycflights-sample.tsv" 1))))
+
+  (check-equal? (cadr (rendered (shell '(head "flights.tsv" 1))))
+                (string-join '("year" "month" "day" "dep_time" "sched_dep_time" "dep_delay"
+                               "arr_time" "sched_arr_time" "arr_delay" "carrier" "flight"
+                               "tailnum" "origin" "dest" "air_time" "distance" "hour" "minute"
+                               "time_hour")
+                             "\t"))
+  (check-equal? (cadr (rendered (shell '(tail "flights.tsv" 1))))
+                (string-join '("2013" "1" "1" "NA" "1630" "NA" "NA" "1815" "NA" "EV" "4308"
+                               "N18120" "EWR" "RDU" "NA" "416" "16" "30" "2013-01-01 16:00:00")
+                             "\t"))
+
+  (check-equal? (rendered (shell '(head "notes.csv")))
                 '("$ head -n 5 notes.csv"
                   "# carrier notes, typed up by hand"
                   "carrier;note"
                   "UA;'late; weather'"
                   "AA;on time"))
 
-  (check-head "latin1.csv" 5)
-  (check-equal? (rendered (shell-head "latin1.csv" #:directory data-dir))
+  (check-equal? (rendered (shell '(head "latin1.csv" 5)))
                 '("$ head -n 5 latin1.csv" "carrier,name" "B6,JetBlue" "ZZ,Caf\uFFFD Air"))
 
-  (check-head "parts/part-1.csv" 5)
-  (check-head "stations.csv" 6)
-  (check-head "apple_stock.csv" 5)
-  (check-head "stations.json" 6)
-  (check-head "stations.ndjson" 5)
-  (check-equal? (length (rendered (shell-head "stations.ndjson" #:directory data-dir))) 5)
-  (check-tail "stations.ndjson" 1)
+  (define scratch (make-temporary-directory "rkt-polars-shell-~a"))
+  (for ([file (in-list '(("unterminated.txt" "one\ntwo\nthree")
+                         ("empty.txt" "")
+                         ("blank.txt" "one\n\nthree\n")))])
+    (apply scratch-file scratch file))
 
-  (check-head "nycflights-sample.tsv" 3)
-  (check-tail "nycflights-sample.tsv" 1)
-  (check-equal? (rendered (shell-head "nycflights-sample.tsv" 0 #:directory data-dir))
-                '("$ head -n 0 nycflights-sample.tsv")))
+  (define scratch-shell (make-shell #:directory scratch))
+  (for ([case (in-list '(((tail "unterminated.txt" 2)
+                          ("$ tail -n 2 unterminated.txt" "two" "three"))
+                         ((head "empty.txt" 3)
+                          ("$ head -n 3 empty.txt"))
+                         ((tail "blank.txt" 2)
+                          ("$ tail -n 2 blank.txt" " " "three"))))])
+    (match-define (list command lines) case)
+    (check-equal? (rendered (scratch-shell command)) lines))
+  (for ([command (in-list '((tail "unterminated.txt" 5)
+                            (head "empty.txt" 0)
+                            (tail "empty.txt" 2)
+                            (head "blank.txt" 2)))])
+    (check-command scratch command))
+  (check-exn exn:fail:contract:blame?
+             (lambda () (shell (list 'head (path->string (build-path scratch "blank.txt")) 1))))
+
+  (delete-directory/files scratch))

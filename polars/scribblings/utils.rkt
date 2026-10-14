@@ -8,7 +8,7 @@
 ;;   #lang scribble/manual
 ;;   @(require "../utils.rkt")
 ;;
-;; Four jobs:
+;; Three jobs:
 ;;
 ;;  * Re-export `scribble/manual` and `scribble/example` so chapters do not
 ;;    repeat them.
@@ -19,9 +19,6 @@
 ;;    written once here rather than copied into each .scrbl file; without it
 ;;    `@racket[...]` does not hyperlink to the right binding.
 ;;
-;;  * Show a data file's first or last lines as `head` or `tail` prints them,
-;;    read at documentation-build time like the examples.
-;;
 ;;  * Build the example evaluator.  Examples run against the real bindings at
 ;;    documentation-build time, so a printed frame cannot drift from what the
 ;;    library actually produces, and a broken example fails the build.  The
@@ -30,15 +27,19 @@
 
 (require scribble/manual
          scribble/example
-         scribble/core
-         scribble/decode
-         racket/sandbox
-         (only-in racket/contract/base ->* contract-out)
+         (for-syntax racket/base (only-in syntax/parse id))
+         (only-in racket/contract/base -> contract-out list/c or/c)
          (only-in racket/file file->lines)
-         (only-in racket/list take-right)
-         scribble/html-properties
-         syntax/parse/define
-         (for-syntax racket/base))
+         (only-in racket/list append-map take take-right)
+         (only-in racket/match match)
+         (only-in racket/sandbox
+                  sandbox-error-output sandbox-eval-limits sandbox-memory-limit sandbox-output
+                  sandbox-path-permissions sandbox-security-guard)
+         (only-in scribble/core
+                  block? make-element make-nested-flow make-paragraph make-style make-table)
+         (only-in scribble/decode decode-content)
+         (only-in scribble/html-properties attributes)
+         (only-in syntax/parse/define define-syntax-parse-rule))
 
 (require (for-label polars
                     ffi/vector
@@ -59,10 +60,7 @@
          see-reference
          exnraise
          (contract-out
-          [shell-head (->* (relative-path? #:directory path-string?) (exact-nonnegative-integer?)
-                           block?)]
-          [shell-tail (->* (relative-path? #:directory path-string?) (exact-nonnegative-integer?)
-                           block?)]))
+          [make-shell (-> #:directory path-string? (-> command/c command/c ... block?))]))
 
 (define (make-polars-eval #:directory [directory (current-directory)])
   (parameterize ([current-directory directory]
@@ -91,35 +89,37 @@
                                  what
                                  (list ".")))))
 
-;; Invalid UTF-8 reads as U+FFFD, as a UTF-8 terminal shows it; tabs stay
-;; tabs, and the block keeps them with `white-space: pre`.
-(define (shell-head file [n 5] #:directory directory)
-  (terminal (format "head -n ~a ~a" n file)
-            (call-with-input-file (build-path directory file)
-              (lambda (in)
-                (for/list ([line (in-lines in 'linefeed)]
-                           [_ (in-range n)])
-                  line)))))
+(define command/c
+  (or/c (list/c (or/c 'head 'tail) relative-path?)
+        (list/c (or/c 'head 'tail) relative-path? exact-nonnegative-integer?)))
 
-(define (shell-tail file [n 5] #:directory directory)
-  (define lines (file->lines (build-path directory file) #:line-mode 'linefeed))
-  (terminal (format "tail -n ~a ~a" n file)
-            (take-right lines (min n (length lines)))))
+(define default-lines 5)
+
+(define ((make-shell #:directory directory) . commands)
+  (terminal (append-map (lambda (command) (command->lines directory command)) commands)))
+
+(define (command->lines directory command)
+  (match command
+    [(list verb file) (command->lines directory (list verb file default-lines))]
+    [(list verb file n)
+     (define lines (file->lines (build-path directory file) #:line-mode 'linefeed))
+     (define pick (match verb ['head take] ['tail take-right]))
+     (cons (format "$ ~a -n ~a ~a" verb n file)
+           (pick lines (min n (length lines))))]))
 
 (define terminal-style
   (make-style 'code-inset (list (attributes '((style . "overflow-x: auto"))))))
 (define terminal-lines-style
   (make-style "SVerbatim" (list (attributes '((style . "white-space: pre"))))))
+(define row-style (make-style 'omitable null))
 
-(define (terminal command lines)
-  (make-nested-flow
-   terminal-style
-   (list (make-table terminal-lines-style
-                     (for/list ([line (cons (string-append "$ " command) lines)])
-                       (list (make-paragraph (make-style 'omitable null)
-                                             (list (make-element 'tt (list (nonempty line)))))))))))
+(define (terminal lines)
+  (make-nested-flow terminal-style (list (make-table terminal-lines-style (map row lines)))))
 
-(define (nonempty line)
+(define (row line)
+  (list (make-paragraph row-style (list (make-element 'tt (list (blank->space line)))))))
+
+(define (blank->space line)
   (cond
     [(string=? line "") " "]
     [else line]))
