@@ -130,7 +130,7 @@ glob pattern, as for Parquet:
 
 API gaps: a path only, no file object or in-memory string in or out; an
 Enum in @racket[#:schema] (read as @racket['categorical] and
-@racket[cast]); no @tt{glob} for @racket[read-ndjson]; one path or
+@racket[cast]); no @racket[#:glob #f] to read a path literally; one path or
 pattern, not a list; no cloud @tt{storage_options},
 @tt{credential_provider} or @tt{retries}.
 

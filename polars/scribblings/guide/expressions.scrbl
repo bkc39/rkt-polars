@@ -54,8 +54,8 @@ A dtype selects every column of that dtype; @racket['f64] and
 (~> df (with-columns (~> (col 'float64) (/ eur-usd-rate) (round #:decimals 2))))
 ]
 
-API gap: @racket[col] takes one dtype, and selectors do not compose yet
-(#50), so @tt{pl.col(pl.Float32, pl.Float64)} is one expression per dtype.
+API gap: @racket[col] takes one dtype, and selectors do not compose
+(#208), so @tt{pl.col(pl.Float32, pl.Float64)} is one expression per dtype.
 A dtype no column has matches nothing.
 
 @examples[#:eval ev #:label #f
@@ -182,7 +182,7 @@ Build the expressions first, then hand them to one context.
 @subsection[#:tag "expressions-selectors"]{More flexible column selections}
 
 API gap: no @tt{polars.selectors}, and selectors do not compose with set
-operations yet (#50). A union of disjoint selections is a list of specs;
+operations (#208). A union of disjoint selections is a list of specs;
 anything else is a Racket filter over the names.
 
 @examples[#:eval ev #:label #f
