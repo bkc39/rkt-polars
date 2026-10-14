@@ -4,14 +4,14 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
-         (only-in gregor datetime?)
          polars/private/foreign
          polars/private/series
+         (only-in polars/private/temporal temporal-values-dtype)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
-         numeric-dtypes numeric-dtype? temporal-dtype?
+         check-categorical-values numeric-dtypes numeric-dtype? temporal-dtype?
          dtype-spec? define-enum)
 
 (begin-for-syntax
@@ -19,33 +19,30 @@
     #:description "an enum category (an identifier or a string)"
     (pattern name:id #:with symbol #'name)
     (pattern text:str
-             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text))))
+             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text)))
+
+  (define (category-with-nul categories)
+    (for/first ([category (in-list categories)]
+                #:when (for/or ([c (in-string (symbol->string (syntax-e category)))])
+                         (char=? c #\nul)))
+      category)))
 
 (define-syntax-parse-rule (define-enum name:id category:enum-category ...+)
   #:fail-when (check-duplicate-identifier (syntax->list #'(category.symbol ...)))
               "duplicate enum category"
+  #:fail-when (category-with-nul (syntax->list #'(category.symbol ...)))
+              "an enum category cannot contain a NUL character"
   (define name '(enum category.symbol ...)))
 
 ;; Accept both the short constructor spellings (i32, f64, str, bool) and the
 ;; canonical symbols returned by series-dtype (int32, float64, string,
 ;; boolean).  Maps everything to a canonical symbol.
 (define dtype-aliases
-  (hash 'i8 'int8    'int8 'int8
-        'i16 'int16   'int16 'int16
-        'i32 'int32   'int32 'int32
-        'i64 'int64   'int64 'int64
-        'u8 'uint8    'uint8 'uint8
-        'u16 'uint16  'uint16 'uint16
-        'u32 'uint32  'uint32 'uint32
-        'u64 'uint64  'uint64 'uint64
-        'f32 'float32 'float32 'float32
-        'f64 'float64 'float64 'float64
-        'bool 'boolean 'boolean 'boolean
-        'str 'string   'string 'string
-        'date 'date
-        'time 'time
-        'datetime 'datetime
-        'categorical 'categorical))
+  (for/fold ([aliases dtype-short-names])
+            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
+                                   float32 float64 boolean string
+                                   date time datetime categorical))])
+    (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
   (match v
@@ -54,7 +51,7 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ (enum-dtype? v)]))
+    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
 
 (define (normalize-dtype dt)
   (cond
@@ -78,7 +75,7 @@
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
-    [(andmap datetime? vals) 'datetime]
+    [(temporal-values-dtype vals)]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 
@@ -98,8 +95,8 @@
     [(string)  (if vec? series-new-str/vec series-new-str)]
     [else
      (match canonical
-       [(or 'datetime `(datetime . ,_))
-        (if vec? series-new-datetime/vec series-new-datetime)]
+       [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))
+        (lambda (name elements) (series-new-temporal 'series name elements canonical))]
        [(or 'categorical (? enum-dtype?))
         (define strings (if vec? series-new-str/vec series-new-str))
         (lambda (name elements)
@@ -109,6 +106,23 @@
                       (series-cast-enum 'series s canonical))
                   (series-drop s)))]
        [_ (error 'series "no constructor for dtype ~v" canonical)])]))
+
+;; ref reads categorical and Enum values back as C strings, which end at a NUL (#165).
+(define (check-categorical-values who canonical elements)
+  (define (check value)
+    (define name
+      (cond
+        [(symbol? value) (symbol->string value)]
+        [(string? value) value]
+        [else #f]))
+    (when (and name (string-has-nul? name))
+      (raise-argument-error who "a categorical or enum value without a NUL character" value)))
+  (when (enum-dtype? canonical)
+    (check-enum-categories who canonical))
+  (when (or (eq? canonical 'categorical) (enum-dtype? canonical))
+    (if (vector? elements)
+        (for ([value (in-vector elements)]) (check value))
+        (for ([value (in-list elements)]) (check value)))))
 
 ;; The float constructors want flonums; accept exact reals too by coercing,
 ;; so (series '(1 2 3) #:dtype 'f64) does what the user means.
@@ -150,4 +164,6 @@
   (check-exn #rx"duplicate enum category"
              (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
   (check-exn #rx"expected more terms"
-             (lambda () (convert-compile-time-error (let () (define-enum none) none)))))
+             (lambda () (convert-compile-time-error (let () (define-enum none) none))))
+  (check-exn #rx"an enum category cannot contain a NUL character"
+             (lambda () (convert-compile-time-error (let () (define-enum held a "b\u0000c") held)))))

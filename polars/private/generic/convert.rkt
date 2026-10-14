@@ -48,6 +48,7 @@
 (module+ test
   (require rackunit
            racket/match
+           (only-in gregor datetime)
            racket/runtime-path
            (only-in ffi/vector f64vector->list f64vector-length f64vector-ref)
            (only-in racket/contract exn:fail:contract:blame?)
@@ -58,7 +59,7 @@
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/generic/reshape cast head lazy rename slice vstack)
+           (only-in polars/private/generic/reshape cast head lazy rename slice unique vstack)
            (only-in polars/private/generic/test-fixtures frame settle! withnull)
            (only-in threading ~>))
 
@@ -144,6 +145,16 @@
                   (ref-list s polars-null)
                   (format "~s by ~a" (dtype s) chunk-rows)))
   (check-false (~> frame (ref "user") series->vector immutable?))
+
+  (for ([s (in-list temporal-series)])
+    (define xs (series->list s))
+    (check-equal? (series->list (series xs #:dtype (dtype s))) xs (format "~s" (dtype s))))
+  (for ([unit '(milliseconds microseconds nanoseconds)]
+        [after '((1 500000000) (0 1500000) (0 1500))]
+        [before '(999000000 999999000 999999999)])
+    (check-equal? (~> '(1500 -1) (series #:dtype 'int64) (cast (list 'datetime unit)) series->list)
+                  (list (apply datetime 1970 1 1 0 0 after)
+                        (datetime 1969 12 31 23 59 59 before))))
 
   (define numeric-variants
     (filter (lambda (s)
@@ -477,3 +488,20 @@
       row)
     (settle!)
     (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2))))
+
+(module+ test
+  (define repro-rows 300000)
+  (define two-strings
+    (series (for/list ([i (in-range repro-rows)]) (if (< i 2) "a" "b")) #:name "g"))
+  (define digit-strings
+    (series (for/list ([i (in-range repro-rows)]) (number->string i)) #:name "s"))
+  (check-equal? (sort (contracted:series->list (unique two-strings)) string<?) '("a" "b"))
+  (check-equal? (ref digit-strings (sub1 repro-rows)) (number->string (sub1 repro-rows)))
+  (define digit-list (contracted:series->list digit-strings))
+  (check-true (for/and ([s (in-list digit-list)] [i (in-naturals)])
+                (equal? s (number->string i))))
+  (define two-symbols
+    (series (for/list ([i (in-range repro-rows)]) (if (< i 2) 'a 'b)) #:name "c"))
+  (check-equal? (dtype two-symbols) 'categorical)
+  (check-equal? (contracted:series->list (head two-symbols 3)) '(a a b))
+  (check-equal? (len (unique two-symbols)) 2))

@@ -16,12 +16,13 @@
                   call/foreign-error dataframe-column dataframe-column-name
                   dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
-                  series-ref)
+                  series-ref zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/io-contracts
                   c-string/c column-name/c distinct-names? distinct? given positive-size/c
                   row-index/c size/c)
-         (only-in polars/private/io-options define-io-options keyword-forwarder))
+         (only-in polars/private/io-options define-io-options keyword-forwarder)
+         (only-in polars/private/resource _string-list))
 
 (provide csv-reader/c csv-scanner/c csv-writer/c csv-reader csv-scanner csv-writer
          csv-read-arguments csv-scan-arguments csv-write-arguments
@@ -53,6 +54,7 @@
    'csv-dtype/c
    (lambda (v)
      (and (dtype-spec? v)
+          (not (zoned-datetime-dtype? v))
           (match v
             [(cons (or 'duration 'enum) _) #f]
             [_ #t])))))
@@ -187,17 +189,17 @@
         _CompatCsvOptions
         _string/utf-8
         _string/utf-8
-        (null-values : (_list i _string/utf-8))
+        (null-values : _string-list)
         (_size = (length null-values))
-        (null-columns : (_list i _string/utf-8))
-        (_list i _string/utf-8)
+        (null-columns : _string-list)
+        _string-list
         (_size = (length null-columns))
-        (names : (_list i _string/utf-8))
+        (names : _string-list)
         (_list i _CompatDType)
         (_size = (length names))
-        (new-columns : (_list i _string/utf-8))
+        (new-columns : _string-list)
         (_size = (length new-columns))
-        (columns : (_list i _string/utf-8))
+        (columns : _string-list)
         (_size = (length columns))
         (projection : (_list i _size))
         (_size = (length projection))

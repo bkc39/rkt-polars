@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/match
+         (only-in racket/contract/base -> contract-out flat-contract-predicate or/c)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
          (only-in racket/list [drop list-drop])
@@ -8,10 +9,15 @@
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
-         polars/private/generic/core)
+         polars/private/generic/core
+         (only-in polars/private/generic/dtype dtype-spec?))
 
-(provide (except-out (all-defined-out) explain)
-         (contract-out [explain (explain/c lazyframe?)]))
+(provide (except-out (all-defined-out) cast explain)
+         (contract-out
+          [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
+          [explain (explain/c lazyframe?)]))
+
+(define cast-target/c (or/c dtype-spec? 'binary 'null 'duration))
 
 ;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
 ;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
@@ -115,14 +121,10 @@
   (guard-dataframe 'with-column d)
   (wrap-dataframe (dataframe-with-column d s)))
 
-;; cast: change dtype.  Expr -> cast Expr; series -> eager cast; a column name
-;; lifts to (col name).  `dtype` is a canonical symbol ('float64 / 'string /
-;; 'datetime / ...) or a list like '(datetime microseconds).
 (define (cast x dtype)
-  (cond [(Expr-ptr? x) (expr-cast x dtype)]
-        [(series? x)   (wrap-series (series-cast x dtype))]
-        [(string? x)   (expr-cast (col x) dtype)]
-        [else (error 'cast "expected an Expr, series, or column name, got ~v" x)]))
+  (cond [(Expr-ptr? x) (expr-cast-to 'cast x dtype)]
+        [(series? x)   (wrap-series (series-cast-to 'cast x dtype))]
+        [else          (expr-cast-to 'cast (col x) dtype)]))
 
 ;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
 ;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
@@ -238,7 +240,8 @@
            polars/private/generic/operators
            (only-in polars/private/foreign dataframe-sort)
            polars/private/generic/reductions
-           polars/private/generic/test-fixtures)
+           polars/private/generic/test-fixtures
+           (prefix-in contracted: (submod "..")))
 
   (define (sorted-by d key) (wrap-dataframe (dataframe-sort d (list key))))
 
@@ -292,6 +295,19 @@
   (check-equal? (height (drop-nulls ops-df)) 5)
   (check-equal? (height (unique ops-df)) 5)
 
+  ;; the unique / drop-nulls reference entry
+  (define ref-dups
+    (dataframe (list (series (list 1 1 2 polars-null) #:name "v")
+                     (series '("a" "a" "b" "c") #:name "w"))))
+  (define ref-unique (sorted-by (unique ref-dups) "v"))
+  (check-equal? (column ref-unique "v") (list polars-null 1 2))
+  (check-equal? (column ref-unique "w") '("c" "a" "b"))
+  (check-equal? (series-cells (drop-nulls (ref ref-dups "v"))) '(1 1 2))
+  (check-equal? (column (drop-nulls ref-dups) "v") '(1 1 2))
+  (check-equal? (column (drop-nulls ref-dups) "w") '("a" "a" "b"))
+  (check-exn #rx"^unique: expected a series or dataframe, got '\\(1 1 2\\)$"
+             (lambda () (unique '(1 1 2))))
+
   ;; dataframe column ops: select / drop / rename / with-column
   (check-equal? (column-names (select frame '("user" "cost"))) '("user" "cost"))
   (check-equal? (column-names (select frame "score")) '("score"))
@@ -324,6 +340,24 @@
   (check-equal? (dtype (cast (series '(1 2 3) #:dtype 'i32) 'float64)) 'float64)
   (let ([d (with-columns frame (~> (col "score") (cast 'float64) (alias "scoref")))])
     (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
+  (check-equal? (dtype (contracted:cast (series '(1 2 3)) 'f64)) 'float64)
+  (check-equal? (series-cells (cast (series '(1 2 3)) 'str)) '("1" "2" "3"))
+  (let ([d (with-columns frame (contracted:cast "score" 'f32))])
+    (check-equal? (dtype (ref d #:columns "score")) 'float32))
+  (check-exn #rx"^cast: contract violation\n  expected: \\(or/c dtype-spec\\? \\(quote binary\\)"
+             (lambda () (contracted:cast (series '(1 2 3)) 'f65)))
+  (define cast-target? (flat-contract-predicate cast-target/c))
+  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
+                  datetime (datetime milliseconds) (datetime microseconds #f)
+                  (duration nanoseconds) (enum a b))])
+    (check-true (cast-target? target) (format "~v" target)))
+  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64"
+                  (datetime microseconds todo-timezone))])
+    (check-false (cast-target? target) (format "~v" target)))
+  (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
+             (lambda () (contracted:cast 5 'f64)))
+  (check-exn #rx"^cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"
+             (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
 
   ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
   (define flights
@@ -347,10 +381,14 @@
   (check-equal? (column-names (select coded (col '(enum JFK MIA)))) '())
   (check-equal? (series-cells (= (ref coded "carrier") 'UA)) '(#t #f #t #f))
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
-  (check-exn #rx"^series-cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
+  (check-exn #rx"^cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^lazyframe-collect: .*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
+  (define nul-dests (list 'enum 'JFK (string->symbol "MI\u0000A") 'IAH))
+  (for ([target (list (ref flights "dest") "dest")])
+    (check-exn #rx"^cast: contract violation\n  expected: an enum category without a NUL"
+               (lambda () (cast target nul-dests))))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)

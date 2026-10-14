@@ -71,3 +71,14 @@ pub extern "C" fn expr_dtype_col_enum(
         Box::into_raw(Box::new(dtype_col(&dt).as_selector().as_expr()))
     })
 }
+
+#[no_mangle]
+pub extern "C" fn expr_dtype_col_datetime_tz(
+    unit: i32,
+    tz: *const c_char,
+) -> *mut Expr {
+    clear_last_error();
+    datetime_tz_dtype(unit, tz).map_or(ptr::null_mut(), |dt| {
+        Box::into_raw(Box::new(dtype_col(&dt).as_selector().as_expr()))
+    })
+}

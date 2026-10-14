@@ -22,7 +22,12 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   dataframe-drop
                   frame-sort/c sort-flags
-                  _CompatDType ->compat-dtype enum-dtype?)
+                  _CompatDType ->compat-dtype check-enum-categories enum-dtype?
+                  time-unit-symbol->code zoned-datetime-dtype?)
+         (only-in polars/private/resource _string-list)
+         (only-in polars/private/series series-new-temporal)
+         (only-in polars/private/temporal
+                  temporal-value-dtype temporal-values-dtype zone-conflict)
          syntax/parse/define)
 
 (module+ test
@@ -105,10 +110,10 @@
          lazyframe-join
          (contract-out
           [lazyframe-explain (explain/c LazyFrame-ptr?)])
-         expr-cast
+         expr-cast expr-cast-to
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         expr-meta-output-name expr-meta-root-names expr-meta-eq?
+         expr-meta-output-name expr-meta-output-name/raw expr-meta-root-names expr-meta-eq?
          (contract-out
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
           [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]
@@ -404,7 +409,7 @@
   #:wrap (allocator expr-drop))
 
 ;; The right-hand side may be an Expr, a Series, or a Racket list of
-;; homogeneous scalars (ints / reals / strings / symbols / booleans).
+;; homogeneous scalars (ints / reals / strings / symbols / booleans / gregor values).
 (define (->membership-expr who rhs)
   (cond
     [(Expr-ptr? rhs) rhs]
@@ -418,12 +423,23 @@
          [(andmap string? rhs) (series-new-str "" rhs)]
          [(andmap symbol? rhs) (series-new-str "" (map symbol->string rhs))]
          [(andmap boolean? rhs) (series-new-bool "" rhs)]
-         [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans, got ~v" rhs)]))
+         [(temporal-values-dtype rhs)
+          => (lambda (dtype)
+               (check-one-zone who rhs)
+               (series-new-temporal who "" rhs dtype))]
+         [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
 
-(define (expr-is-in e rhs)
-  (expr-is-in/raw e (->membership-expr 'expr-is-in rhs)))
+(define (check-one-zone who vals)
+  (define conflict (zone-conflict vals))
+  (when conflict
+    (raise-arguments-error who "the values have no common dtype: their time zones differ"
+                           "dtype" (temporal-value-dtype (car conflict))
+                           "other dtype" (temporal-value-dtype (cadr conflict)))))
+
+(define (expr-is-in e rhs #:who [who 'expr-is-in])
+  (expr-is-in/raw e (->membership-expr who rhs)))
 
 (define-compat expr-is-between/raw
   (_fun _Expr-ptr _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -748,7 +764,7 @@
 
 (define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
@@ -825,9 +841,9 @@
 
 (define-compat lazyframe-join/c
   (_fun _LazyFrame-ptr _LazyFrame-ptr
-        (left-on : (_list i _string))
+        (left-on : _string-list)
         (_size = (length left-on))
-        (right-on : (_list i _string))
+        (right-on : _string-list)
         (_size = (length right-on))
         _int32
         -> _LazyFrame-ptr)
@@ -857,18 +873,33 @@
 
 (define-compat expr-cast-enum/raw
   (_fun _Expr-ptr
-        (categories : (_list i _string/utf-8))
+        (categories : _string-list)
         (_size = (length categories))
         -> _Expr-ptr/null)
   #:c-id expr_cast_enum
   #:wrap (allocator expr-drop))
 
+(define-compat expr-cast-datetime-tz/raw
+  (_fun _Expr-ptr _int32 _string/utf-8 -> _Expr-ptr/null)
+  #:c-id expr_cast_datetime_tz
+  #:wrap (allocator expr-drop))
+
 (define (expr-cast e dtype)
-  (if (enum-dtype? dtype)
-      (call/foreign-error 'expr-cast
-                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
-                          "cannot convert to ~v" dtype)
-      (expr-cast/c e (->compat-dtype dtype))))
+  (expr-cast-to 'expr-cast e dtype))
+
+(define (expr-cast-to who e dtype)
+  (cond
+    [(enum-dtype? dtype)
+     (check-enum-categories who dtype)
+     (call/foreign-error who
+                         (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
+                         "cannot convert to ~v" dtype)]
+    [(zoned-datetime-dtype? dtype)
+     (define code (time-unit-symbol->code (cadr dtype)))
+     (call/foreign-error who
+                         (lambda () (expr-cast-datetime-tz/raw e code (caddr dtype)))
+                         "cannot convert to ~v" dtype)]
+    [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ test
   (define df
@@ -878,6 +909,8 @@
 
   (define lf (dataframe-lazy df))
   (check-pred LazyFrame-ptr? lf)
+  (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 
   (define tmp-scan-csv
     (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))

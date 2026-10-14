@@ -23,4 +23,4 @@ pub use self::optionals::{
 };
 pub use self::parquet::{CompatParquetReadOptions, CompatParquetWriteOptions};
 pub use self::shape::Shape;
-pub use self::temporal::{CompatOptYMD, CompatOptYMDHMS, YMD, YMDHMS};
+pub use self::temporal::{CompatOptYMD, YMD, YMDHMS};

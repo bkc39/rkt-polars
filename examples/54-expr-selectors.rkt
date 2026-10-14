@@ -10,8 +10,8 @@
 ;;   pl.col("^.*_high$")          ->  (col "^.*_high$")   ; a Polars regex
 ;;                                    (col #rx"_high$")    ; a Racket regexp
 ;; A Racket regexp keeps its Racket meaning.  Polars' regex engine has no
-;; lookaround, so a regexp using it fails when the query runs; select those
-;; names in Racket with regexp-match? instead.
+;; lookaround, so `col` rejects a regexp that uses it; select those names in
+;; Racket with regexp-match? instead.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/54-expr-selectors.rkt
@@ -59,9 +59,10 @@
 
 (define lookahead #px"^(?!day_).*_(high|low)$")
 
-(displayln "a lookahead regexp is rejected when the query runs:")
-(with-handlers ([exn:fail? (lambda (e) (displayln (exn-message e)))])
-  (select stocks (col lookahead)))
+(displayln "col rejects a lookahead regexp:")
+(with-handlers ([exn:fail:contract?
+                 (lambda (e) (displayln (car (regexp-split #rx"\n  given:" (exn-message e)))))])
+  (col lookahead))
 
 (displayln "so match the names in Racket and select them by name:")
 (displayln

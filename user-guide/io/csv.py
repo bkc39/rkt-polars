@@ -50,6 +50,9 @@ print(
 )
 print(pl.read_csv(flights_tsv, separator="\t", infer_schema_length=None)["dep_delay"].dtype)
 print(pl.read_csv(flights_tsv, separator="\t", ignore_errors=True)["dep_delay"].null_count())
+
+# --- parsing dates (upstream: Time series, Parsing) ------------------------
+print(pl.read_csv(data_dir / "apple_stock.csv", try_parse_dates=True))
 print(
     pl.read_csv(flights_tsv, separator="\t", null_values="NA", try_parse_dates=True)
     .select("time_hour")

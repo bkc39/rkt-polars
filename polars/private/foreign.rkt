@@ -16,13 +16,16 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
-         (only-in polars/private/resource with-raw-buffer)
+         (only-in polars/private/resource _string-list with-raw-buffer with-release)
+         (only-in polars/private/temporal
+                  epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
   (require rackunit))
 
-(provide (except-out (all-defined-out) series-sort dataframe-sort)
+(provide (except-out (all-defined-out)
+                     series-sort dataframe-sort series-ref-string strings->series)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -56,7 +59,7 @@
   (_fun -> _rsstring))
 
 (define racket-spellings
-  '(("`infer_schema_length` (e.g. `infer_schema_length=10000`)"
+  `(("`infer_schema_length` (e.g. `infer_schema_length=10000`)"
      . "#:infer-schema-length (e.g. #:infer-schema-length 10000, or #f for every row)")
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
@@ -69,9 +72,13 @@
     ("use the compression parameter to control compression, or set `check_extension` to `False` if you want to suffix an uncompressed filename with an ending intended for compression"
      . "pass #:check-extension #f to give an uncompressed file a compressed file's suffix")
     ("set `check_extension` to `False`" . "pass #:check-extension #f")
-
     ("`missing_columns='insert'`" . "#:missing-columns 'insert")
     ("hint: specify this column in the schema, or pass extra_columns='ignore' in scan options. "
+     . "")
+    ("Please use `ambiguous` to tell" . "Please use #:ambiguous to tell")
+    ("use `non_existent='null'`" . "use dt-replace-time-zone's #:non-existent 'null")
+    (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
+                     " set POLARS_IGNORE_TIMEZONE_PARSE_ERROR=1.")
      . "")))
 
 (define empty-expansion
@@ -188,7 +195,7 @@
     [(16) (list 'datetime
                 time-unit
                 (and (positive? (bitwise-and flags compat-dtype-flag/has-timezone))
-                     'todo-timezone))]
+                     'zoned))]
     [(17) (list 'duration time-unit)]
     [(18) 'time]
     [(19) 'null]
@@ -206,9 +213,25 @@
     [(cons 'enum (and (list (? symbol?) ...) categories)) (not (check-duplicates categories))]
     [_ #f]))
 
+(define (string-has-nul? s)
+  (for/or ([c (in-string s)])
+    (char=? c #\nul)))
+
+;; Categories cross into Rust as C strings, which end at a NUL (#165).
+(define (check-enum-categories who dtype)
+  (for ([category (in-list (cdr dtype))]
+        #:when (string-has-nul? (symbol->string category)))
+    (raise-argument-error who "an enum category without a NUL character" category)))
+
 (define (decimal-dtype? v)
   (match v
     [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
+    [_ #f]))
+
+(define (zoned-datetime-dtype? v)
+  (match v
+    [(list 'datetime (or 'nanoseconds 'microseconds 'milliseconds) (? string? zone))
+     (positive? (string-length zone))]
     [_ #f]))
 
 (define-cstruct _CompatOptI32
@@ -366,9 +389,13 @@
             (string->symbol (series-ref-str/raw names i)))
           (series-drop names)))
 
+(define-compat series-time-zone
+  (_fun _Series-ptr -> _rsstring))
+
 (define (series-dtype series)
   (match (compat-dtype->datum (series-dtype/raw series))
     ['enum (cons 'enum (series-enum-categories series))]
+    [(list 'datetime unit 'zoned) (list 'datetime unit (series-time-zone series))]
     [dtype dtype]))
 
 (define (time-unit-symbol->code tu)
@@ -400,11 +427,19 @@
     [(categorical) compat-dtype-tag/categorical]
     [else        #f]))
 
+(define dtype-short-names
+  (hash 'i8 'int8   'i16 'int16   'i32 'int32   'i64 'int64
+        'u8 'uint8  'u16 'uint16  'u32 'uint32  'u64 'uint64
+        'f32 'float32 'f64 'float64 'bool 'boolean 'str 'string))
+
+;; a naive datetime only: a zoned one crosses through the _datetime_tz entry
+;; points, which take its zone's name
 (define (->compat-dtype dtype)
-  (cond
-    [(symbol? dtype)
-     (define tag (simple-dtype-tag dtype))
-     (case dtype
+  (match dtype
+    [(? symbol?)
+     (define canonical (hash-ref dtype-short-names dtype dtype))
+     (define tag (simple-dtype-tag canonical))
+     (case canonical
        [(datetime)
         (make-CompatDType compat-dtype-tag/datetime
                           compat-time-unit/microseconds 0 0)]
@@ -415,13 +450,11 @@
         (unless tag
           (error '->compat-dtype "unsupported cast target ~v" dtype))
         (make-CompatDType tag compat-time-unit/none 0 0)])]
-    [(and (pair? dtype) (eq? (car dtype) 'datetime))
-     (make-CompatDType compat-dtype-tag/datetime
-                       (time-unit-symbol->code (cadr dtype)) 0 0)]
-    [(and (pair? dtype) (eq? (car dtype) 'duration))
-     (make-CompatDType compat-dtype-tag/duration
-                       (time-unit-symbol->code (cadr dtype)) 0 0)]
-    [else (error '->compat-dtype "unsupported cast target ~v" dtype)]))
+    [(list* 'datetime unit (or '() (list #f)))
+     (make-CompatDType compat-dtype-tag/datetime (time-unit-symbol->code unit) 0 0)]
+    [(cons 'duration (cons unit _))
+     (make-CompatDType compat-dtype-tag/duration (time-unit-symbol->code unit) 0 0)]
+    [_ (error '->compat-dtype "unsupported cast target ~v" dtype)]))
 
 (define-compat series-rename
   (_fun _Series-ptr _string -> _void))
@@ -904,7 +937,43 @@
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
   (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t))))
 
-(define-series-constructors str _string "")
+;; The buffer and validity are GC memory the collector may move: never #:blocking?.
+(define-compat series-new-str/raw
+  (_fun _string _bytes _size _pointer _size _bytes _size -> _Series-ptr/null)
+  #:c-id series_new_str_packed
+  #:wrap (allocator series-drop))
+
+;; One UTF-8 buffer and row offsets, not a list of C strings: the collector
+;; moves strings while such a list is filled (#143).
+(define (strings->series who name strings)
+  (define count (length strings))
+  (define valid (and (contains-polars-null? strings) (make-bytes count 1)))
+  (with-raw-buffer ([offsets (add1 count) _int64])
+    (ptr-set! offsets _int64 0 0)
+    (define size
+      (for/fold ([end 0]) ([s (in-list strings)] [row (in-naturals)])
+        (define next
+          (cond
+            [(string? s) (+ end (string-utf-8-length s))]
+            [(polars-null? s) (bytes-set! valid row 0) end]
+            [else (raise-argument-error who "(or/c string? polars-null?)" s)]))
+        (ptr-set! offsets _int64 (add1 row) next)
+        next))
+    (define buf (make-bytes size))
+    (for/fold ([end 0]) ([s (in-list strings)] #:when (string? s))
+      (define utf-8 (string->bytes/utf-8 s))
+      (bytes-copy! buf end utf-8)
+      (+ end (bytes-length utf-8)))
+    (call/foreign-error
+     who
+     (lambda () (series-new-str/raw name buf size offsets (add1 count) valid (if valid count 0)))
+     "operation failed")))
+
+(define (series-new-str name strings)
+  (strings->series 'series-new-str name strings))
+
+(define (series-new-str/vec name strings)
+  (strings->series 'series-new-str/vec name (vector->list strings)))
 
 (module+ test
   (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
@@ -919,6 +988,16 @@
    #rx"contract violation"
    (λ ()
      (series-new-str "" '(symbol))))
+  (check-exn #rx"^series-new-str/vec: contract violation.*given: #f"
+             (lambda () (series-new-str/vec "" (vector "a" #f))))
+
+  (define mixed-strings
+    (list "héllo" polars-null "" "東京 😀" polars-null "a string past twelve bytes" "a\u0000b"))
+  (define mixed-series (series-new-str "mixed" mixed-strings))
+  (check-equal? (series-null-count mixed-series) 2)
+  (check-equal? (for/list ([i (in-range (series-len mixed-series))]) (series-ref mixed-series i))
+                mixed-strings)
+  (check-equal? (series-ref (series-new-str/vec "v" (list->vector mixed-strings)) 3) "東京 😀")
 
   (check-pred Series-ptr? (series-new-str/vec "" (vector "foo" "bar" "baz" "")))
   (check-equal?
@@ -936,22 +1015,6 @@
    [hour _uint32]
    [minute _uint32]
    [sescond _uint32]))
-
-(define-cstruct _CompatOptYMDHMS
-  ([valid _int32]
-   [value _YMDHMS]))
-
-(define (ymdhms->datetime value)
-  (datetime (YMDHMS-year value)
-            (YMDHMS-month value)
-            (YMDHMS-day value)
-            (YMDHMS-hour value)
-            (YMDHMS-minute value)
-            (YMDHMS-sescond value)))
-
-(define (compat-opt-ymdhms->datum o)
-  (and (not (zero? (CompatOptYMDHMS-valid o)))
-       (ymdhms->datetime (CompatOptYMDHMS-value o))))
 
 (module+ test
   (check-pred YMDHMS?
@@ -1024,35 +1087,11 @@
   (_fun _Series-ptr _size -> _CompatOptI64)
   #:c-id series_ref_time)
 
-(define-compat series-ref-ymdhms/raw
-  (_fun _Series-ptr _size -> _CompatOptYMDHMS)
-  #:c-id series_ref_ymdhms)
-
 (define (series-ref-unsupported dtype)
   (error 'series-ref "unsupported dtype ~v" dtype))
 
 (define (require-ref-value dtype value)
   (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
-
-(define (left-pad-number value width)
-  (define s (number->string value))
-  (if (>= (string-length s) width)
-      s
-      (string-append (make-string (- width (string-length s)) #\0) s)))
-
-(define (nanoseconds->time value)
-  (define-values (total-seconds nanosecond) (quotient/remainder value 1000000000))
-  (define-values (total-minutes second) (quotient/remainder total-seconds 60))
-  (define-values (hour minute) (quotient/remainder total-minutes 60))
-  (define base
-    (format "~a:~a:~a"
-            (left-pad-number hour 2)
-            (left-pad-number minute 2)
-            (left-pad-number second 2)))
-  (iso8601->time
-   (if (zero? nanosecond)
-       base
-       (format "~a.~a" base (left-pad-number nanosecond 9)))))
 
 (define (duration-value->period dtype value)
   (match dtype
@@ -1064,6 +1103,52 @@
 
 (define-compat series-copy-decimal
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
+(define-compat series-str-byte-len
+  (_fun _Series-ptr _size _size -> _int64))
+
+;; The buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-str
+  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
+
+;; By length, not as a C string, which would end at a NUL the value holds.
+(define (series-ref-string s index)
+  (define size (series-str-byte-len s index 1))
+  (cond
+    [(negative? size) #f]
+    [else
+     (define buf (make-bytes size))
+     (with-raw-buffer ([offsets 2 _int64])
+       (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
+            (bytes->string/utf-8 buf)))]))
+;; The validity buffer is GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-i64
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
+;; `count` rows of a zoned column from `start`: each UTC instant into
+;; `instants`, and into `walls` its wall clock in (offset-unit unit).
+(define (copy-zoned-datetimes who s dtype start count instants walls valid)
+  (match-define (list _ unit zone) dtype)
+  (define (copied status)
+    (when (negative? status)
+      (error who "could not copy a series of dtype ~v (status ~a)" dtype status)))
+  (with-release ([rows (series-slice s start count) series-drop]
+                 [view (series-cast-datetime-tz who rows (list 'datetime (offset-unit unit) zone))
+                       series-drop]
+                 [clocks (series-dt-replace-time-zone who view #f 'raise 'raise) series-drop])
+    (copied (series-copy-i64 rows 0 count instants count valid (if valid (bytes-length valid) 0)))
+    (copied (series-copy-i64 clocks 0 count walls count #f 0))))
+
+(define (series-ref-datetime s index unit zone)
+  (with-raw-buffer ([value 2 _int64])
+    (cond
+      [zone
+       (copy-zoned-datetimes 'series-ref s (list 'datetime unit zone) index 1
+                             value (ptr-add value 1 _int64) #f)
+       (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone)]
+      [else
+       (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
+            (epoch->datetime unit (ptr-ref value _int64 0)))])))
 
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
@@ -1101,7 +1186,7 @@
         (when (zero? (CompatOptBool-valid value))
           (error 'series-ref "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
-       [(string) (require-ref-value dtype (series-ref-str/raw s index))]
+       [(string) (require-ref-value dtype (series-ref-string s index))]
        [(categorical enum)
         (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
        [(date)
@@ -1117,9 +1202,9 @@
            (require-ref-value
             dtype
             (and raw (duration-value->period dtype raw)))]
-          [`(datetime ,_ ,_)
+          [`(datetime ,unit ,zoned)
            (require-ref-value dtype
-                              (compat-opt-ymdhms->datum (series-ref-ymdhms/raw s index)))]
+                              (series-ref-datetime s index unit (and zoned (series-time-zone s))))]
           [`(decimal ,_ ,scale) (require-ref-value dtype (series-ref-decimal s index scale))]
           [_ (series-ref-unsupported dtype)])])]
     [else (error 'series-ref "could not read null state at index ~a" index)]))
@@ -1215,6 +1300,15 @@
            polars-null)))
   (check-equal? (series-ref ref-dt 0) (datetime 2024 1 2 3 4 5))
   (check-equal? (series-ref ref-dt 1) polars-null)
+  (for ([unit '(milliseconds microseconds nanoseconds)]
+        [k '(1000 1000000 1000000000)])
+    (define ticks (series-cast (series-new-i64 "t" (list 1500 -1 polars-null))
+                               (list 'datetime unit)))
+    (check-equal? (series-ref ticks 0) (posix->datetime (/ 1500 k)))
+    (check-equal? (series-ref ticks 1) (posix->datetime (/ -1 k)))
+    (check-equal? (series-ref ticks 2) polars-null))
+  (check-equal? (series-ref (series-cast (series-new-i64 "t" '(1500)) '(datetime milliseconds)) 0)
+                (datetime 1970 1 1 0 0 1 500000000))
 
   (define ref-date
     (series-cast (series-new-i32 "d" (list 19724 polars-null -1)) 'date))
@@ -1254,21 +1348,65 @@
 
 (define-compat series-cast-enum/raw
   (_fun _Series-ptr
-        (categories : (_list i _string/utf-8))
+        (categories : _string-list)
         (_size = (length categories))
         -> _Series-ptr/null)
   #:c-id series_cast_enum
   #:wrap (allocator series-drop))
 
 (define (series-cast-enum who s dtype)
+  (check-enum-categories who dtype)
   (call/foreign-error who
                       (lambda () (series-cast-enum/raw s (map symbol->string (cdr dtype))))
                       "cannot convert to ~v" dtype))
 
+(define-compat series-cast-datetime-tz/raw
+  (_fun _Series-ptr _int32 _string/utf-8 -> _Series-ptr/null)
+  #:c-id series_cast_datetime_tz
+  #:wrap (allocator series-drop))
+
+(define (series-cast-datetime-tz who s dtype)
+  (match-define (list _ unit zone) dtype)
+  (call/foreign-error who
+                      (lambda ()
+                        (series-cast-datetime-tz/raw s (time-unit-symbol->code unit) zone))
+                      "cannot convert to ~v" dtype))
+
+(define (series-cast-to who s dtype)
+  (cond
+    [(enum-dtype? dtype) (series-cast-enum who s dtype)]
+    [(zoned-datetime-dtype? dtype) (series-cast-datetime-tz who s dtype)]
+    [else (series-cast/c s (->compat-dtype dtype))]))
+
 (define (series-cast s dtype)
-  (if (enum-dtype? dtype)
-      (series-cast-enum 'series-cast s dtype)
-      (series-cast/c s (->compat-dtype dtype))))
+  (series-cast-to 'series-cast s dtype))
+
+(define-compat series-dt-convert-time-zone/raw
+  (_fun _Series-ptr _string/utf-8 -> _Series-ptr/null)
+  #:c-id series_dt_convert_time_zone
+  #:wrap (allocator series-drop))
+
+(define (series-dt-convert-time-zone who s zone)
+  (call/foreign-error who
+                      (lambda () (series-dt-convert-time-zone/raw s zone))
+                      "cannot convert to the time zone ~s" zone))
+
+(define-compat series-dt-replace-time-zone/raw
+  (_fun _Series-ptr _string/utf-8 _string/utf-8 _string/utf-8 -> _Series-ptr/null)
+  #:c-id series_dt_replace_time_zone
+  #:wrap (allocator series-drop))
+
+(define (series-dt-replace-time-zone who s zone ambiguous non-existent)
+  (call/foreign-error who
+                      (lambda ()
+                        (series-dt-replace-time-zone/raw s zone (symbol->string ambiguous)
+                                                         (symbol->string non-existent)))
+                      "~a" (replace-zone-failure zone)))
+
+(define (replace-zone-failure zone)
+  (if zone
+      (format "cannot replace the time zone with ~s" zone)
+      "cannot unset the time zone"))
 
 (define-compat series-std/raw
   (_fun _Series-ptr _uint8 -> _CompatOptF64)
@@ -1382,6 +1520,8 @@
     (check-equal? (series-ref casted 1) (if (eq? dtype 'float32) 2.0 2)))
   (check-exn #rx"unsupported cast target"
              (lambda () (series-cast batch2-x '(list int32))))
+  (for ([(short canonical) (in-hash dtype-short-names)])
+    (check-equal? (series-dtype (series-cast batch2-y short)) canonical))
 
   (define bears (series-new-str "bears" (list "Polar" polars-null "Brown" "Polar")))
   (define bears/cat (series-cast bears 'categorical))
@@ -1400,6 +1540,80 @@
              (lambda () (series-cast bears '(enum "Polar"))))
   (check-true (enum-dtype? '(enum)))
   (check-false (enum-dtype? '(enum a . b)))
+  (check-true (string-has-nul? "a\u0000b"))
+  (check-false (string-has-nul? "東京 😀"))
+  (check-exn #rx"^series-cast: contract violation\n  expected: an enum category without a NUL"
+             (lambda () (series-cast bears (list 'enum 'Brown (string->symbol "Po\u0000lar")))))
+
+  (define stamps (series-new-i64 "t" (list 1616842800000000 polars-null -1)))
+  (define brussels (series-cast stamps '(datetime microseconds "Europe/Brussels")))
+  (check-equal? (series-dtype brussels) '(datetime microseconds "Europe/Brussels"))
+  (check-equal? (series-time-zone brussels) "Europe/Brussels")
+  (check-false (series-time-zone stamps))
+  (check-false (series-time-zone (series-cast stamps '(datetime microseconds #f))))
+  (check-equal? (series-ref brussels 0) (moment 2021 3 27 12 #:tz "Europe/Brussels"))
+  (check-equal? (series-ref brussels 1) polars-null)
+  (check-equal? (series-ref brussels 2) (moment 1970 1 1 0 59 59 999999000 #:tz "Europe/Brussels"))
+  (check-equal? (series-ref (series-cast brussels '(datetime nanoseconds "UTC")) 0)
+                (moment 2021 3 27 11 #:tz "UTC"))
+  (check-equal? (series-ref (series-cast brussels '(datetime milliseconds #f)) 0)
+                (datetime 2021 3 27 11))
+  (define (wall-clock m) (list (->datetime/local m) (->utc-offset m) (->tzid m)))
+  (define ns-edges
+    (series-new-i64 "t" (list (+ (* (->posix (datetime 2262 4 11 23)) 1000000000) 1)
+                              (+ (- (sub1 (expt 2 63))) 3600000000000))))
+  (check-equal? (wall-clock (series-ref (series-cast ns-edges '(datetime nanoseconds "Asia/Tokyo"))
+                                        0))
+                (list (datetime 2262 4 12 8 0 0 1) 32400 "Asia/Tokyo"))
+  (check-equal? (wall-clock (series-ref (series-cast ns-edges
+                                                     '(datetime nanoseconds "America/New_York"))
+                                        1))
+                (list (datetime 1677 9 20 20 16 41 145224193) -17762 "America/New_York"))
+  (with-raw-buffer ([out 8 _int64])
+    (check-exn (regexp (string-append "^test: could not copy a series of dtype"
+                                      " '\\(datetime microseconds \"Europe/Brussels\"\\)"
+                                      " \\(status -1\\)$"))
+               (lambda ()
+                 (copy-zoned-datetimes 'test brussels '(datetime microseconds "Europe/Brussels")
+                                       1 4 out (ptr-add out 4 _int64) #f))))
+  (check-equal? (series-dtype (series-cast stamps '(datetime microseconds "+05:00")))
+                '(datetime microseconds "Etc/GMT-5"))
+  (check-exn #rx"unable to parse time zone: '\\+05:30'"
+             (lambda () (series-cast stamps '(datetime microseconds "+05:30"))))
+  (check-exn (regexp (string-append "^series-cast: cannot convert to '\\(datetime microseconds"
+                                    " \"Mars/Base\"\\): unable to parse time zone: 'Mars/Base'"))
+             (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
+  (check-exn #rx"unsupported cast target '\\(datetime microseconds \"\"\\)"
+             (lambda () (series-cast stamps '(datetime microseconds ""))))
+  (check-exn #rx"^->compat-dtype: unsupported cast target '\\(datetime microseconds \"UTC\"\\)"
+             (lambda () (->compat-dtype '(datetime microseconds "UTC"))))
+  (check-true (zoned-datetime-dtype? '(datetime nanoseconds "UTC")))
+  (for ([v (list '(datetime nanoseconds "") '(datetime #f "UTC") '(datetime nanoseconds #f)
+                 '(datetime nanoseconds UTC) '(datetime nanoseconds "UTC" x))])
+    (check-false (zoned-datetime-dtype? v)))
+  (check-equal? (series-ref (series-dt-convert-time-zone 'test brussels "Asia/Kathmandu") 0)
+                (moment 2021 3 27 16 45 #:tz "Asia/Kathmandu"))
+  (check-equal? (series-ref (series-dt-replace-time-zone 'test brussels "UTC" 'raise 'raise) 0)
+                (moment 2021 3 27 12 #:tz "UTC"))
+  (check-equal? (series-ref (series-dt-replace-time-zone 'test brussels #f 'raise 'raise) 0)
+                (datetime 2021 3 27 12))
+  (check-exn #rx"^test: cannot convert to the time zone \"Mars/Base\": unable to parse"
+             (lambda () (series-dt-convert-time-zone 'test brussels "Mars/Base")))
+  (check-exn (regexp (string-append "^test: cannot replace the time zone with \"UTC\": invalid"
+                                    " ambiguous 'x', expected one of 'earliest', 'latest', 'null'"
+                                    " or 'raise'$"))
+             (lambda () (series-dt-replace-time-zone 'test brussels "UTC" 'x 'raise)))
+  (check-exn (regexp (string-append "^test: cannot replace the time zone with \"UTC\": invalid"
+                                    " non-existent 'earliest', expected 'null' or 'raise'$"))
+             (lambda () (series-dt-replace-time-zone 'test brussels "UTC" 'raise 'earliest)))
+  (check-equal? (respell (string-append "is ambiguous. Please use `ambiguous` to tell how it"
+                                        " should be localized. You may be able to use"
+                                        " `non_existent='null'` to return `null`"))
+                (string-append "is ambiguous. Please use #:ambiguous to tell how it should be"
+                               " localized. You may be able to use dt-replace-time-zone's"
+                               " #:non-existent 'null to return `null`"))
+  (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
+             (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 
   ;; reductions
   (define stats (series-new-f64 "s" '(1.0 2.0 3.0 4.0)))
@@ -1511,7 +1725,7 @@
 
 (define-compat dataframe-select/c
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_select
@@ -1522,7 +1736,7 @@
 
 (define-compat dataframe-drop-columns/c
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_drop_columns
@@ -1688,7 +1902,7 @@
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
-        (names : (_list i _string))
+        (names : _string-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
@@ -1742,9 +1956,9 @@
 (define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
   (define-compat name
     (_fun _DataFrame-ptr
-          (by : (_list i _string))
+          (by : _string-list)
           (_size = (length by))
-          (agg : (_list i _string))
+          (agg : _string-list)
           (_size = (length agg))
           -> _DataFrame-ptr/null)
     #:c-id rust-id
@@ -1796,9 +2010,9 @@
 
 (define-compat dataframe-join/c
   (_fun _DataFrame-ptr _DataFrame-ptr
-        (left-on : (_list i _string))
+        (left-on : _string-list)
         (_size = (length left-on))
-        (right-on : (_list i _string))
+        (right-on : _string-list)
         (_size = (length right-on))
         _int32
         -> _DataFrame-ptr/null)
@@ -1843,9 +2057,9 @@
 
 (define-compat dataframe-join-asof-options/raw
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
-        (left-by : (_list i _string))
+        (left-by : _string-list)
         (_size = (length left-by))
-        (right-by : (_list i _string))
+        (right-by : _string-list)
         (_size = (length right-by))
         _int32
         _int64
@@ -1937,11 +2151,11 @@
 
 (define-compat dataframe-pivot/raw
   (_fun _DataFrame-ptr
-        (on : (_list i _string))
+        (on : _string-list)
         (_size = (length on))
-        (index : (_list i _string))
+        (index : _string-list)
         (_size = (length index))
-        (values : (_list i _string))
+        (values : _string-list)
         (_size = (length values))
         _int32
         -> _DataFrame-ptr/null)
@@ -1954,9 +2168,9 @@
 
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr
-        (on : (_list i _string))
+        (on : _string-list)
         (_size = (length on))
-        (index : (_list i _string))
+        (index : _string-list)
         (_size = (length index))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_unpivot
@@ -2031,6 +2245,9 @@
   (define just-score (dataframe-select example-df '("score")))
   (check-equal? (dataframe-width just-score) 1)
   (check-equal? (dataframe-column-names just-score) '("score"))
+  (check-equal? (dataframe-column-names
+                 (dataframe-select example-df (list #"score" (string->path "cost") "user")))
+                '("score" "cost" "user"))
 
   (define no-cost (dataframe-drop-columns example-df '("cost")))
   (check-equal? (dataframe-column-names no-cost) '("user" "score"))
@@ -2315,6 +2532,7 @@
   (define owned-str (series-new-str "s" '("a" "b" "a" "c" "b")))
   (define owned-bool (series-new-bool "b" '(#t #f #t #t #f)))
   (define owned-enum (series-cast owned-str '(enum a b c)))
+  (define owned-zoned (series-cast owned-i64 '(datetime microseconds "Europe/Brussels")))
   (define owned-stamp (make-YMDHMS 2024 1 2 3 4 5))
   (define owned-frame
     (dataframe-new (list (series-new-i32 "x" '(1 2 1))
@@ -2358,6 +2576,12 @@
           (list 'series-cast-enum/raw (lambda () (series-cast owned-str '(enum a b c))))
           (list 'series-enum-categories/raw
                 (lambda () (series-enum-categories/raw owned-enum)))
+          (list 'series-cast-datetime-tz/raw
+                (lambda () (series-cast owned-i64 '(datetime microseconds "UTC"))))
+          (list 'series-dt-convert-time-zone/raw
+                (lambda () (series-dt-convert-time-zone 'test owned-zoned "Asia/Tokyo")))
+          (list 'series-dt-replace-time-zone/raw
+                (lambda () (series-dt-replace-time-zone 'test owned-zoned #f 'raise 'raise)))
           (list 'series-new-bool (lambda () (series-new-bool "b" '(#t #f))))
           (list 'series-new-bool/opt (lambda () (series-new-bool "b" (list #t polars-null))))
           (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))))
@@ -2458,6 +2682,12 @@
                 1)
   (check-equal? (drops-once series-drop-count series-drop
                             (lambda () (series-cast owned-str '(enum a b c))))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-cast owned-i64 '(datetime nanoseconds "UTC"))))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-dt-convert-time-zone 'test owned-zoned "UTC")))
                 1)
   (check-equal? (drops-once dataframe-drop-count dataframe-drop
                             (lambda () (dataframe-hstack owned-frame (list owned-extra))))

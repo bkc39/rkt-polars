@@ -33,7 +33,11 @@ pub(crate) use ffi::{
 };
 #[cfg(test)]
 pub(crate) use series::ymdhms_to_naive_datetime;
-pub(crate) use series::{enum_dtype, name_from_ptr, series_new, valid_slices};
+pub(crate) use series::{
+    ambiguous_name, datetime_tz_dtype, enum_dtype, name_from_ptr,
+    named_time_zone, optional_time_zone, series_new, tz_resolution,
+    valid_slices,
+};
 #[cfg(test)]
 pub(crate) use types::compat_time_unit_from_polars;
 pub(crate) use types::{compat_dtype_from_polars, polars_dtype_from_compat};

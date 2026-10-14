@@ -12,7 +12,8 @@
                   dataframe-drop path->complete-string)
          (only-in polars/private/io-contracts
                   column-index/c column-name/c given row-index/c size/c)
-         (only-in polars/private/io-options define-io-options keyword-forwarder))
+         (only-in polars/private/io-options define-io-options keyword-forwarder)
+         (only-in polars/private/resource _string-list))
 
 (provide parquet-reader parquet-scanner parquet-writer
          parquet-reader/c parquet-scanner/c parquet-writer/c
@@ -144,7 +145,7 @@
         _string/utf-8
         _string/utf-8
         _uint8
-        (names : (_list i _string/utf-8))
+        (names : _string-list)
         (indices : (_list i _int64))
         (_size = (+ (length names) (length indices)))
         -> _DataFrame-ptr/null)
