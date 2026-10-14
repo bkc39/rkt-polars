@@ -35,7 +35,7 @@
 (displayln
  (~> df (with-columns (~> (col 'float64) (/ eur-usd-rate) (round #:decimals 2)))))
 
-;; API gap: col takes one dtype and selectors do not compose yet (#50), so
+;; API gap: col takes one dtype and selectors do not compose (#208), so
 ;; one expression per dtype.
 (displayln
  (~> df
@@ -104,7 +104,7 @@
 (displayln (~> df (with-columns (amplitude-expressions '("day" "year")))))
 
 ;; --- more flexible column selections -------------------------------------
-;; API gap: no polars.selectors, and no set operations on selectors (#50).
+;; API gap: no polars.selectors, and no set operations on selectors (#208).
 (displayln (select df (col 'string) (col #rx"_high$")))
 (displayln
  (select df (filter (lambda (name)

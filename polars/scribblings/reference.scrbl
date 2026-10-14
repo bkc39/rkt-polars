@@ -410,8 +410,7 @@ total
   @racket['str]) or canonical (@racket['float64], @racket['int32],
   @racket['string]), as @racket[series]' @racket[#:dtype] does
   (@racket[dtype-spec?]), plus @racket['binary], @racket['null] and
-  @racket['duration]. Any other value is a contract violation, including a
-  time-zone-aware datetime dtype, since time zones have no surface yet. A
+  @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
   in a cast to an Enum, which raises naming the values outside its
   categories, as Python's default @tt{strict=True} does (on an expression,
@@ -865,7 +864,8 @@ stations
   each column contiguous; none of the four changes the result.
 
   Categorical, Enum and Decimal columns keep their dtypes
-  (@secref["ref-categorical"]). A file Polars cannot read raises
+  (@secref["ref-categorical"]), and a datetime column its unit and time
+  zone. A file Polars cannot read raises
   @racket[exn:fail] with Polars' reason, even where Polars itself panics.
   API gaps: no @tt{schema}, @tt{extra_columns}, @tt{use_pyarrow} or hive
   options.

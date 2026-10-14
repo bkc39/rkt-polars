@@ -13,7 +13,7 @@
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
-(define version "0.0.1")
+(define version "0.1.0")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 
