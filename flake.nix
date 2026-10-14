@@ -14,7 +14,7 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      version = "0.0.1";
+      version = "0.1.0";
       # The Racket release this flake targets; nixpkgs supplies the actual
       # toolchain, and the `racket-version` check asserts it is at least this.
       minRacketVersion = "9.3";
