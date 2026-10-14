@@ -21,12 +21,13 @@
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
 (provide dataframe-read-csv lazyframe-scan-csv
-         (except-out (all-from-out polars/private/expr) expr-cast-to)
+         (except-out (all-from-out polars/private/expr) expr-cast-to expr-meta-output-name/raw)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error dataframe-drop-count
                      last-error-message owned-pointer-accessor owned-pointer-arg owned-pointer?
                      prop:owned-pointer series-drop-count dataframe-sort/raw frame-sort/c
                      series-sort/raw sort-flags sort-flags/c sort-flags-mismatch
+                     dtype-short-names
                      series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
                      series-dt-convert-time-zone series-dt-convert-time-zone/raw
                      series-dt-replace-time-zone series-dt-replace-time-zone/raw
@@ -39,3 +40,16 @@
                      [polars:when when]
                      [polars:abs abs] [polars:round round] [polars:floor floor]
                      [polars:sqrt sqrt] [polars:exp exp] [polars:log log]))
+
+(module+ test
+  (require rackunit)
+  (define-values (variables syntaxes) (module->exports 'polars))
+  (define exported
+    (for*/list ([phase+names (in-list (append variables syntaxes))]
+                #:when (eqv? (car phase+names) 0)
+                [name (in-list (cdr phase+names))])
+      (car name)))
+  (check-not-false (memq 'cast exported))
+  (for ([internal '(dtype-short-names expr-meta-output-name/raw allocator/or-fail
+                    call/foreign-error prop:owned-pointer sort-flags-mismatch)])
+    (check-false (memq internal exported) (format "~a is internal" internal))))

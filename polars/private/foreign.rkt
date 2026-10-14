@@ -403,13 +403,19 @@
     [(categorical) compat-dtype-tag/categorical]
     [else        #f]))
 
+(define dtype-short-names
+  (hash 'i8 'int8   'i16 'int16   'i32 'int32   'i64 'int64
+        'u8 'uint8  'u16 'uint16  'u32 'uint32  'u64 'uint64
+        'f32 'float32 'f64 'float64 'bool 'boolean 'str 'string))
+
 ;; a naive datetime only: a zoned one crosses through the _datetime_tz entry
 ;; points, which take its zone's name
 (define (->compat-dtype dtype)
   (match dtype
     [(? symbol?)
-     (define tag (simple-dtype-tag dtype))
-     (case dtype
+     (define canonical (hash-ref dtype-short-names dtype dtype))
+     (define tag (simple-dtype-tag canonical))
+     (case canonical
        [(datetime)
         (make-CompatDType compat-dtype-tag/datetime
                           compat-time-unit/microseconds 0 0)]
@@ -1426,6 +1432,8 @@
     (check-equal? (series-ref casted 1) (if (eq? dtype 'float32) 2.0 2)))
   (check-exn #rx"unsupported cast target"
              (lambda () (series-cast batch2-x '(list int32))))
+  (for ([(short canonical) (in-hash dtype-short-names)])
+    (check-equal? (series-dtype (series-cast batch2-y short)) canonical))
 
   (define bears (series-new-str "bears" (list "Polar" polars-null "Brown" "Polar")))
   (define bears/cat (series-cast bears 'categorical))
