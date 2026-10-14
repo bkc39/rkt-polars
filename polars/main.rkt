@@ -1,7 +1,9 @@
 #lang racket/base
 
 (require (only-in polars/private/csv dataframe-read-csv lazyframe-scan-csv)
-         (only-in polars/private/json dataframe-read-json dataframe-write-json)
+         (only-in polars/private/json
+                  dataframe-read-json dataframe-write-json dataframe-read-json-lines
+                  dataframe-write-json-lines lazyframe-scan-json-lines)
          polars/private/expr
          polars/private/foreign
          polars/private/generic
@@ -22,7 +24,8 @@
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
 (provide dataframe-read-csv lazyframe-scan-csv
-         dataframe-read-json dataframe-write-json
+         dataframe-read-json dataframe-write-json dataframe-read-json-lines
+         dataframe-write-json-lines lazyframe-scan-json-lines
          (except-out (all-from-out polars/private/expr) expr-cast-to expr-meta-output-name/raw)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error check-enum-categories

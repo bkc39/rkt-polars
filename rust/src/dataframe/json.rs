@@ -1,11 +1,14 @@
 use std::io::Write;
 use std::num::NonZeroUsize;
+use std::path::Path;
+use std::sync::Mutex;
 
 use crate::prelude::*;
 use crate::{
     clear_last_error, decode_path, decode_schema, guard_panic, record,
     write_checked_frame, CompatDType, CompatJsonOptions,
 };
+use polars::prelude::file::Writable;
 use polars::prelude::{SerReader, SerWriter};
 
 struct JsonArrays {
@@ -155,5 +158,94 @@ pub extern "C" fn dataframe_write_json(
             buffer.flush()?;
             Ok(())
         },
+    )
+}
+
+pub(crate) fn without_plan(err: PolarsError) -> PolarsError {
+    err.wrap_msg(|msg| {
+        msg.split("\n\nResolved plan until failure:")
+            .next()
+            .unwrap_or(msg)
+            .to_string()
+    })
+}
+
+fn ndjson_compression(
+    code: u8,
+    level: Option<u32>,
+) -> PolarsResult<ExternalCompression> {
+    match code {
+        0 => Ok(ExternalCompression::Uncompressed),
+        1 => Ok(ExternalCompression::Gzip { level }),
+        2 => Ok(ExternalCompression::Zstd { level }),
+        _ => Err(polars_err!(ComputeError: "unknown compression {}", code)),
+    }
+}
+
+fn ndjson_extension(
+    path: &str,
+    compression: ExternalCompression,
+) -> PolarsResult<()> {
+    let extension = Path::new(path).extension().and_then(|ext| ext.to_str());
+    match compression.file_suffix() {
+        Some(suffix) => polars_ensure!(
+            extension.is_none_or(|ext| ext == suffix.trim_start_matches('.')),
+            InvalidOperation: "the path ({}) does not conform to standard naming, expected suffix: ({}), set `check_extension` to `False` if you don't want this behavior", path, suffix
+        ),
+        None => polars_ensure!(
+            !matches!(extension, Some("gz" | "zst" | "zstd")),
+            InvalidOperation: "use the compression parameter to control compression, or set `check_extension` to `False` if you want to suffix an uncompressed filename with an ending intended for compression"
+        ),
+    }
+    Ok(())
+}
+
+fn ndjson_write(
+    df: &DataFrame,
+    file: &std::fs::File,
+    compression: ExternalCompression,
+) -> PolarsResult<()> {
+    let target = Writable::Local(file.try_clone()?);
+    df.clone()
+        .lazy()
+        .sink(
+            SinkDestination::File {
+                target: SinkTarget::Dyn(SpecialEq::new(Arc::new(Mutex::new(
+                    Some(target),
+                )))),
+            },
+            FileWriteFormat::NDJson(NDJsonWriterOptions {
+                compression,
+                check_extension: false,
+            }),
+            UnifiedSinkArgs::default(),
+        )?
+        .collect()
+        .map(drop)
+        .map_err(without_plan)
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_write_ndjson_with_options(
+    df_ptr: *mut DataFrame,
+    path: *const c_char,
+    compression: u8,
+    has_compression_level: bool,
+    compression_level: u32,
+    check_extension: bool,
+) -> i32 {
+    let level = has_compression_level.then_some(compression_level);
+    write_checked_frame(
+        df_ptr,
+        path,
+        |path, df| {
+            refuse_binary(df)?;
+            let compression = ndjson_compression(compression, level)?;
+            if check_extension {
+                ndjson_extension(path, compression)?;
+            }
+            Ok(compression)
+        },
+        |compression, file, df| ndjson_write(df, file, compression),
     )
 }

@@ -30,12 +30,28 @@
        [#:glob glob boolean? #t]))))
 
 @(begin-for-syntax
-   (define json-arguments
+   (define (json-like-arguments schema/c)
+     #`([path path-string?]
+        [#:schema schema (or/c #,schema/c #f) #f]
+        [#:schema-overrides schema-overrides #,schema/c '()]
+        [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]))
+   (define json-arguments (json-like-arguments #'json-schema/c))
+   (define ndjson-arguments
+     #`(#,@(json-like-arguments #'ndjson-schema/c)
+        [#:batch-size batch-size (or/c positive-size/c #f) 1024]
+        [#:n-rows n-rows (or/c size/c #f) #f]
+        [#:low-memory low-memory boolean? #f]
+        [#:rechunk rechunk boolean? #f]
+        [#:row-index-name row-index-name (or/c column-name/c #f) #f]
+        [#:row-index-offset row-index-offset row-index/c 0]
+        [#:ignore-errors ignore-errors boolean? #f]
+        [#:include-file-paths include-file-paths (or/c column-name/c #f) #f]))
+   (define ndjson-writer-arguments
      (quote-syntax
       ([path path-string?]
-       [#:schema schema (or/c json-schema/c #f) #f]
-       [#:schema-overrides schema-overrides json-schema/c '()]
-       [#:infer-schema-length infer-schema-length (or/c positive-size/c #f) 100]))))
+       [#:compression compression (or/c 'uncompressed 'gzip 'zstd) 'uncompressed]
+       [#:compression-level compression-level (or/c exact-nonnegative-integer? #f) #f]
+       [#:check-extension check-extension boolean? #t]))))
 
 @(define-syntax-parser defproc/arguments
    [(_ arguments:id (name leading ... result) body ...)
@@ -704,17 +720,13 @@ total
 (collect (scan-parquet (build-path parquet-dir "part-*.parquet") #:n-rows 3))
 (read-parquet "produce.parquet")]}
 
-@deftogether[(@defproc[(read-ndjson [path path-string?]) dataframe?]
-              @defproc[(write-csv [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?]
-              @defproc[(write-ndjson [d dataframe?] [path path-string?]) void?])]{
-  Newline-delimited JSON in (@tt{pl.read_ndjson}), and a dataframe out to
-  CSV, Parquet or newline-delimited JSON (@tt{df.write_csv} and friends).
+@deftogether[(@defproc[(write-csv [d dataframe?] [path path-string?]) void?]
+              @defproc[(write-parquet [d dataframe?] [path path-string?]) void?])]{
+  A dataframe out to CSV or Parquet (@tt{df.write_csv},
+  @tt{df.write_parquet}).
   CSV writes a zoned datetime as its local time and UTC offset,
   @tt{2021-03-27T12:00:00.000000+0100}, as Python does; Parquet keeps the
   zone in the column's type.
-  API gap: there is no @tt{scan_ndjson}, so @racket[read-ndjson] reads one
-  file and takes no glob pattern (#44).
 
   A writer replaces an existing file atomically, keeping its permission bits.}
 
@@ -723,7 +735,8 @@ total
   Read a file holding one JSON array of objects into a @tech{dataframe}
   (@tt{pl.read_json}), and write a dataframe as one (@tt{df.write_json}).
   A lone object reads as one row. @racket[path] is literal; a directory is
-  an error.
+  an error. A gzip, zlib or zstd file is decompressed first, recognised by
+  its first bytes.
 
   Column types are inferred from the first @racket[infer-schema-length]
   objects, or from all of them for @racket[#f]; a key first seen later is an
@@ -777,6 +790,85 @@ total
 (eval:error (read-json "stations.json" #:schema-overrides '(("dya" . date))))]
   @examples[#:eval ev #:hidden
 (delete-directory/files json-dir)]}
+
+@deftogether[(@defproc/arguments[ndjson-arguments (read-ndjson dataframe?)]
+              @defproc/arguments[ndjson-arguments (scan-ndjson lazyframe?)])]{
+  Read newline-delimited JSON, one object a line, into a @tech{dataframe}
+  (@tt{pl.read_ndjson}), or start a @tech{lazyframe} plan from it
+  (@tt{pl.scan_ndjson}); @racket[read-ndjson] is
+  @racket[(collect (scan-ndjson path ....))]. @racket[path] is a glob
+  pattern: the matching files stack in sorted filename order, and a pattern
+  matching nothing is an error, which @racket[scan-ndjson] leaves to
+  @racket[collect]. A directory reads every file in it, and they must share
+  one extension. A literal @litchar{[}, @litchar{*} or @litchar{?} in a
+  file name is spelled @litchar{[[]}, @litchar{[*]} or @litchar{[?]}.
+
+  Column types are inferred from the first @racket[infer-schema-length]
+  lines, or from all of them for @racket[#f]. A key first seen later is
+  left out, and a value that does not parse as its column's type is an
+  error, or null with @racket[#:ignore-errors #t]. @racket[schema] and
+  @racket[schema-overrides] work as for @racket[read-json], an override
+  applying even with a schema; @racket[scan-ndjson] reports a bad override
+  at once. An @racket[ndjson-schema/c] is a @racket[json-schema/c] whose
+  dtypes are a boolean, a 32- or 64-bit integer, a float, a string, a date,
+  a datetime or a categorical.
+
+  @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
+  @racket['uint32] column of row numbers from @racket[row-index-offset];
+  @racket[include-file-paths] adds a last column holding each row's file;
+  the two name different columns. @racket[rechunk] gathers the result into
+  one chunk. Polars ignores @racket[batch-size] and @racket[low-memory].
+  A gzip, zlib or zstd file is decompressed as it is read, recognised by
+  its first bytes rather than its name. A @racket[size/c] is an integer
+  from @racket[0] to @racket[(sub1 (expt 2 64))], a @racket[row-index/c]
+  one from @racket[0] to @racket[(sub1 (expt 2 32))].
+
+  @examples[#:eval ev #:hidden
+(require racket/file)
+(define nd-dir (make-temporary-directory "polars-doc-~a"))
+(for ([i '(1 2 3)])
+  (write-ndjson (read-csv (format "parts/part-~a.csv" i))
+                (build-path nd-dir (format "part-~a.ndjson" i))))]
+  @examples[#:eval ev
+(read-ndjson "stations.ndjson")
+(~> (scan-ndjson "stations.ndjson")
+    (filter (> (col "reading") 3))
+    (select "station" "reading")
+    collect)
+(read-ndjson (build-path nd-dir "part-*.ndjson") #:n-rows 4 #:row-index-name "row")
+(column-names (read-ndjson "stations.ndjson" #:include-file-paths "file"))
+(eval:error (read-ndjson "stations.ndjson" #:infer-schema-length 1))
+(~> (read-ndjson "stations.ndjson" #:infer-schema-length 1 #:ignore-errors #t)
+    (select "station" "reading"))
+(eval:error (scan-ndjson "stations.ndjson" #:schema-overrides '(("dya" . date))))
+(eval:error (read-ndjson (build-path nd-dir "*.json")))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files nd-dir)]}
+
+@defproc/arguments[ndjson-writer-arguments (write-ndjson [d dataframe?] void?)]{
+  Write @racket[d] as newline-delimited JSON, one object a line
+  (@tt{df.write_ndjson}), with values written as @racket[write-json] writes
+  them; a binary column is an error. @racket[compression] gzips or
+  zstd-compresses the whole file at @racket[compression-level], 0 to 9 for
+  gzip and 1 to 22 for zstd, or the codec's default for @racket[#f]; a
+  level without a codec is a contract error. Unless
+  @racket[check-extension] is @racket[#f], the path must end in
+  @filepath{.gz} for gzip and @filepath{.zst} for zstd, and in neither for
+  an uncompressed file. It replaces a file as @racket[write-csv] does.
+
+  @examples[#:eval ev #:hidden
+(define nd-dir (make-temporary-directory "polars-doc-~a"))]
+  @examples[#:eval ev
+(define small (dataframe (list (series '(1 2) #:name "a"))))
+(write-ndjson small (build-path nd-dir "small.ndjson"))
+(file->string (build-path nd-dir "small.ndjson"))
+(write-ndjson small (build-path nd-dir "small.ndjson.gz") #:compression 'gzip)
+(read-ndjson (build-path nd-dir "small.ndjson.gz"))
+(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")))
+(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")
+                          #:compression 'zstd #:compression-level 30))]
+  @examples[#:eval ev #:hidden
+(delete-directory/files nd-dir)]}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
@@ -1866,11 +1958,9 @@ generic operations are simply the preferred surface.
 
 @deftogether[(@defproc[(dataframe-write-csv [d dataframe?] [path path-string?]) void?]
               @defproc[(dataframe-write-parquet [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-read-parquet [path path-string?]) dataframe?]
-              @defproc[(dataframe-write-json-lines [d dataframe?] [path path-string?]) void?]
-              @defproc[(dataframe-read-json-lines [path path-string?]) dataframe?])]{
-  Round-trip a dataframe through CSV, Parquet, or newline-delimited JSON; the
-  fluent @racket[read-csv] and friends are the surface. Like
+              @defproc[(dataframe-read-parquet [path path-string?]) dataframe?])]{
+  Round-trip a dataframe through CSV or Parquet; the fluent
+  @racket[read-csv] and friends are the surface. Like
   @racket[read-parquet], @racket[dataframe-read-parquet] accepts a glob
   pattern.}
 
@@ -1891,6 +1981,19 @@ generic operations are simply the preferred surface.
   @examples[#:eval ev
 (dataframe-width (dataframe-read-json "stations.json" #:schema '(("station" . str))))
 (eval:error (dataframe-read-json "stations.json" #:infer-schema-length 0))]}
+
+@deftogether[(@defproc/arguments[ndjson-arguments (dataframe-read-json-lines DataFrame-ptr?)]
+              @defproc/arguments[ndjson-arguments (lazyframe-scan-json-lines LazyFrame-ptr?)]
+              @defproc/arguments[ndjson-writer-arguments (dataframe-write-json-lines [d DataFrame-ptr?] void?)])]{
+  The raw-pointer NDJSON reader, scan and writer under @racket[read-ndjson],
+  @racket[scan-ndjson] and @racket[write-ndjson], with the same keywords and
+  checks.
+
+  @examples[#:eval ev
+(dataframe-height (dataframe-read-json-lines "stations.ndjson" #:n-rows 3))
+(dataframe-width (lazyframe-collect (lazyframe-scan-json-lines "stations.ndjson"
+                                                               #:infer-schema-length 2)))
+(eval:error (dataframe-read-json-lines "stations.ndjson" #:schema '(("reading" . i8))))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 

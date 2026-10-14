@@ -4,10 +4,15 @@ use std::path::Path;
 
 type Writer = extern "C" fn(*mut DataFrame, *const c_char) -> i32;
 
-const WRITERS: [(&str, Writer); 3] = [
+extern "C" fn write_ndjson(df: *mut DataFrame, path: *const c_char) -> i32 {
+    dataframe_write_ndjson_with_options(df, path, 0, false, 0, true)
+}
+
+const WRITERS: [(&str, Writer); 4] = [
     ("csv", dataframe_write_csv),
     ("parquet", dataframe_write_parquet),
     ("json", dataframe_write_json),
+    ("ndjson", write_ndjson),
 ];
 
 fn write_to(writer: Writer, path: &Path) -> i32 {
@@ -37,6 +42,20 @@ fn read_csv(path: &str) -> *mut DataFrame {
 fn read_parquet(path: &str) -> *mut DataFrame {
     let p = cstr(path);
     dataframe_read_parquet(p.as_ptr())
+}
+
+fn read_ndjson(path: &str) -> *mut DataFrame {
+    let p = cstr(path);
+    dataframe_read_ndjson_with_options(
+        p.as_ptr(),
+        CompatNdjsonOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    )
 }
 
 fn height_of(df: *mut DataFrame) -> usize {
@@ -179,23 +198,29 @@ fn a_new_file_gets_default_permissions() {
 #[test]
 fn a_fifo_is_written_in_place() {
     use std::os::unix::fs::FileTypeExt;
-    let dir = scratch_dir();
-    let fifo = dir.path().join("pipe.json");
-    let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-    if !made.is_ok_and(|status| status.success()) {
-        return;
+    let cases: [(&str, Writer, &str); 2] = [
+        ("json", dataframe_write_json, r#"[{"x":1},{"x":2}]"#),
+        ("ndjson", write_ndjson, "{\"x\":1}\n{\"x\":2}\n"),
+    ];
+    for (ext, writer, expected) in cases {
+        let dir = scratch_dir();
+        let fifo = dir.path().join(format!("pipe.{ext}"));
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|status| status.success()) {
+            return;
+        }
+        let reader = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || std::fs::read_to_string(fifo).unwrap())
+        };
+        assert_eq!(write_to(writer, &fifo), 0, "{ext}");
+        assert_eq!(reader.join().unwrap(), expected);
+        assert!(std::fs::symlink_metadata(&fifo)
+            .unwrap()
+            .file_type()
+            .is_fifo());
+        assert_eq!(entries(dir.path()), vec![format!("pipe.{ext}")]);
     }
-    let reader = {
-        let fifo = fifo.clone();
-        std::thread::spawn(move || std::fs::read_to_string(fifo).unwrap())
-    };
-    assert_eq!(write_to(dataframe_write_json, &fifo), 0);
-    assert_eq!(reader.join().unwrap(), r#"[{"x":1},{"x":2}]"#);
-    assert!(std::fs::symlink_metadata(&fifo)
-        .unwrap()
-        .file_type()
-        .is_fifo());
-    assert_eq!(entries(dir.path()), vec!["pipe.json"]);
 }
 
 #[cfg(unix)]
@@ -243,6 +268,17 @@ fn a_leftover_staging_file_is_not_read() {
         ),
         "{reason}"
     );
+    assert!(reason.contains(".partial"), "{reason}");
+    let ndjson_dir = dir.path().join("lines");
+    std::fs::create_dir(&ndjson_dir).unwrap();
+    assert_eq!(write_to(write_ndjson, &ndjson_dir.join("a.ndjson")), 0);
+    std::fs::write(ndjson_dir.join(".rkt-polars-1-2.partial"), "{\"x\":99}\n")
+        .unwrap();
+    let lines =
+        |name: &str| ndjson_dir.join(name).to_str().unwrap().to_string();
+    assert_eq!(height_of(read_ndjson(&lines("*.ndjson"))), 2);
+    assert!(read_ndjson(&lines("")).is_null());
+    let reason = recorded_error().expect("a reason");
     assert!(reason.contains(".partial"), "{reason}");
 }
 
@@ -327,21 +363,27 @@ fn a_failed_rename_removes_its_staging_file() {
 
 #[test]
 fn a_refused_frame_opens_nothing() {
-    let dir = scratch_dir();
-    let path = dir.path().join("keep.json");
-    std::fs::write(&path, "PRECIOUS").unwrap();
+    let writers: [(&str, Writer); 2] =
+        [("json", dataframe_write_json), ("ndjson", write_ndjson)];
     let df = binary_frame();
-    let p = cstr(path.to_str().unwrap());
-    assert_eq!(dataframe_write_json(df, p.as_ptr()), 4);
-    assert_eq!(std::fs::read_to_string(&path).unwrap(), "PRECIOUS");
-    assert_eq!(entries(dir.path()), vec!["keep.json"]);
-    #[cfg(unix)]
-    {
-        let link = dir.path().join("link.json");
-        std::os::unix::fs::symlink("made.json", &link).unwrap();
-        let l = cstr(link.to_str().unwrap());
-        assert_eq!(dataframe_write_json(df, l.as_ptr()), 4);
-        assert_eq!(entries(dir.path()), vec!["keep.json", "link.json"]);
+    for (ext, writer) in writers {
+        let dir = scratch_dir();
+        let keep = format!("keep.{ext}");
+        let path = dir.path().join(&keep);
+        std::fs::write(&path, "PRECIOUS").unwrap();
+        let p = cstr(path.to_str().unwrap());
+        assert_eq!(writer(df, p.as_ptr()), 4, "{ext}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "PRECIOUS");
+        assert_eq!(entries(dir.path()), vec![keep.clone()]);
+        #[cfg(unix)]
+        {
+            let link = format!("link.{ext}");
+            let at = dir.path().join(&link);
+            std::os::unix::fs::symlink(format!("made.{ext}"), &at).unwrap();
+            let l = cstr(at.to_str().unwrap());
+            assert_eq!(writer(df, l.as_ptr()), 4, "{ext}");
+            assert_eq!(entries(dir.path()), vec![keep, link]);
+        }
     }
     dataframe_drop(df);
 }

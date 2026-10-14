@@ -19,6 +19,7 @@ mod groupby;
 mod io;
 mod join;
 mod json;
+mod ndjson;
 mod reshape;
 mod smoke;
 mod stack;

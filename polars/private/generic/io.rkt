@@ -4,8 +4,7 @@
          (only-in polars/private/csv csv-reader/c dataframe-read-csv lazyframe-scan-csv)
          (only-in polars/private/expr lazyframe-scan-parquet)
          (only-in polars/private/foreign
-                  dataframe-read-json-lines dataframe-read-parquet dataframe-write-csv
-                  dataframe-write-json-lines dataframe-write-parquet)
+                  dataframe-read-parquet dataframe-write-csv dataframe-write-parquet)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
          syntax/parse/define)
@@ -18,10 +17,8 @@
           [scan-parquet (->* (path-string?)
                              (#:n-rows (or/c #f exact-nonnegative-integer?))
                              lazyframe?)]
-          [read-ndjson (-> path-string? dataframe?)]
           [write-csv (-> dataframe? path-string? void?)]
-          [write-parquet (-> dataframe? path-string? void?)]
-          [write-ndjson (-> dataframe? path-string? void?)]))
+          [write-parquet (-> dataframe? path-string? void?)]))
 
 (define-syntax-parse-rule (define-wrapped name:id wrap:expr reader:expr)
   (define name (procedure-rename (compose1 wrap reader) 'name)))
@@ -30,10 +27,8 @@
 (define-wrapped scan-csv wrap-lazyframe lazyframe-scan-csv)
 (define-wrapped read-parquet wrap-dataframe dataframe-read-parquet)
 (define-wrapped scan-parquet wrap-lazyframe lazyframe-scan-parquet)
-(define-wrapped read-ndjson wrap-dataframe dataframe-read-json-lines)
 (define write-csv dataframe-write-csv)
 (define write-parquet dataframe-write-parquet)
-(define write-ndjson dataframe-write-json-lines)
 
 (module+ test
   (require rackunit
@@ -436,9 +431,6 @@
   (write-parquet frame frame-parquet)
   (check-true (frame=? (read-parquet frame-parquet) frame))
   (check-equal? (height (collect (scan-parquet frame-parquet #:n-rows 2))) 2)
-  (define frame-ndjson (build-path scratch "frame.ndjson"))
-  (write-ndjson frame frame-ndjson)
-  (check-equal? (shape (read-ndjson frame-ndjson)) '(3 3))
 
   (define produce (read-parquet (build-path data-dir "produce.parquet")))
   (check-equal? (for/list ([name (column-names produce)]) (dtype (ref produce name)))
@@ -486,11 +478,6 @@
   (check-true (frame=? (read-parquet brussels-parquet) brussels))
   (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
                 '(datetime microseconds "Europe/Brussels"))
-  (define brussels-ndjson (build-path scratch "brussels.ndjson"))
-  (write-ndjson brussels brussels-ndjson)
-  (check-equal? (file->string brussels-ndjson)
-                (string-append "{\"t\":\"2021-03-27T12:00:00.500+01:00\"}\n{\"t\":null}\n"
-                               "{\"t\":\"2021-07-01T00:00:00+02:00\"}\n"))
   (define offsets (scratch-file "offsets.csv" "t,u"
                                 "2021-03-27T00:00:00+01:00,2021-03-27 00:00"
                                 "2021-03-29T00:00:00+02:00,2021-03-29 00:00"))

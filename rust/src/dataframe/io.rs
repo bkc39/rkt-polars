@@ -5,17 +5,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::prelude::*;
 use crate::*;
-use polars::prelude::{SerReader, SerWriter};
+use polars::prelude::SerWriter;
 
 const IO_OK: i32 = 0;
 const IO_NULL_ARG: i32 = 1;
 const IO_BAD_PATH: i32 = 2;
 const IO_OPEN_FAILED: i32 = 3;
 const IO_WRITE_FAILED: i32 = 4;
-
-fn open_file(path: &str) -> Option<File> {
-    record(File::open(path).map_err(|err| format!("cannot open file: {}", err)))
-}
 
 fn cannot_create(err: std::io::Error) -> String {
     format!("cannot create file: {}", err)
@@ -163,17 +159,6 @@ impl Staged {
     }
 }
 
-fn read_frame(
-    path: *const c_char,
-    read: impl FnOnce(File) -> PolarsResult<DataFrame>,
-) -> *mut DataFrame {
-    clear_last_error();
-    decode_path(path)
-        .and_then(open_file)
-        .and_then(|file| guard_panic(|| record(read(file))))
-        .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
-}
-
 pub(crate) struct PathRules {
     pub glob: bool,
     pub directory: bool,
@@ -299,29 +284,6 @@ pub extern "C" fn dataframe_read_parquet(
         },
         |path| parquet_scan(path, None),
     )
-}
-
-#[no_mangle]
-pub extern "C" fn dataframe_write_json_lines(
-    df_ptr: *mut DataFrame,
-    path: *const c_char,
-) -> i32 {
-    write_frame(df_ptr, path, |file, df| {
-        JsonWriter::new(file)
-            .with_json_format(JsonFormat::JsonLines)
-            .finish(df)
-    })
-}
-
-#[no_mangle]
-pub extern "C" fn dataframe_read_json_lines(
-    path: *const c_char,
-) -> *mut DataFrame {
-    read_frame(path, |file| {
-        JsonReader::new(file)
-            .with_json_format(JsonFormat::JsonLines)
-            .finish()
-    })
 }
 
 #[no_mangle]

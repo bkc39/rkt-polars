@@ -41,6 +41,32 @@ fn read_json(path: *const c_char) -> *mut DataFrame {
     )
 }
 
+fn read_ndjson(path: *const c_char) -> *mut DataFrame {
+    dataframe_read_ndjson_with_options(
+        path,
+        CompatNdjsonOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    )
+}
+
+fn scan_ndjson(path: *const c_char) -> *mut LazyFrame {
+    lazyframe_scan_ndjson_with_options(
+        path,
+        CompatNdjsonOptions::default(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+        ptr::null(),
+    )
+}
+
 fn scan_csv(path: *const c_char) -> *mut LazyFrame {
     lazyframe_scan_csv_with_options(
         path,
@@ -54,9 +80,9 @@ fn scan_csv(path: *const c_char) -> *mut LazyFrame {
     )
 }
 
-// Use i64 input throughout: CSV / JSON-Lines readers infer
-// integer columns as i64, and Parquet preserves the i64 schema —
-// so all three round-trip back to i64 uniformly.
+// Use i64 input throughout: the CSV reader infers integer columns as
+// i64, and Parquet preserves the i64 schema — so both round-trip back
+// to i64 uniformly.
 
 #[test]
 fn csv_round_trip_preserves_shape_and_values() {
@@ -87,25 +113,6 @@ fn parquet_round_trip_preserves_shape_and_values() {
         "parquet",
         dataframe_write_parquet,
         dataframe_read_parquet,
-    );
-    assert_eq!(dataframe_height(back), 3);
-    assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
-    dataframe_drop(back);
-    dataframe_drop(df);
-    series_drop(xs);
-    series_drop(gs);
-}
-
-#[test]
-fn json_lines_round_trip_preserves_shape_and_values() {
-    let xs = make_i64("x", &[1, 2, 3]);
-    let gs = make_str("g", &["a", "b", "c"]);
-    let df = make_df(&[xs, gs]);
-    let back = write_round_trip(
-        df,
-        "jsonl",
-        dataframe_write_json_lines,
-        dataframe_read_json_lines,
     );
     assert_eq!(dataframe_height(back), 3);
     assert_eq!(read_i64_col(back, "x"), vec![1, 2, 3]);
@@ -234,8 +241,18 @@ fn every_entry_point_clears_a_stale_reason() {
     cleared("dataframe_write_csv");
     assert_eq!(dataframe_write_parquet(df, parquet.as_ptr()), 0);
     cleared("dataframe_write_parquet");
-    assert_eq!(dataframe_write_json_lines(df, ndjson.as_ptr()), 0);
-    cleared("dataframe_write_json_lines");
+    assert_eq!(
+        dataframe_write_ndjson_with_options(
+            df,
+            ndjson.as_ptr(),
+            0,
+            false,
+            0,
+            true
+        ),
+        0
+    );
+    cleared("dataframe_write_ndjson_with_options");
     assert_eq!(dataframe_write_json(df, json.as_ptr()), 0);
     cleared("dataframe_write_json");
     frame("dataframe_read_csv_with_options", read_csv(csv.as_ptr()));
@@ -246,12 +263,17 @@ fn every_entry_point_clears_a_stale_reason() {
     );
     cleared("dataframe_read_parquet");
     frame(
-        "dataframe_read_json_lines",
-        dataframe_read_json_lines(ndjson.as_ptr()),
+        "dataframe_read_ndjson_with_options",
+        read_ndjson(ndjson.as_ptr()),
     );
-    cleared("dataframe_read_json_lines");
+    cleared("dataframe_read_ndjson_with_options");
     frame("dataframe_read_json_with_options", read_json(json.as_ptr()));
     cleared("dataframe_read_json_with_options");
+    plan(
+        "lazyframe_scan_ndjson_with_options",
+        scan_ndjson(ndjson.as_ptr()),
+    );
+    cleared("lazyframe_scan_ndjson_with_options");
     plan("lazyframe_scan_csv_with_options", scan_csv(csv.as_ptr()));
     cleared("lazyframe_scan_csv_with_options");
     plan(
