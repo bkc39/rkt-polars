@@ -5,7 +5,10 @@
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
-(require polars/private/generic/core
+(require (only-in racket/contract exn:fail:contract:blame?)
+         (only-in racket/file display-to-file)
+         (only-in racket/path path-has-extension?)
+         polars/private/generic/core
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign polars-null polars-null?)
          (only-in gregor datetime))
@@ -40,3 +43,62 @@
        (for/and ([name (in-list (column-names a))])
          (and (equal? (dtype (ref a #:columns name)) (dtype (ref b #:columns name)))
               (equal? (column a name) (column b name))))))
+
+(define (dtypes-of df)
+  (for/list ([name (in-list (column-names df))])
+    (list name (dtype (ref df name)))))
+
+(define (scratch-file dir name text)
+  (define path (build-path dir name))
+  (display-to-file text path #:exists 'replace)
+  path)
+
+(define ((contract-violation-of who) e)
+  (and (exn:fail:contract:blame? e)
+       (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
+                      (exn-message e))))
+
+(define (apply-keywords proc kvs . args)
+  (define sorted (sort kvs keyword<? #:key car))
+  (keyword-apply proc (map car sorted) (map cdr sorted) args))
+
+(define (staging-files dir)
+  (filter (lambda (name) (path-has-extension? name #".partial")) (directory-list dir)))
+
+(module+ test
+  (require rackunit
+           (only-in racket/file delete-directory/files file->string make-temporary-directory))
+
+  (provide check-staged-write)
+
+  (define (check-staged-write write! ext df)
+    (define dir (make-temporary-directory "rkt-polars-staged-~a"))
+    (define (named stem) (format "~a.~a" stem ext))
+    (define (failure cause)
+      (pregexp (format "^~a: failed to write [^ ]+ to [^:]*: cannot create file: ~a"
+                       (object-name write!) cause)))
+    (define real (scratch-file dir (named "real") "OLD"))
+    (define link (build-path dir (named "link")))
+    (make-file-or-directory-link (named "real") link)
+    (write! df link)
+    (check-true (link-exists? link))
+    (check-not-equal? (file->string real) "OLD")
+    (define locked (scratch-file dir (named "locked") "OLD"))
+    (file-or-directory-permissions locked #o444)
+    (unless (memq 'write (file-or-directory-permissions locked))
+      (check-exn (failure "Permission denied") (lambda () (write! df locked)))
+      (check-equal? (file->string locked) "OLD"))
+    (define private (scratch-file dir (named "private") "OLD"))
+    (file-or-directory-permissions private #o600)
+    (write! df private)
+    (check-equal? (file-or-directory-permissions private 'bits) #o600)
+    (write! df "/dev/null")
+    (define long (build-path dir (named (make-string (- 249 (string-length ext)) #\x))))
+    (write! df long)
+    (check-true (file-exists? long))
+    (define sub (build-path dir "sub"))
+    (make-directory sub)
+    (check-exn (failure "it is a directory$") (lambda () (write! df sub)))
+    (check-equal? (staging-files dir) '())
+    (check-equal? (directory-list sub) '())
+    (delete-directory/files dir)))

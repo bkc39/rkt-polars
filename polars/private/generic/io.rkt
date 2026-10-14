@@ -10,7 +10,8 @@
                   dataframe? lazyframe? wrap-dataframe wrap-lazyframe)
          syntax/parse/define)
 
-(provide (contract-out
+(provide define-wrapped
+         (contract-out
           [read-csv (csv-reader/c dataframe?)]
           [scan-csv (csv-reader/c lazyframe?)]
           [read-parquet (-> path-string? dataframe?)]
@@ -40,7 +41,8 @@
            racket/runtime-path
            (only-in file/gzip gzip-through-ports)
            (only-in racket/contract exn:fail:contract:blame?)
-           (only-in racket/list last remove-duplicates)
+           (only-in racket/list filter-map last remove-duplicates second)
+           (only-in racket/match match-lambda)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk in-series series->list)
@@ -153,16 +155,13 @@
   (define primed (scratch-file "primed.csv" "a;b" "'x;y';1" "z;2"))
   (check-equal? (column (read-csv primed #:separator #\; #:quote-char #\') "a") '("x;y" "z"))
 
-  (define (dtypes-of df)
-    (map (lambda (name) (dtype (ref df #:columns name))) (column-names df)))
   (check-equal? (remove-duplicates
-                 (dtypes-of (read-csv flights #:separator #\tab #:infer-schema-length 0)))
+                 (map second (dtypes-of (read-csv flights #:separator #\tab
+                                                  #:infer-schema-length 0))))
                 '(string))
   (define all-rows (read-csv flights #:separator #\tab #:infer-schema-length #f))
-  (check-equal? (for/list ([name (column-names all-rows)]
-                           [type (dtypes-of all-rows)]
-                           #:when (eq? type 'string))
-                  name)
+  (check-equal? (filter-map (match-lambda [(list name 'string) name] [_ #f])
+                            (dtypes-of all-rows))
                 '("dep_time" "dep_delay" "arr_time" "arr_delay" "carrier" "tailnum"
                   "origin" "dest" "air_time" "time_hour"))
 
@@ -202,7 +201,7 @@
                 ("u16" . u16) ("u32" . u32) ("u64" . u64) ("f32" . f32) ("f64" . f64)
                 ("b" . bool) ("s" . str) ("d" . date) ("dt" . datetime)
                 ("dtms" . (datetime milliseconds)))))
-  (check-equal? (dtypes-of typed-frame)
+  (check-equal? (map second (dtypes-of typed-frame))
                 '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 float32 float64
                   boolean string date (datetime microseconds #f)
                   (datetime milliseconds #f)))
@@ -210,11 +209,12 @@
 
   (define dated (scratch-file "dated.csv" "d,t,ts" "2020-01-02,05:00:00,2013-01-01 05:00:00"))
   (define parsed (read-csv dated #:try-parse-dates #t))
-  (check-equal? (dtypes-of parsed) '(date time (datetime microseconds #f)))
+  (check-equal? (dtypes-of parsed)
+                '(("d" date) ("t" time) ("ts" (datetime microseconds #f))))
   (check-equal? (column parsed "ts") (list (datetime 2013 1 1 5)))
   (define clocked (scratch-file "clocked.csv" "t" "05:00:00" "06:30:15"))
   (define clocked-frame (read-csv clocked #:schema-overrides '(("t" . time))))
-  (check-equal? (dtypes-of clocked-frame) '(time))
+  (check-equal? (dtypes-of clocked-frame) '(("t" time)))
   (check-true (frame=? clocked-frame (read-csv clocked #:try-parse-dates #t)))
   (check-equal? (~> (read-csv flights #:separator #\tab #:null-values "NA" #:try-parse-dates #t)
                     (ref #:columns "time_hour")
@@ -222,10 +222,11 @@
                 '(datetime microseconds #f))
   (define apple (read-csv (build-path data-dir "apple_stock.csv") #:try-parse-dates #t))
   (check-equal? (shape apple) '(100 2))
-  (check-equal? (dtypes-of apple) '(date float64))
+  (check-equal? (map second (dtypes-of apple)) '(date float64))
   (check-equal? (ref (ref apple #:columns "Date") 0) (date 1981 2 23))
   (check-equal? (ref (ref apple #:columns "Close") 99) 522.06)
-  (check-equal? (dtypes-of (read-csv (build-path data-dir "apple_stock.csv"))) '(string float64))
+  (check-equal? (map second (dtypes-of (read-csv (build-path data-dir "apple_stock.csv"))))
+                '(string float64))
 
   (define quoted (scratch-file "quoted.csv" "a,b" "\"1,5\",x" "\"2\",y"))
   (check-equal? (column (read-csv quoted) "a") '("1,5" "2"))

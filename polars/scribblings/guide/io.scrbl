@@ -130,6 +130,8 @@ as it is. A column in a format the parser does not recognise stays a
 string; @racket[str->date] and its siblings parse it with an explicit
 format (@secref["ts-parsing-cast"]).
 
+@include-section["io-json.scrbl"]
+
 @section[#:tag "io-multiple"]{Multiple files}
 
 Polars can deal with multiple files differently depending on your needs and

@@ -19,6 +19,7 @@
 (require polars/private/generic/core
          polars/private/generic/convert
          polars/private/generic/io
+         polars/private/generic/json
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators
@@ -42,6 +43,7 @@
          len shape shape/values dtype null-count define-enum
          width height column-name column-names
          write-csv read-csv write-parquet read-parquet write-ndjson read-ndjson
+         write-json read-json
          series->list series->vector series->f64vector in-series
          dataframe->columns dataframe->hash dataframe->f64vector in-dataframe-columns
          in-dataframe-rows dataframe->rows

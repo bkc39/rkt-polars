@@ -60,12 +60,14 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Filtering | `filtering.rkt` | `filtering.py` |
 | Time zones | `time-zones.rkt` | `time_zones.py` |
 
-`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/) and
+`io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/),
+[JSON](https://docs.pola.rs/user-guide/io/json/) and
 [multiple files](https://docs.pola.rs/user-guide/io/multiple/)
 
 | Topic | Racket | Python |
 | --- | --- | --- |
 | CSV, with the reading options | `csv.rkt` | `csv.py` |
+| JSON, with the reading options | `json-files.rkt` | `json_files.py` |
 | Multiple files | `multiple.rkt` | `multiple.py` |
 
 `interop/` — upstream [Arrow producer/consumer](https://docs.pola.rs/user-guide/misc/arrow/) and [Visualization](https://docs.pola.rs/user-guide/misc/visualization/), through `to_list` / `to_dict` / `to_numpy`

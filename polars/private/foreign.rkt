@@ -64,6 +64,10 @@
     ("the `schema_overrides` argument" . "#:schema-overrides")
     ("setting `ignore_errors` to `True`" . "setting #:ignore-errors to #t")
     ("to the `null_values` list" . "to #:null-values")
+    ("Try increasing `infer_schema_length` or specifying a schema."
+     . "Try increasing #:infer-schema-length or passing #:schema.")
+    ("consider increasing infer_schema_length, or manually specifying the full schema"
+     . "consider increasing #:infer-schema-length, or passing the full #:schema")
     ("Please use `ambiguous` to tell" . "Please use #:ambiguous to tell")
     ("use `non_existent='null'`" . "use dt-replace-time-zone's #:non-existent 'null")
     (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
