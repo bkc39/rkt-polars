@@ -58,8 +58,8 @@ that is desirable.
 
 A CSV file holds text, so a column read back from one is whatever the reader
 infers. Parquet records each column's dtype, so Categorical, Enum, Decimal
-and datetime columns, zoned or not, come back as they went out. @filepath{produce.parquet}
-has one of each of the first three:
+and datetime columns, zoned or not, come back as they went out.
+@filepath{produce.parquet} has one of each of the first three:
 
 @examples[#:eval ev #:label #f
 (define produce (read-parquet "produce.parquet"))
@@ -70,15 +70,15 @@ produce
 (read-parquet (build-path dir "produce.parquet"))
 ]
 
-And datetime columns, one naive and one in New York's zone
-(@secref["ts-time-zones"]). CSV reads both back as strings;
-@racket[#:try-parse-dates] parses the zoned one from its UTC offset into
-UTC. Parquet keeps each column's unit and zone:
+A naive and a zoned datetime column (@secref["ts-time-zones"]) lose their
+dtype through CSV and keep it through Parquet:
 
 @examples[#:eval ev #:label #f
 (define stamps
   (select flights "time_hour"
-          (~> (col "time_hour") (dt-replace-time-zone "America/New_York") (alias "local"))))
+          (~> (col "time_hour")
+              (dt-replace-time-zone "America/New_York")
+              (alias "local"))))
 (write-csv stamps (build-path dir "stamps.csv"))
 (read-csv (build-path dir "stamps.csv") #:n-rows 2)
 (read-csv (build-path dir "stamps.csv") #:n-rows 2 #:try-parse-dates #t)
