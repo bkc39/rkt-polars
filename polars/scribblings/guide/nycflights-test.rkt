@@ -45,7 +45,7 @@
 
   (define unparsed (message-of (lambda () (read-csv sample-tsv #:separator #\tab))))
   (check-regexp-match
-   #rx"^dataframe-read-csv: failed to read csv from [^:]*nycflights-sample.tsv: could not parse `NA` as dtype `i64` at column 'arr_delay'"
+   #rx"^read-csv: failed to read csv from [^:]*nycflights-sample.tsv: could not parse `NA` as dtype `i64` at column 'arr_delay'"
    unparsed)
   (check-true (string-contains? unparsed "`NA` to #:null-values"))
 
@@ -112,7 +112,7 @@
 
   ;; nycflights-separator
   (define guard (message-of (lambda () (read-csv sample-tsv))))
-  (check-regexp-match #rx"^dataframe-read-csv: [^:]*nycflights-sample.tsv reads as one column"
+  (check-regexp-match #rx"^read-csv: [^:]*nycflights-sample.tsv reads as one column"
                       guard)
   (check-regexp-match #rx"pass #:separator #\\\\tab" guard)
 

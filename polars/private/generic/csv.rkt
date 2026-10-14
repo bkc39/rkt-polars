@@ -411,9 +411,10 @@
   (write-csv brussels brussels-csv)
   (check-equal? (file->string brussels-csv)
                 "t\n2021-03-27T12:00:00.500000+0100\n\n2021-07-01T00:00:00.000000+0200\n")
-  (define offsets (scratch-file "offsets.csv" "t,u"
-                                "2021-03-27T00:00:00+01:00,2021-03-27 00:00"
-                                "2021-03-29T00:00:00+02:00,2021-03-29 00:00"))
+  (define offsets (scratch-file scratch "offsets.csv"
+                                (string-append "t,u\n"
+                                               "2021-03-27T00:00:00+01:00,2021-03-27 00:00\n"
+                                               "2021-03-29T00:00:00+02:00,2021-03-29 00:00\n")))
   (for ([read (list (lambda (p) (read-csv p #:try-parse-dates #t))
                     (lambda (p) (collect (scan-csv p #:try-parse-dates #t))))])
     (define parsed (read offsets))
