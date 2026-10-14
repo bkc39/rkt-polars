@@ -12,8 +12,8 @@
                   rename-contract)
          racket/match
          (only-in racket/dict in-dict)
-         (only-in racket/list check-duplicates)
-         (only-in racket/string string-replace)
+         (only-in racket/list check-duplicates remove-duplicates)
+         (only-in racket/string string-join string-replace)
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
@@ -25,7 +25,8 @@
   (require rackunit))
 
 (provide (except-out (all-defined-out)
-                     series-sort dataframe-sort series-ref-string strings->series)
+                     series-sort dataframe-sort series-ref-string strings->series
+                     enum-misses enum-misses-shown raise-enum-misses)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -1354,11 +1355,52 @@
   #:c-id series_cast_enum
   #:wrap (allocator series-drop))
 
+(define enum-misses-shown 10)
+
+(define (enum-misses s categories)
+  (define known (for/hash ([category (in-list categories)]) (values category #t)))
+  (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
+                 [present (series-drop-nulls strings) series-drop])
+    (define n (series-len present))
+    (define buf (make-bytes (series-str-byte-len present 0 n)))
+    (with-raw-buffer ([offsets (add1 n) _int64])
+      (series-copy-str present 0 n buf (bytes-length buf) offsets (add1 n) #f 0)
+      (values (for*/list ([i (in-range n)]
+                          [value (in-value (bytes->string/utf-8
+                                            buf #f
+                                            (ptr-ref offsets _int64 i)
+                                            (ptr-ref offsets _int64 (add1 i))))]
+                          #:unless (hash-ref known value #f))
+                value)
+              n))))
+
+(define (raise-enum-misses who dtype misses total)
+  (define distinct (remove-duplicates misses))
+  (define shown
+    (for/list ([value (in-list distinct)]
+               [_ (in-range enum-misses-shown)])
+      (format "~s" (string->symbol value))))
+  (error who "~a of ~a ~a ~a not in ~v: ~a"
+         (length misses) total (if (= total 1) "value" "values")
+         (if (= (length misses) 1) "is" "are") dtype
+         (string-join (if (> (length distinct) enum-misses-shown)
+                          (append shown '("..."))
+                          shown))))
+
 (define (series-cast-enum who s dtype)
   (check-enum-categories who dtype)
-  (call/foreign-error who
-                      (lambda () (series-cast-enum/raw s (map symbol->string (cdr dtype))))
-                      "cannot convert to ~v" dtype))
+  (define categories (map symbol->string (cdr dtype)))
+  (define coded (series-cast-enum/raw s categories))
+  (define-values (misses total)
+    (match (and (not coded) (series-dtype s))
+      [(or 'string 'categorical (cons 'enum _)) (enum-misses s categories)]
+      [_ (values '() 0)]))
+  (cond
+    [coded coded]
+    [(pair? misses) (raise-enum-misses who dtype misses total)]
+    [else (call/foreign-error who
+                              (lambda () (series-cast-enum/raw s categories))
+                              "cannot convert to ~v" dtype)]))
 
 (define-compat series-cast-datetime-tz/raw
   (_fun _Series-ptr _int32 _string/utf-8 -> _Series-ptr/null)
@@ -1532,7 +1574,7 @@
   (check-equal? (series-ref bears/enum 2) 'Brown)
   (check-equal? (series-dtype (series-cast (series-head bears 0) '(enum))) '(enum))
   (check-equal? (series-ref (series-cast bears/enum 'string) 0) "Polar")
-  (check-exn #rx"^series-cast: cannot convert to '\\(enum Polar Panda\\): .*\\[\"Brown\"\\]"
+  (check-exn #rx"^series-cast: 1 of 3 values is not in '\\(enum Polar Panda\\): Brown$"
              (lambda () (series-cast bears '(enum Polar Panda))))
   (check-exn #rx"unsupported cast target '\\(enum Polar Polar\\)"
              (lambda () (series-cast bears '(enum Polar Polar))))

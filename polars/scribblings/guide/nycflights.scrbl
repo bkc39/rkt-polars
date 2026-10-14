@@ -264,6 +264,11 @@ declares them, in order, as an Enum:
     (group-by "origin")
     (agg (alias (mean "dep_delay") "mean_delay"))
     (sort "origin"))
+]
+
+A value outside the Enum is an error:
+
+@examples[#:eval ev #:label #f
 (eval:error (cast (series '(EWR TEB)) nyc-airport))
 ]
 
@@ -276,7 +281,9 @@ categorical directly. API gap: not as an Enum (#133). See
 The post finds @tt{df-describe} “pretty useless” on @tt{carrier}, @tt{dest}
 and @tt{time_hour}, which @tt{data-frame} keeps as strings. @racket[describe] gives a
 string column its count, null count, minimum and maximum; parsed as a
-datetime, @tt{time_hour} also gets a mean and quartiles:
+datetime, @tt{time_hour} also gets a mean and quartiles. The summary's
+columns are strings, as in Python; @racket[describe] leaves the input's dtypes
+alone:
 
 @examples[#:eval ev #:label #f
 (~> flights

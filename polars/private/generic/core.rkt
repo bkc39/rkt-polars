@@ -227,7 +227,7 @@
   (define levels (series '("info" debug) #:dtype '(enum debug info)))
   (check-equal? (dtype levels) '(enum debug info))
   (check-equal? (ref levels 0) 'info)
-  (check-exn #rx"^series: cannot convert to '\\(enum debug info\\): .*\\[\"error\"\\]"
+  (check-exn #rx"^series: 1 of 2 values is not in '\\(enum debug info\\): error$"
              (lambda () (series '(info error) #:dtype '(enum debug info))))
   (check-exn #rx"unsupported dtype '\\(enum debug debug\\)"
              (lambda () (series '(debug) #:dtype '(enum debug debug))))
