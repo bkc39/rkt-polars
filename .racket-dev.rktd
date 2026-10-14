@@ -37,7 +37,8 @@
   (resyntax      "scripts/resyntax-lint.sh")
   (lint-test     "raco test lint")
   ;; The CI-equivalent: cargo tests, the Racket build with docs, rustfmt, the
-  ;; Racket version floor, and no-syntax-rule; not resyntax or lint-test.
+  ;; Racket version floor, no-syntax-rule, and the release rustc pin; not
+  ;; resyntax or lint-test.
   (check         "nix flake check")
   ;; The nycflights scoreboard and ratio table (#86).  Red only when the
   ;; harness itself breaks; a FAIL line or a slow ratio is the arc's to fix.
