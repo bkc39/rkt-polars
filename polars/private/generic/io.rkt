@@ -478,11 +478,6 @@
   (check-true (frame=? (read-parquet brussels-parquet) brussels))
   (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
                 '(datetime microseconds "Europe/Brussels"))
-  (define brussels-ndjson (build-path scratch "brussels.ndjson"))
-  (write-ndjson brussels brussels-ndjson)
-  (check-equal? (file->string brussels-ndjson)
-                (string-append "{\"t\":\"2021-03-27T12:00:00.500+01:00\"}\n{\"t\":null}\n"
-                               "{\"t\":\"2021-07-01T00:00:00+02:00\"}\n"))
   (define offsets (scratch-file "offsets.csv" "t,u"
                                 "2021-03-27T00:00:00+01:00,2021-03-27 00:00"
                                 "2021-03-29T00:00:00+02:00,2021-03-29 00:00"))

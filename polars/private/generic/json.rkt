@@ -27,7 +27,7 @@
            racket/runtime-path
            (only-in racket/list make-list)
            (only-in file/gzip gzip-through-ports)
-           (only-in gregor date)
+           (only-in gregor date moment)
            (prefix-in contracted: (submod ".."))
            (only-in threading ~>)
            (only-in polars/private/generic/core
@@ -436,5 +436,15 @@
   (check-exn #rx"#:compression-level needs #:compression 'gzip"
              (lambda () (contracted:write-ndjson guide-df guide-nd #:compression-level 3)))
   (check-exn (contract-violation-of 'read-ndjson) (lambda () (contracted:read-ndjson 'sym)))
+
+  (define brussels
+    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
+                             #:name "t"))))
+  (define brussels-ndjson (build-path scratch "brussels.ndjson"))
+  (write-ndjson brussels brussels-ndjson)
+  (check-equal? (file->string brussels-ndjson)
+                (string-append "{\"t\":\"2021-03-27T12:00:00.500+01:00\"}\n{\"t\":null}\n"
+                               "{\"t\":\"2021-07-01T00:00:00+02:00\"}\n"))
 
   (delete-directory/files scratch))
