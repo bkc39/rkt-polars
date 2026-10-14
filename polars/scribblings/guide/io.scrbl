@@ -183,6 +183,8 @@ format (@secref["ts-parsing-cast"]).
 
 @include-section["io-json.scrbl"]
 
+@include-section["io-parquet.scrbl"]
+
 @section[#:tag "io-multiple"]{Multiple files}
 
 Polars can deal with multiple files differently depending on your needs and

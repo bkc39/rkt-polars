@@ -722,10 +722,10 @@ fn a_glob_matching_nothing_says_so_at_collect() {
     lazyframe_drop(lf);
 
     let p = cstr(dir.path().join("*.parquet").to_str().unwrap());
-    assert!(dataframe_read_parquet(p.as_ptr()).is_null());
+    assert!(super::io::read_parquet(p.as_ptr()).is_null());
     let msg = recorded_error().expect("a reason");
     assert!(empty_expansion(&msg), "{:?}", msg);
-    let lf = lazyframe_scan_parquet_options(p.as_ptr(), 0, 0);
+    let lf = super::io::scan_parquet(p.as_ptr());
     assert!(!lf.is_null(), "{:?}", recorded_error());
     assert!(lazyframe_collect(lf).is_null());
     let msg = recorded_error().expect("a reason");
@@ -753,7 +753,7 @@ fn a_missing_file_keeps_the_os_reason_without_the_path() {
     assert!(!msg.contains("nope.csv"), "{:?}", msg);
 
     let p = cstr(dir.path().join("nope.parquet").to_str().unwrap());
-    assert!(dataframe_read_parquet(p.as_ptr()).is_null());
+    assert!(super::io::read_parquet(p.as_ptr()).is_null());
     let msg = recorded_error().expect("a reason");
     assert!(msg.starts_with("cannot open file: "), "{:?}", msg);
 }
@@ -814,12 +814,12 @@ fn parquet_reads_a_glob_in_sorted_order() {
         let xs = make_i64("x", &[value]);
         let df = make_df(&[xs]);
         let p = cstr(dir.path().join(name).to_str().unwrap());
-        assert_eq!(dataframe_write_parquet(df, p.as_ptr()), 0);
+        assert_eq!(super::io::write_parquet(df, p.as_ptr()), 0);
         dataframe_drop(df);
         series_drop(xs);
     }
     let pattern = cstr(dir.path().join("*.parquet").to_str().unwrap());
-    let out = dataframe_read_parquet(pattern.as_ptr());
+    let out = super::io::read_parquet(pattern.as_ptr());
     assert!(!out.is_null(), "{:?}", recorded_error());
     let df = unsafe { *Box::from_raw(out) };
     assert_eq!(read_i64(&df, "x"), [1, 2]);
@@ -842,7 +842,7 @@ fn parquet_single_file_read_matches_the_reader_it_replaced() {
         .finish()
         .unwrap();
     let p = cstr(path.to_str().unwrap());
-    let out = dataframe_read_parquet(p.as_ptr());
+    let out = super::io::read_parquet(p.as_ptr());
     assert!(!out.is_null(), "{:?}", recorded_error());
     let new = unsafe { *Box::from_raw(out) };
     assert_eq!(old.schema(), new.schema());
@@ -862,7 +862,7 @@ fn a_single_parquet_file_under_a_hive_directory_gains_no_columns() {
     ParquetWriter::new(file).finish(&mut df).unwrap();
 
     let p = cstr(path.to_str().unwrap());
-    let out = dataframe_read_parquet(p.as_ptr());
+    let out = super::io::read_parquet(p.as_ptr());
     assert!(!out.is_null(), "{:?}", recorded_error());
     let back = unsafe { *Box::from_raw(out) };
     assert_eq!(back.get_column_names(), ["x"]);

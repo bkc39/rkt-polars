@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use crate::prelude::*;
 use crate::{
-    clear_last_error, decode_path, decode_schema, guard_panic,
+    clear_last_error, decode_name, decode_path, decode_schema, guard_panic,
     infer_schema_length, missing_override, read_path, record, without_plan,
     CompatDType, CompatNdjsonOptions, PathRules,
 };
@@ -14,19 +14,6 @@ struct NdjsonArrays {
     override_dtypes: *const CompatDType,
     row_index_name: *const c_char,
     include_file_paths: *const c_char,
-}
-
-fn decode_name(
-    ptr: *const c_char,
-    what: &str,
-) -> PolarsResult<Option<PlSmallStr>> {
-    if ptr.is_null() {
-        return Ok(None);
-    }
-    let name = unsafe { CStr::from_ptr(ptr) }.to_str().map_err(
-        |err| polars_err!(ComputeError: "{} is not valid UTF-8: {}", what, err),
-    )?;
-    Ok(Some(name.into()))
 }
 
 fn row_index(

@@ -4,6 +4,8 @@
          (only-in polars/private/json
                   dataframe-read-json dataframe-write-json dataframe-read-json-lines
                   dataframe-write-json-lines lazyframe-scan-json-lines)
+         (only-in polars/private/parquet
+                  dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet)
          polars/private/expr
          polars/private/foreign
          polars/private/generic
@@ -26,6 +28,7 @@
 (provide dataframe-read-csv dataframe-write-csv lazyframe-scan-csv
          dataframe-read-json dataframe-write-json dataframe-read-json-lines
          dataframe-write-json-lines lazyframe-scan-json-lines
+         dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet
          (except-out (all-from-out polars/private/expr) expr-cast-to expr-meta-output-name/raw)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error check-enum-categories

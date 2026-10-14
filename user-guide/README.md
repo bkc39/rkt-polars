@@ -61,12 +61,14 @@ python user-guide/getting-started/expressions_and_contexts.py
 | Time zones | `time-zones.rkt` | `time_zones.py` |
 
 `io/` — upstream [CSV](https://docs.pola.rs/user-guide/io/csv/),
+[Parquet](https://docs.pola.rs/user-guide/io/parquet/),
 [JSON](https://docs.pola.rs/user-guide/io/json/) and
 [multiple files](https://docs.pola.rs/user-guide/io/multiple/)
 
 | Topic | Racket | Python |
 | --- | --- | --- |
 | CSV, with the reading options | `csv.rkt` | `csv.py` |
+| Parquet | `parquet.rkt` | `parquet.py` |
 | JSON and NDJSON, with the reading options | `json-files.rkt` | `json_files.py` |
 | Multiple files | `multiple.rkt` | `multiple.py` |
 

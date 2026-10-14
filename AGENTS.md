@@ -148,8 +148,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic`: the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
-  today the `dataframe_read_*` and `dataframe_write_*` IO entry points, the
-  `scan_*` family, `lazyframe_collect`,
+  today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
+  `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
   `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
@@ -160,15 +160,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_str_to_datetime_tz`) — or it attaches a stale reason from an unrelated
   call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, `ambiguous` → `#:ambiguous`, ...;
+  hints (`null_values` → `#:null-values`, `missing_columns='insert'` →
+  `#:missing-columns 'insert`, `ambiguous` → `#:ambiguous`, ...;
   `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
   'null`, since `str->datetime` and the other verbs that can raise it lack
   the keyword) and in the JSON readers' advice to increase
-  `infer_schema_length` or give a schema, and drops the hint to set
-  `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's name through
-  `named_time_zone`, which checks it with `TimeZone::validate_time_zone`
-  after `opt_try_new`, and only `opt_try_new` reads that variable, so setting
-  it changes nothing here.
+  `infer_schema_length` or give a schema. It drops the multi-file scan's
+  hint to pass `extra_columns` or a schema, which the bindings lack, and the
+  hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's
+  name through `named_time_zone`, which checks it with
+  `TimeZone::validate_time_zone` after `opt_try_new`, and only `opt_try_new`
+  reads that variable, so setting it changes nothing here.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
   unwinds out of an `extern "C"` function aborts the Racket process, and
   polars panics on some inputs where it could return an error (crate 0.41.3
@@ -178,7 +180,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `dataframe_sort_with_options`,
+  `lazyframe_collect`, `lazyframe_explain`, `dataframe_sort_with_options`,
   `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
   the three series time-zone entry points (`series_cast_datetime_tz`,
   `series_dt_convert_time_zone`, `series_dt_replace_time_zone`), the IO
@@ -297,7 +299,7 @@ it. Racket side: `define-compat` with `#:c-id`.
     one-column result (a row index aside) whose header splits on a tab, `;`
     or `|` (and whose first row agrees) raises.
   - The eager readers glob like the scans, CSV, Parquet and NDJSON (#44);
-    `#:glob #f` takes a CSV path literally, and Parquet and NDJSON have no
+    `#:glob #f` takes a CSV or Parquet path literally, and NDJSON has no
     opt-out (#36). An eager CSV read of a directory is an error, as in
     Python; a scan reads every file in it.
 - `write-csv` is the eager `CsvWriter`; Python 1.42.1's `write_csv` runs
@@ -389,6 +391,32 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Parquet reads add hive (`key=value`) columns only for a directory path,
   never for a single file or a glob, matching Python (`HiveOptions {
   enabled: None }`, which 0.55 resolves at collect).
+- `read-parquet` is `scan-parquet` with the same keywords, collected, as
+  Python's `read_parquet` is; its `#:columns` selects after the scan, so a
+  position counts the row index column. The names and positions are checked
+  against the scan's schema first, so a missing name, a position out of
+  range or a column picked twice reports one line (Python's `select` reports
+  the plan as well), and a name is a name, never Python's regex or `*`.
+  `write-parquet` runs the eager `ParquetWriter`, where Python's goes
+  through the streaming sink: given `#:row-group-size`, it writes groups of
+  exactly that many rows, as the sink does (the eager writer alone splits
+  the frame into equal parts); by default its groups are about 512² rows,
+  the sink's about 122,880. The frames read back are the same. As in
+  Python, `#:row-group-size 0` is the default and a codec without levels
+  ignores `#:compression-level`. Stricter than Python, a non-empty
+  `#:statistics` list must name `'min`, `'max` and `'null-count`: without
+  min and max polars writes a page index that marks pages holding values as
+  null pages (#203), and without the null count it fails at the footer on a
+  column it does not dictionary-encode. A name passed as a C string
+  (`#:columns`, `#:row-index-name`, `#:include-file-paths`) refuses a NUL in
+  the contract, which would otherwise truncate it (#165).
+- The Parquet verbs report under the verb's own name (`read-parquet:`),
+  the low-level bindings under theirs (#153). The C surface is the three
+  `_with_options` entries; Rust tests reach them through the default-option
+  helpers in `tests/dataframe/io.rs`.
+- The Parquet reader and scan number the row index from 0 and add
+  `#:row-index-offset` afterwards, checked, as the CSV readers do; polars'
+  streaming row-index node would panic past `u32::MAX`.
 - The separator guard is stricter than Python, whose `read_csv` returns the
   one column; the #86 scoreboard (check C1) requires the error.
 - A duration schema override is a contract error: polars cannot parse a

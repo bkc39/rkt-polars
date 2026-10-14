@@ -5,14 +5,17 @@
          (prefix-in base: racket/base)
          (except-in racket/list drop)
          (only-in racket/list [drop list-drop])
+         (only-in racket/contract/base contract-out)
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
          (only-in polars/private/generic/dtype dtype-spec?))
 
-(provide (except-out (all-defined-out) cast)
+(provide (except-out (all-defined-out) cast explain)
          (contract-out
-          [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]))
+          [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
+          [explain (explain/c lazyframe?)]))
 
 (define cast-target/c (or/c dtype-spec? 'binary 'null 'duration))
 
@@ -198,6 +201,8 @@
   (unless (lazyframe? lf)
     (error 'collect "expected a lazyframe, got ~v" lf))
   (wrap-dataframe (lazyframe-collect lf)))
+
+(define explain (lazyframe-explainer 'explain))
 
 ;; --- clone / rename ---------------------------------------------------------
 ;; series-slice already returns a fresh series, so a full-length slice clones.
@@ -477,3 +482,30 @@
   (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
   ;; lazy join (both sides lazy)
   (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3))
+
+(module+ test
+  (require racket/runtime-path
+           (only-in racket/contract exn:fail:contract:blame?)
+           (only-in racket/string string-contains?)
+           (only-in polars/private/csv lazyframe-scan-csv)
+           (prefix-in contracted: (submod "..")))
+  (define-runtime-path iris-csv "../../scribblings/guide/iris.csv")
+  (define iris-plan
+    (~> (wrap-lazyframe (lazyframe-scan-csv iris-csv))
+        (filter (> (col "sepal_length") 5))
+        (group-by "species")
+        (agg (mean "sepal_width"))))
+  (define iris-explained (contracted:explain iris-plan))
+  (check-true (string-contains? iris-explained "AGGREGATE"))
+  (check-true (string-contains? iris-explained "Csv SCAN ["))
+  (check-true (string-contains? iris-explained "SELECTION: col(\"sepal_length\") > 5.0"))
+  (check-false (string-contains? (contracted:explain iris-plan #:optimized #f) "SELECTION"))
+  (check-not-equal? (contracted:explain iris-plan #:format 'tree) iris-explained)
+  (check-equal? (object-name contracted:explain) 'explain)
+  (check-exn exn:fail:contract:blame? (lambda () (contracted:explain ops-df)))
+  (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:format 'dot)))
+  (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:optimized 1)))
+  (check-regexp-match
+   #rx"^explain: failed to explain the query: [^\n]*\"nope\""
+   (with-handlers ([exn:fail? exn-message])
+     (contracted:explain (select (lazy ops-df) "nope")))))

@@ -1,4 +1,4 @@
-use super::io::write_csv;
+use super::io::{write_csv, write_parquet};
 use super::test_util::*;
 use super::*;
 use std::path::Path;
@@ -11,7 +11,7 @@ extern "C" fn write_ndjson(df: *mut DataFrame, path: *const c_char) -> i32 {
 
 const WRITERS: [(&str, Writer); 4] = [
     ("csv", write_csv),
-    ("parquet", dataframe_write_parquet),
+    ("parquet", write_parquet),
     ("json", dataframe_write_json),
     ("ndjson", write_ndjson),
 ];
@@ -33,7 +33,7 @@ fn read_csv(path: &str) -> *mut DataFrame {
 
 fn read_parquet(path: &str) -> *mut DataFrame {
     let p = cstr(path);
-    dataframe_read_parquet(p.as_ptr())
+    super::io::read_parquet(p.as_ptr())
 }
 
 fn read_ndjson(path: &str) -> *mut DataFrame {
@@ -190,10 +190,11 @@ fn a_new_file_gets_default_permissions() {
 #[test]
 fn a_fifo_is_written_in_place() {
     use std::os::unix::fs::FileTypeExt;
-    let cases: [(&str, Writer, &str); 3] = [
-        ("csv", write_csv, "x\n1\n2\n"),
-        ("json", dataframe_write_json, r#"[{"x":1},{"x":2}]"#),
-        ("ndjson", write_ndjson, "{\"x\":1}\n{\"x\":2}\n"),
+    let cases: [(&str, Writer, Option<&str>); 4] = [
+        ("csv", write_csv, Some("x\n1\n2\n")),
+        ("parquet", write_parquet, None),
+        ("json", dataframe_write_json, Some(r#"[{"x":1},{"x":2}]"#)),
+        ("ndjson", write_ndjson, Some("{\"x\":1}\n{\"x\":2}\n")),
     ];
     for (ext, writer, expected) in cases {
         let dir = scratch_dir();
@@ -204,10 +205,17 @@ fn a_fifo_is_written_in_place() {
         }
         let reader = {
             let fifo = fifo.clone();
-            std::thread::spawn(move || std::fs::read_to_string(fifo).unwrap())
+            std::thread::spawn(move || std::fs::read(fifo).unwrap())
         };
         assert_eq!(write_to(writer, &fifo), 0, "{ext}");
-        assert_eq!(reader.join().unwrap(), expected);
+        let bytes = reader.join().unwrap();
+        match expected {
+            Some(text) => assert_eq!(bytes, text.as_bytes()),
+            None => assert!(
+                bytes.starts_with(b"PAR1") && bytes.ends_with(b"PAR1"),
+                "{ext}"
+            ),
+        }
         assert!(std::fs::symlink_metadata(&fifo)
             .unwrap()
             .file_type()
@@ -241,10 +249,7 @@ fn a_leftover_staging_file_is_not_read() {
     let dir = scratch_dir();
     let at = |name: &str| dir.path().join(name).to_str().unwrap().to_string();
     assert_eq!(write_to(write_csv, Path::new(&at("a.csv"))), 0);
-    assert_eq!(
-        write_to(dataframe_write_parquet, Path::new(&at("a.parquet"))),
-        0
-    );
+    assert_eq!(write_to(write_parquet, Path::new(&at("a.parquet"))), 0);
     std::fs::write(at(".rkt-polars-1-0.partial"), "x\n99\n99\n99\n").unwrap();
     assert_eq!(height_of(read_csv(&at("*.csv"))), 2);
     assert_eq!(height_of(read_parquet(&at("*.parquet"))), 2);

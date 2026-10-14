@@ -20,6 +20,7 @@ mod io;
 mod join;
 mod json;
 mod ndjson;
+mod parquet;
 mod reshape;
 mod smoke;
 mod stack;

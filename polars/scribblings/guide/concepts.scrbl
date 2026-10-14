@@ -235,6 +235,13 @@ path to a small CSV.
 (collect q)
 ]
 
-API gaps: no @tt{explain}; no schema-only @tt{LazyFrame}.
+@racket[explain] previews the plan @racket[collect] would run, after
+optimisation: the filter has moved into the CSV scan.
+
+@examples[#:eval ev #:label #f
+(displayln (explain q))
+]
+
+API gap: no schema-only @tt{LazyFrame}.
 
 @(close-eval ev)

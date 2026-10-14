@@ -12,6 +12,7 @@ const IO_NULL_ARG: i32 = 1;
 const IO_BAD_PATH: i32 = 2;
 const IO_OPEN_FAILED: i32 = 3;
 const IO_WRITE_FAILED: i32 = 4;
+pub(crate) const IO_BAD_OPTIONS: i32 = 5;
 
 fn cannot_create(err: std::io::Error) -> String {
     format!("cannot create file: {}", err)
@@ -353,30 +354,6 @@ pub extern "C" fn dataframe_write_csv_with_options(
     write_frame(df_ptr, path, |file, df| {
         csv_writer(file, &options, &strings, df.height())?.finish(df)
     })
-}
-
-#[no_mangle]
-pub extern "C" fn dataframe_write_parquet(
-    df_ptr: *mut DataFrame,
-    path: *const c_char,
-) -> i32 {
-    write_frame(df_ptr, path, |file, df| {
-        ParquetWriter::new(file).finish(df).map(|_| ())
-    })
-}
-
-#[no_mangle]
-pub extern "C" fn dataframe_read_parquet(
-    path: *const c_char,
-) -> *mut DataFrame {
-    collect_frame(
-        path,
-        PathRules {
-            glob: true,
-            directory: true,
-        },
-        |path| parquet_scan(path, None),
-    )
 }
 
 #[no_mangle]
