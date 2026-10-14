@@ -865,7 +865,8 @@ stations
   each column contiguous; none of the four changes the result.
 
   Categorical, Enum and Decimal columns keep their dtypes
-  (@secref["ref-categorical"]). A file Polars cannot read raises
+  (@secref["ref-categorical"]), and a datetime column its unit and time
+  zone. A file Polars cannot read raises
   @racket[exn:fail] with Polars' reason, even where Polars itself panics.
   API gaps: no @tt{schema}, @tt{extra_columns}, @tt{use_pyarrow} or hive
   options.

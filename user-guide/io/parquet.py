@@ -38,11 +38,16 @@ print(pl.read_csv(tmp / "produce.csv"))
 produce.write_parquet(tmp / "produce.parquet")
 print(pl.read_parquet(tmp / "produce.parquet"))
 
-stamps = flights.select("time_hour")
+stamps = flights.select(
+    "time_hour",
+    pl.col("time_hour").dt.replace_time_zone("America/New_York").alias("local"),
+)
 stamps.write_csv(tmp / "stamps.csv")
-print(pl.read_csv(tmp / "stamps.csv")["time_hour"].dtype)
+print(pl.read_csv(tmp / "stamps.csv", n_rows=2))
+print(pl.read_csv(tmp / "stamps.csv", n_rows=2, try_parse_dates=True))
 stamps.write_parquet(tmp / "stamps.parquet")
-print(pl.read_parquet(tmp / "stamps.parquet")["time_hour"].dtype)
+print(pl.read_parquet(tmp / "stamps.parquet", n_rows=2))
+print(pl.read_parquet(tmp / "stamps.parquet")["local"].dtype)
 
 # --- projection and predicate pushdown ---------------------------------------
 late = (
