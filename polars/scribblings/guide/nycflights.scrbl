@@ -31,7 +31,7 @@ The post's file is the @tt{flights} table of the R package
 (Hadley Wickham, released under CC0; the data come from the US Bureau of
 Transportation Statistics), as the TSV at
 @tt{https://www.travishinkelman.com/data/nycflights.tsv}: 336,776 rows ×
-19 columns, @litchar{NA} for a missing value. The examples here run while the
+19 columns. The examples here run while the
 manual builds, with no network, so they read @filepath{nycflights-sample.tsv},
 which ships with the package: the header and the 5,434 flights on the first
 day of January, March, May, July, September and November, their lines
@@ -87,6 +87,11 @@ copy:
 
 API gap: @racket[read-csv] reads a local file, not a URL as the post's first
 reader does and Python's @tt{read_csv} can (#159); fetch the file first.
+
+The sample's first lines and its last:
+
+@shell-head["nycflights-sample.tsv" 3 #:directory data-dir]
+@shell-tail["nycflights-sample.tsv" 1 #:directory data-dir]
 
 @racket[read-csv] reads the TSV as it is: @racket[#:separator] names the
 tab, and @racket[#:null-values] the @litchar{NA} marker, which becomes a null

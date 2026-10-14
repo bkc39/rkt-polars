@@ -8,7 +8,7 @@
 ;;   #lang scribble/manual
 ;;   @(require "../utils.rkt")
 ;;
-;; Three jobs:
+;; Four jobs:
 ;;
 ;;  * Re-export `scribble/manual` and `scribble/example` so chapters do not
 ;;    repeat them.
@@ -18,6 +18,9 @@
 ;;    the arithmetic and comparison operators, ...), so the shadowing dance is
 ;;    written once here rather than copied into each .scrbl file; without it
 ;;    `@racket[...]` does not hyperlink to the right binding.
+;;
+;;  * Show a data file's first or last lines as `head` or `tail` prints them,
+;;    read at documentation-build time like the examples.
 ;;
 ;;  * Build the example evaluator.  Examples run against the real bindings at
 ;;    documentation-build time, so a printed frame cannot drift from what the
@@ -30,6 +33,10 @@
          scribble/core
          scribble/decode
          racket/sandbox
+         (only-in racket/contract/base ->* contract-out)
+         (only-in racket/file file->lines)
+         (only-in racket/list take-right)
+         scribble/html-properties
          syntax/parse/define
          (for-syntax racket/base))
 
@@ -50,7 +57,12 @@
                                   racket/base))
          make-polars-eval
          see-reference
-         exnraise)
+         exnraise
+         (contract-out
+          [shell-head (->* (relative-path? #:directory path-string?) (exact-nonnegative-integer?)
+                           block?)]
+          [shell-tail (->* (relative-path? #:directory path-string?) (exact-nonnegative-integer?)
+                           block?)]))
 
 (define (make-polars-eval #:directory [directory (current-directory)])
   (parameterize ([current-directory directory]
@@ -78,3 +90,36 @@
          (decode-content (append (list "See " (secref tag) " for ")
                                  what
                                  (list ".")))))
+
+;; Invalid UTF-8 reads as U+FFFD, as a UTF-8 terminal shows it; tabs stay
+;; tabs, and the block keeps them with `white-space: pre`.
+(define (shell-head file [n 5] #:directory directory)
+  (terminal (format "head -n ~a ~a" n file)
+            (call-with-input-file (build-path directory file)
+              (lambda (in)
+                (for/list ([line (in-lines in 'linefeed)]
+                           [_ (in-range n)])
+                  line)))))
+
+(define (shell-tail file [n 5] #:directory directory)
+  (define lines (file->lines (build-path directory file) #:line-mode 'linefeed))
+  (terminal (format "tail -n ~a ~a" n file)
+            (take-right lines (min n (length lines)))))
+
+(define terminal-style
+  (make-style 'code-inset (list (attributes '((style . "overflow-x: auto"))))))
+(define terminal-lines-style
+  (make-style "SVerbatim" (list (attributes '((style . "white-space: pre"))))))
+
+(define (terminal command lines)
+  (make-nested-flow
+   terminal-style
+   (list (make-table terminal-lines-style
+                     (for/list ([line (cons (string-append "$ " command) lines)])
+                       (list (make-paragraph (make-style 'omitable null)
+                                             (list (make-element 'tt (list (nonempty line)))))))))))
+
+(define (nonempty line)
+  (cond
+    [(string=? line "") " "]
+    [else line]))
