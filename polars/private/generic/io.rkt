@@ -217,10 +217,11 @@
                 '(datetime microseconds #f))
   (define apple (read-csv (build-path data-dir "apple_stock.csv") #:try-parse-dates #t))
   (check-equal? (shape apple) '(100 2))
-  (check-equal? (dtypes-of apple) '(date float64))
+  (check-equal? (map second (dtypes-of apple)) '(date float64))
   (check-equal? (ref (ref apple #:columns "Date") 0) (date 1981 2 23))
   (check-equal? (ref (ref apple #:columns "Close") 99) 522.06)
-  (check-equal? (dtypes-of (read-csv (build-path data-dir "apple_stock.csv"))) '(string float64))
+  (check-equal? (map second (dtypes-of (read-csv (build-path data-dir "apple_stock.csv"))))
+                '(string float64))
 
   (define quoted (scratch-file "quoted.csv" "a,b" "\"1,5\",x" "\"2\",y"))
   (check-equal? (column (read-csv quoted) "a") '("1,5" "2"))
