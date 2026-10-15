@@ -95,10 +95,10 @@
   (require rackunit
            (only-in polars/private/expr-core
                     Expr-ptr? LazyFrame-ptr? col expr-drop expr-drop-count lazyframe-drop)
-           (only-in polars/private/expr expr-alias lazyframe-collect)
+           (only-in polars/private/expr dataframe-lazy expr-alias lazyframe-collect)
            (only-in polars/private/foreign
-                    DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-new
-                    series-drop series-drop-count series-len series-new-i64)
+                    DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-height
+                    dataframe-new series-drop series-drop-count series-len series-new-i64)
            (only-in polars/private/test-helpers contract-violation-of drops-once))
 
   (define-check (check-dropped thunk who noun)
@@ -148,6 +148,14 @@
   (define raw-series (series-new-i64 "raw" '(1)))
   (series-drop raw-series)
   (check-dropped (lambda () (series-len raw-series)) 'series 'series)
+
+  (define raw-frame (dataframe-new (list (series-new-i64 "v" '(1)))))
+  (dataframe-drop raw-frame)
+  (check-dropped (lambda () (dataframe-height raw-frame)) 'dataframe 'dataframe)
+
+  (define raw-query (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1))))))
+  (lazyframe-drop raw-query)
+  (check-dropped (lambda () (lazyframe-collect raw-query)) 'lazyframe 'lazyframe)
 
   (define inner-series (series '(4 5)))
   (series-drop (wrap-series inner-series))

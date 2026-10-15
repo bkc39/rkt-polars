@@ -128,8 +128,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   non-null `_X-ptr` type itself raises a useless `argument is not non-null`
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
-  `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
-  (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
+  `deallocator`-wrapped `<type>-drop/raw`, which `<type>-drop` wraps,
+  refusing a dropped value, so an explicit drop frees twice (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
   <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
   `who: operation failed` itself, so no wrapper is needed. A test in
   `foreign.rkt` reads every `define-compat` under `polars/private` and fails
