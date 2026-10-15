@@ -40,11 +40,15 @@
 (write-parquet produce (scratch "produce.parquet"))
 (displayln (read-parquet (scratch "produce.parquet")))
 
-(define stamps (select flights "time_hour"))
+(define stamps
+  (select flights "time_hour"
+          (~> (col "time_hour") (dt-replace-time-zone "America/New_York") (alias "local"))))
 (write-csv stamps (scratch "stamps.csv"))
-(displayln (dtype (ref (read-csv (scratch "stamps.csv")) "time_hour")))
+(displayln (read-csv (scratch "stamps.csv") #:n-rows 2))
+(displayln (read-csv (scratch "stamps.csv") #:n-rows 2 #:try-parse-dates #t))
 (write-parquet stamps (scratch "stamps.parquet"))
-(displayln (dtype (ref (read-parquet (scratch "stamps.parquet")) "time_hour")))
+(displayln (read-parquet (scratch "stamps.parquet") #:n-rows 2))
+(displayln (dtype (ref (read-parquet (scratch "stamps.parquet")) "local")))
 
 ;; --- projection and predicate pushdown ---------------------------------------
 (define late

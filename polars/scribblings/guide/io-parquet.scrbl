@@ -58,8 +58,8 @@ that is desirable.
 
 A CSV file holds text, so a column read back from one is whatever the reader
 infers. Parquet records each column's dtype, so Categorical, Enum, Decimal
-and datetime columns come back as they went out. @filepath{produce.parquet}
-has one of each of the first three:
+and datetime columns, zoned or not, come back as they went out.
+@filepath{produce.parquet} has one of each of the first three:
 
 @examples[#:eval ev #:label #f
 (define produce (read-parquet "produce.parquet"))
@@ -70,14 +70,21 @@ produce
 (read-parquet (build-path dir "produce.parquet"))
 ]
 
-And a datetime column:
+A naive and a zoned datetime column (@secref["ts-time-zones"]) lose their
+dtype through CSV and keep it through Parquet:
 
 @examples[#:eval ev #:label #f
-(define stamps (select flights "time_hour"))
+(define stamps
+  (select flights "time_hour"
+          (~> (col "time_hour")
+              (dt-replace-time-zone "America/New_York")
+              (alias "local"))))
 (write-csv stamps (build-path dir "stamps.csv"))
-(dtype (ref (read-csv (build-path dir "stamps.csv")) "time_hour"))
+(read-csv (build-path dir "stamps.csv") #:n-rows 2)
+(read-csv (build-path dir "stamps.csv") #:n-rows 2 #:try-parse-dates #t)
 (write-parquet stamps (build-path dir "stamps.parquet"))
-(dtype (ref (read-parquet (build-path dir "stamps.parquet")) "time_hour"))
+(read-parquet (build-path dir "stamps.parquet") #:n-rows 2)
+(dtype (ref (read-parquet (build-path dir "stamps.parquet")) "local"))
 ]
 
 @section[#:tag "io-parquet-pushdown"]{Projection and predicate pushdown}
