@@ -29,7 +29,8 @@
          dataframe-read-json dataframe-write-json dataframe-read-json-lines
          dataframe-write-json-lines lazyframe-scan-json-lines
          dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet
-         (except-out (all-from-out polars/private/expr) expr-cast-to expr-meta-output-name/raw)
+         (except-out (all-from-out polars/private/expr)
+                     expr-cast-to expr-meta-output-name/raw expr-name-keep)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error check-enum-categories
                      dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
