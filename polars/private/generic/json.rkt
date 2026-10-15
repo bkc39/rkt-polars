@@ -165,6 +165,9 @@
                         "a")
                 (list polars-null -1))
 
+  (check-equal? (dtypes-of (read-json (scratch-file scratch "nulls.json" "[{\"a\":1,\"b\":null}]")
+                                     #:schema '(("a" . i64) ("b" . null))))
+                '(("a" int64) ("b" null)))
   (check-equal? (shape (read-json (scratch-file scratch "empty.json" "[]"))) '(0 0))
   (check-equal? (dtypes-of (read-json (build-path scratch "empty.json") #:schema '(("a" . i64))))
                 '(("a" int64)))
@@ -395,6 +398,7 @@
   (define nd-bad
     `((#:schema . (("a" . i8))) (#:schema . (("a" . time))) (#:schema . (("a" . (enum x))))
       (#:schema-overrides . (("a" . (duration microseconds)))) (#:schema-overrides . (("a" . u16)))
+      (#:schema . (("a" . null)))
       (#:infer-schema-length . 0) (#:batch-size . 0) (#:n-rows . -1) (#:n-rows . 1.5)
       (#:low-memory . 1) (#:rechunk . "yes") (#:ignore-errors . 1)
       (#:row-index-name . row) (#:row-index-offset . -1) (#:row-index-offset . 4294967296)

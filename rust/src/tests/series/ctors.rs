@@ -137,3 +137,79 @@ fn ctor_ymdhms_happy_path() {
     assert_dtype(s, CompatDTypeTag::Datetime, CompatTimeUnit::Milliseconds);
     series_drop(s);
 }
+
+macro_rules! ctor_empty {
+    ($name:ident, $ctor:ident, $tag:ident) => {
+        #[test]
+        fn $name() {
+            let n = cstr("xs");
+            let s = $ctor(n.as_ptr(), ptr::null(), 0);
+            assert!(!s.is_null());
+            assert_eq!(series_len(s), 0);
+            assert_eq!(unsafe { &*s }.name().as_str(), "xs");
+            assert_dtype(s, CompatDTypeTag::$tag, CompatTimeUnit::None);
+            series_drop(s);
+        }
+    };
+}
+
+ctor_empty!(ctor_i8_empty_ok, series_new_i8, Int8);
+ctor_empty!(ctor_i16_empty_ok, series_new_i16, Int16);
+ctor_empty!(ctor_i32_empty_ok, series_new_i32, Int32);
+ctor_empty!(ctor_i64_empty_ok, series_new_i64, Int64);
+ctor_empty!(ctor_u8_empty_ok, series_new_u8, UInt8);
+ctor_empty!(ctor_u16_empty_ok, series_new_u16, UInt16);
+ctor_empty!(ctor_u32_empty_ok, series_new_u32, UInt32);
+ctor_empty!(ctor_u64_empty_ok, series_new_u64, UInt64);
+ctor_empty!(ctor_f32_empty_ok, series_new_f32, Float32);
+ctor_empty!(ctor_f64_empty_ok, series_new_f64, Float64);
+
+#[test]
+fn ctor_empty_null_name_returns_null() {
+    assert!(series_new_f64(ptr::null(), ptr::null(), 0).is_null());
+}
+
+#[test]
+fn ctor_ymdhms_empty_ok() {
+    let n = cstr("ts");
+    for s in [
+        series_new_ymdhms(n.as_ptr(), ptr::null(), 0),
+        series_new_opt_ymdhms(n.as_ptr(), ptr::null(), ptr::null(), 0),
+    ] {
+        assert!(!s.is_null());
+        assert_eq!(series_len(s), 0);
+        assert_dtype(s, CompatDTypeTag::Datetime, CompatTimeUnit::Milliseconds);
+        series_drop(s);
+    }
+    assert!(series_new_ymdhms(n.as_ptr(), ptr::null(), 1).is_null());
+}
+
+#[test]
+fn ctor_null_builds_nulls() {
+    let n = cstr("nothing");
+    for length in [0, 3] {
+        let s = series_new_null(n.as_ptr(), length);
+        assert!(!s.is_null());
+        assert_eq!(series_len(s), length);
+        assert_eq!(series_null_count(s), length);
+        assert_eq!(unsafe { &*s }.name().as_str(), "nothing");
+        assert_dtype(s, CompatDTypeTag::Null, CompatTimeUnit::None);
+        series_drop(s);
+    }
+    assert!(series_new_null(ptr::null(), 0).is_null());
+}
+
+#[test]
+fn ctor_bool_empty_and_null_data() {
+    let n = cstr("b");
+    let s = series_new_bool(n.as_ptr(), ptr::null(), 0);
+    assert_eq!(series_len(s), 0);
+    assert_dtype(s, CompatDTypeTag::Boolean, CompatTimeUnit::None);
+    series_drop(s);
+    assert!(series_new_bool(n.as_ptr(), ptr::null(), 2).is_null());
+    assert!(series_new_i64(n.as_ptr(), ptr::null(), 2).is_null());
+    assert!(
+        series_new_opt_ymdhms(n.as_ptr(), ptr::null(), ptr::null(), 1)
+            .is_null()
+    );
+}

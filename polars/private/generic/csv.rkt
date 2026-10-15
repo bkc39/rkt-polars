@@ -63,6 +63,7 @@
       (#:null-values . ,(hash "a" "NA"))
       (#:schema-overrides . ((a . int32))) (#:schema-overrides . (("a" . bogus)))
       (#:schema-overrides . (("a" . (duration microseconds))))
+      (#:schema-overrides . (("a" . null)))
       (#:schema-overrides . (("a" . (enum x y))))
       (#:schema-overrides . (("a" . (datetime microseconds "UTC"))))
       (#:schema-overrides . (("a" . int32) ("a" . f64)))
