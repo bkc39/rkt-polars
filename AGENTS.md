@@ -138,7 +138,13 @@ it. Racket side: `define-compat` with `#:c-id`.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
-  around an allocated pointer needs the property too.
+  around an allocated pointer needs the property too. The release retags the
+  pointer, which the raw value and every wrapper of it share, and the pointer
+  types (`define-owned-cpointer-type`) refuse a retagged one on their failure
+  path, so the live path costs nothing: a later use raises `series: series
+  has been dropped` (its kind as the `who`, since no verb is known there), a
+  second drop raises under the drop's own name, and the native release still
+  runs once (#131).
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail

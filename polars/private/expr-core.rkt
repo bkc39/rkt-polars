@@ -14,8 +14,9 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories enum-dtype? owned-pointer-arg sort-flags-mismatch
-                  sort-flags/c time-unit-symbol->code zoned-datetime-dtype?)
+                  check-enum-categories define-owned-cpointer-type enum-dtype? lazyframe-dropped
+                  release-owned sort-flags-mismatch sort-flags/c time-unit-symbol->code
+                  zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
@@ -53,7 +54,7 @@
 (define (wrap-expr p) (and p (expr p)))
 
 (define-cpointer-type _Expr-ptr _pointer #f wrap-expr)
-(define-cpointer-type _LazyFrame-ptr)
+(define-owned-cpointer-type _LazyFrame-ptr 'lazyframe lazyframe-dropped)
 
 (define-compat expr-drop/raw
   (_fun _Expr-ptr -> _void)
@@ -67,9 +68,13 @@
 (define-compat expr-drop-count
   (_fun -> _size))
 
-(define-compat lazyframe-drop
+(define-compat lazyframe-drop/raw
   (_fun _LazyFrame-ptr -> _void)
-  #:wrap (deallocator owned-pointer-arg))
+  #:c-id lazyframe_drop
+  #:wrap (deallocator))
+
+(define (lazyframe-drop lf)
+  (release-owned 'lazyframe-drop 'lazyframe lazyframe-dropped lazyframe-drop/raw lf))
 
 (define-compat expr->string
   (_fun _Expr-ptr -> _rsstring)

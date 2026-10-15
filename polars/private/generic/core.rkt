@@ -47,7 +47,7 @@
   #:property prop:owned-pointer 0
   #:property prop:custom-write
   (lambda (s port mode)
-    (write-string (series->string s) port))
+    (write-string (if (dropped? s series-dropped) "#<series: dropped>" (series->string s)) port))
   #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
@@ -73,7 +73,8 @@
   #:property prop:owned-pointer 0
   #:property prop:custom-write
   (lambda (d port mode)
-    (write-string (dataframe->string d) port))
+    (write-string (if (dropped? d dataframe-dropped) "#<dataframe: dropped>" (dataframe->string d))
+                  port))
   #:methods gen:has-ref
   [(define (ref d [key unset] #:columns [columns unset] #:rows [rows unset])
      (dataframe-ref* d key columns rows))]
@@ -105,7 +106,8 @@
   #:property prop:cpointer 0
   #:property prop:owned-pointer 0
   #:property prop:custom-write
-  (lambda (lf port mode) (write-string "#<lazyframe>" port)))
+  (lambda (lf port mode)
+    (write-string (if (dropped? lf lazyframe-dropped) "#<lazyframe: dropped>" "#<lazyframe>") port)))
 
 (define (lazyframe? v) (lazyframe-rec? v))
 (define (wrap-lazyframe ptr) (lazyframe-rec ptr))
@@ -303,6 +305,26 @@
   (check-pred void? (begin (lazyframe-drop (wrap-lazyframe (dataframe-lazy frame)))
                            (settle!)))
 
+  (define (drop-twice drop)
+    (lambda (v)
+      (drop v)
+      (check-exn exn:fail:contract? (lambda () (drop v)))))
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop)
+                            (lambda () (series '(1 2))))
+                1)
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop)
+                            (lambda () (series-new-i64 "raw" '(1 2))))
+                1)
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop)
+                            (lambda () (wrap-series (wrap-series (series-new-i64 "x" '(1))))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count (drop-twice dataframe-drop)
+                            (lambda () (dataframe (list (series '(1 2) #:name "a")))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count (drop-twice dataframe-drop)
+                            (lambda () (dataframe-new (list (series '(1 2) #:name "a")))))
+                1)
+
   (define (drops-while-raising thunk)
     (settle!)
     (define before (series-drop-count))
@@ -314,6 +336,78 @@
                    (drops-while-raising
                     (lambda () (series-cast held '(enum debug info)))))
                 1))
+
+(module+ test
+  (require (only-in polars/private/expr lazyframe-collect)
+           (only-in polars/private/test-helpers message-of))
+  (define dropped-series (series '(1 2 3) #:name "s"))
+  (series-drop dropped-series)
+  (check-equal? (format "~a" dropped-series) "#<series: dropped>")
+  (check-equal? (message-of (lambda () (len dropped-series))) "series: series has been dropped")
+  (check-equal? (message-of (lambda () (series-len dropped-series)))
+                "series: series has been dropped")
+  (check-equal? (message-of (lambda () (dataframe (list dropped-series))))
+                "series: series has been dropped")
+  (check-equal? (message-of (lambda () (series-drop dropped-series)))
+                "series-drop: series has been dropped")
+  (check-exn exn:fail:contract? (lambda () (ref dropped-series 0)))
+  (check-true (series? dropped-series))
+  (check-false (Series-ptr? dropped-series))
+
+  (define inner-series (series '(4 5)))
+  (define outer-series (wrap-series inner-series))
+  (series-drop outer-series)
+  (check-equal? (message-of (lambda () (len inner-series))) "series: series has been dropped")
+  (check-equal? (message-of (lambda () (series-drop inner-series)))
+                "series-drop: series has been dropped")
+
+  (define raw-series (series-new-i64 "raw" '(1)))
+  (series-drop raw-series)
+  (check-equal? (message-of (lambda () (series-drop raw-series)))
+                "series-drop: series has been dropped")
+  (check-equal? (message-of (lambda () (series-len raw-series))) "series: series has been dropped")
+
+  (define shared-raw (series-new-i64 "shared" '(1 2)))
+  (define first-holder (wrap-series shared-raw))
+  (define second-holder (wrap-series shared-raw))
+  (series-drop first-holder)
+  (check-equal? (message-of (lambda () (len second-holder))) "series: series has been dropped")
+  (check-equal? (message-of (lambda () (series-drop second-holder)))
+                "series-drop: series has been dropped")
+  (check-equal? (format "~a" second-holder) "#<series: dropped>")
+
+  (define dropped-frame (dataframe (list (series '(1 2) #:name "a"))))
+  (dataframe-drop dropped-frame)
+  (check-equal? (format "~a" dropped-frame) "#<dataframe: dropped>")
+  (check-equal? (message-of (lambda () (height dropped-frame)))
+                "dataframe: dataframe has been dropped")
+  (check-equal? (message-of (lambda () (dataframe-drop dropped-frame)))
+                "dataframe-drop: dataframe has been dropped")
+  (check-true (dataframe? dropped-frame))
+
+  (define dropped-plan (wrap-lazyframe (dataframe-lazy frame)))
+  (lazyframe-drop dropped-plan)
+  (check-equal? (format "~a" dropped-plan) "#<lazyframe: dropped>")
+  (check-equal? (message-of (lambda () (lazyframe-collect dropped-plan)))
+                "lazyframe: lazyframe has been dropped")
+  (check-equal? (message-of (lambda () (lazyframe-drop dropped-plan)))
+                "lazyframe-drop: lazyframe has been dropped")
+  (check-true (lazyframe? dropped-plan))
+
+  (define temps (series '(21.5 23.0 19.8) #:name "temp"))
+  (series-drop temps)
+  (check-equal? (format "~v" temps) "#<series: dropped>")
+  (check-equal? (message-of (lambda () (series-drop temps))) "series-drop: series has been dropped")
+  (define readings (dataframe (list (series '(3 1 2) #:name "v"))))
+  (dataframe-drop readings)
+  (check-equal? (format "~v" readings) "#<dataframe: dropped>")
+  (check-equal? (message-of (lambda () (dataframe-drop readings)))
+                "dataframe-drop: dataframe has been dropped")
+  (define query (wrap-lazyframe (dataframe-lazy (dataframe (list (series '(3 1 2) #:name "v"))))))
+  (lazyframe-drop query)
+  (check-equal? (format "~v" query) "#<lazyframe: dropped>")
+  (check-equal? (message-of (lambda () (lazyframe-drop query)))
+                "lazyframe-drop: lazyframe has been dropped"))
 
 (module+ test
   (require (only-in gregor date moment now)

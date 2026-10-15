@@ -354,11 +354,73 @@
   (let unwrap ([v (car args)])
     (if (owned-pointer? v) (unwrap ((owned-pointer-accessor v) v)) v)))
 
-(define-cpointer-type _Series-ptr)
+(define (raise-dropped who kind)
+  (raise (exn:fail:contract (format "~a: ~a has been dropped" who kind)
+                            (current-continuation-marks))))
 
-(define-compat series-drop
+;; a release retags the pointer it frees, which every wrapper of it shares
+(define (dropped? v tag)
+  (and (cpointer? v) (cpointer-has-tag? v tag)))
+
+(define (owned-cpointer-types tag kind dropped)
+  (define (refuse p nullable?)
+    (cond
+      [(dropped? p dropped) (raise-dropped kind kind)]
+      [else (raise-arguments-error (string->symbol (format "~a->C" tag))
+                                   (format "argument is not ~a`~a' pointer"
+                                           (if nullable? "" "non-null ") tag)
+                                   "argument" p)]))
+  (values (make-ctype _pointer
+                      (lambda (p)
+                        (if (and (cpointer? p) (cpointer-has-tag? p tag)) p (refuse p #f)))
+                      (lambda (p)
+                        (if p (cpointer-push-tag! p tag) (refuse p #f))
+                        p))
+          (make-ctype _pointer
+                      (lambda (p)
+                        (cond
+                          [(not p) p]
+                          [(and (cpointer? p) (cpointer-has-tag? p tag)) p]
+                          [else (refuse p #t)]))
+                      (lambda (p)
+                        (when p (cpointer-push-tag! p tag))
+                        p))))
+
+;; define-cpointer-type, but a pointer released by its drop is refused as dropped
+(define-syntax-parser define-owned-cpointer-type
+  [(_ type:id kind:expr dropped:expr)
+   #:do [(define tag (substring (symbol->string (syntax-e #'type)) 1))]
+   #:with type/null (format-id #'type "~a/null" #'type)
+   #:with type? (format-id #'type "~a?" tag)
+   #:with type-tag (format-id #'type "~a-tag" tag)
+   #:with tag-name (datum->syntax #'type (string->symbol tag))
+   #'(begin
+       (define type-tag 'tag-name)
+       (define-values (type type/null) (owned-cpointer-types type-tag kind dropped))
+       (define (type? v) (and (cpointer? v) (cpointer-has-tag? v type-tag))))])
+
+(define (release-owned who kind tag drop/raw v)
+  (call-as-atomic
+   (lambda ()
+     (define p (owned-pointer-arg (list v)))
+     (cond
+       [(dropped? p tag) (raise-dropped who kind)]
+       [else (drop/raw p)
+             (set-cpointer-tag! p tag)]))))
+
+(define series-dropped (gensym 'series-dropped))
+(define dataframe-dropped (gensym 'dataframe-dropped))
+(define lazyframe-dropped (gensym 'lazyframe-dropped))
+
+(define-owned-cpointer-type _Series-ptr 'series series-dropped)
+
+(define-compat series-drop/raw
   (_fun _Series-ptr -> _void)
-  #:wrap (deallocator owned-pointer-arg))
+  #:c-id series_drop
+  #:wrap (deallocator))
+
+(define (series-drop s)
+  (release-owned 'series-drop 'series series-dropped series-drop/raw s))
 
 (define-compat series-drop-count
   (_fun -> _size))
@@ -1777,11 +1839,15 @@
   (check-exn #rx"operation failed"
              (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3))))
 
-(define-cpointer-type _DataFrame-ptr)
+(define-owned-cpointer-type _DataFrame-ptr 'dataframe dataframe-dropped)
 
-(define-compat dataframe-drop
+(define-compat dataframe-drop/raw
   (_fun _DataFrame-ptr -> _void)
-  #:wrap (deallocator owned-pointer-arg))
+  #:c-id dataframe_drop
+  #:wrap (deallocator))
+
+(define (dataframe-drop d)
+  (release-owned 'dataframe-drop 'dataframe dataframe-dropped dataframe-drop/raw d))
 
 (define-compat dataframe-drop-count
   (_fun -> _size))

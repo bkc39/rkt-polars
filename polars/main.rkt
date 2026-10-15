@@ -32,8 +32,11 @@
          (except-out (all-from-out polars/private/expr) expr-cast-to expr-meta-output-name/raw)
          (except-out (all-from-out polars/private/foreign)
                      allocator/or-fail call/foreign-error check-enum-categories
-                     dataframe-drop-count decimal-ref last-error-message owned-pointer-accessor
-                     owned-pointer-arg owned-pointer? prop:owned-pointer series-drop-count
+                     dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
+                     define-owned-cpointer-type dropped? last-error-message lazyframe-dropped
+                     owned-cpointer-types owned-pointer-accessor owned-pointer-arg
+                     owned-pointer? prop:owned-pointer raise-dropped release-owned
+                     series-drop-count series-drop/raw series-dropped
                      dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
                      series-new-str/raw series-sort/raw series-str-byte-len sort-flags
                      sort-flags/c sort-flags-mismatch string-has-nul?
@@ -62,7 +65,8 @@
   (check-not-false (memq 'cast exported))
   (check-not-false (memq 'series-new-str exported))
   (for ([internal '(dtype-short-names expr-meta-output-name/raw allocator/or-fail
-                    call/foreign-error prop:owned-pointer sort-flags-mismatch
+                    call/foreign-error prop:owned-pointer release-owned series-drop/raw
+                    dataframe-drop/raw lazyframe-drop/raw lazyframe-dropped sort-flags-mismatch
                     check-enum-categories decimal-ref series-copy-decimal series-copy-str
                     series-new-str/raw series-str-byte-len string-has-nul?)])
     (check-false (memq internal exported) (format "~a is internal" internal))))
