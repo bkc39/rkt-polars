@@ -14,18 +14,19 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories define-owned-cpointer-type enum-dtype? lazyframe-dropped
-                  release-owned sort-flags-mismatch sort-flags/c time-unit-symbol->code
-                  zoned-datetime-dtype?)
+                  check-enum-categories define-owned-cpointer-type enum-dtype? sort-flags-mismatch
+                  sort-flags/c time-unit-symbol->code write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
-(provide (contract-out [expr->string (->/c Expr-ptr? string?)])
+(provide (contract-out [expr->string (->/c Expr-ptr? string?)]
+                       [expr-drop (->/c Expr-ptr? void?)]
+                       [lazyframe-drop (->/c LazyFrame-ptr? void?)])
          define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
          _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
-         expr-drop expr-drop-count lazyframe-drop
+         expr-drop-count expr-dropped lazyframe-dropped
          sort-by/c
          explain/c lazyframe-explainer
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
@@ -45,36 +46,24 @@
   (ffi-lib (build-path expr-native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
-(struct expr ([ptr #:mutable])
-  #:property prop:cpointer (lambda (e) (expr-ptr e))
-  #:property prop:custom-write
-  (lambda (e port mode)
-    (write-string (if (expr-ptr e) (expr->string e) "#<expr: dropped>") port)))
+(define-owned-cpointer-type _Expr-ptr expr #:noun "expression" #:wrap (lambda (p) (expr p))
+  (define-compat expr-drop/raw
+    (_fun _Expr-ptr -> _void)
+    #:c-id expr_drop
+    #:wrap (deallocator)))
 
-(define (wrap-expr p) (and p (expr p)))
+(struct expr (ptr)
+  #:property prop:cpointer 0
+  #:property prop:custom-write (write-owned 'expr expr-dropped (lambda (e) (expr->string e))))
 
-(define-cpointer-type _Expr-ptr _pointer #f wrap-expr)
-(define-owned-cpointer-type _LazyFrame-ptr 'lazyframe lazyframe-dropped)
-
-(define-compat expr-drop/raw
-  (_fun _Expr-ptr -> _void)
-  #:c-id expr_drop
-  #:wrap (deallocator))
-
-(define (expr-drop e)
-  (expr-drop/raw e)
-  (set-expr-ptr! e #f))
+(define-owned-cpointer-type _LazyFrame-ptr lazyframe
+  (define-compat lazyframe-drop/raw
+    (_fun _LazyFrame-ptr -> _void)
+    #:c-id lazyframe_drop
+    #:wrap (deallocator)))
 
 (define-compat expr-drop-count
   (_fun -> _size))
-
-(define-compat lazyframe-drop/raw
-  (_fun _LazyFrame-ptr -> _void)
-  #:c-id lazyframe_drop
-  #:wrap (deallocator))
-
-(define (lazyframe-drop lf)
-  (release-owned 'lazyframe-drop 'lazyframe lazyframe-dropped lazyframe-drop/raw lf))
 
 (define-compat expr->string
   (_fun _Expr-ptr -> _rsstring)

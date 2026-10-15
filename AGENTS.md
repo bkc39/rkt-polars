@@ -138,13 +138,22 @@ it. Racket side: `define-compat` with `#:c-id`.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
-  around an allocated pointer needs the property too. The release retags the
-  pointer, which the raw value and every wrapper of it share, and the pointer
-  types (`define-owned-cpointer-type`) refuse a retagged one on their failure
-  path, so the live path costs nothing: a later use raises `series: series
-  has been dropped` (its kind as the `who`, since no verb is known there), a
-  second drop raises under the drop's own name, and the native release still
-  runs once (#131).
+  around an allocated pointer needs the property too.
+- `define-owned-cpointer-type` defines each of the four pointer types
+  (`_Series-ptr`, `_DataFrame-ptr`, `_Expr-ptr`, `_LazyFrame-ptr`), its
+  predicate and its drop around the `-drop/raw` `define-compat` it is given,
+  which stays a subform so the ownership audit reads it. A drop retags the
+  pointer, which the raw value and every wrapper of it share. The predicate
+  still accepts a retagged pointer, as `port?` accepts a closed port, so every
+  contract and dispatch passes it on to the conversion into Polars, which
+  refuses it on its failure path: the live path costs nothing, a later use
+  raises `series: series has been dropped` (`expr: expression has been
+  dropped`; the kind is the `who`, since no verb is known there), a second
+  drop raises under the drop's own name, and the native release still runs
+  once (#131). The check is made as a call converts its arguments, outside
+  any atomic region, so a drop must not run while another thread uses the
+  same value: a drop between the conversion and the native call frees memory
+  the call then reads.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail
