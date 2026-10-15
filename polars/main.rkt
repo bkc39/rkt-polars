@@ -66,3 +66,16 @@
                     check-enum-categories decimal-ref series-copy-decimal series-copy-str
                     series-new-str/raw series-str-byte-len string-has-nul?)])
     (check-false (memq internal exported) (format "~a is internal" internal))))
+
+(module+ test
+  (require racket/match
+           racket/runtime-path
+           (only-in setup/getinfo get-info/full)
+           (only-in version/utils valid-version?))
+  (define-runtime-path collection-dir ".")
+  (define-runtime-path package-dir "..")
+  (define polars-version ((get-info/full collection-dir) 'version))
+  (check-pred valid-version? polars-version)
+  (match (get-info/full package-dir)
+    [#f (void)]
+    [root-info (check-equal? (root-info 'version) polars-version)]))
