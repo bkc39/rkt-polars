@@ -167,12 +167,12 @@
 ;; pivot: long -> wide (Polars df.pivot).
 (define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
   (guard-dataframe 'pivot d)
-  (wrap-dataframe (dataframe-pivot d #:on on #:index index #:values values #:agg agg)))
+  (wrap-dataframe (pivot-frame 'pivot d on index values agg)))
 
 ;; unpivot: wide -> long (Polars df.unpivot).
 (define (unpivot d #:on on #:index index)
   (guard-dataframe 'unpivot d)
-  (wrap-dataframe (dataframe-unpivot d #:on on #:index index)))
+  (wrap-dataframe (unpivot-frame 'unpivot d on index)))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
@@ -451,7 +451,7 @@
     (check-equal? (column-names pv) '("id" "x" "y"))
     (check-equal? (dtype (ref pv "y")) 'int64)
     (check-equal? (column pv "y") '(11 21))
-    (check-exn #rx"^dataframe-pivot: "
+    (check-exn #rx"^pivot: cannot pivot the dataframe: "
                (lambda () (pivot cells #:on '("k") #:index '("id") #:values '("v") #:agg #f))))
   (let* ([gaps (dataframe (list (series '(1 2 2) #:name "id")
                                 (series '("y" "x" "y") #:name "k")
@@ -515,3 +515,12 @@
    #rx"^explain: failed to explain the query: [^\n]*\"nope\""
    (with-handlers ([exn:fail? exn-message])
      (contracted:explain (select (lazy ops-df) "nope")))))
+
+(module+ test
+  (require (only-in gregor date)
+           (only-in polars/private/bulk series->list))
+  (check-equal? (ref past-chrono-date 0) (date 5477784 1 6))
+  (check-equal? (series->list past-chrono-date) (list (ref past-chrono-date 0)))
+  (check-regexp-match #rx"\n\t[+]5477784-01-06\n" (format "~a" past-chrono-date))
+  (check-exn #rx"required keyword"
+             (lambda () (contracted:unpivot (dataframe (list past-chrono-date)) #:on '("d")))))

@@ -8,20 +8,17 @@ pub extern "C" fn series_new_ymdhms(
     length: usize,
 ) -> *mut Series {
     if data.is_null() {
-        std::ptr::null_mut()
-    } else {
-        let ymdhms_slice = unsafe { std::slice::from_raw_parts(data, length) };
-        let naive_dates: Vec<NaiveDateTime> = ymdhms_slice
-            .iter()
-            .map(|ymdhms| {
-                NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day)
-                    .unwrap()
-                    .and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second)
-                    .unwrap()
-            })
-            .collect();
-        Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
+        return ptr::null_mut();
     }
+    let ymdhms_slice = unsafe { std::slice::from_raw_parts(data, length) };
+    let Some(naive_dates) = ymdhms_slice
+        .iter()
+        .map(ymdhms_to_naive_datetime)
+        .collect::<Option<Vec<NaiveDateTime>>>()
+    else {
+        return ptr::null_mut();
+    };
+    Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
 }
 
 pub(crate) fn ymdhms_to_naive_datetime(

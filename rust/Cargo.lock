@@ -399,6 +399,8 @@ dependencies = [
  "blake3",
  "chrono",
  "polars",
+ "proc-macro2",
+ "syn 2.0.72",
  "tempfile",
 ]
 

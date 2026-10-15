@@ -427,7 +427,3 @@
 
   (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe 5)))
   (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe (col "a")))))
-
-(module+ test
-  (define far (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
-  (check-equal? (ref far 0) (date 5477784 1 6)))

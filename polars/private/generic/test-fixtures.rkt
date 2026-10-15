@@ -8,7 +8,8 @@
 (require polars/private/generic/core
          polars/private/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
-         (only-in polars/private/foreign polars-null polars-null?)
+         (only-in polars/private/foreign
+                  polars-null polars-null? series-cast series-new-i32 series-new-i64)
          (only-in gregor datetime))
 
 (provide (all-defined-out)
@@ -18,6 +19,12 @@
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
 (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
+
+;; Past chrono's years, which only a cast can make: the reference's example.
+(define past-chrono-date (wrap-series (series-cast (series-new-i32 "d" '(2000000000)) 'date)))
+(define past-chrono-datetime
+  (wrap-series (series-cast (series-new-i64 "t" '(9223372036854775807))
+                            '(datetime milliseconds #f))))
 
 (define frame
   (dataframe (list (series '("alice" "bob" "carol") #:name "user")

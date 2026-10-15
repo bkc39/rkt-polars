@@ -76,6 +76,7 @@ pub extern "C" fn dataframe_pivot(
     n_values: usize,
     agg: i32,
 ) -> *mut DataFrame {
+    clear_last_error();
     if df_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -99,10 +100,8 @@ pub extern "C" fn dataframe_pivot(
         None => return ptr::null_mut(),
     };
     let df = unsafe { &*df_ptr };
-    match pivot_eager(df, on, index, values, agg_expr) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    guard_panic(|| record(pivot_eager(df, on, index, values, agg_expr)))
+        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }
 
 #[no_mangle]
@@ -113,6 +112,7 @@ pub extern "C" fn dataframe_unpivot(
     index_ptrs: *const *const c_char,
     n_index: usize,
 ) -> *mut DataFrame {
+    clear_last_error();
     if df_ptr.is_null() {
         return ptr::null_mut();
     }
@@ -126,8 +126,6 @@ pub extern "C" fn dataframe_unpivot(
     };
     let df = unsafe { &*df_ptr };
     let on = if on.is_empty() { None } else { Some(on) };
-    match df.unpivot(on, index) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    guard_panic(|| record(df.unpivot(on, index)))
+        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }

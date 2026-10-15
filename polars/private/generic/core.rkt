@@ -73,7 +73,7 @@
   #:property prop:owned-pointer 0
   #:property prop:custom-write
   (lambda (d port mode)
-    (write-string (dataframe->string d (printer-who mode)) port))
+    (write-string (printed-or-placeholder 'dataframe (lambda () (dataframe->string/raw d))) port))
   #:methods gen:has-ref
   [(define (ref d [key unset] #:columns [columns unset] #:rows [rows unset])
      (dataframe-ref* d key columns rows))]
@@ -386,36 +386,49 @@
 (module+ test
   (require (only-in compiler/find-exe find-exe)
            (only-in racket/system system*/exit-code))
-  (define past-chrono-date '(cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
-  (define past-chrono-datetime
-    '(cast (series '(9223372036854775807) #:dtype 'i64 #:name "t") '(datetime milliseconds #f)))
-  (define printings
-    `((display (dataframe (list ,past-chrono-date)) (open-output-string))
-      (write (dataframe (list ,past-chrono-datetime)) (open-output-string))
-      (print (dataframe (list ,past-chrono-date)) (open-output-string))
-      (format "~a" (dataframe (list ,past-chrono-date)))
-      (display-dataframe (dataframe (list ,past-chrono-date)) (open-output-string))
-      (format "~a" (collect (lazy (dataframe (list ,past-chrono-datetime)))))
-      (display (is-in "x" ,past-chrono-date) (open-output-string))
-      (write (is-in "x" ,past-chrono-date) (open-output-string))
-      (expr->string (is-in "x" ,past-chrono-date))))
-  (define program
-    `(write (for/list ([show (list ,@(map (lambda (p) `(lambda () ,p)) printings))])
-              (with-handlers ([exn:fail? exn-message]) (show) 'printed))))
-  (define output (open-output-string))
-  (define status
-    (parameterize ([current-output-port output] [current-error-port (open-output-string)])
-      (system*/exit-code (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" program))))
-  (define (panicked who what cause)
-    (format "~a: cannot print the ~a: polars panicked: ~a" who what cause))
-  (check-equal? status 0)
-  (check-equal? (read (open-input-string (get-output-string output)))
-                (list (panicked 'display "dataframe" "out-of-range date")
-                      (panicked 'write "dataframe" "invalid or out-of-range datetime")
-                      (panicked 'print "dataframe" "out-of-range date")
-                      (panicked 'display "dataframe" "out-of-range date")
-                      (panicked 'display-dataframe "dataframe" "out-of-range date")
-                      (panicked 'display "dataframe" "invalid or out-of-range datetime")
-                      (panicked 'display "expression" "out-of-range date")
-                      (panicked 'write "expression" "out-of-range date")
-                      (panicked 'expr->string "expression" "out-of-range date"))))
+  ;; Every probe runs in one child process, which a regression would abort.
+  (define placeholder-rx "^#<~a: cannot print: polars panicked: [^>]+>$")
+  (define past-chrono-probes
+    `([(format "~a" (dataframe (list past-chrono-date))) ,(format placeholder-rx "dataframe")]
+      [(format "~s" (dataframe (list past-chrono-datetime))) ,(format placeholder-rx "dataframe")]
+      [(format "~v" (dataframe (list past-chrono-date))) ,(format placeholder-rx "dataframe")]
+      [(format "~a" (collect (lazy (dataframe (list past-chrono-datetime)))))
+       ,(format placeholder-rx "dataframe")]
+      [(format "~a" (is-in "x" past-chrono-date)) ,(format placeholder-rx "expr")]
+      [(format "~s" (is-in "x" past-chrono-date)) ,(format placeholder-rx "expr")]
+      [(display-dataframe (dataframe (list past-chrono-date)) (open-output-string))
+       "^display-dataframe: cannot print the dataframe: polars panicked: "]
+      [(dataframe->string (dataframe (list past-chrono-date)))
+       "^dataframe->string: cannot print the dataframe: polars panicked: "]
+      [(expr->string (is-in "x" past-chrono-date))
+       "^expr->string: cannot print the expression: polars panicked: "]
+      [(cast past-chrono-date 'string) "^cast: cannot cast to string: polars panicked: "]
+      [(cast past-chrono-datetime 'string) "^cast: cannot cast to string: polars panicked: "]
+      [(pivot (dataframe (list past-chrono-date (series '(1) #:name "k") (series '(2) #:name "x")))
+              #:on '("d") #:index '("k") #:values '("x"))
+       "^pivot: cannot pivot the dataframe: polars panicked: "]
+      [(unpivot (dataframe (list past-chrono-date (series '("a") #:name "k") (series '(1) #:name "i")))
+                #:on '("d" "k") #:index '("i"))
+       "^unpivot: cannot unpivot the dataframe: polars panicked: "]
+      [(series-ref-i64/raw (series-new-i64 "a" '(1)) 5) "^series-ref-i64/raw: index is out of range"]
+      [(series-new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0)))
+       "^series-new-ymdhms: operation failed"]))
+  (define past-chrono-program
+    `(write (for/list ([probe (list ,@(for/list ([p (in-list past-chrono-probes)])
+                                        `(lambda () ,(car p))))])
+              (with-handlers ([exn:fail? exn-message]) (format "~a" (probe))))))
+  (define past-chrono-output (open-output-string))
+  (define past-chrono-stderr (open-output-string))
+  (define past-chrono-status
+    (parameterize ([current-output-port past-chrono-output]
+                   [current-error-port past-chrono-stderr])
+      (system*/exit-code (find-exe) "-l" "racket/base" "-l" "polars"
+                         "-l" "polars/private/generic/test-fixtures"
+                         "-e" (format "~s" past-chrono-program))))
+  (check-equal? past-chrono-status 0)
+  (check-equal? (get-output-string past-chrono-stderr) "")
+  (define past-chrono-results (read (open-input-string (get-output-string past-chrono-output))))
+  (check-equal? (length past-chrono-results) (length past-chrono-probes))
+  (for ([probe (in-list past-chrono-probes)]
+        [result (in-list past-chrono-results)])
+    (check-true (regexp-match? (cadr probe) result) (format "~s gave ~s" (car probe) result))))

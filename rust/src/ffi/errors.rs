@@ -5,11 +5,30 @@
 
 use crate::prelude::*;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Once;
 
 use super::strings::rust_string_to_ptr;
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
+}
+
+static QUIET_HOOK: Once = Once::new();
+static ACTIVE_GUARDS: AtomicUsize = AtomicUsize::new(0);
+
+/// A caught panic is reported as the failure reason, so the panic hook stays
+/// silent while any guard is active (polars panics on its pool's threads as
+/// well as the caller's) and defers to the previous hook otherwise.
+fn install_quiet_hook() {
+    QUIET_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if ACTIVE_GUARDS.load(Ordering::SeqCst) == 0 {
+                previous(info);
+            }
+        }));
+    });
 }
 
 pub(crate) fn set_last_error(msg: impl Into<String>) {
@@ -31,17 +50,19 @@ pub(crate) fn record<T, E: std::fmt::Display>(
 /// so an entry point that runs polars code on caller-controlled data records
 /// the panic as the failure reason instead.
 pub(crate) fn guard_panic<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(
-        |payload| {
-            let msg = payload
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown cause".to_string());
-            set_last_error(format!("polars panicked: {}", msg));
-            None
-        },
-    )
+    install_quiet_hook();
+    ACTIVE_GUARDS.fetch_add(1, Ordering::SeqCst);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    ACTIVE_GUARDS.fetch_sub(1, Ordering::SeqCst);
+    result.unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown cause".to_string());
+        set_last_error(format!("polars panicked: {}", msg));
+        None
+    })
 }
 
 pub(crate) fn decode_path<'a>(path: *const c_char) -> Option<&'a str> {

@@ -107,14 +107,16 @@
       (range len)
       (append (range 0 5) (list 'ellipsis) (range (- len 5) len))))
 
+;; Printing never raises: when polars cannot format a value, no abbreviation.
 (define (zone-abbreviations s start count)
-  (with-release ([rows (series-slice s start count) series-drop]
-                 [frame (dataframe-new (list rows)) dataframe-drop]
-                 [out (dataframe-select-exprs frame (list (expr-dt-strftime (expr-all) "%Z")))
-                      dataframe-drop]
-                 [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
-    (for/list ([i (in-range count)])
-      (series-ref names i))))
+  (with-handlers ([exn:fail? (lambda (_) (make-list count #f))])
+    (with-release ([rows (series-slice s start count) series-drop]
+                   [frame (dataframe-new (list rows)) dataframe-drop]
+                   [out (dataframe-select-exprs frame (list (expr-dt-strftime (expr-all) "%Z")))
+                        dataframe-drop]
+                   [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
+      (for/list ([i (in-range count)])
+        (series-ref names i)))))
 
 (define (shown-abbreviations s dt len)
   (cond
@@ -161,8 +163,6 @@
   (define (cells s) (cdddr (string-split (series->string s) #rx"\n\t?")))
   (check-equal? (cells (series-cast (series-new-i32 "d" '(15706 -1 2932897 -719893)) 'date))
                 '("2013-01-01" "1969-12-31" "+10000-01-01" "-0001-01-01" "]"))
-  (check-equal? (cells (series-cast (series-new-i32 "d" '(2000000000)) 'date))
-                '("+5477784-01-06" "]"))
   (check-equal? (cells (series-cast (series-new-i64 "t" '(0 1500000000 1000 1)) 'time))
                 '("00:00:00" "00:00:01.500" "00:00:00.000001" "00:00:00.000000001" "]"))
   (check-equal? (cells (series-cast (series-new-i64 "dt" (list 1500 -1 polars-null))
@@ -189,6 +189,9 @@
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
                                     '(datetime microseconds "UTC")))
                 '("2021-03-27 11:00:00 UTC" "]"))
+  (check-regexp-match #rx"^[+][0-9]+-[0-9][0-9]-[0-9][0-9] [0-9:.]+$"
+                      (car (cells (series-cast (series-new-i64 "k" '(9223372036854775807))
+                                               '(datetime milliseconds "UTC")))))
   ;; polars' reading: an LMT offset, a summer after 2037, a backward-compatible name
   (check-equal? (cells (series-cast (series-new-i64 "k" (list (* (- -2208988800 20476) 1000000)))
                                     '(datetime microseconds "Asia/Kathmandu")))

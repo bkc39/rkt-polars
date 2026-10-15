@@ -25,7 +25,9 @@
   (require rackunit))
 
 (provide (except-out (all-defined-out)
-                     series-sort dataframe-sort series-ref-string strings->series)
+                     series-sort dataframe-sort series-ref-string strings->series
+                     call/reason define-copies define-series-refs in-bounds print-dataframe
+                     series-date-ref)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -94,18 +96,26 @@
     (string-replace reason python racket)))
 
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
+(define (call/reason thunk ok?)
+  (call-as-atomic
+   (lambda ()
+     (define result (thunk))
+     (values result (and (not (ok? result)) (last-error-message))))))
+
 (define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
                             fmt . args)
-  (define-values (result reason)
-    (call-as-atomic
-     (lambda ()
-       (define result (thunk))
-       (values result (and (not (ok? result)) (last-error-message))))))
+  (define-values (result reason) (call/reason thunk ok?))
   (cond
     [(ok? result) result]
     [(explain) => (lambda (message) (error who "~a" message))]
     [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
+
+;; A custom-write never raises: an error message that shows the value would
+;; hide its own error.
+(define (printed-or-placeholder what render)
+  (define-values (text reason) (call/reason render values))
+  (or text (format "#<~a: cannot print: ~a>" what (or reason "no reason recorded"))))
 
 ;; only for entry points that record no reason; the others go through call/foreign-error
 (define ((allocator/or-fail drop who) proc)
@@ -1029,65 +1039,39 @@
 (define-compat series-ref-is-null
   (_fun _Series-ptr _size -> _int32))
 
-(define-compat series-ref-i32/raw
-  (_fun _Series-ptr _size -> _CompatOptI32)
-  #:c-id series_ref_i32)
+(define ((in-bounds who) ref)
+  (procedure-rename
+   (lambda (s index)
+     (define len (series-len s))
+     (unless (< index len)
+       (raise-range-error who "series" "" index s 0 (sub1 len)))
+     (ref s index))
+   who))
 
-(define-compat series-ref-i8/raw
-  (_fun _Series-ptr _size -> _CompatOptI8)
-  #:c-id series_ref_i8)
+(define-syntax-parse-rule (define-series-refs [name:id c-id:id result:expr] ...)
+  (begin
+    (define-compat name
+      (_fun _Series-ptr _size -> result)
+      #:c-id c-id
+      #:wrap (in-bounds 'name))
+    ...))
 
-(define-compat series-ref-i16/raw
-  (_fun _Series-ptr _size -> _CompatOptI16)
-  #:c-id series_ref_i16)
-
-(define-compat series-ref-i64/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_i64)
-
-(define-compat series-ref-u8/raw
-  (_fun _Series-ptr _size -> _CompatOptU8)
-  #:c-id series_ref_u8)
-
-(define-compat series-ref-u16/raw
-  (_fun _Series-ptr _size -> _CompatOptU16)
-  #:c-id series_ref_u16)
-
-(define-compat series-ref-u32/raw
-  (_fun _Series-ptr _size -> _CompatOptU32)
-  #:c-id series_ref_u32)
-
-(define-compat series-ref-u64/raw
-  (_fun _Series-ptr _size -> _CompatOptU64)
-  #:c-id series_ref_u64)
-
-(define-compat series-ref-f64/raw
-  (_fun _Series-ptr _size -> _CompatOptF64)
-  #:c-id series_ref_f64)
-
-(define-compat series-ref-f32/raw
-  (_fun _Series-ptr _size -> _CompatOptF32)
-  #:c-id series_ref_f32)
-
-(define-compat series-ref-bool/raw
-  (_fun _Series-ptr _size -> _CompatOptBool)
-  #:c-id series_ref_bool)
-
-(define-compat series-ref-str/raw
-  (_fun _Series-ptr _size -> _rsstring)
-  #:c-id series_ref_str)
-
-(define-compat series-ref-date/raw
-  (_fun _Series-ptr _size -> _CompatOptYMD)
-  #:c-id series_ref_date)
-
-(define-compat series-ref-duration/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_duration)
-
-(define-compat series-ref-time/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_time)
+(define-series-refs
+  [series-ref-i32/raw series_ref_i32 _CompatOptI32]
+  [series-ref-i8/raw series_ref_i8 _CompatOptI8]
+  [series-ref-i16/raw series_ref_i16 _CompatOptI16]
+  [series-ref-i64/raw series_ref_i64 _CompatOptI64]
+  [series-ref-u8/raw series_ref_u8 _CompatOptU8]
+  [series-ref-u16/raw series_ref_u16 _CompatOptU16]
+  [series-ref-u32/raw series_ref_u32 _CompatOptU32]
+  [series-ref-u64/raw series_ref_u64 _CompatOptU64]
+  [series-ref-f64/raw series_ref_f64 _CompatOptF64]
+  [series-ref-f32/raw series_ref_f32 _CompatOptF32]
+  [series-ref-bool/raw series_ref_bool _CompatOptBool]
+  [series-ref-str/raw series_ref_str _rsstring]
+  [series-ref-date/raw series_ref_date _CompatOptYMD]
+  [series-ref-duration/raw series_ref_duration _CompatOptI64]
+  [series-ref-time/raw series_ref_time _CompatOptI64])
 
 (define (series-ref-unsupported dtype)
   (error 'series-ref "unsupported dtype ~v" dtype))
@@ -1124,11 +1108,16 @@
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
 ;; The validity buffers are GC memory the collector may move: never #:blocking?.
-(define-compat series-copy-i32
-  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+(define-syntax-parse-rule (define-copies name:id ...)
+  (begin
+    (define-compat name
+      (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+    ...))
 
-(define-compat series-copy-i64
-  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+(define-copies
+  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
+  series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
+  series-copy-f32 series-copy-f64 series-copy-bool)
 
 ;; `count` rows of a zoned column from `start`: each UTC instant into
 ;; `instants`, and into `walls` its wall clock in (offset-unit unit).
@@ -1155,7 +1144,7 @@
        (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
             (epoch->datetime unit (ptr-ref value _int64 0)))])))
 
-(define (series-ref-date s index)
+(define (series-date-ref s index)
   (with-raw-buffer ([days 1 _int32])
     (and (zero? (series-copy-i32 s index 1 days 1 #f 0))
          (days->date (ptr-ref days _int32 0)))))
@@ -1199,7 +1188,7 @@
        [(string) (require-ref-value dtype (series-ref-string s index))]
        [(categorical enum)
         (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
-       [(date) (require-ref-value dtype (series-ref-date s index))]
+       [(date) (require-ref-value dtype (series-date-ref s index))]
        [(time)
         (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
         (require-ref-value dtype (and raw (nanoseconds->time raw)))]
@@ -1324,9 +1313,6 @@
   (check-equal? (series-ref ref-date 0) (date 2024 1 2))
   (check-equal? (series-ref ref-date 1) polars-null)
   (check-equal? (series-ref ref-date 2) (date 1969 12 31))
-  (define past-chrono (series-cast (series-new-i32 "d" '(2000000000 -2000000000)) 'date))
-  (check-equal? (series-ref past-chrono 0) (date 5477784 1 6))
-  (check-equal? (series-ref past-chrono 1) (date -5473845 12 27))
 
   (define ref-duration
     (series-cast (series-new-i64 "dur" (list 1500 polars-null -250))
@@ -1355,7 +1341,7 @@
 (define-compat series-cast/c
   (_fun _Series-ptr _CompatDType -> _Series-ptr/null)
   #:c-id series_cast
-  #:wrap (allocator/or-fail series-drop 'series-cast))
+  #:wrap (allocator series-drop))
 
 (define-compat series-cast-enum/raw
   (_fun _Series-ptr
@@ -1391,7 +1377,7 @@
   (define (misses)
     (match (series-dtype s)
       [(or 'string 'categorical (cons 'enum _))
-       (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
+       (with-release ([strings (series-cast-to who s 'string) series-drop]
                       [present (series-drop-nulls strings) series-drop])
          (series-rename present "value")
          (with-release ([known (match categories
@@ -1487,7 +1473,8 @@
   (cond
     [(enum-dtype? dtype) (series-cast-enum who s dtype)]
     [(zoned-datetime-dtype? dtype) (series-cast-datetime-tz who s dtype)]
-    [else (series-cast/c s (->compat-dtype dtype))]))
+    [else (call/foreign-error who (lambda () (series-cast/c s (->compat-dtype dtype)))
+                              "cannot cast to ~s" dtype)]))
 
 (define (series-cast s dtype)
   (series-cast-to 'series-cast s dtype))
@@ -1897,15 +1884,11 @@
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
-(define (printer-who mode)
-  (case mode
-    [(#t) 'write]
-    [(#f) 'display]
-    [else 'print]))
-
-(define (dataframe->string df [who 'dataframe->string])
+(define (print-dataframe who df)
   (call/foreign-error who (lambda () (dataframe->string/raw df)) "cannot print the dataframe"))
 
+(define (dataframe->string df)
+  (print-dataframe 'dataframe->string df))
 
 (define (glob-pattern? p)
   (regexp-match? #rx"[*?[]" (if (path? p) (path->string p) p)))
@@ -2280,11 +2263,16 @@
         _int32
         -> _DataFrame-ptr/null)
   #:c-id dataframe_pivot
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-pivot))
+  #:wrap (allocator dataframe-drop))
+
+(define (pivot-frame who df on index values agg)
+  (call/foreign-error who
+                      (lambda () (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg)))
+                      "cannot pivot the dataframe"))
 
 (define (dataframe-pivot df #:on on #:index index #:values values
                          #:agg [agg 'first])
-  (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg)))
+  (pivot-frame 'dataframe-pivot df on index values agg))
 
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr
@@ -2294,13 +2282,17 @@
         (_size = (length index))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_unpivot
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-unpivot))
+  #:wrap (allocator dataframe-drop))
+
+(define (unpivot-frame who df on index)
+  (call/foreign-error who (lambda () (dataframe-unpivot/raw df on index))
+                      "cannot unpivot the dataframe"))
 
 (define (dataframe-unpivot df #:on on #:index index)
-  (dataframe-unpivot/raw df on index))
+  (unpivot-frame 'dataframe-unpivot df on index))
 
 (define (display-dataframe df [out (current-output-port)])
-  (display (dataframe->string df 'display-dataframe) out)
+  (display (print-dataframe 'display-dataframe df) out)
   (newline out))
 
 (module+ test

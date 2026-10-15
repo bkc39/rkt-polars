@@ -14,7 +14,7 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories enum-dtype? owned-pointer-arg printer-who
+                  check-enum-categories enum-dtype? owned-pointer-arg printed-or-placeholder
                   sort-flags-mismatch sort-flags/c time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
@@ -48,7 +48,10 @@
   #:property prop:cpointer (lambda (e) (expr-ptr e))
   #:property prop:custom-write
   (lambda (e port mode)
-    (write-string (if (expr-ptr e) (render-expr (printer-who mode) e) "#<expr: dropped>") port)))
+    (write-string (if (expr-ptr e)
+                      (printed-or-placeholder 'expr (lambda () (expr->string/raw e)))
+                      "#<expr: dropped>")
+                  port)))
 
 (define (wrap-expr p) (and p (expr p)))
 
@@ -75,11 +78,8 @@
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_to_string)
 
-(define (render-expr who e)
-  (call/foreign-error who (lambda () (expr->string/raw e)) "cannot print the expression"))
-
 (define (expr->string e)
-  (render-expr 'expr->string e))
+  (call/foreign-error 'expr->string (lambda () (expr->string/raw e)) "cannot print the expression"))
 
 (define-compat lazyframe-explain/raw
   (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstring)
