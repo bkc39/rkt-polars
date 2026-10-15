@@ -12,7 +12,7 @@
 
 (require (prefix-in base: racket/base)
          (only-in racket/list make-list)
-         (only-in racket/match match match*)
+         (only-in racket/match match match* match-define)
          (only-in threading ~>)
          polars/private/foreign
          polars/private/expr
@@ -21,7 +21,7 @@
          (only-in polars/private/series series-repeat-temporal)
          (only-in polars/private/temporal temporal-value-dtype)
          syntax/parse/define
-         (for-syntax racket/base))
+         (for-syntax racket/base syntax/parse))
 
 (provide (all-defined-out))
 
@@ -78,42 +78,67 @@
         [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
         [else (base-op a b)]))
 
-(define ((unary-arith expr-op series-op base-op) a)
-  (cond [(Expr-ptr? a) (expr-op a)]
-        [(series? a) (series-op a)]
-        [else (base-op a)]))
+(define (series-through-expr s build)
+  (define name (series-name s))
+  (~> (dataframe-new (list s))
+      (dataframe-select-exprs (list (expr-alias (build (expr-all)) name)))
+      (dataframe-column name)
+      wrap-series))
 
-(define (series-neg s)
+(define (series-negate s)
   (match (series-dtype s)
+    ['null s]
     [(or 'int8 'int16 'int32 'int64 'float32 'float64 (list 'duration _) (list 'decimal _ _))
-     (define name (series-name s))
-     (~> (dataframe-new (list s))
-         (dataframe-select-exprs (list (expr-neg (col name))))
-         (dataframe-column name)
-         wrap-series)]
+     (series-through-expr s expr-neg)]
     [dt (raise-arguments-error '- "cannot negate a series of this dtype" "dtype" dt)]))
 
-(define (reciprocal a) (binary-arith '/ expr-div series-div base:/ 1 a))
+(define (expr-reciprocal e)
+  (define divided (p/ 1 e))
+  (match (expr-meta-output-name/raw e)
+    [#f divided]
+    [name (expr-alias divided name)]))
 
-(define-syntax-parse-rule (define-arith name:id who:id expr-op:expr series-op:expr base-op:expr
-                                        unary-op:expr)
-  (define (name . args)
-    (cond
-      [(andmap base:number? args) (apply base-op args)]   ; numeric fast path
-      [(null? args) (base-op)]
-      [(null? (cdr args)) (unary-op (car args))]
-      [else (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
-                   (car args) (cdr args))])))
+(define (series-reciprocal s)
+  (match (series-dtype s)
+    ['null s]
+    [(or (? numeric-dtype?) (list 'decimal _ _)) (series-through-expr s expr-reciprocal)]
+    [dt (raise-arguments-error '/ "cannot take the reciprocal of a series of this dtype"
+                               "dtype" dt)]))
 
-(define-arith p+ + expr-add series-add base:+ (unary-arith values values base:+))
-(define-arith p- - expr-sub series-sub base:- (unary-arith expr-neg series-neg base:-))
-(define-arith p* * expr-mul series-mul base:* (unary-arith values values base:*))
-(define-arith p/ / expr-div series-div base:/ (unary-arith reciprocal reciprocal base:/))
+(begin-for-syntax
+  (define-splicing-syntax-class (one-argument who base-op)
+    #:description "a one-argument case (#:unary expr-op series-op, or #:binary-only)"
+    #:attributes ([clause 1])
+    (pattern (~seq #:unary expr-op:expr series-op:expr)
+             #:with (clause ...) #`([(list (? Expr-ptr? a)) (expr-op a)]
+                                    [(list (? series? a)) (series-op a)]
+                                    [(list a) (#,base-op a)]))
+    (pattern (~seq #:binary-only)
+             #:with (clause ...) #`([(list) (raise-arity-error '#,who (arity-at-least 2))]
+                                    [(list a) (raise-arity-error '#,who (arity-at-least 2) a)]))
+    (pattern (~seq)
+             #:with (clause ...) #`([(list (and a (or (? Expr-ptr?) (? series?)))) a]
+                                    [(list a) (#,base-op a)]))))
+
+(define-syntax-parser define-arith
+  [(_ name:id who:id expr-op:expr series-op:expr base-op:expr
+      (~var one (one-argument #'who #'base-op)))
+   #'(define (name . args)
+       (match args
+         one.clause ...
+         [_ #:when (andmap base:number? args) (apply base-op args)]
+         [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
+                               a more)]))])
+
+(define-arith p+ + expr-add series-add base:+)
+(define-arith p- - expr-sub series-sub base:- #:unary expr-neg series-negate)
+(define-arith p* * expr-mul series-mul base:*)
+(define-arith p/ / expr-div series-div base:/ #:unary expr-reciprocal series-reciprocal)
 
 ;; `mod` does not collide with racket/base (which spells it `modulo`), so it
 ;; is provided under its own name rather than via the rename-out dance.  Plain
 ;; numbers fall back to racket/base `modulo`.
-(define-arith mod mod expr-mod series-mod base:modulo (unary-arith values values base:modulo))
+(define-arith mod mod expr-mod series-mod base:modulo #:binary-only)
 
 ;; --- boolean / logical operators --------------------------------------------
 ;; and / or stay short-circuit macros; only an Expr/series operand routes into
@@ -191,10 +216,8 @@
   ;; filter/select integration is exercised in reshape's tests, to avoid an
   ;; operators<->reshape test cycle.
   (require rackunit
-           racket/runtime-path
            (only-in gregor/period hours minutes)
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/parquet dataframe-read-parquet)
            polars/private/generic/core
            polars/private/generic/test-fixtures)
 
@@ -258,12 +281,17 @@
   (check-equal? (mod 10 3) 1)
   (check-pred Expr-ptr? (mod (col "value") 2))
 
-  ;; one argument: - negates and / takes the reciprocal, as on numbers (#169)
   (check-equal? (list (p- 5) (p/ 4) (p+ 3) (p* 3)) '(-5 1/4 3 3))
-  (check-equal? (format "~a" (p- (col "value"))) "col(\"value\").negate()")
-  (check-equal? (format "~a" (p/ (col "value"))) "[(dyn int: 1) rust_div (col(\"value\"))]")
-  (check-equal? (format "~a" (p+ (col "value"))) "col(\"value\")")
-  (check-equal? (format "~a" (p* (col "value"))) "col(\"value\")")
+  (for ([case (list (list (p- (col "value")) "col(\"value\").negate()")
+                    (list (p/ (col "value"))
+                          "[(dyn int: 1) rust_div (col(\"value\"))].alias(\"value\")")
+                    (list (p+ (col "value")) "col(\"value\")")
+                    (list (p* (col "value")) "col(\"value\")")
+                    (list (p- (col "delay")) "col(\"delay\").negate()")
+                    (list (p/ (col "speed"))
+                          "[(dyn int: 1) rust_div (col(\"speed\"))].alias(\"speed\")"))])
+    (match-define (list e printed) case)
+    (check-equal? (format "~a" e) printed))
   (define unary-frame
     (dataframe-select-exprs ops-df
                             (list (expr-alias (p- (col "value")) "neg")
@@ -276,6 +304,14 @@
   (check-equal? (unary-column "cost-recip")
                 (map (lambda (x) (base:/ 1 x)) '(1.2 2.4 0.5 3.1 1.8)))
   (check-equal? (unary-column "same") '(10 25 7 30 18))
+  (define reciprocals (dataframe-select-exprs ops-df (list (p/ (col "value")) (p/ (col "cost")))))
+  (check-equal? (dataframe-column-names reciprocals) '("value" "cost"))
+  (check-equal? (series->list (dataframe-column reciprocals "cost"))
+                (map (lambda (x) (base:/ 1 x)) '(1.2 2.4 0.5 3.1 1.8)))
+  (check-equal? (dataframe-column-names (dataframe-with-columns ops-df (list (p/ (col "cost")))))
+                '("group" "value" "cost"))
+  (check-equal? (expr-meta-output-name (p/ (expr-alias (col "cost") "c"))) "c")
+  (check-equal? (expr-meta-output-name (p/ (col #rx"^c"))) "literal")
   (define negated (p- withnull))
   (check-pred series? negated)
   (check-equal? (dtype negated) 'int32)
@@ -284,14 +320,22 @@
   (check-equal? (series->list (p- floats)) '(-1.5 -2.0 -4.25 -8.0))
   (check-equal? (series->list (p- (series (list (hours 1) (minutes -30)))))
                 (series->list (series (list (hours -1) (minutes 30)))))
-  (define-runtime-path data-dir "../../scribblings/data")
-  (define price
-    (~> (build-path data-dir "produce.parquet") dataframe-read-parquet (dataframe-column "price")
-        wrap-series))
-  (check-equal? (series->list (p- price)) (list -5/4 -4/5 polars-null -12))
-  (check-equal? (format "~a" (p- (col "delay"))) "col(\"delay\").negate()")
-  (check-equal? (format "~a" (p/ (col "speed"))) "[(dyn int: 1) rust_div (col(\"speed\"))]")
+  (check-equal? (series->list (p- prices)) (list -5/4 -4/5 polars-null -12))
+  (check-equal? (series->list (p/ prices)) (list 4/5 5/4 polars-null 2/25))
+  (check-equal? (series-name (p/ prices)) "price")
+  (define pattern-named (series '(1 2) #:name "^a$"))
+  (check-equal? (series->list (p- pattern-named)) '(-1 -2))
+  (check-equal? (series-name (p- pattern-named)) "^a$")
+  (check-equal? (series->list (p/ pattern-named)) '(1 0))
+  (check-equal? (series-name (p/ pattern-named)) "^a$")
   (check-equal? (series->list (p- (series '(1 -2 3)))) '(-1 2 -3))
+  (check-equal? (series-name (p- (series '(1 -2 3) #:name "v"))) "v")
+  (define replaced
+    (dataframe-with-columns (dataframe (list (series '(10 25 7) #:name "v")))
+                            (list (p/ (col "v")))))
+  (check-equal? (dataframe-column-names replaced) '("v"))
+  (check-equal? (series->list (dataframe-column replaced "v")) '(0 0 0))
+  (check-exn #rx"^mod: arity mismatch" (lambda () (mod (col "v"))))
   (check-equal? (~> (dataframe (list (series '(10 25 7) #:name "v")))
                     (dataframe-select-exprs (list (expr-alias (p- (col "v")) "neg")))
                     (dataframe-column "neg")
@@ -299,13 +343,29 @@
                 '(-10 -25 -7))
   (check-equal? (series->list (p/ (series '(1.0 2.0 4.0)))) '(1.0 0.5 0.25))
   (check-equal? (series->list (p/ (series '(1 2 4)))) '(1 0 0))
-  (check-equal? (series->list (p/ ints)) (series->list (p/ 1 ints)))
+  (check-equal? (series->list (p/ ints)) '(1 0 0 0))
+  (check-equal? (dtype (p/ ints)) 'int32)
+  (check-equal? (series-name (p/ floats)) "floats")
+  (check-equal? (series->list (p/ (series '(1 2) #:dtype 'u8))) '(1 0))
+  (define nulls
+    (wrap-series (series-cast (series (list polars-null polars-null) #:name "n") 'null)))
+  (for ([op (list p- p/)])
+    (define result (op nulls))
+    (check-equal? (list (dtype result) (len result) (series-name result)) '(null 2 "n")))
   (check-eq? (p+ ints) ints)
   (check-eq? (p* ints) ints)
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'uint8"
              (lambda () (p- (series '(1 2) #:dtype 'u8))))
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'string"
              (lambda () (p- (series '("a" "b")))))
+  (for ([operand (list (series '("a")) (series '(#t #f)) (series (list (hours 1)))
+                       (series (list (datetime 2013 1 1))))])
+    (check-exn #rx"^/: cannot take the reciprocal of a series of this dtype\n  dtype: "
+               (lambda () (p/ operand))))
+  (for ([operand (list 5 (col "value") v64)])
+    (check-exn #rx"^mod: arity mismatch.*expected: at least 2\n  given: 1"
+               (lambda () (mod operand))))
+  (check-exn #rx"^mod: arity mismatch.*expected: at least 2\n  given: 0" (lambda () (mod)))
 
   ;; when / then / otherwise build an Expr; control-flow path stays racket `when`
   (check-pred Expr-ptr? (~> (p-when (> (col "score") 15)) (then 10) (otherwise 0)))

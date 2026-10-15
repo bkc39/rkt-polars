@@ -264,32 +264,35 @@ total
 @deftogether[(@defproc[(+ [v any/c] ...) any/c]
               @defproc[(- [v any/c] ...) any/c]
               @defproc[(* [v any/c] ...) any/c]
-              @defproc[(/ [v any/c] ...) any/c])]{
+              @defproc[(/ [v any/c] ...) any/c]
+              @defproc[(mod [a any/c] [b any/c] ...+) any/c])]{
   Overloaded arithmetic. When every argument is a number they are exactly the
-  @racketmodname[racket/base] operators. Otherwise they fold left over the
-  arguments: an expression operand yields an expression (via
-  @racket[expr-add], @racket[expr-sub], @racket[expr-mul], @racket[expr-div]),
-  so @racket[(* (col "value") 2)] reads like @tt{col("value") * 2}, and a
-  series operand yields an eagerly computed series. With one argument they
-  keep their @racketmodname[racket/base] meaning on an expression or a series
-  too: @racket[-] negates (@racket[expr-neg]; a series must be a signed
-  integer, float, decimal or duration one), @racket[/] takes the reciprocal
-  as @racket[(/ 1 _v)] does, so on an integer column it is integer division
-  (@racket[(/ (col "v"))] is @tt{1 // v}), and @racket[+] and @racket[*] return
-  it unchanged. These shadow the @racketmodname[racket/base] bindings; see
+  @racketmodname[racket/base] operators (@racket[mod] is @racket[modulo]).
+  Otherwise they fold left over the arguments: an expression operand yields an
+  expression (via @racket[expr-add], @racket[expr-sub], @racket[expr-mul],
+  @racket[expr-div], @racket[expr-mod]), so @racket[(* (col "value") 2)] reads
+  like @tt{col("value") * 2}, and a series operand yields an eagerly computed
+  series. These shadow the @racketmodname[racket/base] bindings; see
   @secref["fluent-shadowing"].
+
+  With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
+  @racket[(/ 1 _v)], integer division on an integer column, keeping
+  @racket[_v]'s name unless @racket[_v] has several outputs; @racket[+] and
+  @racket[*] return @racket[_v], and @racket[mod] needs two arguments.
 
   @examples[#:eval ev #:label #f
 (- 5)
 (/ 4)
 (- (col "delay"))
 (/ (col "speed"))
-(- (series '(1 -2 3)))
-(/ (series '(1.0 2.0 4.0)))
+(- (series '(1 -2 3) #:name "v"))
+(/ (series '(1.0 2.0 4.0) #:name "v"))
 (/ (series '(1 2 4)))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
+(eval:error (/ (series '("a"))))
+(eval:error (mod (col "v")))
 (~> (dataframe (list (series '(10 25 7) #:name "v")))
-    (select (alias (- (col "v")) "neg")))]}
+    (with-columns (/ (col "v"))))]}
 
 @defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
   Keeps the rows of @racket[d] matching @racket[predicate], which may be a
@@ -2438,11 +2441,18 @@ built.
 @deftogether[(@defproc[(expr-and [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-or  [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-xor [a any/c] [b any/c]) Expr-ptr?]
-              @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?])]{
+              @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?]
+              @defproc[(expr-neg [e Expr-ptr?]) Expr-ptr?])]{
   Element-wise boolean logic over boolean expressions, for combining
   predicates. The generic @racket[and], @racket[or], @racket[xor] and
   @racket[not] dispatch to these when given an expression and are the preferred
-  surface: @racket[(and (> (col "value") 15) (< (col "cost") 3.0))].}
+  surface: @racket[(and (> (col "value") 15) (< (col "cost") 3.0))].
+  @racket[expr-neg] negates a numeric expression; one-argument @racket[-]
+  dispatches to it.
+
+  @examples[#:eval ev #:label #f
+(~> (dataframe (list (series '(1 -2 3) #:name "x")))
+    (select (expr-neg (col "x"))))]}
 
 @deftogether[(@defproc[(expr-sum      [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-mean     [e Expr-ptr?]) Expr-ptr?]

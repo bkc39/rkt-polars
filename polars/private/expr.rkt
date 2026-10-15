@@ -1247,6 +1247,11 @@
                   (expr-alias (expr-is-null (col "x")) "x_null")))
   (check-equal? (series-dtype (dataframe-column df-unops "not_one")) 'boolean)
   (check-equal? (series-dtype (dataframe-column df-unops "x_null")) 'boolean)
+  (define negated-x
+    (dataframe-select-exprs (dataframe-new (list (series-new-i64 "x" '(1 -2 3))))
+                            (list (expr-neg (col "x")))))
+  (check-equal? (dataframe-column-names negated-x) '("x"))
+  (check-equal? (for/list ([i 3]) (series-ref (dataframe-column negated-x "x") i)) '(-1 2 -3))
 
   ;; --- Phase A3 tests ---
 
