@@ -270,9 +270,26 @@ total
   arguments: an expression operand yields an expression (via
   @racket[expr-add], @racket[expr-sub], @racket[expr-mul], @racket[expr-div]),
   so @racket[(* (col "value") 2)] reads like @tt{col("value") * 2}, and a
-  series operand yields an eagerly computed series. A single non-numeric
-  argument is returned unchanged. These shadow the @racketmodname[racket/base]
-  bindings; see @secref["fluent-shadowing"].}
+  series operand yields an eagerly computed series. With one argument they
+  keep their @racketmodname[racket/base] meaning on an expression or a series
+  too: @racket[-] negates (@racket[expr-neg]; a series must be a signed
+  integer, float, decimal or duration one), @racket[/] takes the reciprocal
+  as @racket[(/ 1 _v)] does, so on an integer column it is integer division
+  (@racket[(/ (col "v"))] is @tt{1 // v}), and @racket[+] and @racket[*] return
+  it unchanged. These shadow the @racketmodname[racket/base] bindings; see
+  @secref["fluent-shadowing"].
+
+  @examples[#:eval ev #:label #f
+(- 5)
+(/ 4)
+(- (col "delay"))
+(/ (col "speed"))
+(- (series '(1 -2 3)))
+(/ (series '(1.0 2.0 4.0)))
+(/ (series '(1 2 4)))
+(eval:error (- (series '(1 2) #:dtype 'u8)))
+(~> (dataframe (list (series '(10 25 7) #:name "v")))
+    (select (alias (- (col "v")) "neg")))]}
 
 @defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
   Keeps the rows of @racket[d] matching @racket[predicate], which may be a
