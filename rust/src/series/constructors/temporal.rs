@@ -7,10 +7,14 @@ pub extern "C" fn series_new_ymdhms(
     data: *const YMDHMS,
     length: usize,
 ) -> *mut Series {
-    if data.is_null() {
+    if data.is_null() && length != 0 {
         std::ptr::null_mut()
     } else {
-        let ymdhms_slice = unsafe { std::slice::from_raw_parts(data, length) };
+        let ymdhms_slice: &[YMDHMS] = if length == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(data, length) }
+        };
         let naive_dates: Vec<NaiveDateTime> = ymdhms_slice
             .iter()
             .map(|ymdhms| {

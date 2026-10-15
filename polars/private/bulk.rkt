@@ -365,7 +365,7 @@
            (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
-                    dataframe-new polars-null? series-cast series-drop-count series-head
+                    dataframe-new polars-null? series-cast series-drop-count
                     series-new-i64 series-new-str series-new-str/vec series-ref)
            (only-in polars/private/gc-pressure call-with-collections))
 
@@ -379,8 +379,8 @@
   (for* ([chunk-rows '(1 2 3 7)]
          [n (list 0 (sub1 chunk-rows) chunk-rows (add1 chunk-rows) (* 2 chunk-rows)
                   (add1 (* 2 chunk-rows)))]
-         [s (let ([strs (series-head (series-new-str "x" (gappy-strs (add1 n))) n)])
-              (list (series-head (series-new-i64 "x" (gappy-ints (add1 n))) n)
+         [s (let ([strs (series-new-str "x" (gappy-strs n))])
+              (list (series-new-i64 "x" (gappy-ints n))
                     strs
                     (series-cast strs 'categorical)
                     (series-cast strs '(enum yyy || yy y))))])

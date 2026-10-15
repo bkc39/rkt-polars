@@ -71,6 +71,31 @@ fn packed_null_name_is_empty() {
 }
 
 #[test]
+fn packed_zero_rows_is_empty() {
+    let n = cstr("xs");
+    let offsets = [0i64];
+    for s in [
+        packed(n.as_ptr(), b"", &offsets, None),
+        packed(n.as_ptr(), b"ab", &[2], Some(&[])),
+        series_new_str_packed(
+            n.as_ptr(),
+            ptr::null(),
+            0,
+            offsets.as_ptr(),
+            1,
+            ptr::null(),
+            0,
+        ),
+    ] {
+        assert!(!s.is_null());
+        assert_eq!(series_len(s), 0);
+        assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
+        assert_eq!(take_cstring(series_name(s)), "xs");
+        series_drop(s);
+    }
+}
+
+#[test]
 fn packed_many_rows() {
     let owned: Vec<String> = (0..200_000).map(|i| format!("r{i}é")).collect();
     let rows: Vec<Option<&str>> = owned
@@ -90,8 +115,10 @@ fn packed_refusals_return_null() {
     let n = cstr("xs");
     let name = n.as_ptr();
     let good_valid = [1u8, 1];
-    let cases: [(&str, &[u8], &[i64], Option<&[u8]>); 9] = [
-        ("zero rows", b"", &[0], None),
+    let cases: [(&str, &[u8], &[i64], Option<&[u8]>); 11] = [
+        ("lone offset past the buffer", b"ab", &[3], None),
+        ("lone negative offset", b"ab", &[-1], None),
+        ("lone offset inside a character", "é".as_bytes(), &[1], None),
         ("no offsets", b"", &[], None),
         ("decreasing offsets", b"abc", &[0, 2, 1], None),
         ("negative offset", b"abc", &[-1, 1, 2], None),

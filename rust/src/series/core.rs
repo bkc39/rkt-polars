@@ -102,8 +102,11 @@ pub(crate) fn create_chunked_array_from_raw<T>(
 where
     T: PolarsNumericType,
 {
-    let slice = unsafe { std::slice::from_raw_parts(data as *const _, length) };
-    let vec = slice.to_vec();
+    let vec = if length == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(data, length) }.to_vec()
+    };
 
     unsafe {
         if let Ok(name) = CStr::from_ptr(name).to_str() {
@@ -123,7 +126,7 @@ where
     T: PolarsNumericType + Clone,
     ChunkedArray<T>: IntoSeries,
 {
-    if name.is_null() || data.is_null() {
+    if name.is_null() || (data.is_null() && length != 0) {
         return ptr::null_mut();
     }
 

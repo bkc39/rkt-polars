@@ -177,16 +177,14 @@
           'datetime (list (datetime 1999 12 31) (datetime 2020 1 1) (datetime 2020 1 1 12))))
 
   (define (random-sort-frame rng dtypes n density #:payload? [payload? #t])
-    (define m (max n 1))
     (define (cell dtype)
       (define pool (hash-ref sort-pools dtype))
       (if (< (random rng) density) polars-null (list-ref pool (random (length pool) rng))))
     (define keys
       (for/list ([dtype (in-list dtypes)] [j (in-naturals)])
-        (series (for/list ([_ (in-range m)]) (cell dtype)) #:name (format "k~a" j) #:dtype dtype)))
-    (define rows (series (range m) #:name "row" #:dtype 'int64))
-    (define d (dataframe (if payload? (append keys (list rows)) keys)))
-    (if (zero? n) (head d 0) d))
+        (series (for/list ([_ (in-range n)]) (cell dtype)) #:name (format "k~a" j) #:dtype dtype)))
+    (define rows (series (range n) #:name "row" #:dtype 'int64))
+    (dataframe (if payload? (append keys (list rows)) keys)))
 
   (define (sort-value-compare a b)
     (cond

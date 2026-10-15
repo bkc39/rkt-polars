@@ -3,7 +3,8 @@
 ;; dtype aliases, inference, and the dtype -> series-constructor map shared by
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
-(require racket/match
+(require (only-in racket/list make-list)
+         racket/match
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -61,15 +62,15 @@
     [else dt]))
 
 (define (infer-dtype elements)
+  (define all (if (vector? elements) (vector->list elements) elements))
   (define vals
-    (for/list ([x (in-list (if (vector? elements)
-                               (vector->list elements)
-                               elements))]
+    (for/list ([x (in-list all)]
                #:unless (polars-null? x))
       x))
   ;; Defaults mirror Polars' inference for a Python list: integers -> Int64,
   ;; reals -> Float64, strings -> String, booleans -> Boolean.
   (cond
+    [(null? all) 'null]
     [(null? vals) 'int64]
     [(andmap boolean? vals) 'boolean]
     [(andmap exact-integer? vals) 'int64]
@@ -94,6 +95,11 @@
     [(float64) (if vec? series-new-f64/vec series-new-f64)]
     [(boolean) (if vec? series-new-bool/vec series-new-bool)]
     [(string)  (if vec? series-new-str/vec series-new-str)]
+    [(null)
+     (lambda (name elements)
+       (define n (if vec? (vector-length elements) (length elements)))
+       (with-release ([s (series-new-i64 name (make-list n polars-null)) series-drop])
+         (series-cast-to 'series s 'null)))]
     [else
      (match canonical
        [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))

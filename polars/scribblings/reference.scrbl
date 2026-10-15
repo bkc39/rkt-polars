@@ -1449,9 +1449,13 @@ an implementation detail and not part of the public series API.)
   datetime or duration column is microseconds, or nanoseconds when a value
   carries a sub-microsecond part and a nanosecond column holds every value,
   and moments make a zoned datetime column (@secref["ref-temporal-values"]).
+  An empty list or vector is an empty series of @racket[dtype], or of
+  @racket['null] without one, as Python's @tt{pl.Series([])}.
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
+(series '())
+(series '() #:name "empty" #:dtype 'f64)
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")

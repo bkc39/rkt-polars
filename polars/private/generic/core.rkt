@@ -382,3 +382,29 @@
              (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
   (check-exn #rx"^series: value out of range for this dtype"
              (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f)))))
+
+(module+ test
+  (require (only-in racket/match match-define))
+  (define (empty-shape s)
+    (list (series-name s) (series-dtype s) (series-len s) (for/list ([x s]) x)))
+
+  (check-equal? (empty-shape (series '())) '("" null 0 ()))
+  (check-equal? (empty-shape (series (vector) #:name "v")) '("v" null 0 ()))
+  (check-equal? (empty-shape (series '() #:name "empty" #:dtype 'f64)) '("empty" float64 0 ()))
+  (check-equal? (series-dtype (series (list polars-null))) 'int64)
+  (for* ([dtypes (in-list '((i8 int8) (i16 int16) (i32 int32) (i64 int64)
+                            (u8 uint8) (u16 uint16) (u32 uint32) (u64 uint64)
+                            (f32 float32) (f64 float64) (bool boolean) (str string)
+                            (date date) (time time) (datetime (datetime microseconds #f))
+                            ((datetime milliseconds) (datetime milliseconds #f))
+                            ((datetime nanoseconds #f) (datetime nanoseconds #f))
+                            ((datetime microseconds "Europe/Paris")
+                             (datetime microseconds "Europe/Paris"))
+                            ((duration microseconds) (duration microseconds))
+                            ((duration nanoseconds) (duration nanoseconds))
+                            (categorical categorical) ((enum a b) (enum a b)) ((enum) (enum))))]
+         [elements (in-list (list '() (vector)))])
+    (match-define (list spec expected) dtypes)
+    (check-equal? (empty-shape (series elements #:name "e" #:dtype spec))
+                  (list "e" expected 0 '())
+                  (format "~s ~s" spec elements))))
