@@ -11,9 +11,9 @@
          (only-in polars/private/foreign
                   _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
                   dataframe-column-names dataframe-height decimal-ref define-compat
-                  duration-value->period polars-null series-copy-decimal series-copy-i64
-                  series-copy-str series-drop series-dtype series-len series-name
-                  series-null-count series-str-byte-len)
+                  duration-value->period polars-null series-copy-decimal series-copy-i32
+                  series-copy-i64 series-copy-str series-drop series-dtype series-len
+                  series-name series-null-count series-str-byte-len)
          (only-in polars/private/resource with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time))
@@ -37,7 +37,7 @@
     ...))
 
 (define-copies
-  series-copy-i8 series-copy-i16 series-copy-i32
+  series-copy-i8 series-copy-i16
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
 
@@ -366,8 +366,11 @@
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
                     dataframe-new polars-null? series-cast series-drop-count series-head
-                    series-new-i64 series-new-str series-new-str/vec series-ref)
+                    series-new-i32 series-new-i64 series-new-str series-new-str/vec series-ref)
            (only-in polars/private/gc-pressure call-with-collections))
+
+  (define past-chrono (series-cast (series-new-i32 "d" '(2000000000 -2000000000)) 'date))
+  (check-equal? (series->list past-chrono) (list (series-ref past-chrono 0) (series-ref past-chrono 1)))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])

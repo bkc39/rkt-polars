@@ -73,7 +73,7 @@
   #:property prop:owned-pointer 0
   #:property prop:custom-write
   (lambda (d port mode)
-    (write-string (dataframe->string d) port))
+    (write-string (dataframe->string d (printer-who mode)) port))
   #:methods gen:has-ref
   [(define (ref d [key unset] #:columns [columns unset] #:rows [rows unset])
      (dataframe-ref* d key columns rows))]
@@ -382,3 +382,40 @@
              (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
   (check-exn #rx"^series: value out of range for this dtype"
              (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f)))))
+
+(module+ test
+  (require (only-in compiler/find-exe find-exe)
+           (only-in racket/system system*/exit-code))
+  (define past-chrono-date '(cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+  (define past-chrono-datetime
+    '(cast (series '(9223372036854775807) #:dtype 'i64 #:name "t") '(datetime milliseconds #f)))
+  (define printings
+    `((display (dataframe (list ,past-chrono-date)) (open-output-string))
+      (write (dataframe (list ,past-chrono-datetime)) (open-output-string))
+      (print (dataframe (list ,past-chrono-date)) (open-output-string))
+      (format "~a" (dataframe (list ,past-chrono-date)))
+      (display-dataframe (dataframe (list ,past-chrono-date)) (open-output-string))
+      (format "~a" (collect (lazy (dataframe (list ,past-chrono-datetime)))))
+      (display (is-in "x" ,past-chrono-date) (open-output-string))
+      (write (is-in "x" ,past-chrono-date) (open-output-string))
+      (expr->string (is-in "x" ,past-chrono-date))))
+  (define program
+    `(write (for/list ([show (list ,@(map (lambda (p) `(lambda () ,p)) printings))])
+              (with-handlers ([exn:fail? exn-message]) (show) 'printed))))
+  (define output (open-output-string))
+  (define status
+    (parameterize ([current-output-port output] [current-error-port (open-output-string)])
+      (system*/exit-code (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" program))))
+  (define (panicked who what cause)
+    (format "~a: cannot print the ~a: polars panicked: ~a" who what cause))
+  (check-equal? status 0)
+  (check-equal? (read (open-input-string (get-output-string output)))
+                (list (panicked 'display "dataframe" "out-of-range date")
+                      (panicked 'write "dataframe" "invalid or out-of-range datetime")
+                      (panicked 'print "dataframe" "out-of-range date")
+                      (panicked 'display "dataframe" "out-of-range date")
+                      (panicked 'display-dataframe "dataframe" "out-of-range date")
+                      (panicked 'display "dataframe" "invalid or out-of-range datetime")
+                      (panicked 'display "expression" "out-of-range date")
+                      (panicked 'write "expression" "out-of-range date")
+                      (panicked 'expr->string "expression" "out-of-range date"))))

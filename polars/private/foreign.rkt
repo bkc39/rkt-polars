@@ -18,7 +18,7 @@
          syntax/parse/define
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
          (only-in polars/private/temporal
-                  epoch->datetime epoch->moment nanoseconds->time offset-unit)
+                  days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
@@ -1123,7 +1123,10 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
-;; The validity buffer is GC memory the collector may move: never #:blocking?.
+;; The validity buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-i32
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+
 (define-compat series-copy-i64
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
 
@@ -1151,6 +1154,11 @@
       [else
        (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
             (epoch->datetime unit (ptr-ref value _int64 0)))])))
+
+(define (series-ref-date s index)
+  (with-raw-buffer ([days 1 _int32])
+    (and (zero? (series-copy-i32 s index 1 days 1 #f 0))
+         (days->date (ptr-ref days _int32 0)))))
 
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
@@ -1191,9 +1199,7 @@
        [(string) (require-ref-value dtype (series-ref-string s index))]
        [(categorical enum)
         (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
-       [(date)
-        (require-ref-value dtype
-                           (compat-opt-ymd->datum (series-ref-date/raw s index)))]
+       [(date) (require-ref-value dtype (series-ref-date s index))]
        [(time)
         (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
         (require-ref-value dtype (and raw (nanoseconds->time raw)))]
@@ -1318,6 +1324,9 @@
   (check-equal? (series-ref ref-date 0) (date 2024 1 2))
   (check-equal? (series-ref ref-date 1) polars-null)
   (check-equal? (series-ref ref-date 2) (date 1969 12 31))
+  (define past-chrono (series-cast (series-new-i32 "d" '(2000000000 -2000000000)) 'date))
+  (check-equal? (series-ref past-chrono 0) (date 5477784 1 6))
+  (check-equal? (series-ref past-chrono 1) (date -5473845 12 27))
 
   (define ref-duration
     (series-cast (series-new-i64 "dur" (list 1500 polars-null -250))
@@ -1884,9 +1893,18 @@
   (or (dataframe-column/raw df name)
       (error 'dataframe-column "no column named ~s" name)))
 
-(define-compat dataframe->string
+(define-compat dataframe->string/raw
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
+
+(define (printer-who mode)
+  (case mode
+    [(#t) 'write]
+    [(#f) 'display]
+    [else 'print]))
+
+(define (dataframe->string df [who 'dataframe->string])
+  (call/foreign-error who (lambda () (dataframe->string/raw df)) "cannot print the dataframe"))
 
 
 (define (glob-pattern? p)
@@ -2282,7 +2300,7 @@
   (dataframe-unpivot/raw df on index))
 
 (define (display-dataframe df [out (current-output-port)])
-  (display (dataframe->string df) out)
+  (display (dataframe->string df 'display-dataframe) out)
   (newline out))
 
 (module+ test

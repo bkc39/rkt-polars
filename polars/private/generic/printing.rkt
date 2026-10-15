@@ -161,6 +161,8 @@
   (define (cells s) (cdddr (string-split (series->string s) #rx"\n\t?")))
   (check-equal? (cells (series-cast (series-new-i32 "d" '(15706 -1 2932897 -719893)) 'date))
                 '("2013-01-01" "1969-12-31" "+10000-01-01" "-0001-01-01" "]"))
+  (check-equal? (cells (series-cast (series-new-i32 "d" '(2000000000)) 'date))
+                '("+5477784-01-06" "]"))
   (check-equal? (cells (series-cast (series-new-i64 "t" '(0 1500000000 1000 1)) 'time))
                 '("00:00:00" "00:00:01.500" "00:00:00.000001" "00:00:00.000000001" "]"))
   (check-equal? (cells (series-cast (series-new-i64 "dt" (list 1500 -1 polars-null))

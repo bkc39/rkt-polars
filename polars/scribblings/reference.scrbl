@@ -424,6 +424,15 @@ total
   clock instead. A zone polars does not know raises, with the nearest name
   it does.
 
+  A cast can make a date or datetime outside the years -262143 to 262142,
+  which @racket[series] and @racket[lit] refuse. @racket[ref], the
+  conversions (@racket[series->list], ...) and a series' printing read it as
+  the gregor value. Polars cannot print one, so printing a dataframe or an
+  expression that holds one raises: the error names the printer
+  (@racket[display], @racket[write] or @racket[print], or
+  @racket[display-dataframe] or @racket[expr->string]) and gives Polars'
+  reason.
+
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
@@ -433,7 +442,10 @@ total
 (eval:error (cast (series '("UA" "B6")) carriers))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
-                  '(datetime microseconds "Europe/Brusels")))]}
+                  '(datetime microseconds "Europe/Brusels")))
+(define far (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+(ref far 0)
+(eval:error (display (dataframe (list far))))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must

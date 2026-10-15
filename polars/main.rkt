@@ -41,7 +41,8 @@
                      series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
                      series-dt-convert-time-zone series-dt-convert-time-zone/raw
                      series-dt-replace-time-zone series-dt-replace-time-zone/raw
-                     series-time-zone replace-zone-failure zoned-datetime-dtype?)
+                     series-time-zone replace-zone-failure zoned-datetime-dtype?
+                     dataframe->string/raw printer-who series-copy-i32 series-ref-date)
          (all-from-out polars/private/generic)
          ~> ~>> lambda~> lambda~>>
          (rename-out [polars:and and] [polars:or or]
@@ -64,7 +65,9 @@
   (for ([internal '(dtype-short-names expr-meta-output-name/raw allocator/or-fail
                     call/foreign-error prop:owned-pointer sort-flags-mismatch
                     check-enum-categories decimal-ref series-copy-decimal series-copy-str
-                    series-new-str/raw series-str-byte-len string-has-nul?)])
+                    series-new-str/raw series-str-byte-len string-has-nul?
+                    dataframe->string/raw printer-who series-copy-i32 series-ref-date
+                    expr->string/raw render-expr)])
     (check-false (memq internal exported) (format "~a is internal" internal))))
 
 (module+ test

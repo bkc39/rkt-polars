@@ -150,6 +150,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
+  `dataframe_to_string`, `expr_to_string`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
   `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
@@ -180,7 +181,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
   `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `lazyframe_explain`, `dataframe_sort_with_options`,
+  `lazyframe_collect`, `lazyframe_explain`, `dataframe_to_string`,
+  `expr_to_string`, `dataframe_sort_with_options`,
   `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
   the three series time-zone entry points (`series_cast_datetime_tz`,
   `series_dt_convert_time_zone`, `series_dt_replace_time_zone`), the IO
@@ -188,7 +190,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`dataframe_read_json_with_options`, `lazyframe_scan_ndjson_with_options`,
   `dataframe_write_ndjson_with_options`) do: 0.41.3 aborted Racket on a
   Parquet Categorical or Decimal column (#93), and a `scan-csv` that reads
-  the header (`#:schema-overrides`) aborted it on a compressed file (#177).
+  the header (`#:schema-overrides`) aborted it on a compressed file (#177),
+  and the two printers on a date or datetime outside chrono's range (#141).
+  `rust/src/tests/guard_audit.rs` reads every `#[no_mangle] extern "C"`
+  function under `rust/src` (and every `macro_rules!` that generates one)
+  and fails on one that reaches `guard_panic` neither directly nor through a
+  helper that does, unless `rust/src/tests/unguarded.txt` lists it with a
+  reason class (`drop`, `count`, `accessor`, `builder`, `constructor`,
+  `error`, or `compute` for one that runs polars on caller data); a
+  generating macro is listed with its invocation count. The audit also
+  fails on a stale entry, so guarding an entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
   otherwise observe a native free (`foreign.rkt` has a case for each Series-
@@ -463,7 +474,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
   part as a polars cast does: a datetime floors, a duration truncates toward
   zero. A date or datetime outside chrono's years (-262143 to 262142) is
-  refused, since polars panics printing one. `lit`, and so every comparison,
+  refused, since polars panics printing one. A `cast` still makes one (#141):
+  `ref`, the conversions and the series printer read it as gregor's value
+  (`ref` reads a date through the bulk copy, as `series->list` does, so the
+  two agree), and printing a frame or an expression that holds one raises
+  under the printer's name (`display`, `write` or `print` by the
+  custom-write mode, or `display-dataframe` / `expr->string`) with polars'
+  panic as the reason. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
   dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
 - A zoned datetime (#140, polars' `timezones` feature) is the datum
