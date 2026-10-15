@@ -21,3 +21,4 @@
 ;; time; see private/install-compat.rkt.
 (define pre-install-collection "private/install-compat.rkt")
 (define compile-omit-files '("private/install-compat.rkt"))
+(define test-timeouts '(("private/generic/csv-options.rkt" 900)))

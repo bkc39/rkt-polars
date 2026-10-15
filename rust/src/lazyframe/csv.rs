@@ -7,6 +7,7 @@ use crate::{
 use polars::io::path_utils::{decode_file_uri_paths, expand_paths};
 use polars::io::utils::compression::SupportedCompression;
 use polars::polars_utils::pl_path::PlRefPath;
+use polars::polars_utils::sys::total_memory;
 use polars_buffer::Buffer;
 use std::future::Future;
 use std::io::Read;
@@ -144,18 +145,22 @@ fn decode_selection(arrays: &CsvArrays) -> PolarsResult<Selection> {
     })
 }
 
-const FREE_RESERVATION: usize = 1 << 20;
-// No allocation reaches 2^47 bytes, the user address space on x86-64 and arm64.
-pub(crate) const NEVER_RESERVED: usize = (1 << 47) / size_of::<Buffer<u8>>();
-// A compressed byte decodes to at most: deflate, 258 bytes in two bits; zstd, 128 KiB in four.
+pub(crate) const FREE_RESERVATION: usize = 1 << 20;
+const ADDRESS_BITS: u32 = 47;
+pub(crate) const ROW_BYTES: u64 = size_of::<Buffer<u8>>() as u64;
+pub(crate) const NEVER_RESERVED: usize =
+    (1 << ADDRESS_BITS) / size_of::<Buffer<u8>>();
 const DEFLATE_EXPANSION: u64 = 1032;
 const ZSTD_EXPANSION: u64 = 32768;
 
-fn expansion(path: &Path) -> u64 {
+fn compression(path: &Path) -> std::io::Result<Option<SupportedCompression>> {
     let mut head = Vec::with_capacity(4);
-    let read = std::fs::File::open(path)
-        .and_then(|file| file.take(4).read_to_end(&mut head));
-    match read.map(|_| SupportedCompression::check(&head)) {
+    std::fs::File::open(path)?.take(4).read_to_end(&mut head)?;
+    Ok(SupportedCompression::check(&head))
+}
+
+fn expansion(path: &Path) -> u64 {
+    match compression(path) {
         Ok(None) => 1,
         Ok(Some(SupportedCompression::GZIP | SupportedCompression::ZLIB)) => {
             DEFLATE_EXPANSION
@@ -165,13 +170,13 @@ fn expansion(path: &Path) -> u64 {
 }
 
 fn most_rows_in_file(path: &Path) -> Option<u64> {
-    let metadata = std::fs::metadata(path).ok()?;
-    metadata.is_file().then(|| {
+    let metadata = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    Some(
         metadata
             .len()
             .saturating_mul(expansion(path))
-            .saturating_add(1)
-    })
+            .saturating_add(1),
+    )
 }
 
 fn input_files(path: &str, glob: bool) -> Option<Vec<PlRefPath>> {
@@ -199,13 +204,17 @@ pub(crate) fn most_rows(path: &str, glob: bool) -> Option<u64> {
 
 pub(crate) fn rows_to_infer(
     requested: Option<usize>,
+    memory: impl FnOnce() -> u64,
     most_rows: impl FnOnce() -> Option<u64>,
 ) -> Option<usize> {
-    requested.filter(|&n| {
-        n <= FREE_RESERVATION
-            || (n < NEVER_RESERVED
-                && most_rows().is_none_or(|rows| (n as u64) < rows))
-    })
+    let reservation = |n: usize| (n as u64).saturating_mul(ROW_BYTES);
+    match requested {
+        Some(n) if n <= FREE_RESERVATION => requested,
+        Some(n) if n >= NEVER_RESERVED => None,
+        Some(n) if reservation(n) > memory() => None,
+        Some(n) if most_rows().is_some_and(|rows| n as u64 >= rows) => None,
+        _ => requested,
+    }
 }
 
 #[derive(Clone)]
@@ -236,6 +245,7 @@ fn decode(
             options
                 .has_infer_schema_length
                 .then_some(options.infer_schema_length),
+            total_memory,
             || most_rows(path, options.glob),
         ),
         comment_prefix: decode_string(arrays.comment_prefix, "comment prefix")?

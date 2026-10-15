@@ -334,11 +334,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   pattern`.
 - polars reserves 24 bytes a row for a CSV `#:infer-schema-length` before
   it reads (`streaming.rs`), so `rows_to_infer` (`lazyframe/csv.rs`) reads
-  every row instead when the count is over 2^20 and either no allocation
-  can reach it (2^47 bytes) or the local inputs cannot hold that many rows;
-  for the second it expands the paths with polars' `expand_paths` and stats
-  each file and reads its first four bytes when the plan is built, not at
-  `collect`.
+  every row instead when a count over 2^20 reserves more than polars'
+  `total_memory()` (`polars_utils::sys`, a cgroup's limit where one is set;
+  `POLARS_OVERRIDE_TOTAL_MEMORY` moves it) or 2^47 bytes, or more rows than
+  the local inputs could hold.
+- That last bound is fixed when the plan is built, not at `collect`: it
+  expands the paths with polars' `expand_paths` and stats each file and reads
+  its first four bytes, so a pipe, a device, an unexpanded cloud path or a
+  file created later gives no bound. One poll of `expand_paths` suffices:
+  its local branch never awaits, and a `Pending` poll counts as no bound
+  (`block_on` could hang under `POLARS_FORCE_ASYNC` inside
+  `call-as-atomic`).
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the

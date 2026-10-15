@@ -70,7 +70,7 @@
 
   (provide call-in-child check-reads-like-every check-staged-write)
 
-  (define (call-in-child form #:timeout [seconds 300])
+  (define (call-in-child form #:timeout [seconds 120])
     (define-values (child out in err)
       (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" form)))
     (close-output-port in)
@@ -78,14 +78,18 @@
     (define copiers
       (for/list ([from (list out err)] [to (in-list texts)])
         (thread (lambda () (copy-port from to) (close-input-port from)))))
-    (unless (sync/timeout seconds child)
-      (subprocess-kill child #t))
+    (define status
+      (cond
+        [(sync/timeout seconds child) (subprocess-status child)]
+        [else (subprocess-kill child #t) 'timeout]))
     (for-each thread-wait copiers)
-    (apply values (subprocess-status child) (map get-output-string texts)))
+    (apply values status (map get-output-string texts)))
 
-  (define (check-reads-like-every label every read)
-    (for ([n (in-list (list (expt 2 62) size-max))])
-      (check-true (frame=? (read n) every) (format "~a at ~a" label n))))
+  (define huge-counts (list (expt 2 62) size-max))
+
+  (define (check-reads-like-every label every read-with)
+    (for ([n (in-list huge-counts)])
+      (check-true (frame=? (read-with n) every) (format "~a at ~a" label n))))
 
   (define char-device #o020000)
 

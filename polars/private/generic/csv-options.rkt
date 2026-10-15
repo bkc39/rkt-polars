@@ -5,8 +5,8 @@
            racket/file
            racket/runtime-path
            (only-in racket/list last range second)
-           (only-in racket/match match-define)
-           (only-in racket/string string-join)
+           (only-in racket/dict in-dict)
+           (only-in racket/string string-append*)
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
@@ -394,10 +394,9 @@
                       oracle-frame)
 
   (define late-float-text
-    (string-join (append '("x,s")
-                         (for/list ([i (in-range 150)]) (format "~a,r~a" i i))
-                         '("1.5,last"))
-                 "\n" #:after-last "\n"))
+    (string-append "x,s\n"
+                   (string-append* (for/list ([i (in-range 150)]) (format "~a,r~a\n" i i)))
+                   "1.5,last\n"))
   (define late-float (scratch-file csv-dir "late-float.csv" late-float-text))
   (define parts-dir (build-path data-dir "parts"))
   (define (check-same-as-every label path)
@@ -406,34 +405,36 @@
                             (lambda (n) (read-csv path #:infer-schema-length n)))
     (check-reads-like-every (format "scan-csv ~a" label) every
                             (lambda (n) (collect (scan-csv path #:infer-schema-length n)))))
-  (for ([source (in-list `(("late float" ,late-float)
-                           ("one-file glob" ,(one-file-pattern late-float))
-                           ("parts glob" ,(build-path parts-dir "*.csv"))
-                           ("gzip" ,(build-path compressed "part-1.csv.gz"))
-                           ("zlib" ,(build-path compressed "part-1.csv.zlib"))
-                           ("zstd" ,(build-path compressed "part-1.csv.zst"))))])
-    (match-define (list label path) source)
+  (for ([(label path) (in-dict (list (cons "late float" late-float)
+                                     (cons "one-file glob" (one-file-pattern late-float))
+                                     (cons "parts glob" (build-path parts-dir "*.csv"))
+                                     (cons "gzip" (build-path compressed "part-1.csv.gz"))
+                                     (cons "zlib" (build-path compressed "part-1.csv.zlib"))
+                                     (cons "zstd" (build-path compressed "part-1.csv.zst"))))])
     (check-same-as-every label path))
   (check-equal? (dtype (ref (read-csv late-float #:infer-schema-length (expt 2 62)) "x")) 'float64)
   (check-reads-like-every "scan-csv of a directory"
                           (collect (scan-csv parts-dir #:infer-schema-length #f))
                           (lambda (n) (collect (scan-csv parts-dir #:infer-schema-length n))))
 
-  (define (summary frame-form)
-    `(let ([d ,frame-form]) (write (list (shape d) (dtype (ref d "x"))))))
-  (define written-later (path->string (build-path csv-dir "written-later.csv")))
-  (for ([child (in-list
-                `(("a count the file bounds" ,(summary `(read-csv ,(path->string late-float)
-                                                                  #:infer-schema-length
-                                                                  ,(expt 2 40))))
-                  ("a count no reservation reaches, before the file exists"
-                   (let ([plan (scan-csv ,written-later #:infer-schema-length ,(expt 2 50))])
-                     (call-with-output-file ,written-later
-                       (lambda (out) (write-string ,late-float-text out)))
-                     ,(summary '(collect plan))))))])
-    (match-define (list label form) child)
+  (define late-float-every (read-csv late-float #:infer-schema-length #f))
+  (define never-reserved (quotient (expt 2 47) 24))
+  (define (scan-before-writing name count)
+    (define later (path->string (build-path csv-dir name)))
+    `(let ([plan (scan-csv ,later #:infer-schema-length ,count)])
+       (call-with-output-file ,later (lambda (out) (write-string ,late-float-text out)))
+       (let ([d (collect plan)])
+         (write (list (shape d) (dtype (ref d "x")))))))
+  (define past-every-reservation (scan-before-writing "unreserved.csv" never-reserved))
+  (define past-the-host-memory
+    `(begin (putenv "POLARS_OVERRIDE_TOTAL_MEMORY" ,(number->string (expt 2 34)))
+            ,(scan-before-writing "past-memory.csv" (sub1 never-reserved))))
+  (for ([(label form) (in-dict (list (cons "a count no reservation reaches" past-every-reservation)
+                                     (cons "a count past the host's memory" past-the-host-memory)))])
     (define-values (status output errors) (call-in-child form))
-    (check-equal? status 0 (format "~a: ~a" label errors))
-    (check-equal? (read (open-input-string output)) '((151 2) float64) label))
+    (check-equal? status 0 (format "~a, before the file exists: ~a" label errors))
+    (check-equal? (read (open-input-string output))
+                  (list (shape late-float-every) (dtype (ref late-float-every "x")))
+                  label))
 
   (delete-directory/files csv-dir))
