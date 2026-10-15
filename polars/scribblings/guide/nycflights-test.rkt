@@ -137,7 +137,7 @@
   (for ([got (column by-origin "mean_delay")]
         [want '(18.297525013164822 16.61114237478897 14.715965346534654)])
     (check-= got want 1e-9))
-  (check-exn #rx"^cast: cannot convert to '\\(enum EWR JFK LGA\\): .*\"TEB\""
+  (check-exn #rx"^cast: 1 of 2 "
              (lambda () (cast (series '(EWR TEB)) nyc-airport)))
 
   ;; nycflights-describe

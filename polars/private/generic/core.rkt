@@ -227,7 +227,7 @@
   (define levels (series '("info" debug) #:dtype '(enum debug info)))
   (check-equal? (dtype levels) '(enum debug info))
   (check-equal? (ref levels 0) 'info)
-  (check-exn #rx"^series: cannot convert to '\\(enum debug info\\): .*\\[\"error\"\\]"
+  (check-exn #rx"^series: 1 of 2 "
              (lambda () (series '(info error) #:dtype '(enum debug info))))
   (check-exn #rx"unsupported dtype '\\(enum debug debug\\)"
              (lambda () (series '(debug) #:dtype '(enum debug debug))))
@@ -301,7 +301,19 @@
                             (lambda () (dataframe (list (series '(1 2) #:name "a")))))
                 1)
   (check-pred void? (begin (lazyframe-drop (wrap-lazyframe (dataframe-lazy frame)))
-                           (settle!))))
+                           (settle!)))
+
+  (define (drops-while-raising thunk)
+    (settle!)
+    (define before (series-drop-count))
+    (check-exn exn:fail? thunk)
+    (- (series-drop-count) before))
+  (define held (series-new-str "levels" '("info" "error")))
+  (check-equal? (- (drops-while-raising
+                    (lambda () (series '(info error) #:dtype '(enum debug info))))
+                   (drops-while-raising
+                    (lambda () (series-cast held '(enum debug info)))))
+                1))
 
 (module+ test
   (require (only-in gregor date moment now)

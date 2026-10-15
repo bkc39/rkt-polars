@@ -356,8 +356,14 @@
     (check-false (cast-target? target) (format "~v" target)))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
              (lambda () (contracted:cast 5 'f64)))
-  (check-exn #rx"^cast: cannot convert to '\\(enum UA AA\\): .*\\[\"B6\"\\]"
+  (check-exn #rx"^cast: 1 of 2 "
              (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
+  (check-exn #rx"^cast: 3 of 4 "
+             (lambda () (cast (series (list 'TEB polars-null 'XYZ 'TEB 'EWR)) '(enum EWR JFK LGA))))
+  (check-equal? (series-cells (cast (series (list 'EWR polars-null 'LGA)) '(enum EWR JFK LGA)))
+                (list 'EWR polars-null 'LGA))
+  (check-exn #rx"^cast: 2 of 2 "
+             (lambda () (cast (series '(high high) #:dtype '(enum high)) '(enum low))))
 
   ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
   (define flights
@@ -381,7 +387,7 @@
   (check-equal? (column-names (select coded (col '(enum JFK MIA)))) '())
   (check-equal? (series-cells (= (ref coded "carrier") 'UA)) '(#t #f #t #f))
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
-  (check-exn #rx"^cast: cannot convert to '\\(enum JFK\\): .*\"IAH\""
+  (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^lazyframe-collect: .*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))

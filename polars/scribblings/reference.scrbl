@@ -412,9 +412,10 @@ total
   (@racket[dtype-spec?]), plus @racket['binary], @racket['null] and
   @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
-  in a cast to an Enum, which raises naming the values outside its
-  categories, as Python's default @tt{strict=True} does (on an expression,
-  when the plan runs).
+  in a cast to an Enum, which raises as Python's default @tt{strict=True}
+  does. On a series the error names the values outside the categories (the
+  first ten in sorted order); on an expression it raises when the plan runs,
+  with Polars' message.
 
   A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each
   instant: a naive datetime, or an integer count since the epoch, is read
