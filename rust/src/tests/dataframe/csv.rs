@@ -1260,3 +1260,100 @@ fn read_i64(df: &DataFrame, name: &str) -> Vec<i64> {
         .into_no_null_iter()
         .collect()
 }
+
+#[test]
+fn a_count_past_the_input_infers_from_every_row() {
+    let huge = 1usize << 62;
+    let bound = || Some(1000);
+    assert_eq!(rows_to_infer(Some(huge), bound), None);
+    assert_eq!(rows_to_infer(Some(usize::MAX), bound), None);
+    assert_eq!(rows_to_infer(Some(huge), || Some(huge as u64)), None);
+    assert_eq!(
+        rows_to_infer(Some(huge), || Some(huge as u64 + 1)),
+        Some(huge)
+    );
+    assert_eq!(rows_to_infer(Some(huge), || None), Some(huge));
+    assert_eq!(rows_to_infer(None, bound), None);
+    for small in [0, 1, 100, 1000, 1 << 20] {
+        assert_eq!(rows_to_infer(Some(small), bound), Some(small));
+    }
+}
+
+#[test]
+fn the_row_bound_covers_every_file_decompressed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let plain = write(dir.path(), "plain.csv", b"x\n1\n2\n");
+    assert_eq!(most_rows(plain.to_str().unwrap(), true), Some(7));
+    for (name, head, expansion) in [
+        ("g.csv.gz", [0x1f, 0x8b, 8, 0], 1032),
+        ("z.csv.zlib", [0x78, 0x9c, 0, 0], 1032),
+        ("s.csv.zst", [0x28, 0xb5, 0x2f, 0xfd], 32768),
+    ] {
+        let mut bytes = head.to_vec();
+        bytes.extend([0; 6]);
+        let path = write(dir.path(), name, &bytes);
+        assert_eq!(
+            most_rows(path.to_str().unwrap(), true),
+            Some(10 * expansion + 1),
+            "{}",
+            name
+        );
+    }
+    let nested = dir.path().join("nested").join("deeper");
+    std::fs::create_dir_all(&nested).expect("mkdir");
+    write(dir.path(), "nested/a.csv", b"x\n1\n");
+    write(&nested, "b.csv", &[b'1'; 40]);
+    let nested_dir = dir.path().join("nested");
+    assert_eq!(most_rows(nested_dir.to_str().unwrap(), true), Some(41));
+    let pattern = dir.path().join("*.csv");
+    assert_eq!(most_rows(pattern.to_str().unwrap(), true), Some(7));
+    assert_eq!(most_rows(pattern.to_str().unwrap(), false), None);
+    let nothing = dir.path().join("*.none");
+    assert_eq!(most_rows(nothing.to_str().unwrap(), true), None);
+    assert_eq!(most_rows("s3://bucket/data.csv", true), None);
+    let missing = dir.path().join("missing.csv");
+    assert_eq!(most_rows(missing.to_str().unwrap(), true), None);
+}
+
+#[test]
+fn a_huge_infer_schema_length_reads_like_every_row() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut text = String::from("x,s\n");
+    for i in 0..150 {
+        text.push_str(&format!("{},r{}\n", i, i));
+    }
+    text.push_str("1.5,last\n");
+    let file = write(dir.path(), "late-float.csv", text.as_bytes());
+    write(dir.path(), "second.csv", b"x,s\n2,two\n");
+    let pattern = dir.path().join("*.csv");
+    let whole_dir = dir.path().to_path_buf();
+    let mut every = Csv::default();
+    every.options.has_infer_schema_length = false;
+    let mut headless_every = every.clone();
+    headless_every.options.has_header = false;
+    headless_every.new_columns = vec![cstr("a"), cstr("b")];
+    for n in [1usize << 62, usize::MAX] {
+        let mut huge = Csv::default();
+        huge.options.infer_schema_length = n;
+        for path in [&file, &pattern] {
+            let expected = every.read(path);
+            assert_eq!(
+                expected.column("x").unwrap().dtype(),
+                &DataType::Float64
+            );
+            for got in [huge.read(path), huge.scan_collect(path)] {
+                assert_eq!(got.schema(), expected.schema(), "{:?}", path);
+                assert!(got.equals_missing(&expected), "{:?}", path);
+            }
+        }
+        let mut headless = huge.clone();
+        headless.options.has_header = false;
+        headless.new_columns = headless_every.new_columns.clone();
+        let expected = headless_every.read(&file);
+        assert!(headless.read(&file).equals_missing(&expected));
+        assert!(headless.scan_collect(&file).equals_missing(&expected));
+        assert!(huge
+            .scan_collect(&whole_dir)
+            .equals_missing(&every.scan_collect(&whole_dir)));
+    }
+}

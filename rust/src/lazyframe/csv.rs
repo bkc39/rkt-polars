@@ -4,6 +4,9 @@ use crate::{
     polars_dtype_from_compat, read_path, require_path, scan, zero_based,
     CompatCsvOptions, CompatDType, PathRules,
 };
+use polars::io::utils::compression::SupportedCompression;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 struct CsvArrays {
     comment_prefix: *const c_char,
@@ -135,8 +138,91 @@ fn decode_selection(arrays: &CsvArrays) -> PolarsResult<Selection> {
     })
 }
 
+const RESERVED_FREELY: usize = 1 << 20;
+/// The most bytes one compressed byte decodes to: a deflate match of 258
+/// bytes takes two bits, a zstd RLE block of 128 KiB takes four bytes.
+const DEFLATE_EXPANSION: u64 = 1032;
+const ZSTD_EXPANSION: u64 = 32768;
+
+fn most_rows_in_file(path: &Path) -> Option<u64> {
+    let file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    let mut head = Vec::with_capacity(4);
+    file.take(4).read_to_end(&mut head).ok()?;
+    let expansion = match SupportedCompression::check(&head) {
+        None => 1,
+        Some(SupportedCompression::GZIP | SupportedCompression::ZLIB) => {
+            DEFLATE_EXPANSION
+        }
+        Some(SupportedCompression::ZSTD) => ZSTD_EXPANSION,
+    };
+    Some(len.saturating_mul(expansion).saturating_add(1))
+}
+
+fn files_under(dir: &Path) -> Option<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(dir).ok()? {
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    Some(files)
+}
+
+fn input_files(path: &str, glob: bool) -> Option<Vec<PathBuf>> {
+    if path.contains("://") {
+        return None;
+    }
+    if is_pattern(path, glob) {
+        let matches = glob::glob(path).ok()?;
+        return matches
+            .map(|found| found.ok())
+            .filter(|found| !found.as_ref().is_some_and(|p| p.is_dir()))
+            .collect();
+    }
+    let path = Path::new(path);
+    if path.is_dir() {
+        files_under(path)
+    } else {
+        Some(vec![path.to_path_buf()])
+    }
+}
+
+pub(crate) fn most_rows(path: &str, glob: bool) -> Option<u64> {
+    input_files(path, glob)?
+        .iter()
+        .map(|file| most_rows_in_file(file))
+        .collect::<Option<Vec<u64>>>()?
+        .into_iter()
+        .max()
+}
+
+/// polars reserves room for `requested` rows before reading any: a count no
+/// input could reach reads every row instead, which infers the same schema.
+pub(crate) fn rows_to_infer(
+    requested: Option<usize>,
+    most_rows: impl FnOnce() -> Option<u64>,
+) -> Option<usize> {
+    match requested {
+        Some(n)
+            if n > RESERVED_FREELY
+                && most_rows().is_some_and(|rows| n as u64 >= rows) =>
+        {
+            None
+        }
+        other => other,
+    }
+}
+
 #[derive(Clone)]
 struct CsvRequest {
+    infer_schema_length: Option<usize>,
     comment_prefix: Option<CommentPrefix>,
     row_index: Option<RowIndex>,
     null_values: Option<NullValues>,
@@ -153,10 +239,17 @@ fn comment_prefix(prefix: String) -> CommentPrefix {
 }
 
 fn decode(
+    path: &str,
     options: &CompatCsvOptions,
     arrays: &CsvArrays,
 ) -> PolarsResult<CsvRequest> {
     Ok(CsvRequest {
+        infer_schema_length: rows_to_infer(
+            options
+                .has_infer_schema_length
+                .then_some(options.infer_schema_length),
+            || most_rows(path, options.glob),
+        ),
         comment_prefix: decode_string(arrays.comment_prefix, "comment prefix")?
             .map(comment_prefix),
         row_index: decode_string(arrays.row_index_name, "row index name")?.map(
@@ -215,11 +308,7 @@ fn read_options(
         .with_skip_lines(options.skip_lines)
         .with_skip_rows_after_header(options.skip_rows_after_header)
         .with_n_rows(options.has_n_rows.then_some(options.n_rows))
-        .with_infer_schema_length(
-            options
-                .has_infer_schema_length
-                .then_some(options.infer_schema_length),
-        )
+        .with_infer_schema_length(request.infer_schema_length)
         .with_ignore_errors(options.ignore_errors)
         .with_raise_if_empty(options.raise_if_empty)
         .with_row_index(zero_based(&request.row_index))
@@ -260,9 +349,7 @@ fn header_names(
     let rows_read = if options.has_header {
         Some(0)
     } else {
-        options
-            .has_infer_schema_length
-            .then_some(options.infer_schema_length)
+        request.infer_schema_length
     };
     let header = CsvReadOptions::default()
         .with_has_header(options.has_header)
@@ -361,6 +448,7 @@ impl Renaming {
             other => other.clone(),
         };
         Ok(CsvRequest {
+            infer_schema_length: request.infer_schema_length,
             comment_prefix: request.comment_prefix.clone(),
             row_index: None,
             null_values,
@@ -475,7 +563,7 @@ fn csv_scan(
     options: &CompatCsvOptions,
     arrays: &CsvArrays,
 ) -> PolarsResult<LazyFrame> {
-    let request = decode(options, arrays)?;
+    let request = decode(path, options, arrays)?;
     if reads_header_at_scan(&request) {
         require_path(
             path,
@@ -571,7 +659,7 @@ fn csv_read(
     if is_pattern(path, options.glob) {
         return csv_scan(path, options, arrays)?.collect();
     }
-    eager_read(path, options, &decode(options, arrays)?)
+    eager_read(path, options, &decode(path, options, arrays)?)
 }
 
 macro_rules! csv_entry {
