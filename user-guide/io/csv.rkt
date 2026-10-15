@@ -78,7 +78,7 @@
 (displayln stations)
 
 ;; API gaps: schema, with_column_names, include_file_paths, missing_columns,
-;; the tuning knobs (n_threads, low_memory, rechunk, batch_size), use_pyarrow.
+;; use_pyarrow.
 
 ;; --- writing options ---------------------------------------------------------
 (write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"

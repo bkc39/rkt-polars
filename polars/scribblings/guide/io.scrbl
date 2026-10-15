@@ -156,8 +156,8 @@ stations
 ]
 
 A gzip, zlib or zstd file reads like a plain one. API gaps: @tt{schema},
-@tt{with_column_names}, @tt{include_file_paths}, @tt{missing_columns}, the
-tuning knobs, @tt{use_pyarrow}.
+@tt{with_column_names}, @tt{include_file_paths}, @tt{missing_columns},
+@tt{use_pyarrow}. The tuning knobs change no result and are not bound.
 
 @subsection[#:tag "io-csv-write-options"]{Writing options}
 
