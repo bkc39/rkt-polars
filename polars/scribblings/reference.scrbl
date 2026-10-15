@@ -866,8 +866,8 @@ stations
   Categorical, Enum and Decimal columns keep their dtypes
   (@secref["ref-categorical"]). A file Polars cannot read raises
   @racket[exn:fail] with Polars' reason, even where Polars itself panics.
-  API gaps: no @tt{schema}, @tt{extra_columns} or hive options.
-  @tt{use_pyarrow} changes no result and is not bound.
+  API gaps: no @tt{schema}, @tt{extra_columns}, @tt{use_pyarrow} or hive
+  options.
 
   @examples[#:eval ev #:hidden
 (require racket/file)

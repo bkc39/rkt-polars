@@ -77,7 +77,8 @@
             #:truncate-ragged-lines #t #:try-parse-dates #t))
 (displayln stations)
 
-;; API gaps: schema, with_column_names, include_file_paths, missing_columns.
+;; API gaps: schema, with_column_names, include_file_paths, missing_columns,
+;; use_pyarrow.
 
 ;; --- writing options ---------------------------------------------------------
 (write-csv stations path #:separator #\; #:decimal-comma #t #:null-value "-"
