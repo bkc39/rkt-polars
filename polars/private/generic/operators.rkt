@@ -13,11 +13,11 @@
 (require (prefix-in base: racket/base)
          (only-in racket/list make-list)
          (only-in racket/match match match* match-define)
-         (only-in threading ~>)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
+         (only-in polars/private/resource with-release)
          (only-in polars/private/series series-repeat-temporal)
          (only-in polars/private/temporal temporal-value-dtype)
          syntax/parse/define
@@ -80,10 +80,10 @@
 
 (define (series-through-expr s build)
   (define name (series-name s))
-  (~> (dataframe-new (list s))
-      (dataframe-select-exprs (list (expr-alias (build (expr-all)) name)))
-      (dataframe-column name)
-      wrap-series))
+  (with-release ([frame (dataframe-new (list s)) dataframe-drop]
+                 [out (dataframe-select-exprs frame (list (expr-alias (build (expr-all)) name)))
+                      dataframe-drop])
+    (wrap-series (dataframe-column out name))))
 
 (define (series-negate s)
   (match (series-dtype s)
@@ -219,10 +219,12 @@
   ;; filter/select integration is exercised in reshape's tests, to avoid an
   ;; operators<->reshape test cycle.
   (require rackunit
+           (only-in ffi/unsafe/atomic call-as-atomic)
            (only-in gregor/period hours minutes)
            (only-in polars/private/bulk series->list)
            polars/private/generic/core
-           polars/private/generic/test-fixtures)
+           polars/private/generic/test-fixtures
+           (only-in threading ~>))
 
   ;; comparison operators dispatch three ways
   (check-pred Expr-ptr? (> (col "value") 15))
@@ -287,6 +289,14 @@
   (check-pred Expr-ptr? (mod (col "value") 2))
 
   (check-equal? (list (p- 5) (p/ 4) (p+ 3) (p* 3)) '(-5 1/4 3 3))
+  (for ([op (list p- p/)])
+    (define s (series '(1.0 2.0 4.0) #:name "v"))
+    (check-equal? (call-as-atomic
+                   (lambda ()
+                     (define before (dataframe-drop-count))
+                     (op s)
+                     (base:- (dataframe-drop-count) before)))
+                  2))
   (for ([case (list (list (p- (col "value")) "col(\"value\").negate()")
                     (list (p/ (col "value"))
                           "[(dyn int: 1) rust_div (col(\"value\"))].alias(\"value\")")

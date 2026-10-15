@@ -266,8 +266,9 @@ total
               @defproc[(* [v any/c] ...) any/c]
               @defproc[(/ [v any/c] ...) any/c]
               @defproc[(mod [a any/c] [b any/c] ...+) any/c])]{
-  Overloaded arithmetic. When every argument is a number they are exactly the
-  @racketmodname[racket/base] operators (@racket[mod] is @racket[modulo]).
+  Overloaded arithmetic. When every argument is a number they are the
+  @racketmodname[racket/base] operators, and @racket[mod] folds
+  @racket[modulo] from the left.
   Otherwise they fold left over the arguments: an expression operand yields an
   expression (via @racket[expr-add], @racket[expr-sub], @racket[expr-mul],
   @racket[expr-div], @racket[expr-mod]), so @racket[(* (col "value") 2)] reads
@@ -277,12 +278,13 @@ total
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
   @racket[(/ 1 _v)], integer division on an integer column, each output
-  keeping its own name; @racket[+] and @racket[*] return @racket[_v], and
-  @racket[mod] needs two arguments.
+  keeping its own name; @racket[+] and @racket[*] return an expression or
+  series operand unchanged, and @racket[mod] needs two arguments.
 
   @examples[#:eval ev #:label #f
 (- 5)
 (/ 4)
+(mod 10 4 3)
 (- (col "delay"))
 (/ (col "speed"))
 (- (series '(1 -2 3) #:name "v"))
