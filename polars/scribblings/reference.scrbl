@@ -540,9 +540,11 @@ total
   are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
   reads every row, and @racket[0], or @racket[#:infer-schema #f], makes every
   column a string. A count above the rows a local input could hold (one a
-  byte, after the most its compression can expand) reads every row, as
-  @racket[#f] does. Polars reserves room for the count before it reads, so
-  a smaller count that is still enormous can exhaust memory and abort the
+  byte, after the most its compression can expand), or too large for any
+  allocation, reads every row, as @racket[#f] does. To tell, a count above
+  @racket[(expt 2 20)] stats each input and reads its first bytes when the
+  read or scan is built. Polars reserves room for the count before it reads,
+  so a smaller count that is still enormous can exhaust memory and abort the
   process.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]

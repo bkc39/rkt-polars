@@ -1263,97 +1263,161 @@ fn read_i64(df: &DataFrame, name: &str) -> Vec<i64> {
 
 #[test]
 fn a_count_past_the_input_infers_from_every_row() {
-    let huge = 1usize << 62;
-    let bound = || Some(1000);
-    assert_eq!(rows_to_infer(Some(huge), bound), None);
-    assert_eq!(rows_to_infer(Some(usize::MAX), bound), None);
-    assert_eq!(rows_to_infer(Some(huge), || Some(huge as u64)), None);
-    assert_eq!(
-        rows_to_infer(Some(huge), || Some(huge as u64 + 1)),
-        Some(huge)
-    );
-    assert_eq!(rows_to_infer(Some(huge), || None), Some(huge));
-    assert_eq!(rows_to_infer(None, bound), None);
-    for small in [0, 1, 100, 1000, 1 << 20] {
-        assert_eq!(rows_to_infer(Some(small), bound), Some(small));
+    let huge = 1usize << 40;
+    for (requested, bound, expected) in [
+        (Some(huge), Some(1000), None),
+        (Some(huge), Some(huge as u64), None),
+        (Some(huge), Some(huge as u64 + 1), Some(huge)),
+        (Some(huge), None, Some(huge)),
+        (None, Some(1000), None),
+        (Some(NEVER_RESERVED - 1), None, Some(NEVER_RESERVED - 1)),
+        (Some(NEVER_RESERVED), None, None),
+        (Some(1 << 50), None, None),
+        (Some(usize::MAX), None, None),
+        (Some(0), Some(0), Some(0)),
+        (Some(1), Some(0), Some(1)),
+        (Some(1000), Some(0), Some(1000)),
+        (Some(1 << 20), Some(0), Some(1 << 20)),
+    ] {
+        assert_eq!(
+            rows_to_infer(requested, || bound),
+            expected,
+            "{:?} {:?}",
+            requested,
+            bound
+        );
     }
+}
+
+fn newlines_compressed(lines: usize) -> [(&'static str, Vec<u8>); 3] {
+    use flate2::write::{GzEncoder, ZlibEncoder};
+    use flate2::Compression;
+    use std::io::Write;
+    let text = vec![b'\n'; lines];
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
+    gzip.write_all(&text).expect("gzip");
+    let mut zlib = ZlibEncoder::new(Vec::new(), Compression::best());
+    zlib.write_all(&text).expect("zlib");
+    [
+        ("lines.csv.gz", gzip.finish().expect("gzip")),
+        ("lines.csv.zlib", zlib.finish().expect("zlib")),
+        (
+            "lines.csv.zst",
+            zstd::encode_all(&text[..], 19).expect("zstd"),
+        ),
+    ]
+}
+
+fn within(
+    seconds: u64,
+    work: impl FnOnce() -> Option<u64> + Send + 'static,
+) -> Option<u64> {
+    let (sent, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || sent.send(work()));
+    received
+        .recv_timeout(std::time::Duration::from_secs(seconds))
+        .expect("most_rows returned in time")
 }
 
 #[test]
 fn the_row_bound_covers_every_file_decompressed() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let plain = write(dir.path(), "plain.csv", b"x\n1\n2\n");
-    assert_eq!(most_rows(plain.to_str().unwrap(), true), Some(7));
-    for (name, head, expansion) in [
-        ("g.csv.gz", [0x1f, 0x8b, 8, 0], 1032),
-        ("z.csv.zlib", [0x78, 0x9c, 0, 0], 1032),
-        ("s.csv.zst", [0x28, 0xb5, 0x2f, 0xfd], 32768),
-    ] {
-        let mut bytes = head.to_vec();
-        bytes.extend([0; 6]);
+    let lines = 1 << 20;
+    for (name, bytes) in newlines_compressed(lines) {
         let path = write(dir.path(), name, &bytes);
-        assert_eq!(
-            most_rows(path.to_str().unwrap(), true),
-            Some(10 * expansion + 1),
-            "{}",
-            name
-        );
+        let bound = most_rows(path.to_str().unwrap(), true).expect(name);
+        assert!(bound > lines as u64, "{}: {}", name, bound);
     }
+    write(dir.path(), "plain.csv", b"x\n1\n2\n");
     let nested = dir.path().join("nested").join("deeper");
     std::fs::create_dir_all(&nested).expect("mkdir");
     write(dir.path(), "nested/a.csv", b"x\n1\n");
     write(&nested, "b.csv", &[b'1'; 40]);
-    let nested_dir = dir.path().join("nested");
-    assert_eq!(most_rows(nested_dir.to_str().unwrap(), true), Some(41));
-    let pattern = dir.path().join("*.csv");
-    assert_eq!(most_rows(pattern.to_str().unwrap(), true), Some(7));
-    assert_eq!(most_rows(pattern.to_str().unwrap(), false), None);
-    let nothing = dir.path().join("*.none");
-    assert_eq!(most_rows(nothing.to_str().unwrap(), true), None);
-    assert_eq!(most_rows("s3://bucket/data.csv", true), None);
-    let missing = dir.path().join("missing.csv");
-    assert_eq!(most_rows(missing.to_str().unwrap(), true), None);
+    let bracketed = dir.path().join("a[1]");
+    std::fs::create_dir(&bracketed).expect("mkdir");
+    write(&bracketed, "x.csv", b"x\n1\n2\n3\n");
+    let special = dir.path().join("special");
+    std::fs::create_dir_all(special.join("sub")).expect("mkdir");
+    write(&special, "a.csv", b"x\n1\n2\n");
+    write(&special, "empty.csv", b"");
+    write(&special.join("sub"), "b.csv", b"x\n");
+    let fifo = special.join("pipe.csv");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+    let at = |relative: &str| {
+        dir.path().join(relative).to_str().unwrap().to_string()
+    };
+    for (path, glob, expected) in [
+        (at("plain.csv"), true, Some(7)),
+        (at("nested"), true, Some(41)),
+        (at("a[1]"), true, Some(9)),
+        (at("special"), true, Some(7)),
+        (at("special/*"), true, Some(7)),
+        (at("*.csv"), true, Some(7)),
+        (at("[p]lain.csv"), true, Some(7)),
+        (at("*.csv"), false, None),
+        (at("*.none"), true, None),
+        (at("special/pipe.csv"), true, None),
+        (at("missing.csv"), true, None),
+        ("s3://bucket/data.csv".to_string(), true, None),
+    ] {
+        let label = format!("{} {}", path, glob);
+        assert_eq!(
+            within(5, move || most_rows(&path, glob)),
+            expected,
+            "{}",
+            label
+        );
+    }
 }
 
 #[test]
 fn a_huge_infer_schema_length_reads_like_every_row() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let mut text = String::from("x,s\n");
-    for i in 0..150 {
-        text.push_str(&format!("{},r{}\n", i, i));
-    }
-    text.push_str("1.5,last\n");
+    let text = (0..150).fold(String::from("x,s\n"), |text, i| {
+        text + &format!("{},r{}\n", i, i)
+    }) + "1.5,last\n";
     let file = write(dir.path(), "late-float.csv", text.as_bytes());
     write(dir.path(), "second.csv", b"x,s\n2,two\n");
-    let pattern = dir.path().join("*.csv");
+    let sources = [
+        file.clone(),
+        dir.path().join("*.csv"),
+        dir.path().join("[l]ate-float.csv"),
+    ];
     let whole_dir = dir.path().to_path_buf();
     let mut every = Csv::default();
     every.options.has_infer_schema_length = false;
+    let expected: Vec<DataFrame> =
+        sources.iter().map(|path| every.read(path)).collect();
+    for frame in &expected {
+        assert_eq!(frame.column("x").unwrap().dtype(), &DataType::Float64);
+    }
     let mut headless_every = every.clone();
     headless_every.options.has_header = false;
     headless_every.new_columns = vec![cstr("a"), cstr("b")];
-    for n in [1usize << 62, usize::MAX] {
+    let headless_expected = headless_every.read(&file);
+    let whole_dir_expected = every.scan_collect(&whole_dir);
+    for n in [1usize << 40, 1 << 62, usize::MAX] {
         let mut huge = Csv::default();
         huge.options.infer_schema_length = n;
-        for path in [&file, &pattern] {
-            let expected = every.read(path);
-            assert_eq!(
-                expected.column("x").unwrap().dtype(),
-                &DataType::Float64
-            );
+        for (path, expected) in sources.iter().zip(&expected) {
             for got in [huge.read(path), huge.scan_collect(path)] {
-                assert_eq!(got.schema(), expected.schema(), "{:?}", path);
-                assert!(got.equals_missing(&expected), "{:?}", path);
+                assert_eq!(got.schema(), expected.schema(), "{:?} {}", path, n);
+                assert!(got.equals_missing(expected), "{:?} {}", path, n);
             }
         }
         let mut headless = huge.clone();
         headless.options.has_header = false;
         headless.new_columns = headless_every.new_columns.clone();
-        let expected = headless_every.read(&file);
-        assert!(headless.read(&file).equals_missing(&expected));
-        assert!(headless.scan_collect(&file).equals_missing(&expected));
+        assert!(headless.read(&file).equals_missing(&headless_expected));
+        assert!(headless
+            .scan_collect(&file)
+            .equals_missing(&headless_expected));
         assert!(huge
             .scan_collect(&whole_dir)
-            .equals_missing(&every.scan_collect(&whole_dir)));
+            .equals_missing(&whole_dir_expected));
     }
 }

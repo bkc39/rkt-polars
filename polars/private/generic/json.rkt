@@ -32,7 +32,6 @@
                     column-names dataframe dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
            (only-in polars/private/generic/reshape cast collect filter select)
-           (only-in polars/private/io-contracts size-max)
            polars/private/generic/test-fixtures
            (submod polars/private/generic/test-fixtures test))
 
@@ -113,8 +112,8 @@
   (check-false (regexp-match? #rx"infer_schema_length" ragged-message))
   (check-equal? (shape (read-json stations #:infer-schema-length #f)) '(4 5))
   (check-equal? (shape (read-json stations #:infer-schema-length 4)) '(4 5))
-  (check-true (frame=? (read-json stations #:infer-schema-length size-max)
-                       (read-json stations #:infer-schema-length #f)))
+  (check-reads-like-every "read-json" (read-json stations #:infer-schema-length #f)
+                          (lambda (n) (read-json stations #:infer-schema-length n)))
 
   (define mixed (scratch-file scratch "mixed.json" "[{\"a\":1},{\"a\":2},{\"a\":\"x\"}]"))
   (check-equal? (column (read-json mixed) "a") '("1" "2" "x"))
@@ -235,11 +234,10 @@
   (check-true (frame=? stations-frame readings))
   (check-pred lazyframe? (scan-ndjson stations-nd))
   (check-true (frame=? (collect (scan-ndjson stations-nd)) stations-frame))
-  (for ([n (list (expt 2 62) size-max)])
-    (check-true (frame=? (read-ndjson stations-nd #:infer-schema-length n)
-                         (read-ndjson stations-nd #:infer-schema-length #f)))
-    (check-true (frame=? (collect (scan-ndjson stations-nd #:infer-schema-length n))
-                         stations-frame)))
+  (check-reads-like-every "read-ndjson" stations-frame
+                          (lambda (n) (read-ndjson stations-nd #:infer-schema-length n)))
+  (check-reads-like-every "scan-ndjson" stations-frame
+                          (lambda (n) (collect (scan-ndjson stations-nd #:infer-schema-length n))))
   (check-equal? (~> (scan-ndjson stations-nd) (filter (> (col "reading") 3)) collect
                     (column "station"))
                 '("south" "south"))

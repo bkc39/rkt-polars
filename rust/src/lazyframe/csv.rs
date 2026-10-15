@@ -4,9 +4,15 @@ use crate::{
     polars_dtype_from_compat, read_path, require_path, scan, zero_based,
     CompatCsvOptions, CompatDType, PathRules,
 };
+use polars::io::path_utils::{decode_file_uri_paths, expand_paths};
 use polars::io::utils::compression::SupportedCompression;
+use polars::polars_utils::pl_path::PlRefPath;
+use polars_buffer::Buffer;
+use std::future::Future;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
 
 struct CsvArrays {
     comment_prefix: *const c_char,
@@ -138,86 +144,68 @@ fn decode_selection(arrays: &CsvArrays) -> PolarsResult<Selection> {
     })
 }
 
-const RESERVED_FREELY: usize = 1 << 20;
-/// The most bytes one compressed byte decodes to: a deflate match of 258
-/// bytes takes two bits, a zstd RLE block of 128 KiB takes four bytes.
+const FREE_RESERVATION: usize = 1 << 20;
+// No allocation reaches 2^47 bytes, the user address space on x86-64 and arm64.
+pub(crate) const NEVER_RESERVED: usize = (1 << 47) / size_of::<Buffer<u8>>();
+// A compressed byte decodes to at most: deflate, 258 bytes in two bits; zstd, 128 KiB in four.
 const DEFLATE_EXPANSION: u64 = 1032;
 const ZSTD_EXPANSION: u64 = 32768;
 
-fn most_rows_in_file(path: &Path) -> Option<u64> {
-    let file = std::fs::File::open(path).ok()?;
-    let len = file.metadata().ok()?.len();
+fn expansion(path: &Path) -> u64 {
     let mut head = Vec::with_capacity(4);
-    file.take(4).read_to_end(&mut head).ok()?;
-    let expansion = match SupportedCompression::check(&head) {
-        None => 1,
-        Some(SupportedCompression::GZIP | SupportedCompression::ZLIB) => {
+    let read = std::fs::File::open(path)
+        .and_then(|file| file.take(4).read_to_end(&mut head));
+    match read.map(|_| SupportedCompression::check(&head)) {
+        Ok(None) => 1,
+        Ok(Some(SupportedCompression::GZIP | SupportedCompression::ZLIB)) => {
             DEFLATE_EXPANSION
         }
-        Some(SupportedCompression::ZSTD) => ZSTD_EXPANSION,
-    };
-    Some(len.saturating_mul(expansion).saturating_add(1))
-}
-
-fn files_under(dir: &Path) -> Option<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    let mut pending = vec![dir.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(dir).ok()? {
-            let path = entry.ok()?.path();
-            if path.is_dir() {
-                pending.push(path);
-            } else {
-                files.push(path);
-            }
-        }
+        Ok(Some(SupportedCompression::ZSTD)) | Err(_) => ZSTD_EXPANSION,
     }
-    Some(files)
 }
 
-fn input_files(path: &str, glob: bool) -> Option<Vec<PathBuf>> {
-    if path.contains("://") {
+fn most_rows_in_file(path: &Path) -> Option<u64> {
+    let metadata = std::fs::metadata(path).ok()?;
+    metadata.is_file().then(|| {
+        metadata
+            .len()
+            .saturating_mul(expansion(path))
+            .saturating_add(1)
+    })
+}
+
+fn input_files(path: &str, glob: bool) -> Option<Vec<PlRefPath>> {
+    let given = [PlRefPath::new(path)];
+    let paths = decode_file_uri_paths(&given, glob);
+    if paths.iter().any(|path| path.has_scheme()) {
         return None;
     }
-    if is_pattern(path, glob) {
-        let matches = glob::glob(path).ok()?;
-        return matches
-            .map(|found| found.ok())
-            .filter(|found| !found.as_ref().is_some_and(|p| p.is_dir()))
-            .collect();
-    }
-    let path = Path::new(path);
-    if path.is_dir() {
-        files_under(path)
-    } else {
-        Some(vec![path.to_path_buf()])
+    let mut cloud = None;
+    let expanding = pin!(expand_paths(&paths, glob, &[], &mut cloud));
+    match expanding.poll(&mut Context::from_waker(Waker::noop())) {
+        Poll::Ready(Ok(found)) => Some(found.to_vec()),
+        _ => None,
     }
 }
 
 pub(crate) fn most_rows(path: &str, glob: bool) -> Option<u64> {
     input_files(path, glob)?
         .iter()
-        .map(|file| most_rows_in_file(file))
+        .map(|file| most_rows_in_file(file.as_std_path()))
         .collect::<Option<Vec<u64>>>()?
         .into_iter()
         .max()
 }
 
-/// polars reserves room for `requested` rows before reading any: a count no
-/// input could reach reads every row instead, which infers the same schema.
 pub(crate) fn rows_to_infer(
     requested: Option<usize>,
     most_rows: impl FnOnce() -> Option<u64>,
 ) -> Option<usize> {
-    match requested {
-        Some(n)
-            if n > RESERVED_FREELY
-                && most_rows().is_some_and(|rows| n as u64 >= rows) =>
-        {
-            None
-        }
-        other => other,
-    }
+    requested.filter(|&n| {
+        n <= FREE_RESERVATION
+            || (n < NEVER_RESERVED
+                && most_rows().is_none_or(|rows| (n as u64) < rows))
+    })
 }
 
 #[derive(Clone)]

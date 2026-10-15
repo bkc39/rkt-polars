@@ -332,6 +332,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   cause alone. `call/foreign-error` respells 0.55's
   empty-expansion reason, which carries the pattern, as `no files match the
   pattern`.
+- polars reserves 24 bytes a row for a CSV `#:infer-schema-length` before
+  it reads (`streaming.rs`), so `rows_to_infer` (`lazyframe/csv.rs`) reads
+  every row instead when the count is over 2^20 and either no allocation
+  can reach it (2^47 bytes) or the local inputs cannot hold that many rows;
+  for the second it expands the paths with polars' `expand_paths` and stats
+  each file and reads its first four bytes when the plan is built, not at
+  `collect`.
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the

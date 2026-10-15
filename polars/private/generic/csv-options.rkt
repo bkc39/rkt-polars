@@ -4,10 +4,9 @@
   (require rackunit
            racket/file
            racket/runtime-path
-           (only-in compiler/find-exe find-exe)
            (only-in racket/list last range second)
-           (only-in racket/match match)
-           (only-in racket/port copy-port)
+           (only-in racket/match match-define)
+           (only-in racket/string string-join)
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
@@ -394,52 +393,47 @@
   (check-staged-write write-csv (lambda (path) (read-csv path #:try-parse-dates #t)) "csv"
                       oracle-frame)
 
-  (define late-float
-    (scratch-file csv-dir "late-float.csv"
-                  (format "x,s\n~a1.5,last\n"
-                          (apply string-append
-                                 (for/list ([i (in-range 150)]) (format "~a,r~a\n" i i))))))
+  (define late-float-text
+    (string-join (append '("x,s")
+                         (for/list ([i (in-range 150)]) (format "~a,r~a" i i))
+                         '("1.5,last"))
+                 "\n" #:after-last "\n"))
+  (define late-float (scratch-file csv-dir "late-float.csv" late-float-text))
   (define parts-dir (build-path data-dir "parts"))
-  (define huge-length-sources
-    (list late-float (build-path parts-dir "*.csv") (build-path compressed "part-1.csv.gz")
-          (build-path compressed "part-1.csv.zlib") (build-path compressed "part-1.csv.zst")))
-  (for* ([path (in-list huge-length-sources)] [n (list (expt 2 62) size-max)])
+  (define (check-same-as-every label path)
     (define every (read-csv path #:infer-schema-length #f))
-    (check-true (frame=? (read-csv path #:infer-schema-length n) every) (format "~a ~a" path n))
-    (check-true (frame=? (collect (scan-csv path #:infer-schema-length n)) every)
-                (format "~a ~a" path n)))
+    (check-reads-like-every (format "read-csv ~a" label) every
+                            (lambda (n) (read-csv path #:infer-schema-length n)))
+    (check-reads-like-every (format "scan-csv ~a" label) every
+                            (lambda (n) (collect (scan-csv path #:infer-schema-length n)))))
+  (for ([source (in-list `(("late float" ,late-float)
+                           ("one-file glob" ,(one-file-pattern late-float))
+                           ("parts glob" ,(build-path parts-dir "*.csv"))
+                           ("gzip" ,(build-path compressed "part-1.csv.gz"))
+                           ("zlib" ,(build-path compressed "part-1.csv.zlib"))
+                           ("zstd" ,(build-path compressed "part-1.csv.zst"))))])
+    (match-define (list label path) source)
+    (check-same-as-every label path))
   (check-equal? (dtype (ref (read-csv late-float #:infer-schema-length (expt 2 62)) "x")) 'float64)
-  (check-true (frame=? (collect (scan-csv parts-dir #:infer-schema-length size-max))
-                       (collect (scan-csv parts-dir #:infer-schema-length #f))))
+  (check-reads-like-every "scan-csv of a directory"
+                          (collect (scan-csv parts-dir #:infer-schema-length #f))
+                          (lambda (n) (collect (scan-csv parts-dir #:infer-schema-length n))))
 
-  (define (huge-length-reads n)
-    `(let ([summary (lambda (d)
-                      (list (column-names d)
-                            (for/list ([name (in-list (column-names d))])
-                              (dtype (ref d #:columns name)))
-                            (dataframe->rows d #:null 'null)))])
-       (write (for/list ([n (list ,n #f)])
-                (cons (summary (collect (scan-csv ,(path->string parts-dir)
-                                                  #:infer-schema-length n)))
-                      (for/list ([path (in-list ',(map path->string huge-length-sources))])
-                        (list (summary (read-csv path #:infer-schema-length n))
-                              (summary (collect (scan-csv path #:infer-schema-length n))))))))))
-  (define (run-child form)
-    (define-values (child out in err)
-      (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" form)))
-    (close-output-port in)
-    (define texts (list (open-output-string) (open-output-string)))
-    (define copiers
-      (for/list ([from (list out err)] [to (in-list texts)])
-        (thread (lambda () (copy-port from to)))))
-    (unless (sync/timeout 300 child)
-      (subprocess-kill child #t))
-    (for-each thread-wait copiers)
-    (apply values (subprocess-status child) (map get-output-string texts)))
-  (define-values (status output errors) (run-child (huge-length-reads (expt 2 50))))
-  (check-equal? status 0 errors)
-  (match (with-handlers ([exn:fail:read? (lambda (_) #f)]) (read (open-input-string output)))
-    [(list huge every) (check-equal? huge every)]
-    [_ (fail (format "the child wrote ~s" output))])
+  (define (summary frame-form)
+    `(let ([d ,frame-form]) (write (list (shape d) (dtype (ref d "x"))))))
+  (define written-later (path->string (build-path csv-dir "written-later.csv")))
+  (for ([child (in-list
+                `(("a count the file bounds" ,(summary `(read-csv ,(path->string late-float)
+                                                                  #:infer-schema-length
+                                                                  ,(expt 2 40))))
+                  ("a count no reservation reaches, before the file exists"
+                   (let ([plan (scan-csv ,written-later #:infer-schema-length ,(expt 2 50))])
+                     (call-with-output-file ,written-later
+                       (lambda (out) (write-string ,late-float-text out)))
+                     ,(summary '(collect plan))))))])
+    (match-define (list label form) child)
+    (define-values (status output errors) (call-in-child form))
+    (check-equal? status 0 (format "~a: ~a" label errors))
+    (check-equal? (read (open-input-string output)) '((151 2) float64) label))
 
   (delete-directory/files csv-dir))

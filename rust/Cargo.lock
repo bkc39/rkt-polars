@@ -398,9 +398,11 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "chrono",
- "glob",
+ "flate2",
  "polars",
+ "polars-buffer",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]
