@@ -95,7 +95,7 @@
 (define (expr-reciprocal e)
   (define divided (p/ 1 e))
   (match (expr-meta-output-name/raw e)
-    [#f divided]
+    [#f (expr-name-keep divided)]
     [name (expr-alias divided name)]))
 
 (define (series-reciprocal s)
@@ -137,8 +137,11 @@
 
 ;; `mod` does not collide with racket/base (which spells it `modulo`), so it
 ;; is provided under its own name rather than via the rename-out dance.  Plain
-;; numbers fall back to racket/base `modulo`.
-(define-arith mod mod expr-mod series-mod base:modulo #:binary-only)
+;; numbers fall back to racket/base `modulo`, folded left.
+(define (base:mod a b . more)
+  (foldl (lambda (m acc) (base:modulo acc m)) (base:modulo a b) more))
+
+(define-arith mod mod expr-mod series-mod base:mod #:binary-only)
 
 ;; --- boolean / logical operators --------------------------------------------
 ;; and / or stay short-circuit macros; only an Expr/series operand routes into
@@ -279,6 +282,8 @@
   (check-equal? (for/list ([i (in-range 5)]) (ref (p* v64 2) i)) '(20 50 14 60 36))
   (check-equal? (for/list ([i (in-range 5)]) (ref (mod v64 3) i)) '(1 1 1 0 0))
   (check-equal? (mod 10 3) 1)
+  (check-equal? (mod 10 4 3) 2)
+  (check-equal? (mod -7 4 3) 1)
   (check-pred Expr-ptr? (mod (col "value") 2))
 
   (check-equal? (list (p- 5) (p/ 4) (p+ 3) (p* 3)) '(-5 1/4 3 3))
@@ -311,7 +316,23 @@
   (check-equal? (dataframe-column-names (dataframe-with-columns ops-df (list (p/ (col "cost")))))
                 '("group" "value" "cost"))
   (check-equal? (expr-meta-output-name (p/ (expr-alias (col "cost") "c"))) "c")
-  (check-equal? (expr-meta-output-name (p/ (col #rx"^c"))) "literal")
+  (define c-frame (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")
+                                   (series '(1 2) #:name "n"))))
+  (define (reciprocal-names . exprs)
+    (dataframe-column-names (dataframe-select-exprs c-frame exprs)))
+  (check-equal? (reciprocal-names (p/ (col #rx"^c"))) '("c1" "c2"))
+  (check-equal? (reciprocal-names (p/ (col #rx"^c1$"))) '("c1"))
+  (check-equal? (reciprocal-names (p/ (col "*"))) '("c1" "c2" "n"))
+  (check-equal? (reciprocal-names (p/ (col 'float64))) '("c1" "c2"))
+  (check-equal? (reciprocal-names (p/ (p/ (col #rx"^c")))) '("c1" "c2"))
+  (check-equal? (reciprocal-names (p/ (lit 2))) '("literal"))
+  (check-equal? (reciprocal-names (p/ (expr-sum (col "c2")))) '("c2"))
+  (check-equal? (~> (dataframe-select-exprs c-frame (list (p/ (col #rx"^c"))))
+                    (dataframe-column "c2")
+                    series->list)
+                '(0.25 0.125))
+  (check-equal? (format "~a" (p/ (col #rx"^c1$")))
+                "[(dyn int: 1) rust_div (cs.matches(\"^(?s).*(?:^c1$).*$\"))].name.keep()")
   (define negated (p- withnull))
   (check-pred series? negated)
   (check-equal? (dtype negated) 'int32)

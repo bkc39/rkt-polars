@@ -191,3 +191,25 @@ fn invalid_regex_collect_returns_null() {
     expr_drop(e);
     drop_frame(df, cols);
 }
+
+#[test]
+fn name_keep_names_each_expanded_column_after_itself() {
+    let one = expr_lit_i32(1);
+    let wide = col("^(x|y)$");
+    let divided = expr_div(one, wide);
+    let kept = expr_name_keep(divided);
+    assert!(!kept.is_null());
+    assert_eq!(
+        take_cstring(expr_to_string(kept)),
+        "[(dyn int: 1) rust_div (cs.matches(\"^(x|y)$\"))].name.keep()"
+    );
+    check_select(&[kept], &["x", "y"]);
+    for e in [divided, wide, one] {
+        expr_drop(e);
+    }
+}
+
+#[test]
+fn name_keep_null_input_returns_null() {
+    assert!(expr_name_keep(std::ptr::null()).is_null());
+}

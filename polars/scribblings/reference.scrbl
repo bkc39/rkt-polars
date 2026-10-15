@@ -276,9 +276,9 @@ total
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
-  @racket[(/ 1 _v)], integer division on an integer column, keeping
-  @racket[_v]'s name unless @racket[_v] has several outputs; @racket[+] and
-  @racket[*] return @racket[_v], and @racket[mod] needs two arguments.
+  @racket[(/ 1 _v)], integer division on an integer column, each output
+  keeping its own name; @racket[+] and @racket[*] return @racket[_v], and
+  @racket[mod] needs two arguments.
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -288,6 +288,8 @@ total
 (- (series '(1 -2 3) #:name "v"))
 (/ (series '(1.0 2.0 4.0) #:name "v"))
 (/ (series '(1 2 4)))
+(~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
+    (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
 (eval:error (/ (series '("a"))))
 (eval:error (mod (col "v")))
@@ -2426,6 +2428,14 @@ built.
   @racket[(* (col "value") 2)] --- which reads like @tt{col("value") * 2} ---
   rather than calling @racket[expr-mul] directly.}
 
+@defproc[(expr-neg [e Expr-ptr?]) Expr-ptr?]{
+  Negates a numeric expression (@tt{-e}); one-argument @racket[-] dispatches
+  to it.
+
+  @examples[#:eval ev #:label #f
+(~> (dataframe (list (series '(1 -2 3) #:name "x")))
+    (select (expr-neg (col "x"))))]}
+
 @deftogether[(@defproc[(expr-gt [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-lt [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-ge [a any/c] [b any/c]) Expr-ptr?]
@@ -2441,18 +2451,11 @@ built.
 @deftogether[(@defproc[(expr-and [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-or  [a any/c] [b any/c]) Expr-ptr?]
               @defproc[(expr-xor [a any/c] [b any/c]) Expr-ptr?]
-              @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?]
-              @defproc[(expr-neg [e Expr-ptr?]) Expr-ptr?])]{
+              @defproc[(expr-not [e Expr-ptr?]) Expr-ptr?])]{
   Element-wise boolean logic over boolean expressions, for combining
   predicates. The generic @racket[and], @racket[or], @racket[xor] and
   @racket[not] dispatch to these when given an expression and are the preferred
-  surface: @racket[(and (> (col "value") 15) (< (col "cost") 3.0))].
-  @racket[expr-neg] negates a numeric expression; one-argument @racket[-]
-  dispatches to it.
-
-  @examples[#:eval ev #:label #f
-(~> (dataframe (list (series '(1 -2 3) #:name "x")))
-    (select (expr-neg (col "x"))))]}
+  surface: @racket[(and (> (col "value") 15) (< (col "cost") 3.0))].}
 
 @deftogether[(@defproc[(expr-sum      [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-mean     [e Expr-ptr?]) Expr-ptr?]

@@ -83,7 +83,7 @@
          expr-dt-date expr-dt-time
          expr-dt-millisecond expr-dt-microsecond expr-dt-nanosecond
          expr-dt-timestamp expr-dt-strftime expr-dt-truncate
-         expr-not expr-neg expr-is-null expr-is-not-null
+         expr-not expr-neg expr-name-keep expr-is-null expr-is-not-null
          expr-drop-nulls expr-drop-nans
          expr-is-nan expr-is-not-nan expr-is-finite expr-is-infinite
          expr-fill-null expr-fill-nan expr-forward-fill expr-backward-fill
@@ -270,6 +270,11 @@
 
 (define-compat expr-neg
   (_fun _Expr-ptr -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
+(define-compat expr-name-keep
+  (_fun _Expr-ptr -> _Expr-ptr)
+  #:c-id expr_name_keep
   #:wrap (allocator expr-drop))
 
 (define-compat expr-is-null
