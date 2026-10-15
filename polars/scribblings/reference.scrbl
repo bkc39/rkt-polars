@@ -401,7 +401,7 @@ total
     (with-columns (alias (* (col "a") 2) "double")))]}
 
 @defproc[(cast [x (or/c Expr-ptr? series? string?)]
-               [dtype (or/c dtype-spec? 'binary 'null 'duration)])
+               [dtype (or/c dtype-spec? 'binary 'duration)])
          (or/c Expr-ptr? series?)]{
   Changes dtype. On an expression (or a column name, lifted with
   @racket[col]) it builds a cast expression, matching @tt{.cast}; on a series
@@ -409,8 +409,7 @@ total
   spellings as @racket[series-cast], short (@racket['f64], @racket['i32],
   @racket['str]) or canonical (@racket['float64], @racket['int32],
   @racket['string]), as @racket[series]' @racket[#:dtype] does
-  (@racket[dtype-spec?]), plus @racket['binary], @racket['null] and
-  @racket['duration]. Any other value is a contract violation. A
+  (@racket[dtype-spec?]), plus @racket['binary] and @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
   in a cast to an Enum, which raises as Python's default @tt{strict=True}
   does. On a series the error names the values outside the categories (the
@@ -544,8 +543,8 @@ total
   to read every row.
   @racket[schema-overrides] fixes the named columns' types. A
   @racket[csv-dtype/c] is any spelling @racket[series]' @racket[#:dtype]
-  accepts except a duration, which Polars cannot parse from CSV, an Enum
-  and a zoned datetime (#170); API gap: read the column as
+  accepts except a duration and @racket['null], which Polars cannot read
+  from CSV, an Enum and a zoned datetime (#170); API gap: read the column as
   @racket['categorical], @racket['string] or a naive datetime and
   @racket[cast] it. Each column
   appears at most once (@racket[distinct-names?]), and naming a column the
@@ -1436,8 +1435,10 @@ an implementation detail and not part of the public series API.)
                  [#:dtype dtype (or/c #f symbol? pair?) #f])
          series?]{
   Builds a series from a list or vector. When @racket[#:dtype] is omitted the
-  dtype is inferred from the elements; otherwise it is taken from
-  @racket[dtype]. Both short spellings (@racket['i32], @racket['f64],
+  dtype is inferred from the elements, and an empty list or vector is a
+  @racket['null] series, as Python's @tt{pl.Series([])}; otherwise it is
+  taken from @racket[dtype], and @racket['null] takes only
+  @racket[polars-null] elements. Both short spellings (@racket['i32], @racket['f64],
   @racket['str], @racket['bool]) and canonical symbols (@racket['int32],
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
   @racket[polars-null] for missing values. Exact integers are coerced to
@@ -1449,13 +1450,13 @@ an implementation detail and not part of the public series API.)
   datetime or duration column is microseconds, or nanoseconds when a value
   carries a sub-microsecond part and a nanosecond column holds every value,
   and moments make a zoned datetime column (@secref["ref-temporal-values"]).
-  An empty list or vector is an empty series of @racket[dtype], or of
-  @racket['null] without one, as Python's @tt{pl.Series([])}.
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (series '())
 (series '() #:name "empty" #:dtype 'f64)
+(series (list polars-null polars-null) #:dtype 'null)
+(eval:error (series '(1 2) #:dtype 'null))
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")

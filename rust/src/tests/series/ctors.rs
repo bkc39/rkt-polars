@@ -183,3 +183,33 @@ fn ctor_ymdhms_empty_ok() {
     }
     assert!(series_new_ymdhms(n.as_ptr(), ptr::null(), 1).is_null());
 }
+
+#[test]
+fn ctor_null_builds_nulls() {
+    let n = cstr("nothing");
+    for length in [0, 3] {
+        let s = series_new_null(n.as_ptr(), length);
+        assert!(!s.is_null());
+        assert_eq!(series_len(s), length);
+        assert_eq!(series_null_count(s), length);
+        assert_eq!(unsafe { &*s }.name().as_str(), "nothing");
+        assert_dtype(s, CompatDTypeTag::Null, CompatTimeUnit::None);
+        series_drop(s);
+    }
+    assert!(series_new_null(ptr::null(), 0).is_null());
+}
+
+#[test]
+fn ctor_bool_empty_and_null_data() {
+    let n = cstr("b");
+    let s = series_new_bool(n.as_ptr(), ptr::null(), 0);
+    assert_eq!(series_len(s), 0);
+    assert_dtype(s, CompatDTypeTag::Boolean, CompatTimeUnit::None);
+    series_drop(s);
+    assert!(series_new_bool(n.as_ptr(), ptr::null(), 2).is_null());
+    assert!(series_new_i64(n.as_ptr(), ptr::null(), 2).is_null());
+    assert!(
+        series_new_opt_ymdhms(n.as_ptr(), ptr::null(), ptr::null(), 1)
+            .is_null()
+    );
+}

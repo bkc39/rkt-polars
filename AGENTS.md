@@ -453,7 +453,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - An empty list or vector is an empty series of `#:dtype`, or `'null` without
   one, as Python's `pl.Series([])` (#98); every constructor, native ones
-  included, takes zero rows. A list of nulls alone still infers int64.
+  included, takes zero rows. A list of nulls alone still infers int64;
+  `#:dtype 'null` (`series_new_null`) takes `polars-null` elements only.
+  A constructor reads its arrays through `slice_or_empty`
+  (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
+  is refused.
 - `series` infers int64 / float64 / string / bool, `'categorical` from a list
   of symbols, and the temporal dtypes from gregor values (#63): `'date`,
   `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from

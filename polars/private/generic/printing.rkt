@@ -128,9 +128,9 @@
   (define lines
     (for/list ([i (in-list (row-indices len))]
                [abbreviation (in-list (shown-abbreviations s dt len))])
-      (if (eq? i 'ellipsis)
-          "\t…\n"
-          (string-append "\t" (value->cell (series-ref s i) dt abbreviation) "\n"))))
+      (string-append "\t"
+                     (if (eq? i 'ellipsis) "…" (value->cell (series-ref s i) dt abbreviation))
+                     "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
    (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label dt))
@@ -151,7 +151,8 @@
   (check-true (regexp-match? #rx"shape: \\(4,\\)" (series->string ints)))
   (check-true (regexp-match? #rx"Series: 'ints' \\[i32\\]" (series->string ints)))
   (define big (series-new-i64 "big" (range 100)))
-  (check-true (regexp-match? #rx"…" (series->string big)))
+  (check-true (regexp-match? #rx"\n\t4\n\t…\n\t95\n" (series->string big)))
+  (check-true (regexp-match? #rx"\n\t99\n]$" (series->string big)))
   (define withnull (series-new-i32 "withnull" (list 10 polars-null 30)))
   (check-true (regexp-match? #rx"null" (series->string withnull)))
   (define bears (series-new-str "bears" '("Polar" "Brown")))

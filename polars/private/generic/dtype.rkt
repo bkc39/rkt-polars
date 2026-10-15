@@ -3,8 +3,8 @@
 ;; dtype aliases, inference, and the dtype -> series-constructor map shared by
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
-(require (only-in racket/list make-list)
-         racket/match
+(require racket/match
+         (only-in racket/sequence sequence-length)
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -43,7 +43,7 @@
   (for/fold ([aliases dtype-short-names])
             ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
                                    float32 float64 boolean string
-                                   date time datetime categorical))])
+                                   date time datetime categorical null))])
     (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
@@ -97,9 +97,10 @@
     [(string)  (if vec? series-new-str/vec series-new-str)]
     [(null)
      (lambda (name elements)
-       (define n (if vec? (vector-length elements) (length elements)))
-       (with-release ([s (series-new-i64 name (make-list n polars-null)) series-drop])
-         (series-cast-to 'series s 'null)))]
+       (unless (for/and ([x elements]) (polars-null? x))
+         (raise-arguments-error 'series "a 'null series holds only polars-null"
+                                "elements" elements))
+       (series-new-null name (sequence-length elements)))]
     [else
      (match canonical
        [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))

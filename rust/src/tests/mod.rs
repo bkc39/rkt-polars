@@ -7,6 +7,7 @@ mod dataframe;
 mod expr;
 mod last_error;
 mod series;
+mod slices;
 #[path = "util.rs"]
 mod test_util;
 mod test_util_smoke;

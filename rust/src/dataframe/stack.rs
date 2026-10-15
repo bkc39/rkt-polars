@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::slice_or_empty;
 
 #[no_mangle]
 pub extern "C" fn dataframe_hstack(
@@ -6,21 +7,19 @@ pub extern "C" fn dataframe_hstack(
     series_ptrs: *const *const Series,
     length: usize,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() || (series_ptrs.is_null() && length != 0) {
+    if df_ptr.is_null() {
         return ptr::null_mut();
     }
-    let columns: Vec<Column> = if length == 0 {
-        Vec::new()
-    } else {
-        let slice = unsafe { std::slice::from_raw_parts(series_ptrs, length) };
-        if slice.iter().any(|p| p.is_null()) {
-            return ptr::null_mut();
-        }
-        slice
-            .iter()
-            .map(|&p| unsafe { (*p).clone() }.into_column())
-            .collect()
+    let Some(slice) = (unsafe { slice_or_empty(series_ptrs, length) }) else {
+        return ptr::null_mut();
     };
+    if slice.iter().any(|p| p.is_null()) {
+        return ptr::null_mut();
+    }
+    let columns: Vec<Column> = slice
+        .iter()
+        .map(|&p| unsafe { (*p).clone() }.into_column())
+        .collect();
     let df = unsafe { &*df_ptr };
     let out = if df.width() == 0 {
         DataFrame::new_infer_height(columns)

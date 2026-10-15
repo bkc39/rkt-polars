@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{clear_last_error, guard_panic};
+use crate::{clear_last_error, guard_panic, slice_or_empty};
 
 pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
     if p.is_null() {
@@ -36,29 +36,26 @@ pub extern "C" fn series_new_str_packed(
 ) -> *mut Series {
     clear_last_error();
     let rows = offsets_len.saturating_sub(1);
-    if offsets_len == 0
-        || offsets.is_null()
-        || (buf.is_null() && buf_len > 0)
-        || !(valid.is_null() || rows <= valid_len)
-    {
+    if offsets_len == 0 || !(valid.is_null() || rows <= valid_len) {
         return ptr::null_mut();
     }
-    let bytes = if buf_len == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(buf, buf_len) }
+    let Some(bytes) = (unsafe { slice_or_empty(buf, buf_len) }) else {
+        return ptr::null_mut();
+    };
+    let Some(offsets) = (unsafe { slice_or_empty(offsets, offsets_len) })
+    else {
+        return ptr::null_mut();
     };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ptr::null_mut();
     };
-    let offsets = unsafe { std::slice::from_raw_parts(offsets, offsets_len) };
-    if !usize::try_from(offsets[0])
-        .is_ok_and(|start| text.is_char_boundary(start))
-    {
+    let Ok(start) = usize::try_from(offsets[0]) else {
+        return ptr::null_mut();
+    };
+    if !text.is_char_boundary(start) {
         return ptr::null_mut();
     }
-    let valid = (!valid.is_null())
-        .then(|| unsafe { std::slice::from_raw_parts(valid, rows) });
+    let valid = unsafe { slice_or_empty(valid, rows) };
     guard_panic(|| {
         let mut builder = StringChunkedBuilder::new(name_from_ptr(name), rows);
         for (row, bounds) in offsets.windows(2).enumerate() {

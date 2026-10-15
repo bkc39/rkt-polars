@@ -933,7 +933,18 @@
                                           ([b (in-vector bools)])
                                 (bool->u8 b)))]))
 
+(define-compat series-new-null
+  (_fun _string _size -> _Series-ptr/null)
+  #:c-id series_new_null
+  #:wrap (allocator/or-fail series-drop 'series-new-null))
+
 (module+ test
+  (for ([n (in-list '(0 3))])
+    (define nulls (series-new-null "nothing" n))
+    (check-equal? (list (series-name nulls) (series-len nulls) (series-dtype nulls)
+                        (series-null-count nulls))
+                  (list "nothing" n 'null n)))
+  (check-exn #rx"^series-new-null: operation failed$" (lambda () (series-new-null #f 0)))
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
   (check-equal? (series-len (series-new-bool "x" '(#t #f))) 2)
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
@@ -982,10 +993,6 @@
   (check-equal?
    (series-len (series-new-str "str" '("" "")))
    2)
-  (let ([empty (series-new-str "example" '())])
-    (check-equal? (list (series-name empty) (series-len empty) (series-dtype empty))
-                  '("example" 0 string)))
-  (check-equal? (series-len (series-new-str/vec "v" (vector))) 0)
   (check-exn
    #rx"contract violation"
    (λ ()
@@ -1231,9 +1238,8 @@
    3)
   (check-equal?
    (series-dtype (series-new-ymdhms "name" ex1))
-   '(datetime milliseconds #f)))
+   '(datetime milliseconds #f))
 
-(module+ test
   (for ([ctor+dtype
          (in-list (list (list series-new-i8 series-new-i8/vec 'int8)
                         (list series-new-i16 series-new-i16/vec 'int16)
@@ -2705,7 +2711,8 @@
                 (lambda () (series-dt-replace-time-zone 'test owned-zoned #f 'raise 'raise)))
           (list 'series-new-bool (lambda () (series-new-bool "b" '(#t #f))))
           (list 'series-new-bool/opt (lambda () (series-new-bool "b" (list #t polars-null))))
-          (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))))
+          (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))
+          (list 'series-new-null (lambda () (series-new-null "n" 2)))))
 
   (define series-op-cases
     (for/list ([op (in-list (list series-eq series-ne series-gt series-ge series-lt series-le
