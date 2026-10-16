@@ -143,6 +143,7 @@
            (only-in gregor/period hours microseconds nanoseconds period weeks)
            (only-in gregor/time time)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/generic/operands const-series)
            (prefix-in p: polars/private/generic/operators)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/predicates is-between is-in))
@@ -241,7 +242,7 @@
         [dt (list 'date 'time '(datetime nanoseconds #f) '(datetime milliseconds #f)
                   '(datetime microseconds #f) '(duration microseconds) '(duration nanoseconds)
                   '(datetime microseconds #f))])
-    (check-equal? (series->list (p:const-series dt 3 value))
+    (check-equal? (series->list (const-series dt 3 value))
                   (series->list (series (make-list 3 value) #:dtype dt)))))
 
 (module+ test

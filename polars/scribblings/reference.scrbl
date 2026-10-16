@@ -266,15 +266,22 @@ total
   operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
   work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
   @racket[(not (= _a _b))]. A plain value compared with a series is a
-  constant of the series' dtype (a gregor value keeps the dtype @racket[lit]
-  gives it); with a @racket['null] series it is a
+  constant of the series' dtype when it fits one (a gregor value keeps the
+  dtype @racket[lit] gives it, and beside a numeric series a non-integer real
+  is @racket['float64] and an integer past the dtype's range
+  @racket['int64]); one that fits none raises @racket[exn:fail:contract]
+  naming it and the series' dtype, and a pair of dtypes Polars cannot
+  compare raises with Polars' reason, both under the operator's name. With a
+  @racket['null] series it is a
   @racket[lit], as in the expression form, and the result is null, where
   Python's eager comparisons on a Null series raise
   @tt{NotImplementedError}. These shadow the @racketmodname[racket/base]
   comparisons; see @secref["fluent-shadowing"].
 
   @examples[#:eval ev #:label #f
-(= (series (list polars-null polars-null)) 1)]}
+(= (series (list polars-null polars-null)) 1)
+(> (series '(1 2)) 1.5)
+(eval:error (> (series '(1 2)) "a"))]}
 
 @deftogether[(@defform[(and expr ...)]
               @defform[(or expr ...)]
@@ -285,12 +292,18 @@ total
   @racket[expr-not], @racket[expr-xor]), so
   @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
   @racket[filter]. When an operand is a series they compute an eager boolean
-  mask. Otherwise they behave as the @racketmodname[racket/base] forms:
+  mask, beside another boolean series or a boolean or @racket[polars-null],
+  and a series of another dtype raises with Polars' reason under the
+  connective's name. Otherwise they behave as the @racketmodname[racket/base] forms:
   @racket[and] and @racket[or] short-circuit and return the deciding value, and
   @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
   expression or series operand it evaluates its remaining operands eagerly to
   combine them. These shadow the @racketmodname[racket/base] bindings; see
-  @secref["fluent-shadowing"].}
+  @secref["fluent-shadowing"].
+
+  @examples[#:eval ev #:label #f
+(xor (series '(#t #f)) #t)
+(eval:error (not (series '(1 2))))]}
 
 @deftogether[(@defproc[(+ [v any/c] ...) any/c]
               @defproc[(- [v any/c] ...) any/c]
@@ -306,7 +319,12 @@ total
   like @tt{col("value") * 2}, and a series operand yields an eagerly computed
   series. With a @racket['null] series a plain operand is a @racket[lit], so
   the result has the expression form's dtype; Python's eager @tt{+ - * %}
-  raise for an integer or boolean operand. These shadow the @racketmodname[racket/base] bindings; see
+  raise for an integer or boolean operand. Beside any other series a plain
+  operand is a constant, as for the comparisons: of the series' dtype when it
+  fits, else @racket['float64] or @racket['int64] for a number beside a
+  numeric series; one that fits none raises @racket[exn:fail:contract], and
+  dtypes Polars cannot combine raise with Polars' reason, under the
+  operator's name. These shadow the @racketmodname[racket/base] bindings; see
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
@@ -333,6 +351,9 @@ total
 (/ (series '(-7 7 1)) (series '(2 2 0)))
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
+(+ (series '(1 2)) 2.5)
+(eval:error (+ (series '(1 2)) "a"))
+(eval:error (+ (series '(1 2)) (date 2024 1 1)))
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
@@ -521,11 +542,13 @@ far-zoned
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
-  have the same columns in the same order (Polars' @tt{vstack}).
+  have the same columns in the same order and dtypes (Polars' @tt{vstack});
+  otherwise it raises with Polars' reason.
 
   @examples[#:eval ev
 (define top (dataframe (list (series '(1 2) #:name "v"))))
-(vstack top (dataframe (list (series '(3) #:name "v"))))]}
+(vstack top (dataframe (list (series '(3) #:name "v"))))
+(eval:error (vstack top (dataframe (list (series '("3") #:name "v")))))]}
 
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
                              [n exact-nonnegative-integer?]) any/c]
@@ -578,7 +601,8 @@ far-zoned
   @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
   (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
   @tech{lazyframe}. As in Python Polars, only a @racket['cross] join promises
-  a row order; sort the result when order matters.
+  a row order; sort the result when order matters. Eager keys whose dtypes
+  differ, or a key a frame lacks, raise with Polars' reason.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
@@ -586,7 +610,8 @@ far-zoned
 (define right (dataframe (list (series '("a" "c") #:name "k")
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
-(join left right #:on '("k") #:how 'inner)]}
+(join left right #:on '("k") #:how 'inner)
+(eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))]}
 
 @defproc/arguments[csv-read-arguments (read-csv [path path-string?] dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be

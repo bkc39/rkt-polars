@@ -133,8 +133,10 @@
               #:how [how 'inner])
   (cond
     [(dataframe? left)
+     (guard-dataframe 'join right)
      (wrap-dataframe
-      (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]
+      (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how
+                      #:who 'join))]
     [(lazyframe? left)
      (wrap-lazyframe
       (lazyframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]
@@ -143,12 +145,13 @@
 ;; vstack: append the rows of another (compatible) dataframe -> dataframe.
 (define (vstack a b)
   (guard-dataframe 'vstack a)
-  (wrap-dataframe (dataframe-vstack a b)))
+  (guard-dataframe 'vstack b)
+  (wrap-dataframe (dataframe-vstack a b #:who 'vstack)))
 
 ;; hstack: append column(s) (series) to a dataframe -> dataframe (Polars df.hstack).
 (define (hstack d . cols)
   (guard-dataframe 'hstack d)
-  (wrap-dataframe (dataframe-hstack d cols)))
+  (wrap-dataframe (dataframe-hstack d cols #:who 'hstack)))
 
 ;; join-asof: as-of join (Polars left.join_asof).  #:on (shared key) or
 ;; #:left-on/#:right-on; #:strategy 'backward/'forward/'nearest; optional
@@ -162,7 +165,7 @@
    (dataframe-join-asof left right
                         #:on on #:left-on left-on #:right-on right-on
                         #:by by #:left-by left-by #:right-by right-by
-                        #:strategy strategy #:tolerance tolerance)))
+                        #:strategy strategy #:tolerance tolerance #:who 'join-asof)))
 
 ;; pivot: long -> wide (Polars df.pivot).
 (define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
@@ -432,6 +435,34 @@
   (let ([stacked (vstack (dataframe (list (series '(1 2) #:name "x")))
                          (dataframe (list (series (list polars-null 4) #:name "x"))))])
     (check-equal? (column stacked "x") (list 1 2 polars-null 4)))
+  (define ints-x (dataframe (list (series '(1) #:name "x"))))
+  (define strs-x (dataframe (list (series '("s") #:name "x"))))
+  (for ([case
+         `((,(lambda () (vstack (dataframe (list (series (list polars-null) #:name "x"
+                                                         #:dtype 'null)))
+                                ints-x))
+            "^vstack: type Int64 is incompatible with expected type Null: failed to vstack column 'x'$")
+           (,(lambda () (vstack ints-x strs-x))
+            "^vstack: type String is incompatible with expected type Int64: failed to vstack column 'x'$")
+           (,(lambda () (vstack ints-x (dataframe (list (series '(1) #:name "y")))))
+            "^vstack: [^\n]*unable to vstack, column names don't match: \"x\" and \"y\"$")
+           (,(lambda () (vstack ints-x 5)) "^vstack: expected a dataframe, got 5$")
+           (,(lambda () (join ints-x strs-x #:on '("x")))
+            "^join: datatypes of join keys don't match - `x`: i64 on left does not match `x`: str")
+           (,(lambda () (join ints-x ints-x #:on '("y"))) "^join: [^\n]*\"y\"")
+           (,(lambda () (join ints-x ints-x #:on '("x") #:how 'sideways))
+            "^join: unknown join kind 'sideways")
+           (,(lambda () (join ints-x ints-x)) "^join: must supply #:on")
+           (,(lambda () (join ints-x 5 #:on '("x"))) "^join: expected a dataframe, got 5$")
+           (,(lambda () (hstack ints-x (series '(2) #:name "x"))) "^hstack: [^\n]*'x'")
+           (,(lambda () (hstack ints-x (series '(2 3) #:name "y"))) "^hstack: [^\n]*height")
+           (,(lambda () (join-asof ints-x ints-x #:on "nope")) "^join-asof: [^\n]*\"nope\"")
+           (,(lambda () (join-asof ints-x ints-x #:on "x" #:strategy 'sideways))
+            "^join-asof: unknown asof strategy 'sideways"))])
+    (match-define (list thunk rx) case)
+    (define message (with-handlers ([exn:fail? exn-message]) (thunk) #f))
+    (check-regexp-match (pregexp rx) message)
+    (check-false (regexp-match? #rx"dataframe-|operation failed|Resolved plan" message)))
   ;; join-asof / pivot / unpivot
   (let ([obs (dataframe (list (series '(1 3 5) #:name "time" #:dtype 'i32)
                               (series '(100 300 500) #:name "reading" #:dtype 'i32)))]

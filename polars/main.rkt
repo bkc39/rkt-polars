@@ -32,7 +32,7 @@
  #:internal internal-names
  [polars/private/expr expr-cast-to expr-meta-output-name/raw expr-name-keep lazyframe-collect/raw]
  [polars/private/foreign
-  allocator/or-fail call/foreign-error check-enum-categories
+  allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
   owned-cpointer-types owned-pointer-accessor owned-pointer-arg
@@ -48,7 +48,11 @@
   series-time-zone replace-zone-failure zoned-datetime-dtype?
   dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
   series-copy-i8 series-copy-i16 series-copy-i32 series-copy-u8 series-copy-u16
-  series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool])
+  series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool
+  series-add/raw series-sub/raw series-mul/raw series-div/raw series-mod/raw
+  series-eq/raw series-ne/raw series-gt/raw series-ge/raw series-lt/raw series-le/raw
+  series-and/raw series-or/raw series-xor/raw series-not/raw
+  dataframe-vstack/raw dataframe-hstack/raw])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:

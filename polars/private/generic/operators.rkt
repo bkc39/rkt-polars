@@ -11,71 +11,18 @@
 ;; them on the way out.
 
 (require (prefix-in base: racket/base)
-         (only-in racket/list make-list)
-         (only-in racket/match match match* match-define)
+         (only-in racket/match match match-define)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
-         (only-in polars/private/resource with-release)
-         (only-in polars/private/series series-repeat-temporal)
-         (only-in polars/private/temporal temporal-value-dtype)
+         polars/private/generic/logical
+         polars/private/generic/operands
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
-(provide (all-defined-out))
-
-;; A constant series of `dt`, length `n`, every slot = `value`.
-(define (const-series dt n value)
-  (wrap-series
-   (if (temporal-dtype? dt)
-       (series-repeat-temporal 'series "" value n dt)
-       ((dtype->constructor dt #f) "" (coerce-elements dt (make-list n value))))))
-
-;; The other operand of a series op, as a series matching `s`; a gregor value
-;; keeps the dtype `lit` gives it, as the expression path does.
-(define (cmp-other who s other)
-  (define o
-    (cond
-      [(series? other) other]
-      [(temporal-value-dtype other) => (lambda (dt) (const-series dt (series-len s) other))]
-      [else (const-series (series-dtype s) (series-len s) other)]))
-  (match* ((series-dtype s) (series-dtype o))
-    [((list 'datetime _ zone) (list 'datetime _ other-zone))
-     #:when (not (equal? zone other-zone))
-     (raise-arguments-error who "datetimes in different time zones"
-                            "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
-    [(_ _) o]))
-
-(define (failure-cause e)
-  (define message (exn-message e))
-  (match (regexp-match #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$"
-                       message)
-    [(list _ cause) cause]
-    [#f message]))
-
-(define (raise-cause who e #:contract? [contract? (exn:fail:contract? e)])
-  (define make-exn (if contract? exn:fail:contract exn:fail))
-  (raise (make-exn (format "~a: ~a" who (failure-cause e)) (exn-continuation-marks e))))
-
-;; A 'null series with a plain operand runs the expression form, the operand
-;; read by `lit`, which has no polars-null literal; #f otherwise.
-(define (null-series-op who expr-op a b)
-  (define (plain? v) (not (or (series? v) (polars-null? v))))
-  (define (literal v)
-    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
-      (lit v)))
-  (define (run s build)
-    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e))])
-      (series-through-expr s build)))
-  (cond
-    [(and (null-series? a) (plain? b))
-     (define v (literal b))
-     (run a (lambda (e) (expr-op e v)))]
-    [(and (null-series? b) (plain? a))
-     (define v (literal a))
-     (run b (lambda (e) (expr-op v e)))]
-    [else #f]))
+(provide (all-defined-out)
+         (all-from-out polars/private/generic/logical))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
@@ -88,8 +35,9 @@
          (cond
            [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
            [(null-series-op 'name expr-op a b) => values]
-           [(series? a) (wrap-series (series-op a (cmp-other 'name a b)))]
-           [(series? b) (wrap-series (series-op-reflected b (cmp-other 'name b a)))]
+           [(series? a) (wrap-series (series-op a (operand-series 'name a b) #:who 'name))]
+           [(series? b)
+            (wrap-series (series-op-reflected b (operand-series 'name b a) #:who 'name))]
            [else (apply base-op args)]))]
       [else (apply base-op args)])))
 
@@ -107,16 +55,9 @@
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
         [(null-series-op who expr-op a b) => values]
-        [(series? a) (wrap-series (series-op a (cmp-other who a b)))]
-        [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
+        [(series? a) (wrap-series (series-op a (operand-series who a b) #:who who))]
+        [(series? b) (wrap-series (series-op (operand-series who b a) b #:who who))]
         [else (base-op a b)]))
-
-(define (series-through-expr s build)
-  (define name (series-name s))
-  (with-release ([frame (dataframe-new (list s)) dataframe-drop]
-                 [out (dataframe-select-exprs frame (list (expr-alias (build (expr-all)) name)))
-                      dataframe-drop])
-    (wrap-series (dataframe-column out name))))
 
 (define (series-negate s)
   (match (series-dtype s)
@@ -174,43 +115,6 @@
   (foldl (lambda (m acc) (base:modulo acc m)) (base:modulo a b) more))
 
 (define-arith mod mod expr-mod series-mod base:mod #:binary-only)
-
-;; --- boolean / logical operators --------------------------------------------
-;; and / or stay short-circuit macros; only an Expr/series operand routes into
-;; the eager combiners.  not / xor are strict, so plain functions.
-
-(define (combine-and a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b) (wrap-series (series-and a b))))
-(define (combine-or a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)  (wrap-series (series-or a b))))
-
-(define-syntax-parser p-and
-  [(_) #'#t]
-  [(_ e:expr) #'e]
-  [(_ e0:expr e:expr ...+)
-   #'(let ([v e0])
-       (if (or (Expr-ptr? v) (series? v))
-           (combine-and v (p-and e ...))   ; predicate build (eager)
-           (if v (p-and e ...) v)))])      ; booleans: racket `and`
-
-(define-syntax-parser p-or
-  [(_) #'#f]
-  [(_ e:expr) #'e]
-  [(_ e0:expr e:expr ...+)
-   #'(let ([v e0])
-       (if (or (Expr-ptr? v) (series? v))
-           (combine-or v (p-or e ...))
-           (if v v (p-or e ...))))])       ; booleans: racket `or`
-
-(define (p-not x)
-  (cond [(Expr-ptr? x) (expr-not x)]
-        [(series? x)   (wrap-series (series-not x))]
-        [else          (base:not x)]))
-
-(define (p-xor a b)
-  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
-        [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
-        [else (and (or a b) (not (and a b)))]))   ; boolean xor
 
 ;; --- when / then / else-when / otherwise ------------------------------------
 ;; Data-first builder that threads, mirroring Polars'
@@ -488,4 +392,78 @@
                   (otherwise 0)))
   (check-exn exn:fail? (lambda () (else-when (when-pending '() #t) #t))) ; else-when needs a then
   (check-equal? (let ([acc 0]) (p-when #t (set! acc 1)) acc) 1)
-  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0))
+  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0)
+
+  (define audit-series
+    (list (series '(1 2)) (series '(1.5 2.0)) (series '("x" "y")) (series '(#t #f))
+          (series (list (date 2024 1 1) (date 2024 1 2)))
+          (wrap-series (series-cast (series (list (datetime 2024 1 1) (datetime 2024 1 2)))
+                                    '(datetime microseconds "Europe/Paris")))
+          (series '(x y)) nulls))
+  (define audit-plain
+    (list 1 2.5 "x" 'x #t (date 2024 1 1) (datetime 2024 1 1) #\a (expt 2 63) polars-null))
+  (define audit-ops
+    `((+ ,p+) (- ,p-) (* ,p*) (/ ,p/) (mod ,mod) (= ,=) (!= ,!=) (< ,<) (> ,>) (<= ,<=)
+      (>= ,>=) (and ,(lambda (a b) (p-and a b))) (or ,(lambda (a b) (p-or a b))) (xor ,p-xor)))
+  (define internal-name
+    (pregexp (string-append "series-(?:add|sub|mul|div|mod|eq|ne|gt|ge|lt|le|and|or|xor|not)"
+                            "|dataframe-|ptr-set!|lazyframe-collect|expr_lit|lit:"
+                            "|operation failed|Resolved plan")))
+  (define (audit who thunk)
+    (define prefix (regexp (string-append "^" (regexp-quote (symbol->string who)) ": ")))
+    (with-handlers ([exn:fail?
+                     (lambda (e)
+                       (define message (exn-message e))
+                       (if (and (regexp-match? prefix message)
+                                (not (regexp-match? internal-name message)))
+                           'refused
+                           message))])
+      (thunk)
+      'ok))
+  (define audit-results
+    (append
+     (for*/list ([op (in-list audit-ops)] [l (in-list audit-series)]
+                 [r (in-list (append audit-series audit-plain))]
+                 [args (in-list (if (series? r) (list (list l r)) (list (list l r) (list r l))))])
+       (match-define (list who f) op)
+       (list who (map (lambda (v) (if (series? v) (dtype v) v)) args)
+             (audit who (lambda () (apply f args)))))
+     (for/list ([l (in-list audit-series)])
+       (list 'not (dtype l) (audit 'not (lambda () (p-not l)))))))
+  (check-equal? (length audit-results) 3144)
+  (check-equal? (for/list ([result (in-list audit-results)]
+                           #:unless (memq (caddr result) '(ok refused)))
+                  result)
+                '())
+  (define (refusal value dtype)
+    (format "the value cannot be an element of a series of this dtype~a~a$"
+            (regexp-quote (format "\n  value: ~v" value))
+            (regexp-quote (format "\n  series dtype: ~v" dtype))))
+  (for ([case (list (list (lambda () (p+ (series '(1 2)) (date 2024 1 1))) exn:fail?
+                          "^[+]: [^\n]*date")
+                    (list (lambda () (p+ (series '(1 2)) "a")) exn:fail:contract?
+                          (string-append "^[+]: " (refusal "a" 'int64)))
+                    (list (lambda () (p- #\a (series '(1 2)))) exn:fail:contract?
+                          (string-append "^-: " (refusal #\a 'int64)))
+                    (list (lambda () (> (series '(1 2)) (expt 2 63))) exn:fail:contract?
+                          (string-append "^>: " (refusal (expt 2 63) 'int64)))
+                    (list (lambda () (> (series '(1 2)) "a")) exn:fail:contract?
+                          (string-append "^>: " (refusal "a" 'int64)))
+                    (list (lambda () (p+ (series '(1 2)) (series '(1 2 3)))) exn:fail?
+                          "^[+]: cannot do arithmetic operation on series of different lengths")
+                    (list (lambda () (p-and nulls (series '(#t #f)))) exn:fail?
+                          "^and: invalid series dtype: expected `Boolean`, got `null` for series with name `n`$")
+                    (list (lambda () (p-not (series '(1 2)))) exn:fail?
+                          "^not: invalid series dtype: expected `Boolean`, got `i64`")
+                    (list (lambda () (p-xor (series '(#t #f)) 1)) exn:fail:contract?
+                          (string-append "^xor: contract violation\n  expected: "
+                                         (regexp-quote "(or/c series? boolean? polars-null?)")
+                                         "\n  given: 1")))])
+    (match-define (list thunk kind rx) case)
+    (check-exn kind thunk)
+    (check-regexp-match (regexp rx) (with-handlers ([exn:fail? exn-message]) (thunk) #f)))
+  (check-equal? (series->list (p+ (series '(1 2)) 2.5)) '(3.5 4.5))
+  (check-equal? (series->list (> (series '(1 2)) 1.5)) '(#f #t))
+  (check-equal? (dtype (p+ (series '(1 2) #:dtype 'i32) 2)) 'int32)
+  (check-equal? (series->list (p-and (series '(#t #f)) #t)) '(#t #f))
+  (check-equal? (series->list (p-xor #t (series '(#t #f)))) '(#f #t)))

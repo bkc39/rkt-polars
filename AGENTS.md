@@ -163,14 +163,20 @@ it. Racket side: `define-compat` with `#:c-id`.
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
-  `call-as-atomic`: the slot is per OS thread and every Racket thread in a
+  `call-as-atomic` (`call/polars-reason` where the reason alone follows the
+  verb, as for the operators, `vstack` and `join`): the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
   `dataframe_to_string`, `expr_to_string`, `series_cast`,
   `dataframe_pivot`, `dataframe_unpivot`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
-  `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
+  `series_new_str_packed`, the series-by-series operators (`series_add`,
+  `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
+  `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
+  `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
+  `dataframe_hstack`, `dataframe_join`, `dataframe_join_asof`,
+  `dataframe_join_asof_options`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,

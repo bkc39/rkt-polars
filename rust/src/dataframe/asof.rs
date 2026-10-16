@@ -67,6 +67,59 @@ pub(crate) fn compat_asof_tolerance(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+fn asof_frames(
+    left: &DataFrame,
+    right: &DataFrame,
+    left_on: &str,
+    right_on: &str,
+    strategy: i32,
+    left_by: &[String],
+    right_by: &[String],
+    tolerance: (i32, i64, f64),
+) -> PolarsResult<DataFrame> {
+    let Some(strategy) = compat_asof_strategy(strategy) else {
+        polars_bail!(InvalidOperation: "unknown asof strategy {}", strategy);
+    };
+    polars_ensure!(
+        left_by.len() == right_by.len(),
+        InvalidOperation: "the left and right by-keys differ in number: {} and {}",
+        left_by.len(),
+        right_by.len()
+    );
+    let left_key = left.column(left_on)?.as_materialized_series();
+    let right_key = right.column(right_on)?.as_materialized_series();
+    let (kind, integer, float) = tolerance;
+    let Some(tolerance) =
+        compat_asof_tolerance(left_key.dtype(), kind, integer, float)
+    else {
+        polars_bail!(
+            InvalidOperation: "a tolerance cannot apply to a key of dtype {}",
+            left_key.dtype()
+        );
+    };
+    if left_by.is_empty() {
+        left._join_asof(
+            right, left_key, right_key, strategy, tolerance, None, None, true,
+            true, true,
+        )
+    } else {
+        // Polars cannot check sortedness within `by` groups; `true` would
+        // only print a warning to stderr.
+        left.join_asof_by(
+            right,
+            left_on,
+            right_on,
+            left_by.iter(),
+            right_by.iter(),
+            strategy,
+            tolerance,
+            true,
+            false,
+        )
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn dataframe_join_asof(
     left_ptr: *mut DataFrame,
@@ -75,42 +128,20 @@ pub extern "C" fn dataframe_join_asof(
     right_on: *const c_char,
     strategy: i32,
 ) -> *mut DataFrame {
-    if left_ptr.is_null()
-        || right_ptr.is_null()
-        || left_on.is_null()
-        || right_on.is_null()
-    {
-        return ptr::null_mut();
-    }
-    let left_on_str = match unsafe { CStr::from_ptr(left_on).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let right_on_str = match unsafe { CStr::from_ptr(right_on).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let strategy = match compat_asof_strategy(strategy) {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let left = unsafe { &*left_ptr };
-    let right = unsafe { &*right_ptr };
-    let left_key = match left.column(left_on_str) {
-        Ok(s) => s.as_materialized_series(),
-        Err(_) => return ptr::null_mut(),
-    };
-    let right_key = match right.column(right_on_str) {
-        Ok(s) => s.as_materialized_series(),
-        Err(_) => return ptr::null_mut(),
-    };
-    match left._join_asof(
-        right, left_key, right_key, strategy, None, None, None, true, true,
-        true,
-    ) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    dataframe_join_asof_options(
+        left_ptr,
+        right_ptr,
+        left_on,
+        right_on,
+        strategy,
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+        CompatAsofToleranceKind::None as i32,
+        0,
+        0.0,
+    )
 }
 
 #[no_mangle]
@@ -128,78 +159,47 @@ pub extern "C" fn dataframe_join_asof_options(
     tolerance_integer: i64,
     tolerance_float: f64,
 ) -> *mut DataFrame {
-    if left_ptr.is_null()
-        || right_ptr.is_null()
-        || left_on.is_null()
-        || right_on.is_null()
-    {
+    clear_last_error();
+    let (Some(left), Some(right)) =
+        (unsafe { left_ptr.as_ref() }, unsafe { right_ptr.as_ref() })
+    else {
+        set_last_error("dataframe is null");
         return ptr::null_mut();
-    }
-    let left_on_str = match unsafe { CStr::from_ptr(left_on).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
     };
-    let right_on_str = match unsafe { CStr::from_ptr(right_on).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let strategy = match compat_asof_strategy(strategy) {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let left_by = match unsafe { collect_c_strings(left_by_ptrs, n_left_by) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let right_by = match unsafe { collect_c_strings(right_by_ptrs, n_right_by) }
-    {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    if left_by.len() != right_by.len() {
+    let (Some(left_on), Some(right_on)) = (
+        decode_c_str(left_on, "the left key"),
+        decode_c_str(right_on, "the right key"),
+    ) else {
         return ptr::null_mut();
-    }
-    let left = unsafe { &*left_ptr };
-    let right = unsafe { &*right_ptr };
-    let left_key = match left.column(left_on_str) {
-        Ok(s) => s.as_materialized_series(),
-        Err(_) => return ptr::null_mut(),
     };
-    let right_key = match right.column(right_on_str) {
-        Ok(s) => s.as_materialized_series(),
-        Err(_) => return ptr::null_mut(),
-    };
-    let tolerance = match compat_asof_tolerance(
-        left_key.dtype(),
-        tolerance_kind,
-        tolerance_integer,
-        tolerance_float,
-    ) {
-        Some(t) => t,
-        None => return ptr::null_mut(),
-    };
-    let result = if left_by.is_empty() && right_by.is_empty() {
-        left._join_asof(
-            right, left_key, right_key, strategy, tolerance, None, None, true,
-            true, true,
+    let keys = unsafe {
+        (
+            collect_c_strings(left_by_ptrs, n_left_by),
+            collect_c_strings(right_by_ptrs, n_right_by),
         )
-    } else {
-        // Polars cannot check sortedness within `by` groups; `true` would
-        // only print a warning to stderr.
-        left.join_asof_by(
-            right,
-            left_on_str,
-            right_on_str,
-            left_by.iter(),
-            right_by.iter(),
-            strategy,
+    };
+    let (Some(left_by), Some(right_by)) = keys else {
+        set_last_error("a by-key is null or not valid UTF-8");
+        return ptr::null_mut();
+    };
+    let tolerance = (tolerance_kind, tolerance_integer, tolerance_float);
+    guard_panic(|| {
+        record(asof_frames(
+            left, right, left_on, right_on, strategy, &left_by, &right_by,
             tolerance,
-            true,
-            false,
-        )
-    };
-    match result {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
+        ))
+    })
+    .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
+}
+
+fn decode_c_str<'a>(p: *const c_char, what: &str) -> Option<&'a str> {
+    if p.is_null() {
+        set_last_error(format!("{} is null", what));
+        return None;
     }
+    record(
+        unsafe { CStr::from_ptr(p) }
+            .to_str()
+            .map_err(|err| format!("{} is not valid UTF-8: {}", what, err)),
+    )
 }

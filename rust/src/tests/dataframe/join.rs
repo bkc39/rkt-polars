@@ -161,3 +161,46 @@ fn join_empty_on_arrays_return_null_for_non_cross() {
     assert!(out.is_null());
     cleanup(left, right, series);
 }
+
+#[test]
+fn join_records_why_it_refuses() {
+    let lk = make_i32("k", &[1]);
+    let rk = make_str("k", &["a"]);
+    let left = make_df(&[lk]);
+    let right = make_df(&[rk]);
+    assert!(join_on_k(left, right, CompatJoinKind::Inner).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(
+        reason.starts_with("datatypes of join keys don't match"),
+        "{}",
+        reason
+    );
+    let other = make_i32("j", &[1]);
+    let missing = make_df(&[other]);
+    assert!(join_on_k(left, missing, CompatJoinKind::Left).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("\"k\""), "{}", reason);
+    assert!(dataframe_join(
+        left,
+        left,
+        ptr::null(),
+        0,
+        ptr::null(),
+        0,
+        CompatJoinKind::Inner as i32
+    )
+    .is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("a join needs at least one key column")
+    );
+    let ok = join_on_k(left, left, CompatJoinKind::Inner);
+    assert!(!ok.is_null());
+    assert_eq!(recorded_error(), None);
+    for d in [ok, left, right, missing] {
+        dataframe_drop(d);
+    }
+    for s in [lk, rk, other] {
+        series_drop(s);
+    }
+}
