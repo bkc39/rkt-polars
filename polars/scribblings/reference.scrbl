@@ -272,17 +272,9 @@ total
   is a mask. Otherwise they fall back to the numeric @racketmodname[racket/base]
   operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
   work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
-  @racket[(not (= _a _b))]. A plain value compared with a series is a
-  constant of the series' dtype when it fits one (a gregor value keeps the
-  dtype @racket[lit] gives it, and beside a numeric series a non-integer real
-  is @racket['float64] and an integer past the dtype's range
-  @racket['int64]); one that fits none raises @racket[exn:fail:contract]
-  naming it and the series' dtype, and a pair of dtypes Polars cannot
-  compare raises with Polars' reason, both under the operator's name. With a
-  @racket['null] series it is a
-  @racket[lit], as in the expression form, and the result is null, where
-  Python's eager comparisons on a Null series raise
-  @tt{NotImplementedError}. These shadow the @racketmodname[racket/base]
+  @racket[(not (= _a _b))]. A plain operand beside a series follows
+  @secref["promotion"], and dtypes Polars cannot compare raise with its reason
+  under the operator's name. These shadow the @racketmodname[racket/base]
   comparisons; see @secref["fluent-shadowing"].
 
   @examples[#:eval ev #:label #f
@@ -299,9 +291,11 @@ total
   @racket[expr-not], @racket[expr-xor]), so
   @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
   @racket[filter]. When an operand is a series they compute an eager boolean
-  mask, beside another boolean series or a boolean or @racket[polars-null],
-  and a series of another dtype raises with Polars' reason under the
-  connective's name. Otherwise they behave as the @racketmodname[racket/base] forms:
+  mask, beside another boolean series or a boolean or @racket[polars-null];
+  a series of another dtype, @racket['null] included, raises with Polars'
+  reason under the connective's name, where Python's @tt{& | ^} are bitwise
+  on integers and raise on a Null series.
+  Otherwise they behave as the @racketmodname[racket/base] forms:
   @racket[and] and @racket[or] short-circuit and return the deciding value, and
   @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
   expression or series operand it evaluates its remaining operands eagerly to
@@ -324,14 +318,9 @@ total
   expression (via @racket[expr-add], @racket[expr-sub], @racket[expr-mul],
   @racket[expr-div], @racket[expr-mod]), so @racket[(* (col "value") 2)] reads
   like @tt{col("value") * 2}, and a series operand yields an eagerly computed
-  series. With a @racket['null] series a plain operand is a @racket[lit], so
-  the result has the expression form's dtype; Python's eager @tt{+ - * %}
-  raise for an integer or boolean operand. Beside any other series a plain
-  operand is a constant, as for the comparisons: of the series' dtype when it
-  fits, else @racket['float64] or @racket['int64] for a number beside a
-  numeric series; one that fits none raises @racket[exn:fail:contract], and
-  dtypes Polars cannot combine raise with Polars' reason, under the
-  operator's name. These shadow the @racketmodname[racket/base] bindings; see
+  series. A plain operand beside a series follows @secref["promotion"], and
+  dtypes Polars cannot combine raise with its reason under the operator's
+  name. These shadow the @racketmodname[racket/base] bindings; see
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
@@ -1956,6 +1945,22 @@ wide, is
 @racket[sum], @racket[min] and @racket[max] preserve the input dtype.
 @racket[mean] promotes to @racket['float64]. Use @racket[series-cast] to change
 a series' dtype explicitly.
+
+A plain value beside a series in an operator is a constant of the series'
+dtype when it fits; a gregor value keeps its own dtype, and a non-integer real
+beside an integer series is @racket['float64]. Otherwise the operator runs
+its expression form, @racket[(_op (col _name) _value)], with that form's
+dtypes and values: beside a @racket['null] series (where Python's eager
+operators raise) or with @racket[polars-null], beside an Enum
+series a string or symbol, beside a Decimal series a real, and beside an
+integer series an integer past the dtype's range. A negative integer beside
+an unsigned series, as in Python's eager operators, and a value no literal
+takes raise @racket[exn:fail:contract] naming it and the series' dtype.
+
+@examples[#:eval ev #:label #f
+(+ (series '(1 2) #:dtype 'u8) 300)
+(= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
+(eval:error (+ (series '(1 2) #:dtype 'u8) -1))]
 
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 

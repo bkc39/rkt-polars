@@ -106,18 +106,29 @@
      (define result (thunk))
      (values result (and (not (ok? result)) (last-error-message))))))
 
-(define (call/polars-reason who thunk)
-  (define-values (result reason) (call/reason thunk values))
-  (or result (error who "~a" (respell (or reason "no reason recorded")))))
-
 (define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
-                            fmt . args)
+                            #:cause [cause values] [fmt #f] . args)
   (define-values (result reason) (call/reason thunk ok?))
+  (define (cause-of reason) (cause (respell reason)))
   (cond
     [(ok? result) result]
     [(explain) => (lambda (message) (error who "~a" message))]
-    [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
-    [else (apply error who fmt args)]))
+    [(and reason fmt) (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
+    [reason (error who "~a" (cause-of reason))]
+    [fmt (apply error who fmt args)]
+    [else (error who "no reason recorded")]))
+
+(define (call/polars-reason who thunk)
+  (call/foreign-error who thunk))
+
+(define-syntax-parse-rule (define-reasoned (name:id arg:id ...) #:who-variant name/who:id
+                            (~and compat ((~datum define-compat) raw:id _ ...)))
+  (begin
+    compat
+    (define (name/who who arg ...)
+      (call/polars-reason who (lambda () (raw arg ...))))
+    (define (name arg ...)
+      (name/who 'name arg ...))))
 
 (define (printed-or-placeholder what render)
   (define-values (text reason) (call/reason render values))
@@ -1670,27 +1681,25 @@
    (series-quantile/raw s (exact->inexact quantile)
                         (quantile-interpolation->code 'series-quantile interpolation))))
 
-(define-syntax-parse-rule (define-series-series-op public-name:id raw-name:id rust-id:id)
-  (begin
+(define-syntax-parse-rule (define-series-series-op name:id name/who:id raw-name:id rust-id:id)
+  (define-reasoned (name a b) #:who-variant name/who
     (define-compat raw-name
       (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
       #:c-id rust-id
-      #:wrap (allocator series-drop))
-    (define (public-name a b #:who [who 'public-name])
-      (call/polars-reason who (lambda () (raw-name a b))))))
+      #:wrap (allocator series-drop))))
 
-(define-series-series-op series-eq series-eq/raw series_eq)
-(define-series-series-op series-ne series-ne/raw series_ne)
-(define-series-series-op series-gt series-gt/raw series_gt)
-(define-series-series-op series-ge series-ge/raw series_ge)
-(define-series-series-op series-lt series-lt/raw series_lt)
-(define-series-series-op series-le series-le/raw series_le)
+(define-series-series-op series-eq series-eq/who series-eq/raw series_eq)
+(define-series-series-op series-ne series-ne/who series-ne/raw series_ne)
+(define-series-series-op series-gt series-gt/who series-gt/raw series_gt)
+(define-series-series-op series-ge series-ge/who series-ge/raw series_ge)
+(define-series-series-op series-lt series-lt/who series-lt/raw series_lt)
+(define-series-series-op series-le series-le/who series-le/raw series_le)
 
-(define-series-series-op series-add series-add/raw series_add)
-(define-series-series-op series-sub series-sub/raw series_sub)
-(define-series-series-op series-mul series-mul/raw series_mul)
-(define-series-series-op series-div series-div/raw series_div)
-(define-series-series-op series-mod series-mod/raw series_mod)
+(define-series-series-op series-add series-add/who series-add/raw series_add)
+(define-series-series-op series-sub series-sub/who series-sub/raw series_sub)
+(define-series-series-op series-mul series-mul/who series-mul/raw series_mul)
+(define-series-series-op series-div series-div/who series-div/raw series_div)
+(define-series-series-op series-mod series-mod/who series-mod/raw series_mod)
 
 (define-syntax-parse-rule (define-series-scalar-op public-name:id rust-id:id ctype:id)
   (define-compat public-name
@@ -2092,17 +2101,15 @@
   (_fun _Series-ptr -> _Series-ptr)
   #:wrap (allocator series-drop))
 
-(define-series-series-op series-and series-and/raw series_and)
-(define-series-series-op series-or series-or/raw series_or)
-(define-series-series-op series-xor series-xor/raw series_xor)
+(define-series-series-op series-and series-and/who series-and/raw series_and)
+(define-series-series-op series-or series-or/who series-or/raw series_or)
+(define-series-series-op series-xor series-xor/who series-xor/raw series_xor)
 
-(define-compat series-not/raw
-  (_fun _Series-ptr -> _Series-ptr/null)
-  #:c-id series_not
-  #:wrap (allocator series-drop))
-
-(define (series-not s #:who [who 'series-not])
-  (call/polars-reason who (lambda () (series-not/raw s))))
+(define-reasoned (series-not s) #:who-variant series-not/who
+  (define-compat series-not/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_not
+    #:wrap (allocator series-drop)))
 
 (module+ test
   (define bool-df

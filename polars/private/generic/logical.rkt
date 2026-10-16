@@ -1,58 +1,59 @@
 #lang racket/base
 
-(require (prefix-in base: racket/base)
-         polars/private/foreign
-         polars/private/expr
-         polars/private/generic/core
-         polars/private/generic/operands
+(require (only-in polars/private/foreign
+                  polars-null? series-and/who series-not/who series-or/who series-xor/who)
+         (only-in polars/private/expr Expr-ptr? expr-and expr-not expr-or expr-xor)
+         (only-in polars/private/generic/core series? wrap-series)
+         (only-in polars/private/generic/operands logical-operand)
          syntax/parse/define
          (for-syntax racket/base))
 
-(provide combine-and combine-or p-and p-not p-or p-xor)
-
-;; --- boolean / logical operators --------------------------------------------
-
-(define (series-logical who op a b)
-  (if (series? a)
-      (wrap-series (op a (logical-operand who a b) #:who who))
-      (wrap-series (op (logical-operand who b a) b #:who who))))
-
-(define (eager-logical who expr-op series-op a b)
-  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
-        [(expression-form-op who expr-op a b) => values]
-        [else (series-logical who series-op a b)]))
-(define (combine-and a b) (eager-logical 'and expr-and series-and a b))
-(define (combine-or a b) (eager-logical 'or expr-or series-or a b))
+(provide p-and p-not p-or p-xor)
 
 (define (operand? v) (or (Expr-ptr? v) (series? v)))
-(define (null-and v w) (if (operand? w) (combine-and v w) w))
-(define (null-or v w) (if (operand? w) (combine-or v w) v))
 
-(define-syntax-parser p-and
-  [(_) #'#t]
-  [(_ e:expr) #'e]
-  [(_ e0:expr e:expr ...+)
-   #'(let ([v e0])
-       (cond [(operand? v) (combine-and v (p-and e ...))]
-             [(polars-null? v) (null-and v (p-and e ...))]
-             [v (p-and e ...)]
-             [else v]))])
+(define (combine who expr-op series-op a b)
+  (cond
+    [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+    [(series? a) (wrap-series (series-op who a (logical-operand who a b)))]
+    [else (wrap-series (series-op who (logical-operand who b a) b))]))
 
-(define-syntax-parser p-or
-  [(_) #'#f]
-  [(_ e:expr) #'e]
-  [(_ e0:expr e:expr ...+)
+(define (combine-and a b) (combine 'and expr-and series-and/who a b))
+(define (combine-or a b) (combine 'or expr-or series-or/who a b))
+
+(define (decided? identity v)
+  (not (eq? (and v #t) identity)))
+
+(define (beside-null identity combine v w)
+  (cond
+    [(operand? w) (combine v w)]
+    [(decided? identity v) v]
+    [else w]))
+
+(define-syntax-parser connective
+  [(_ identity:boolean _:id) #'identity]
+  [(_ _:boolean _:id e:expr) #'e]
+  [(_ identity:boolean combine:id e0:expr e:expr ...+)
    #'(let ([v e0])
-       (cond [(operand? v) (combine-or v (p-or e ...))]
-             [(polars-null? v) (null-or v (p-or e ...))]
-             [v v]
-             [else (p-or e ...)]))])
+       (cond
+         [(operand? v) (combine v (connective identity combine e ...))]
+         [(polars-null? v) (beside-null identity combine v (connective identity combine e ...))]
+         [(decided? identity v) v]
+         [else (connective identity combine e ...)]))])
+
+(define-syntax-parse-rule (p-and e:expr ...)
+  (connective #t combine-and e ...))
+
+(define-syntax-parse-rule (p-or e:expr ...)
+  (connective #f combine-or e ...))
 
 (define (p-not x)
-  (cond [(Expr-ptr? x) (expr-not x)]
-        [(series? x)   (wrap-series (series-not x #:who 'not))]
-        [else          (base:not x)]))
+  (cond
+    [(Expr-ptr? x) (expr-not x)]
+    [(series? x) (wrap-series (series-not/who 'not x))]
+    [else (not x)]))
 
 (define (p-xor a b)
-  (cond [(or (operand? a) (operand? b)) (eager-logical 'xor expr-xor series-xor a b)]
-        [else (and (or a b) (not (and a b)))]))
+  (cond
+    [(or (operand? a) (operand? b)) (combine 'xor expr-xor series-xor/who a b)]
+    [else (and (or a b) (not (and a b)))]))

@@ -163,8 +163,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
-  `call-as-atomic` (`call/polars-reason` where the reason alone follows the
-  verb, as for the operators, `vstack` and `join`): the slot is per OS thread and every Racket thread in a
+  `call-as-atomic` (given no format, the reason alone follows the verb;
+  `call/polars-reason` is that call, and `define-reasoned` binds a
+  keyword-free public name with a `name/who` variant taking the verb, as for
+  the series operators): the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
@@ -512,18 +514,36 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
   comparison with it is null on every row and arithmetic keeps a numeric
   operand's dtype; with a temporal operand (date, datetime, zoned, time,
-  duration) arithmetic raises, as Python's expression form does. A series
-  operator given a `polars-null`, or a `'null` series and a plain value,
-  runs the operator's expression form with the value as a `lit`, so the two
-  agree; Python's eager `s - None` on a date series gives null durations
-  where its expression raises, and ours raises like the expression. `and`
-  and `or` with `polars-null` on the left and an expression or series after
-  it combine as Python's `pl.lit(None) & e` does, not as Racket's
-  short-circuit (so an `or` evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  duration) arithmetic raises, as Python's expression form does. An
+  arithmetic or comparison operator given a `polars-null`, or a `'null`
+  series and a plain value, runs its expression form (see the operand fact
+  below); Python's eager `s - None` on a date series gives null durations
+  where its expression raises, and ours raises like the expression. `and`,
+  `or` and `xor` lift `polars-null` beside a series to a Boolean null, which
+  gives the expression form's Kleene result; with `polars-null` on the left
+  and an expression or series after it, `and` and `or` combine as Python's
+  `pl.lit(None) & e` does, not as Racket's short-circuit (so an `or`
+  evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
   and `var` give `polars-null` and `n-unique` gives 1, through the
   expression engine (the typed `series_sum_*` have no Null case). A `'null`
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
-  and `not` refuse a `'null` series, as in Python.
+  and `not` refuse a `'null` series, as Python's eager operators do, and any
+  other non-Boolean series, where Python's `& | ^` are bitwise on integers.
+- A plain value beside a typed series in an operator is a constant of the
+  series' dtype when it fits (a gregor value keeps its own dtype; a
+  non-integer real beside an integer series is Float64). Otherwise the
+  operator runs its expression form, `(op (col name) (lit v))` on a
+  one-column frame (`series-through-expr`), with that form's dtypes, as
+  Python's expressions give them: beside an Enum series a string or symbol
+  (`=` with a value outside the categories is `#f`, null on a null, and `<`
+  raises polars' reason, as in Python), beside a Decimal series a real, and
+  beside an integer series an Int64 integer past the dtype's range (`(+ u8
+  300)` is UInt16). A negative integer beside an unsigned series, an
+  integer past Int64 (inside UInt64's range beside a UInt64 series aside)
+  and a value no literal takes are contract errors naming the value and the
+  series' dtype, as Python's eager `OverflowError` is. Every (operator,
+  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
+  `generic/operand-audit.rkt` holds the operators to.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an

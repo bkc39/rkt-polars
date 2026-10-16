@@ -52,6 +52,9 @@
   series-add/raw series-sub/raw series-mul/raw series-div/raw series-mod/raw
   series-eq/raw series-ne/raw series-gt/raw series-ge/raw series-lt/raw series-le/raw
   series-and/raw series-or/raw series-xor/raw series-not/raw
+  series-add/who series-sub/who series-mul/who series-div/who series-mod/who
+  series-eq/who series-ne/who series-gt/who series-ge/who series-lt/who series-le/who
+  series-and/who series-or/who series-xor/who series-not/who
   dataframe-vstack/raw dataframe-hstack/raw])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
