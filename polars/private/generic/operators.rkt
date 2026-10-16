@@ -120,15 +120,14 @@
              #:with (clause ...) #`([(list (and a (or (? Expr-ptr?) (? series?)))) a]
                                     [(list a) (#,base-op a)]))))
 
-(define-syntax-parser define-arith
-  [(_ name:id who:id expr-op:expr series-op:expr base-op:expr
-      (~var one (one-argument #'who #'base-op)))
-   #'(define (name . args)
-       (match args
-         one.clause ...
-         [_ #:when (andmap base:number? args) (apply base-op args)]
-         [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
-                               a more)]))])
+(define-syntax-parse-rule (define-arith name:id who:id expr-op:expr series-op:expr base-op:expr
+                           (~var one (one-argument #'who #'base-op)))
+  (define (name . args)
+    (match args
+      one.clause ...
+      [_ #:when (andmap base:number? args) (apply base-op args)]
+      [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
+                            a more)])))
 
 (define-arith p+ + expr-add series-add base:+)
 (define-arith p- - expr-sub series-sub base:- #:unary expr-neg series-negate)
