@@ -61,7 +61,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `foreign.rkt`, where `series-ref` reads through them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
-   wrapped by a checking function of the plain name.
+   wrapped by a checking function of the plain name, except the
+   `series-ref-<type>/raw` readers, which carry an index contract and which
+   `series-ref` reads through unchecked.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
