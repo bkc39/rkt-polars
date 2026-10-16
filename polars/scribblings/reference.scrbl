@@ -123,10 +123,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   zoned literal: in its named zone, or in UTC for a fixed offset. A zoned
   column compares only with a literal in its own zone, as in Python.
   @racket[polars-null] is a null of dtype @racket['null], as
-  @tt{pl.lit(None)} is: it broadcasts to a @racket['null] column, takes
-  the other operand's dtype in arithmetic, and compares as null, so
-  @racket[(= (col "x") polars-null)] is null on every row (test with
-  @racketid[is-null] instead). Every operator below lifts a
+  @tt{pl.lit(None)} is: it broadcasts to a @racket['null] column and
+  compares as null, so @racket[(= (col "x") polars-null)] is null on every
+  row (test with @racketid[is-null] instead). In arithmetic it takes a
+  numeric operand's dtype, and with a temporal operand it raises, as in
+  Python. Every operator below lifts a
   non-expression operand with @racket[lit] automatically, so it is rarely
   needed explicitly.
 
@@ -1308,12 +1309,12 @@ stations
 (eval:error (rank "score" #:method 'first))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
-              @defproc[(mean [v any/c] ...) any/c]
+              @defproc[(mean [v any/c] ...+) any/c]
               @defproc[(min [v any/c] ...) any/c]
               @defproc[(max [v any/c] ...) any/c])]{
   These dispatch on their argument. Applied to a single series, they reduce it
-  (dispatching on its dtype): @racket[min], @racket[max] and @racket[sum]
-  preserve the input dtype, while @racket[mean] always returns a
+  (dispatching on its dtype): @racket[min] and @racket[max] preserve the
+  input dtype, as @racket[sum] does above 16 bits, while @racket[mean] always returns a
   @racket[float64], so the mean of an integer series is a flonum (see
   @secref["promotion"]). Applied to a single expression or a bare column-name
   string, they produce the corresponding aggregation expression — so
@@ -1322,14 +1323,10 @@ stations
   they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
   works.
 
-  A series reduces as in Python Polars. Where the reduction is undefined it
-  is @racket[polars-null]: the @racket[mean], @racket[min] and @racket[max]
-  of an empty or all-null series, and the @racket[mean] of a string or
-  categorical one. The @racket[sum] of an empty or all-null numeric,
-  boolean or duration series is zero, and of a boolean series the number of
-  @racket[#t] entries; a string, temporal or categorical series has no
-  @racket[sum]. A @racket['null] series reduces to @racket[polars-null] and a
-  @racket['null] column aggregates to one.
+  A series reduces as in Python Polars: to @racket[polars-null] where the
+  reduction is undefined, and to zero for the @racket[sum] of no values.
+  A string, temporal or categorical series has no @racket[sum], and a small
+  integer one sums as @racket['int64], so its total does not wrap.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
@@ -1340,15 +1337,18 @@ stations
 (define no-rows (series '() #:dtype 'int64))
 (list (sum no-rows) (mean no-rows) (min no-rows) (max no-rows))
 (sum (series '(#t #f #t)))
+(sum (series '(100 100 100) #:dtype 'int8))
 (mean (series '("a" "b")))
 (eval:error (sum (series '("a" "b"))))
 (~> (dataframe (list nothing)) (select (sum "n")))]}
 
 @deftogether[(@defproc[(count    [x any/c]) any/c]
-              @defproc[(n-unique [x any/c]) any/c]
+              @defproc[(n-unique [x (or/c series? string? Expr-ptr?)]) any/c]
               @defproc[(median   [x any/c]) any/c]
-              @defproc[(std [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
-              @defproc[(var [x any/c] [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+              @defproc[(std [x (or/c series? string? Expr-ptr?)]
+                            [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+              @defproc[(var [x (or/c series? string? Expr-ptr?)]
+                            [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
               @defproc[(alias [e any/c] [name string?]) any/c])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
@@ -1358,13 +1358,10 @@ stations
   @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
   take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.
   On a series, @racket[n-unique], @racket[std] and @racket[var] reduce at
-  once, as in Python Polars: @racket[std] and @racket[var] are
-  @racket[polars-null] for fewer than @racket[(+ ddof 1)] non-null values,
-  take a boolean series as 0 and 1, and raise for a string, temporal or
-  categorical one, though a duration series has a @racket[std]. All nulls
-  count as one unique value. A @racket['null] series has one unique value
-  and a @racket[std] and @racket[var] of @racket[polars-null]; its column's
-  @racket[count] is 0.
+  once, as in Python Polars, with every null one unique value. The
+  @racket[std] and @racket[var] of fewer than @racket[(+ ddof 1)] values
+  are @racket[polars-null], and a string, temporal or categorical series
+  has neither, though a duration has a @racket[std].
 
   @examples[#:eval ev
 (list (std nothing) (var nothing) (n-unique nothing))
@@ -2049,7 +2046,11 @@ temps
   @racket[0]. The generic @racket[sum], @racket[min], @racket[max] and
   @racket[mean] dispatch on the dtype for you, return @racket[polars-null]
   where these return @racket[#f] for an undefined reduction, and are the
-  preferred surface.}
+  preferred surface.
+
+  @examples[#:eval ev
+(define gaps (series (list polars-null polars-null) #:dtype 'float64))
+(list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))]}
 
 @defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical

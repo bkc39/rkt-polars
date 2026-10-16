@@ -51,6 +51,9 @@
 (define (series-cells s)
   (for/list ([i (in-range (len s))]) (ref s i)))
 
+(define (series-shape s)
+  (list (dtype s) (series-cells s)))
+
 (define (column d name)
   (series-cells (ref d #:columns name)))
 

@@ -13,7 +13,7 @@
 (provide const-series
          failure-cause
          logical-operand
-         null-series-op
+         expression-form-op
          operand-series
          raise-cause
          series-through-expr)
@@ -107,9 +107,7 @@
                       dataframe-drop])
     (wrap-series (dataframe-column out name))))
 
-;; A series with a polars-null operand, or a 'null series with a plain one,
-;; runs the expression form, the operand read by `lit`; #f otherwise.
-(define (null-series-op who expr-op a b)
+(define (expression-form-op who expr-op a b)
   (define (literal v)
     (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
       (lit v)))

@@ -510,12 +510,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   is a Null literal, and an empty list is a member of nothing (`#f`, null for
   a null), as Python's `is_in([])` is. `(lit polars-null)` is
   `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
-  comparison with it is null on every row and arithmetic keeps the other
-  operand's dtype. A series operator given a `polars-null`, or a `'null`
-  series and a plain value, runs the operator's expression form with the
-  value as a `lit`, so the two agree; Python's eager `s - None` on a date
-  series gives null durations where its expression raises, and ours raises
-  like the expression. On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  comparison with it is null on every row and arithmetic keeps a numeric
+  operand's dtype; with a temporal operand (date, datetime, zoned, time,
+  duration) arithmetic raises, as Python's expression form does. A series
+  operator given a `polars-null`, or a `'null` series and a plain value,
+  runs the operator's expression form with the value as a `lit`, so the two
+  agree; Python's eager `s - None` on a date series gives null durations
+  where its expression raises, and ours raises like the expression. `and`
+  and `or` with `polars-null` on the left and an expression or series after
+  it combine as Python's `pl.lit(None) & e` does, not as Racket's
+  short-circuit (so an `or` evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
   and `var` give `polars-null` and `n-unique` gives 1, through the
   expression engine (the typed `series_sum_*` have no Null case). A `'null`
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
@@ -528,9 +532,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   numeric, boolean or duration series, a boolean `sum` the count of `#t`,
   and an error under the verb's name for a `sum` of a string, temporal or
   categorical series and a `std` / `var` of a string, temporal (but a
-  duration's `std`) or categorical one. The table in `generic/reductions.rkt`'s
-  tests is Python's, probed per dtype on empty, all-null and partly null
-  series. The typed low-level `series-sum-i32` and kin still return `#f`.
+  duration's `std`) or categorical one. An Int8, Int16, UInt8 or UInt16
+  `sum` is an Int64 total, a Float32 `std` / `var` the Float32 value and a
+  Decimal reduces as Python's does, all through the expression engine. The
+  expectations are `polars/scribblings/data/reductions-expected.rktd`,
+  written by `scripts/reductions-expected.py` from Python on empty,
+  all-null and partly null series of each dtype; `generic/reductions.rkt`'s
+  tests read it. The typed low-level `series-sum-i32` and kin still return
+  `#f`.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.

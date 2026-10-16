@@ -1714,7 +1714,10 @@
   (check-equal? (col7 "d")    '(#f #t #t #f #t #t #f))
   (check-equal? (col7 "f")    '(#t #t #f #t #t #f #t))
   (check-equal? (col7 "l")    '(#t #f #t #t #f #t #t))
-  (check-pred Expr-ptr? (expr-is-in (col "x") '()))
+  (define none-in
+    (dataframe-select-exprs df-p (list (expr-alias (expr-is-in (col "x") '()) "in"))))
+  (check-equal? (for/list ([i (in-range 7)]) (series-ref (dataframe-column none-in "in") i))
+                '(#f #f #f #f #f #f #f))
   (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat)))
 
   ;; --- cumulative + shift / diff ---
