@@ -113,7 +113,7 @@
      (and (dtype-spec? v)
           (match (normalize-dtype v)
             [(or 'boolean 'int32 'int64 'uint32 'uint64 'float32 'float64 'string 'date
-                 'datetime 'categorical (list* 'datetime _))
+                 'datetime 'categorical 'null (list* 'datetime _))
              #t]
             [_ #f])))))
 

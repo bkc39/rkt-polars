@@ -36,15 +36,46 @@
 ;; keeps the dtype `lit` gives it, as the expression path does.
 (define (cmp-other who s other)
   (define o
-    (if (series? other)
-        other
-        (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
+    (cond
+      [(series? other) other]
+      [(temporal-value-dtype other) => (lambda (dt) (const-series dt (series-len s) other))]
+      [else (const-series (series-dtype s) (series-len s) other)]))
   (match* ((series-dtype s) (series-dtype o))
     [((list 'datetime _ zone) (list 'datetime _ other-zone))
      #:when (not (equal? zone other-zone))
      (raise-arguments-error who "datetimes in different time zones"
                             "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
     [(_ _) o]))
+
+(define (failure-cause e)
+  (define message (exn-message e))
+  (match (regexp-match #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$"
+                       message)
+    [(list _ cause) cause]
+    [#f message]))
+
+(define (raise-cause who e #:contract? [contract? (exn:fail:contract? e)])
+  (define make-exn (if contract? exn:fail:contract exn:fail))
+  (raise (make-exn (format "~a: ~a" who (failure-cause e)) (exn-continuation-marks e))))
+
+;; A 'null series with a plain operand runs the expression form, the operand
+;; read by `lit`, which has no polars-null literal; #f otherwise.
+(define (null-series-op who expr-op a b)
+  (define (plain? v) (not (or (series? v) (polars-null? v))))
+  (define (literal v)
+    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
+      (lit v)))
+  (define (run s build)
+    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e))])
+      (series-through-expr s build)))
+  (cond
+    [(and (null-series? a) (plain? b))
+     (define v (literal b))
+     (run a (lambda (e) (expr-op e v)))]
+    [(and (null-series? b) (plain? a))
+     (define v (literal a))
+     (run b (lambda (e) (expr-op v e)))]
+    [else #f]))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
@@ -56,6 +87,7 @@
        (let ([a (base:car args)] [b (base:cadr args)])
          (cond
            [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+           [(null-series-op 'name expr-op a b) => values]
            [(series? a) (wrap-series (series-op a (cmp-other 'name a b)))]
            [(series? b) (wrap-series (series-op-reflected b (cmp-other 'name b a)))]
            [else (apply base-op args)]))]
@@ -74,6 +106,7 @@
 ;; --- arithmetic operators ---------------------------------------------------
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+        [(null-series-op who expr-op a b) => values]
         [(series? a) (wrap-series (series-op a (cmp-other who a b)))]
         [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
         [else (base-op a b)]))
@@ -219,6 +252,7 @@
   ;; operators<->reshape test cycle.
   (require rackunit
            (only-in ffi/unsafe/atomic call-as-atomic)
+           (only-in gregor date)
            (only-in gregor/period hours minutes)
            (only-in polars/private/bulk series->list)
            polars/private/generic/core
@@ -384,6 +418,51 @@
   (for ([op (list p- p/)])
     (define result (op nulls))
     (check-equal? (list (dtype result) (len result) (series-name result)) '(null 2 "n")))
+  (for ([case (list (list (p+ nulls 1) 'int32) (list (p- 1 nulls) 'int32) (list (p/ nulls 2) 'int32)
+                    (list (p* 2.5 nulls) 'float64) (list (p+ nulls 2.5) 'float64)
+                    (list (p+ nulls "a") 'string) (list (p+ nulls 'a) 'string)
+                    (list (= nulls 'a) 'boolean) (list (= nulls "a") 'boolean)
+                    (list (= nulls 1) 'boolean) (list (> 1 nulls) 'boolean)
+                    (list (p+ nulls polars-null) 'null))])
+    (match-define (list result expected) case)
+    (check-equal? (list (dtype result) (series-name result) (series->list result))
+                  (list expected "n" (list polars-null polars-null))))
+  (define null-frame (dataframe (list nulls)))
+  (define (outcome thunk)
+    (with-handlers ([exn:fail? (lambda (e) (list 'raised (failure-cause e)))])
+      (define result (thunk))
+      (list (dtype result) (series->list result))))
+  (define (selected e)
+    (wrap-series (dataframe-column (dataframe-select-exprs null-frame (list (expr-alias e "n")))
+                                   "n")))
+  (for* ([op (list p+ p- p* p/ mod = != > < >= <=)]
+         [value (list 1 2.5 "a" 'a #t (datetime 2024 1 1) (date 2024 1 1) #\a (expt 2 63))])
+    (check-equal? (outcome (lambda () (op nulls value)))
+                  (outcome (lambda () (selected (op (col "n") value))))
+                  (format "~a ~v" (object-name op) value))
+    (check-equal? (outcome (lambda () (op value nulls)))
+                  (outcome (lambda () (selected (op value (col "n")))))
+                  (format "~v ~a" value (object-name op))))
+  (check-not-equal? (outcome (lambda () (p+ nulls #\a)))
+                    (outcome (lambda () (p+ nulls (date 2024 1 1)))))
+  (define (polars-failure? e) (and (exn:fail? e) (not (exn:fail:contract? e))))
+  (for ([case (list (list (lambda () (p+ nulls (date 2024 1 1))) polars-failure?
+                          #rx"^[+]: [^\n]*date$")
+                    (list (lambda () (p- nulls "a")) polars-failure? #rx"^-: [^\n]*str`$")
+                    (list (lambda () (p- "a" nulls)) polars-failure? #rx"^-: [^\n]*str`$")
+                    (list (lambda () (p+ nulls #\a)) exn:fail:contract? #rx"^[+]: [^\n]*#\\\\a$")
+                    (list (lambda () (= nulls #\a)) exn:fail:contract? #rx"^=: [^\n]*#\\\\a$")
+                    (list (lambda () (p+ nulls (expt 2 63))) exn:fail:contract?
+                          #rx"^[+]: .*_int64.*9223372036854775808$")
+                    (list (lambda () (> (expt 2 63) nulls)) exn:fail:contract?
+                          #rx"^>: .*_int64.*9223372036854775808$"))])
+    (match-define (list thunk kind rx) case)
+    (check-exn kind thunk)
+    (define message (with-handlers ([exn:fail? exn-message]) (thunk) #f))
+    (check-regexp-match rx message)
+    (check-false (regexp-match? #rx"Resolved plan|lazyframe-collect|lit:|expr_lit" message)))
+  (check-equal? (series->list (= (series (list (date 2024 1 1))) (datetime 2024 1 1))) '(#t))
+  (check-equal? (series->list (= (series (list (date 2024 1 1))) (datetime 2024 1 1 0 0 1))) '(#f))
   (check-eq? (p+ ints) ints)
   (check-eq? (p* ints) ints)
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'uint8"
