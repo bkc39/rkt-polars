@@ -35,7 +35,10 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
-           polars/private/generic/reshape)     ; with-columns / select / drop-nulls
+           polars/private/generic/reshape      ; with-columns / select / drop-nulls
+           (only-in racket/list make-list)
+           (only-in polars/private/bulk series->list)
+           (only-in polars/private/generic/ordering sort))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
                      (series (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:name "y"))))
@@ -60,22 +63,23 @@
   (check-equal? (ref (ref out #:columns "y_is_inf") 3) #t)
   ;; drop-nulls / drop-nans on an Expr collapse the column length (via select)
   (check-equal? (height (select df (alias (drop-nulls (col "x")) "x"))) 3)
-  (check-equal? (height (select df (alias (drop-nans (col "y")) "y"))) 4))
-
-(module+ test
-  (require (only-in racket/list make-list)
-           (only-in polars/private/bulk series->list)
-           (only-in polars/private/generic/ordering sort))
+  (check-equal? (height (select df (alias (drop-nans (col "y")) "y"))) 4)
   (define nulls (series (list polars-null polars-null) #:name "n"))
   (check-equal? (map (lambda (reduce) (reduce nulls)) (list sum mean min max std var))
                 (make-list 6 polars-null))
   (check-equal? (list (n-unique nulls) (null-count nulls) (len nulls)) '(1 2 2))
+  (define anchored (series (list polars-null polars-null) #:name "^x$"))
+  (check-equal? (map (lambda (reduce) (reduce anchored)) (list sum mean min max std var))
+                (make-list 6 polars-null))
+  (check-equal? (map (lambda (reduce) (reduce (series '("b" "a") #:name "^x$"))) (list min max))
+                '("a" "b"))
+  (check-equal? (mean (series '(#t #f #t #t) #:name "^x$")) 0.75)
   (define null-frame (dataframe (list (series '(a b a) #:name "g")
                                       (series (list polars-null polars-null polars-null)
                                               #:name "n"))))
   (define (column-of d name)
-    (define s (wrap-series (dataframe-column d name)))
-    (list (series-dtype s) (series->list s)))
+    (define s (ref d name))
+    (list (dtype s) (series->list s)))
   (for ([reduce (list sum mean min max median first last std var)])
     (check-equal? (column-of (select null-frame (reduce "n")) "n")
                   (list 'null (list polars-null))

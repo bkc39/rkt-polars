@@ -8,6 +8,7 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          (only-in racket/contract/base ->* contract-out)
+         (only-in racket/list filter-not)
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
@@ -422,16 +423,15 @@
     [(Expr-ptr? rhs) rhs]
     [(Series-ptr? rhs) (expr-lit-series rhs)]
     [(list? rhs)
-     (define vals (filter (lambda (x) (not (polars-null? x))) rhs))
-     (define (convert f) (map (lambda (x) (if (polars-null? x) x (f x))) rhs))
+     (define vals (filter-not polars-null? rhs))
      (define s
        (cond
          [(null? rhs) (error who "is-in needs a non-empty list of values")]
          [(null? vals) (series-new-null "" (length rhs))]
          [(andmap exact-integer? vals) (series-new-i64 "" rhs)]
-         [(andmap real? vals) (series-new-f64 "" (convert exact->inexact))]
+         [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
-         [(andmap symbol? vals) (series-new-str "" (convert symbol->string))]
+         [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
          [(andmap boolean? vals) (series-new-bool "" rhs)]
          [(temporal-values-dtype vals)
           => (lambda (dtype)
@@ -440,6 +440,10 @@
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+
+(define (map-non-null f xs)
+  (for/list ([x (in-list xs)])
+    (if (polars-null? x) x (f x))))
 
 (define (check-one-zone who vals)
   (define conflict (zone-conflict vals))

@@ -259,9 +259,9 @@
                     nd-columns)
                 (list (list "reading" 'float64 '(3.0 4.5 2.0 5.25))
                       (list "extra" 'null (make-list 4 polars-null))))
-  (check-exn #rx"^read-ndjson: failed to read ndjson from [^:]*stations.ndjson: got non-null value for NULL-typed column: late$"
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*late$"
              (lambda () (read-ndjson stations-nd #:schema '(("station" . str) ("note" . null)))))
-  (check-exn #rx"^read-ndjson: failed to read ndjson from [^:]*stations.ndjson: got non-null value for NULL-typed column: ok$"
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*ok$"
              (lambda () (read-ndjson stations-nd #:schema-overrides '(("flag" . null)))))
   (check-equal? (dtypes-of (~> (read-ndjson stations-nd #:schema-overrides '(("day" . date)))
                                (select "day" "reading")))

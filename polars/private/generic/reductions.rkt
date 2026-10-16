@@ -45,13 +45,9 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
-(define (null-series? v)
-  (and (series? v) (eq? (series-dtype v) 'null)))
-
 (define (series-agg-via-expr expr-op s)
-  (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))
-                                      (list (expr-alias (expr-op (col name)) "v"))))
+                                      (list (expr-alias (expr-op (expr-all)) "v"))))
   (series-ref (dataframe-column out "v") 0))
 
 ;; sum / mean / min / max are generic across three worlds:
@@ -110,14 +106,14 @@
         [else (expr-n-unique (->col-expr 'n-unique x))]))
 (define (median x)    (expr-median   (->col-expr 'median x)))
 ;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
-(define (std x #:ddof [ddof 1])
-  (cond [(null-series? x) (series-agg-via-expr (lambda (e) (expr-std e #:ddof ddof)) x)]
-        [(series? x) (series-std x #:ddof ddof)]
-        [else (expr-std (->col-expr 'std x) #:ddof ddof)]))
-(define (var x #:ddof [ddof 1])
-  (cond [(null-series? x) (series-agg-via-expr (lambda (e) (expr-var e #:ddof ddof)) x)]
-        [(series? x) (series-var x #:ddof ddof)]
-        [else (expr-var (->col-expr 'var x) #:ddof ddof)]))
+(define (dispersion who series-op expr-op x ddof)
+  (define (aggregate e) (expr-op e #:ddof ddof))
+  (match x
+    [(? null-series?) (series-agg-via-expr aggregate x)]
+    [(? series?) (series-op x #:ddof ddof)]
+    [_ (aggregate (->col-expr who x))]))
+(define (std x #:ddof [ddof 1]) (dispersion 'std series-std expr-std x ddof))
+(define (var x #:ddof [ddof 1]) (dispersion 'var series-var expr-var x ddof))
 
 (define (first x)
   (cond

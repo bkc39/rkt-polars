@@ -39,8 +39,6 @@
     (cond
       [(series? other) other]
       [(temporal-value-dtype other) => (lambda (dt) (const-series dt (series-len s) other))]
-      [(and (eq? (series-dtype s) 'null) (not (polars-null? other)))
-       (const-series (infer-dtype (list other)) (series-len s) other)]
       [else (const-series (series-dtype s) (series-len s) other)]))
   (match* ((series-dtype s) (series-dtype o))
     [((list 'datetime _ zone) (list 'datetime _ other-zone))
@@ -48,6 +46,15 @@
      (raise-arguments-error who "datetimes in different time zones"
                             "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
     [(_ _) o]))
+
+;; A 'null series with a plain operand runs the expression form, the operand
+;; read by `lit`, which has no polars-null literal; #f otherwise.
+(define (null-series-op expr-op a b)
+  (define (plain? v) (not (or (series? v) (polars-null? v))))
+  (cond
+    [(and (null-series? a) (plain? b)) (series-through-expr a (lambda (e) (expr-op e b)))]
+    [(and (null-series? b) (plain? a)) (series-through-expr b (lambda (e) (expr-op a e)))]
+    [else #f]))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
@@ -59,6 +66,7 @@
        (let ([a (base:car args)] [b (base:cadr args)])
          (cond
            [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+           [(null-series-op expr-op a b) => values]
            [(series? a) (wrap-series (series-op a (cmp-other 'name a b)))]
            [(series? b) (wrap-series (series-op-reflected b (cmp-other 'name b a)))]
            [else (apply base-op args)]))]
@@ -77,6 +85,7 @@
 ;; --- arithmetic operators ---------------------------------------------------
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+        [(null-series-op expr-op a b) => values]
         [(series? a) (wrap-series (series-op a (cmp-other who a b)))]
         [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
         [else (base-op a b)]))
@@ -387,16 +396,31 @@
   (for ([op (list p- p/)])
     (define result (op nulls))
     (check-equal? (list (dtype result) (len result) (series-name result)) '(null 2 "n")))
-  (check-equal? (for/list ([result (list (p+ nulls 1) (p* 2.5 nulls) (p+ nulls 2.5) (p+ nulls "a")
-                                         (= nulls 1) (> 1 nulls) (p+ nulls polars-null))])
-                  (list (dtype result) (series->list result)))
-                (list (list 'int64 (list polars-null polars-null))
-                      (list 'float64 (list polars-null polars-null))
-                      (list 'float64 (list polars-null polars-null))
-                      (list 'string (list polars-null polars-null))
-                      (list 'boolean (list polars-null polars-null))
-                      (list 'boolean (list polars-null polars-null))
-                      (list 'null (list polars-null polars-null))))
+  (for ([case (list (list (p+ nulls 1) 'int32) (list (p- 1 nulls) 'int32) (list (p/ nulls 2) 'int32)
+                    (list (p* 2.5 nulls) 'float64) (list (p+ nulls 2.5) 'float64)
+                    (list (p+ nulls "a") 'string) (list (p+ nulls 'a) 'string)
+                    (list (= nulls 'a) 'boolean) (list (= nulls "a") 'boolean)
+                    (list (= nulls 1) 'boolean) (list (> 1 nulls) 'boolean)
+                    (list (p+ nulls polars-null) 'null))])
+    (match-define (list result expected) case)
+    (check-equal? (list (dtype result) (series-name result) (series->list result))
+                  (list expected "n" (list polars-null polars-null))))
+  (define null-frame (dataframe (list nulls)))
+  (define (outcome thunk)
+    (with-handlers ([exn:fail? (lambda (e) 'raised)])
+      (define result (thunk))
+      (list (dtype result) (series->list result))))
+  (define (selected e)
+    (wrap-series (dataframe-column (dataframe-select-exprs null-frame (list (expr-alias e "n")))
+                                   "n")))
+  (for* ([op (list p+ p- p* p/ mod = != > < >= <=)]
+         [value (list 1 2.5 "a" 'a #t (datetime 2024 1 1))])
+    (check-equal? (outcome (lambda () (op nulls value)))
+                  (outcome (lambda () (selected (op (col "n") value))))
+                  (format "~a ~v" (object-name op) value))
+    (check-equal? (outcome (lambda () (op value nulls)))
+                  (outcome (lambda () (selected (op value (col "n")))))
+                  (format "~v ~a" value (object-name op))))
   (check-eq? (p+ ints) ints)
   (check-eq? (p* ints) ints)
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'uint8"

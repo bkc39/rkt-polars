@@ -62,6 +62,7 @@
 
 (define series? series-rec?)
 (define (wrap-series ptr) (series-rec ptr))
+(define (null-series? v) (and (series? v) (eq? (series-dtype v) 'null)))
 
 ;; ---------------------------------------------------------------------------
 ;; the dataframe wrapper
@@ -371,7 +372,7 @@
 
 (module+ test
   (require (only-in polars/private/bulk series->list)
-           (only-in racket/match match))
+           (only-in racket/match match match-define))
   (define (empty-series-summary s)
     (list (series-name s) (series-dtype s) (series-len s) (series->list s)))
 
@@ -383,11 +384,10 @@
                 (list "n" 'null 1 (list polars-null)))
   (check-equal? (empty-series-summary (series (vector polars-null polars-null)))
                 (list "" 'null 2 (list polars-null polars-null)))
-  (check-equal? (map series-dtype (list (series (list polars-null 1))
-                                        (series (vector 2.5 polars-null))
-                                        (series (list polars-null "a"))
-                                        (series (list polars-null 'a))))
-                '(int64 float64 string categorical))
+  (for ([case (list (list (list polars-null 1) 'int64) (list (vector 2.5 polars-null) 'float64)
+                    (list (list polars-null "a") 'string) (list (list polars-null 'a) 'categorical))])
+    (match-define (list elements expected) case)
+    (check-equal? (series-dtype (series elements)) expected))
   (check-equal? (series-dtype (series '() #:dtype (series-dtype (series '())))) 'null)
   (check-equal? (empty-series-summary (series (list polars-null polars-null) #:dtype 'null))
                 (list "" 'null 2 (list polars-null polars-null)))
