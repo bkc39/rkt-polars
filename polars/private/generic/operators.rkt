@@ -58,21 +58,22 @@
   (define make-exn (if contract? exn:fail:contract exn:fail))
   (raise (make-exn (format "~a: ~a" who (failure-cause e)) (exn-continuation-marks e))))
 
-;; A 'null series with a plain operand runs the expression form, the operand
-;; read by `lit`, which has no polars-null literal; #f otherwise.
+;; A series with a polars-null operand, or a 'null series with a plain one,
+;; runs the expression form, the operand read by `lit`; #f otherwise.
 (define (null-series-op who expr-op a b)
-  (define (plain? v) (not (or (series? v) (polars-null? v))))
   (define (literal v)
     (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
       (lit v)))
   (define (run s build)
     (with-handlers ([exn:fail? (lambda (e) (raise-cause who e))])
       (series-through-expr s build)))
+  (define (expression-form? s v)
+    (and (series? s) (or (polars-null? v) (and (null-series? s) (not (series? v))))))
   (cond
-    [(and (null-series? a) (plain? b))
+    [(expression-form? a b)
      (define v (literal b))
      (run a (lambda (e) (expr-op e v)))]
-    [(and (null-series? b) (plain? a))
+    [(expression-form? b a)
      (define v (literal a))
      (run b (lambda (e) (expr-op v e)))]
     [else #f]))
@@ -180,9 +181,13 @@
 ;; the eager combiners.  not / xor are strict, so plain functions.
 
 (define (combine-and a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b) (wrap-series (series-and a b))))
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b)]
+        [(null-series-op 'and expr-and a b) => values]
+        [else (wrap-series (series-and a b))]))
 (define (combine-or a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)  (wrap-series (series-or a b))))
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)]
+        [(null-series-op 'or expr-or a b) => values]
+        [else (wrap-series (series-or a b))]))
 
 (define-syntax-parser p-and
   [(_) #'#t]
@@ -209,6 +214,7 @@
 
 (define (p-xor a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
+        [(null-series-op 'xor expr-xor a b) => values]
         [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
         [else (and (or a b) (not (and a b)))]))   ; boolean xor
 
@@ -443,6 +449,47 @@
     (check-equal? (outcome (lambda () (op value nulls)))
                   (outcome (lambda () (selected (op value (col "n")))))
                   (format "~v ~a" value (object-name op))))
+  (define (selected-from s e)
+    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe (list s))
+                                                           (list (expr-alias e "n")))
+                                   "n")))
+  (define typed-series
+    (cons nulls (for/list ([value (list 1 1.5 "a" #t (date 2024 1 1))])
+                  (series (list value polars-null) #:name "n"))))
+  (define (check-expression-form s op a b e)
+    (check-equal? (outcome (lambda () (op a b)))
+                  (outcome (lambda () (selected-from s e)))
+                  (format "~a ~a ~v ~v" (dtype s) (object-name op) a b)))
+  (for* ([s (in-list typed-series)]
+         [op (list p+ p- p* p/ mod = != > < >= <= p-xor)])
+    (check-expression-form s op s polars-null (op (col "n") polars-null))
+    (check-expression-form s op polars-null s (op polars-null (col "n"))))
+  (for ([s (in-list typed-series)])
+    (check-expression-form s combine-and s polars-null (p-and (col "n") polars-null))
+    (check-expression-form s combine-or s polars-null (p-or (col "n") polars-null)))
+  (for ([case (list (list (= (series '(1 2)) polars-null) 'boolean (list polars-null polars-null))
+                    (list (p+ (series '(1.5 2.5)) polars-null) 'float64
+                          (list polars-null polars-null))
+                    (list (p-and (series (list #t #f)) polars-null) 'boolean (list polars-null #f))
+                    (list (p-or (series (list #t #f)) polars-null) 'boolean
+                          (list #t polars-null)))])
+    (match-define (list result expected-dtype expected) case)
+    (check-equal? (list (dtype result) (series->list result)) (list expected-dtype expected)))
+  (define gappy (series (list 1 polars-null 3) #:name "n"))
+  (define nothing (selected-from gappy (lit polars-null)))
+  (check-equal? (list (dtype nothing) (series->list nothing))
+                (list 'null (list polars-null)))
+  (for ([case (list (list (~> (p-when (> (col "n") 1)) (then polars-null) (otherwise (col "n")))
+                          'int64 (list 1 polars-null polars-null))
+                    (list (~> (p-when (> (col "n") 1)) (then (col "n")) (otherwise polars-null))
+                          'int64 (list polars-null polars-null 3))
+                    (list (~> (p-when (> (col "n") 1)) (then polars-null) (otherwise polars-null))
+                          'null (list polars-null polars-null polars-null)))])
+    (match-define (list e expected-dtype expected) case)
+    (define result (selected-from gappy e))
+    (check-equal? (list (dtype result) (series->list result)) (list expected-dtype expected)))
+  (check-exn #rx"^-: [^\n]*date and null$"
+             (lambda () (p- (series (list (date 2024 1 1))) polars-null)))
   (check-not-equal? (outcome (lambda () (p+ nulls #\a)))
                     (outcome (lambda () (p+ nulls (date 2024 1 1)))))
   (define (polars-failure? e) (and (exn:fail? e) (not (exn:fail:contract? e))))

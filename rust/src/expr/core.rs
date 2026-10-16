@@ -72,6 +72,12 @@ pub extern "C" fn expr_lit_str(v: *const c_char) -> *mut Expr {
     Box::into_raw(Box::new(lit(s)))
 }
 
+/// Python's `pl.lit(None)`: a null literal of dtype Null.
+#[no_mangle]
+pub extern "C" fn expr_lit_null() -> *mut Expr {
+    Box::into_raw(Box::new(lit(Null {})))
+}
+
 const NS_IN_DAY: i64 = 86_400_000_000_000;
 
 /// A Date, naive Datetime, Duration or Time literal from its physical value

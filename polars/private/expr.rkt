@@ -426,7 +426,6 @@
      (define vals (filter-not polars-null? rhs))
      (define s
        (cond
-         [(null? rhs) (error who "is-in needs a non-empty list of values")]
          [(null? vals) (series-new-null "" (length rhs))]
          [(andmap exact-integer? vals) (series-new-i64 "" rhs)]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
@@ -1715,7 +1714,7 @@
   (check-equal? (col7 "d")    '(#f #t #t #f #t #t #f))
   (check-equal? (col7 "f")    '(#t #t #f #t #t #f #t))
   (check-equal? (col7 "l")    '(#t #f #t #t #f #t #t))
-  (check-exn exn:fail? (lambda () (expr-is-in (col "x") '())))
+  (check-pred Expr-ptr? (expr-is-in (col "x") '()))
   (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat)))
 
   ;; --- cumulative + shift / diff ---

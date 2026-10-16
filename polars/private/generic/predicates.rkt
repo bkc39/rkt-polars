@@ -66,6 +66,18 @@
   (check-equal? (membership (list polars-null)) (list #f polars-null #f))
   (check-equal? (membership (list 1 polars-null)) (list #t polars-null #f))
   (check-equal? (membership (list 1.0 polars-null 3)) (list #t polars-null #t))
+  (check-equal? (membership '()) (list #f polars-null #f))
+  (for ([column (list (series (list "a" polars-null) #:name "x")
+                      (series (list #t polars-null) #:name "x")
+                      (series (list polars-null polars-null) #:name "x"))]
+        [expected (list (list #f polars-null) (list #f polars-null)
+                        (list polars-null polars-null))])
+    (check-equal? (~> (dataframe (list column)) (select (is-in "x" '())) (ref "x") series->list)
+                  expected))
+  (for ([lower (list polars-null 1 polars-null)]
+        [upper (list 5 polars-null polars-null)])
+    (check-equal? (~> gappy (select (is-between "x" lower upper)) (ref "x") series->list)
+                  (list polars-null polars-null polars-null)))
   (check-equal? (~> gappy (select (is-between "x" 2 5)) (ref "x") series->list)
                 (list #f polars-null #t))
   (check-equal? (~> carriers (select (is-in "carrier" (list polars-null 'UA))) (ref "carrier")
