@@ -11,7 +11,9 @@
          (only-in racket/format ~r)
          racket/list
          racket/string
-         (only-in polars/private/expr dataframe-select-exprs expr-all expr-dt-strftime)
+         (only-in polars/private/expr
+                  dataframe-lazy expr-all expr-dt-strftime lazyframe-collect/raw lazyframe-drop
+                  lazyframe-select)
          (only-in polars/private/resource with-release)
          polars/private/foreign)
 
@@ -87,9 +89,12 @@
       (string-append "+" (date->iso8601 d))
       (date->iso8601 d)))
 
+(struct unreadable (reason))
+
 (define (value->cell v dt [abbreviation #f])
   (cond
     [(polars-null? v) "null"]
+    [(unreadable? v) (format "#<cannot print: ~a>" (unreadable-reason v))]
     [(and (pair? dt) (eq? (car dt) 'duration)) (duration->cell (period-ref v (cadr dt)) (cadr dt))]
     [(date? v) (date->cell v)]
     [(time? v) (clock->cell v)]
@@ -108,13 +113,21 @@
       (append (range 0 5) (list 'ellipsis) (range (- len 5) len))))
 
 (define (zone-abbreviations s start count)
-  (with-release ([rows (series-slice s start count) series-drop]
-                 [frame (dataframe-new (list rows)) dataframe-drop]
-                 [out (dataframe-select-exprs frame (list (expr-dt-strftime (expr-all) "%Z")))
-                      dataframe-drop]
-                 [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
-    (for/list ([i (in-range count)])
-      (series-ref names i))))
+  (define collected
+    (with-release ([rows (series-slice s start count) series-drop]
+                   [frame (dataframe-new (list rows)) dataframe-drop]
+                   [plan (lazyframe-select (dataframe-lazy frame)
+                                           (list (expr-dt-strftime (expr-all) "%Z")))
+                         lazyframe-drop])
+      (lazyframe-collect/raw plan)))
+  (cond
+    [collected
+     (with-release ([out collected dataframe-drop]
+                    [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
+       (for/list ([i (in-range count)])
+         (series-ref names i)))]
+    [(= count 1) (list #f)]
+    [else (append-map (lambda (i) (zone-abbreviations s i 1)) (range start (+ start count)))]))
 
 (define (shown-abbreviations s dt len)
   (cond
@@ -129,7 +142,10 @@
     (for/list ([i (in-list (row-indices len))]
                [abbreviation (in-list (shown-abbreviations s dt len))])
       (string-append "\t"
-                     (if (eq? i 'ellipsis) "…" (value->cell (series-ref s i) dt abbreviation))
+                     (if (eq? i 'ellipsis)
+                         "…"
+                         (value->cell (series-value 'series->string s i #:unreadable unreadable)
+                                      dt abbreviation))
                      "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
@@ -191,6 +207,9 @@
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
                                     '(datetime microseconds "UTC")))
                 '("2021-03-27 11:00:00 UTC" "]"))
+  (check-regexp-match #rx"^[+][0-9]+-[0-9][0-9]-[0-9][0-9] [0-9:.]+$"
+                      (car (cells (series-cast (series-new-i64 "k" '(9223372036854775807))
+                                               '(datetime milliseconds "UTC")))))
   ;; polars' reading: an LMT offset, a summer after 2037, a backward-compatible name
   (check-equal? (cells (series-cast (series-new-i64 "k" (list (* (- -2208988800 20476) 1000000)))
                                     '(datetime microseconds "Asia/Kathmandu")))
@@ -218,4 +237,10 @@
                 '("2021-03-28 01:00:00 CET" "2021-03-28 03:00:00 CEST" "2021-03-28 04:00:00 CEST"
                   "2021-03-28 05:00:00 CEST" "2021-03-28 06:00:00 CEST" "…"
                   "2021-03-28 09:00:00 CEST" "2021-03-28 10:00:00 CEST" "2021-03-28 11:00:00 CEST"
-                  "2021-03-28 12:00:00 CEST" "2021-03-28 13:00:00 CEST" "]")))
+                  "2021-03-28 12:00:00 CEST" "2021-03-28 13:00:00 CEST" "]"))
+  (check-equal? (cells (series-cast (series-new-i32 "d" '(2000000000)) 'date))
+                '("+5477784-01-06" "]"))
+  (check-equal? (cells (series-cast (series-new-i64 "k" '(1 9000000000000000000))
+                                    '(datetime microseconds "Europe/Brussels")))
+                '("1970-01-01 01:00:00.000001 CET"
+                  "#<cannot print: polars panicked: invalid or out-of-range datetime>" "]")))

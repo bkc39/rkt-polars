@@ -14,8 +14,9 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories define-owned-cpointer-type enum-dtype? sort-flags-mismatch
-                  sort-flags/c time-unit-symbol->code write-owned zoned-datetime-dtype?)
+                  check-enum-categories define-owned-cpointer-type enum-dtype?
+                  printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
+                  write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
@@ -54,7 +55,9 @@
 
 (struct expr (ptr)
   #:property prop:cpointer 0
-  #:property prop:custom-write (write-owned 'expr expr-dropped (lambda (e) (expr->string e))))
+  #:property prop:custom-write
+  (write-owned 'expr expr-dropped
+               (lambda (e) (printed-or-placeholder 'expr (lambda () (expr->string/raw e))))))
 
 (define-owned-cpointer-type _LazyFrame-ptr lazyframe
   (define-compat lazyframe-drop/raw
@@ -65,9 +68,12 @@
 (define-compat expr-drop-count
   (_fun -> _size))
 
-(define-compat expr->string
+(define-compat expr->string/raw
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_to_string)
+
+(define (expr->string e)
+  (call/foreign-error 'expr->string (lambda () (expr->string/raw e)) "cannot print the expression"))
 
 (define-compat lazyframe-explain/raw
   (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstring)

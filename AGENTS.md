@@ -165,6 +165,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
+  `dataframe_to_string`, `expr_to_string`, `series_cast`,
+  `dataframe_pivot`, `dataframe_unpivot`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
   `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
@@ -194,16 +196,39 @@ it. Racket side: `define-compat` with `#:c-id`.
   call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
-  `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `lazyframe_explain`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
-  the three series time-zone entry points (`series_cast_datetime_tz`,
-  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`), the IO
-  helpers (`read_frame`, `read_path`, `write_frame`, `scan`) and the JSON entry points
-  (`dataframe_read_json_with_options`, `lazyframe_scan_ndjson_with_options`,
-  `dataframe_write_ndjson_with_options`) do: 0.41.3 aborted Racket on a
-  Parquet Categorical or Decimal column (#93), and a `scan-csv` that reads
-  the header (`#:schema-overrides`) aborted it on a compressed file (#177).
+  `polars panicked: <cause>` as the reason and returns NULL. The panic hook
+  stays quiet for a panic on a thread inside a guard, or on a polars worker
+  (a rayon thread, polars' async executor or a tokio thread) while any
+  guard runs, so a caught panic prints nothing to stderr; every other panic
+  reaches the previous hook. The worker test is process-wide, which assumes
+  one place calls polars: while a guard runs in one place, a panic on a
+  worker from an unguarded entry point in another prints nothing and then
+  aborts, a case guarding the `todo-129` entry points (#129) removes. A
+  streaming task that panics after an earlier error cancelled it is dropped
+  with its payload, so the reason is that error's and the panic prints
+  nothing. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
+  (#93), a `scan-csv` that reads the header (`#:schema-overrides`) aborted it
+  on a compressed file (#177), and printing, a `cast` to a string, `pivot` and
+  `unpivot` did on a date or datetime outside chrono's range (#141). Which
+  entry points are guarded is the audit's to say, not this file's:
+  `rust/src/tests/guard_audit.rs` parses every file under `rust/src` with
+  `syn`, expands the crate's own `macro_rules!` invocations (nested ones
+  too; a repetition, an unknown macro wrapping an export, or a recursion
+  past depth 32 is a failure), and takes every function with `no_mangle` or
+  `export_name` (bare or under `unsafe(...)`) and a non-Rust ABI as an entry
+  point. One is guarded when the value its body returns flows from a call to
+  `guard_panic` or to a guarding helper: the body's tail is such a call, a
+  method call on one, a call or method call taking one (or a closure whose
+  body is one) as an argument, a `match` on one, or a local bound to one by
+  `let`; a helper is guarding when every function of its name is guarded in
+  that sense. It does not check what runs before the guard or in an adapter
+  after it. Every other entry point is listed in `rust/src/tests/unguarded.txt`,
+  one `name class` per line: `drop` and `count` (which must be the `_drop`
+  and `_drop_count` names), `accessor`, `builder`, `constructor`, `error`,
+  and `todo-129`, the eager compute entry points that run polars on caller
+  data unguarded until #129 (L7 of #223) guards them with a reason reported
+  to Racket. The audit fails on a stale or misclassified line, so guarding an
+  entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
   otherwise observe a native free (`foreign.rkt` has a case for each Series-
@@ -485,7 +510,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
   part as a polars cast does: a datetime floors, a duration truncates toward
   zero. A date or datetime outside chrono's years (-262143 to 262142) is
-  refused, since polars panics printing one. `lit`, and so every comparison,
+  refused, since polars panics printing one. A `cast` still makes one (#141):
+  `ref`, the conversions and the series printer read it as gregor's value
+  (`ref` reads a date through the bulk copy, as `series->list` does, so the
+  two agree; a zoned series prints without its zone abbreviations when
+  polars cannot format them). In a zone other than UTC polars cannot give
+  its local clock: `ref` and the conversions raise under their own names
+  with polars' reason, and the series printer shows that cell as
+  `#<cannot print: ...>`. A frame or an expression that holds one
+  prints as `#<dataframe: cannot print: polars panicked: ...>` (or
+  `#<expr: ...>`): a custom-write never raises, since an error message that
+  shows the value would hide its own error. `display-dataframe`,
+  `dataframe->string`, `expr->string`, a `cast` to a string, `pivot` and
+  `unpivot` raise under their own names with polars' panic as the reason. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
   dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
 - A zoned datetime (#140, polars' `timezones` feature) is the datum
@@ -601,7 +638,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
+- `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`

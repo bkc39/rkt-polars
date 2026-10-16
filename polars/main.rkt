@@ -9,6 +9,7 @@
          polars/private/expr
          polars/private/foreign
          polars/private/generic
+         syntax/parse/define
          (only-in threading ~> ~>> lambda~> lambda~>>)
          ;; generic exports its dispatching and/or/not/xor via `rename-out`, and
          ;; `all-from-out` below silently drops those (they collide with this
@@ -22,6 +23,33 @@
                   [abs polars:abs] [round polars:round] [floor polars:floor]
                   [sqrt polars:sqrt] [exp polars:exp] [log polars:log]))
 
+(define-syntax-parse-rule (provide-public #:internal internal:id [mod:id name:id ...] ...)
+  (begin
+    (provide (except-out (all-from-out mod) name ...) ...)
+    (module+ test (define internal '(name ... ...)))))
+
+(provide-public
+ #:internal internal-names
+ [polars/private/expr expr-cast-to expr-meta-output-name/raw expr-name-keep lazyframe-collect/raw]
+ [polars/private/foreign
+  allocator/or-fail call/foreign-error check-enum-categories
+  dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
+  define-owned-cpointer-type dropped? last-error-message
+  owned-cpointer-types owned-pointer-accessor owned-pointer-arg
+  owned-pointer? prop:owned-pointer raise-dropped release-owned
+  series-drop-count series-drop/raw series-dropped write-owned
+  dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
+  series-new-str/raw series-sort/raw series-str-byte-len sort-flags
+  sort-flags/c sort-flags-mismatch string-has-nul?
+  dtype-short-names
+  series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
+  series-dt-convert-time-zone series-dt-convert-time-zone/raw
+  series-dt-replace-time-zone series-dt-replace-time-zone/raw
+  series-time-zone replace-zone-failure zoned-datetime-dtype?
+  dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
+  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-u8 series-copy-u16
+  series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool])
+
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
 ;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
@@ -29,23 +57,6 @@
          dataframe-read-json dataframe-write-json dataframe-read-json-lines
          dataframe-write-json-lines lazyframe-scan-json-lines
          dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet
-         (except-out (all-from-out polars/private/expr)
-                     expr-cast-to expr-meta-output-name/raw expr-name-keep)
-         (except-out (all-from-out polars/private/foreign)
-                     allocator/or-fail call/foreign-error check-enum-categories
-                     dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
-                     define-owned-cpointer-type dropped? last-error-message
-                     owned-cpointer-types owned-pointer-accessor owned-pointer-arg
-                     owned-pointer? prop:owned-pointer raise-dropped release-owned
-                     series-drop-count series-drop/raw series-dropped write-owned
-                     dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
-                     series-new-str/raw series-sort/raw series-str-byte-len sort-flags
-                     sort-flags/c sort-flags-mismatch string-has-nul?
-                     dtype-short-names
-                     series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
-                     series-dt-convert-time-zone series-dt-convert-time-zone/raw
-                     series-dt-replace-time-zone series-dt-replace-time-zone/raw
-                     series-time-zone replace-zone-failure zoned-datetime-dtype?)
          (all-from-out polars/private/generic)
          ~> ~>> lambda~> lambda~>>
          (rename-out [polars:and and] [polars:or or]
@@ -65,13 +76,9 @@
       (car name)))
   (check-not-false (memq 'cast exported))
   (check-not-false (memq 'series-new-str exported))
-  (for ([internal '(dtype-short-names expr-meta-output-name/raw allocator/or-fail
-                    call/foreign-error prop:owned-pointer release-owned series-drop/raw
-                    series-dropped dataframe-drop/raw dataframe-dropped expr-drop/raw
-                    expr-dropped lazyframe-drop/raw lazyframe-dropped write-owned
-                    sort-flags-mismatch
-                    check-enum-categories decimal-ref series-copy-decimal series-copy-str
-                    series-new-str/raw series-str-byte-len string-has-nul?)])
+  (for ([internal (in-list (append internal-names
+                                    '(expr-drop/raw expr-dropped
+                                      lazyframe-drop/raw lazyframe-dropped)))])
     (check-false (memq internal exported) (format "~a is internal" internal))))
 
 (module+ test

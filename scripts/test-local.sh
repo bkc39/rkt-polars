@@ -36,4 +36,4 @@ echo ">> building docs + checking declared deps (as the package server does)"
 raco setup --check-pkg-deps --pkgs polars threading-doc
 
 echo ">> running tests"
-raco test -x -c polars
+raco test -x --timeout 600 -c polars

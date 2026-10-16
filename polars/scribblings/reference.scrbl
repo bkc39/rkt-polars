@@ -182,7 +182,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @tt{.alias("n")} and @tt{.sum()} as method suffixes. This is also what an
   expression prints as at the REPL and throughout this manual, so an
   expression is a value you can read, not an opaque pointer. A regexp
-  @racket[col] prints as the Polars pattern it is translated to.
+  @racket[col] prints as the Polars pattern it is translated to. When
+  Polars cannot print the plan, as for a literal date outside chrono's
+  years, @racket[expr->string] raises with Polars' reason and the
+  expression prints as a placeholder.
 
   @examples[#:eval ev
 (col "weight")
@@ -191,7 +194,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (~> (col "v") sum (over "k"))
 (exclude (all) "id")
 (col 'float64)
-(col #rx"^he")]}
+(col #rx"^he")
+(define far-date (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+(is-in "d" far-date)
+(eval:error (expr->string (is-in "d" far-date)))]}
 
 @defproc[(expr-drop [e Expr-ptr?]) void?]{
   Releases the native expression @racket[e] holds now, as
@@ -464,6 +470,16 @@ total
   clock instead. A zone polars does not know raises, with the nearest name
   it does.
 
+  A cast can make a date or datetime outside the years -262143 to 262142,
+  which @racket[series] and @racket[lit] refuse. @racket[ref], the
+  conversions and a series' printing read it as the gregor value, but for a
+  datetime in a zone other than UTC, whose local clock Polars cannot give:
+  @racket[ref] and the conversions raise with Polars' reason, and the series
+  prints that value as a placeholder. Polars cannot print one: a dataframe
+  or expression holding one prints as a placeholder with Polars' reason, and
+  @racket[display-dataframe], @racket[expr->string] and a cast to
+  @racket['string] raise it.
+
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
@@ -473,7 +489,15 @@ total
 (eval:error (cast (series '("UA" "B6")) carriers))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
-                  '(datetime microseconds "Europe/Brusels")))]}
+                  '(datetime microseconds "Europe/Brusels")))
+(define far (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+(ref far 0)
+(dataframe (list far))
+(eval:error (display-dataframe (dataframe (list far))))
+(define far-zoned (cast (series '(9000000000000000000) #:dtype 'i64 #:name "k")
+                        '(datetime microseconds "Europe/Brussels")))
+far-zoned
+(eval:error (ref far-zoned 0))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
@@ -2235,12 +2259,16 @@ generic operations are simply the preferred surface.
   @racket[column-names]. @racket[display-dataframe] prints the Polars table to
   @racket[out]; since a @racket[dataframe] now prints itself, prefer plain
   @racket[display]. @racket[dataframe-column] raises an error naming the
-  column when @racket[d] has none.
+  column when @racket[d] has none. @racket[display-dataframe] raises with
+  Polars' reason when Polars cannot print the table, where the dataframe
+  itself prints as a placeholder.
 
   @examples[#:eval ev
 (define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
 (series-sum-i32 (dataframe-column scores "score"))
-(eval:error (dataframe-column scores "points"))]}
+(eval:error (dataframe-column scores "points"))
+(dataframe (list far-date))
+(eval:error (display-dataframe (dataframe (list far-date))))]}
 
 @defproc[(DataFrame-ptr? [v any/c]) boolean?]{
   Recognises a foreign dataframe pointer. Both raw pointers returned by the

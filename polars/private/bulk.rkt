@@ -11,9 +11,11 @@
          (only-in polars/private/foreign
                   _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
                   dataframe-column-names dataframe-height decimal-ref define-compat
-                  duration-value->period polars-null series-copy-decimal series-copy-i64
-                  series-copy-str series-drop series-dtype series-len series-name
-                  series-null-count series-str-byte-len)
+                  duration-value->period polars-null series-copy-bool series-copy-decimal
+                  series-copy-f32 series-copy-f64 series-copy-i16 series-copy-i32
+                  series-copy-i64 series-copy-i8 series-copy-str series-copy-u16
+                  series-copy-u32 series-copy-u64 series-copy-u8 series-drop series-dtype
+                  series-len series-name series-null-count series-str-byte-len)
          (only-in polars/private/resource with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time))
@@ -30,17 +32,6 @@
          series->vector)
 
 ;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
-(define-syntax-parse-rule (define-copies name:id ...)
-  (begin
-    (define-compat name
-      (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
-    ...))
-
-(define-copies
-  series-copy-i8 series-copy-i16 series-copy-i32
-  series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
-  series-copy-f32 series-copy-f64 series-copy-bool)
-
 (define-compat series-copy-cat
   (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
   #:wrap (allocator series-drop))
@@ -362,11 +353,11 @@
 
 (module+ test
   (require rackunit
-           (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
+           (only-in gregor ->datetime/local ->tzid ->utc-offset date datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
                     dataframe-new polars-null? series-cast series-drop-count
-                    series-new-i64 series-new-str series-new-str/vec series-ref)
+                    series-new-i32 series-new-i64 series-new-str series-new-str/vec series-ref)
            (only-in polars/private/gc-pressure call-with-collections))
 
   (define (gappy-ints n)
@@ -442,4 +433,14 @@
     (for ([_ (in-range 20)]) (thunk))
     (for ([_ (in-range 4)]) (collect-garbage) (sleep 0.1))
     (- (series-drop-count) before))
-  (check >= (released-by (lambda () (series->list carriers))) 20))
+  (check >= (released-by (lambda () (series->list carriers))) 20)
+
+  (define past-chrono-date (series-cast (series-new-i32 "d" '(2000000000)) 'date))
+  (check-equal? (series-ref past-chrono-date 0) (date 5477784 1 6))
+  (check-equal? (series->list past-chrono-date) (list (date 5477784 1 6)))
+  (define past-chrono-zoned
+    (series-cast (series-new-i64 "k" '(9000000000000000000)) '(datetime microseconds "Europe/Brussels")))
+  (check-exn #rx"^series->list: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (series->list past-chrono-zoned)))
+  (check-exn #rx"^series-ref: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (series-ref past-chrono-zoned 0))))

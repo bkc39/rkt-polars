@@ -15,7 +15,7 @@
   ;; otherwise the Racket tests run against the stale library.
   (native        "nix run .#copy-native-libs")
   (compile       "raco make polars/main.rkt")
-  (test          "raco test -x -c polars")
+  (test          "raco test -x --timeout 600 -c polars")
   (guide         "raco test -y user-guide")
   ;; Every examples/*.rkt, each in its own process; an example is red if it
   ;; raises, exits non-zero or writes to stderr.  The flake's Racket check

@@ -4,12 +4,47 @@
 //! and the path, so the recorded message is the cause alone.
 
 use crate::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Once;
 
 use super::strings::rust_string_to_ptr;
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
+    static GUARD_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+static QUIET_HOOK: Once = Once::new();
+static ACTIVE_GUARDS: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn panic_is_quiet(
+    guard_depth: usize,
+    active_guards: usize,
+    on_polars_worker: impl FnOnce() -> bool,
+) -> bool {
+    guard_depth > 0 || (active_guards > 0 && on_polars_worker())
+}
+
+pub(crate) fn on_polars_worker() -> bool {
+    rayon::current_thread_index().is_some()
+        || polars_async::executor::THREAD_SPAWNED_BY_POLARS_EXECUTOR.get()
+        || tokio::runtime::Handle::try_current().is_ok()
+}
+
+fn install_quiet_hook() {
+    QUIET_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !panic_is_quiet(
+                GUARD_DEPTH.get(),
+                ACTIVE_GUARDS.load(Ordering::Relaxed),
+                on_polars_worker,
+            ) {
+                previous(info);
+            }
+        }));
+    });
 }
 
 pub(crate) fn set_last_error(msg: impl Into<String>) {
@@ -31,17 +66,21 @@ pub(crate) fn record<T, E: std::fmt::Display>(
 /// so an entry point that runs polars code on caller-controlled data records
 /// the panic as the failure reason instead.
 pub(crate) fn guard_panic<T>(f: impl FnOnce() -> Option<T>) -> Option<T> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(
-        |payload| {
-            let msg = payload
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown cause".to_string());
-            set_last_error(format!("polars panicked: {}", msg));
-            None
-        },
-    )
+    install_quiet_hook();
+    GUARD_DEPTH.set(GUARD_DEPTH.get() + 1);
+    ACTIVE_GUARDS.fetch_add(1, Ordering::Relaxed);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    ACTIVE_GUARDS.fetch_sub(1, Ordering::Relaxed);
+    GUARD_DEPTH.set(GUARD_DEPTH.get() - 1);
+    result.unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown cause".to_string());
+        set_last_error(format!("polars panicked: {}", msg));
+        None
+    })
 }
 
 pub(crate) fn decode_path<'a>(path: *const c_char) -> Option<&'a str> {

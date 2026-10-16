@@ -8,8 +8,9 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  [-> ->/c] ->* ->i contract-out flat-named-contract listof non-empty-listof or/c
-                  rename-contract)
+                  [-> ->/c] </c ->* ->i and/c any contract-out flat-named-contract listof
+                  non-empty-listof or/c rename-contract)
+         (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
          (only-in racket/list check-duplicates)
@@ -18,7 +19,7 @@
          syntax/parse/define
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
          (only-in polars/private/temporal
-                  epoch->datetime epoch->moment nanoseconds->time offset-unit)
+                  days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax))
 
 (module+ test
@@ -26,7 +27,9 @@
 
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-string strings->series series-drop
-                     dataframe-drop)
+                     dataframe-drop call/reason define-copies define-series-refs print-dataframe
+                     series-date-ref series-index/c
+                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out)))
          (contract-out
           [series-drop (->/c Series-ptr? void?)]
           [dataframe-drop (->/c DataFrame-ptr? void?)]
@@ -97,18 +100,24 @@
     (string-replace reason python racket)))
 
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
+(define (call/reason thunk ok?)
+  (call-as-atomic
+   (lambda ()
+     (define result (thunk))
+     (values result (and (not (ok? result)) (last-error-message))))))
+
 (define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
                             fmt . args)
-  (define-values (result reason)
-    (call-as-atomic
-     (lambda ()
-       (define result (thunk))
-       (values result (and (not (ok? result)) (last-error-message))))))
+  (define-values (result reason) (call/reason thunk ok?))
   (cond
     [(ok? result) result]
     [(explain) => (lambda (message) (error who "~a" message))]
     [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
+
+(define (printed-or-placeholder what render)
+  (define-values (text reason) (call/reason render values))
+  (or text (format "#<~a: cannot print: ~a>" what (or reason "no reason recorded"))))
 
 ;; only for entry points that record no reason; the others go through call/foreign-error
 (define ((allocator/or-fail drop who) proc)
@@ -1102,71 +1111,45 @@
 (define-compat series-ref-is-null
   (_fun _Series-ptr _size -> _int32))
 
-(define-compat series-ref-i32/raw
-  (_fun _Series-ptr _size -> _CompatOptI32)
-  #:c-id series_ref_i32)
+(define series-index/c
+  (->i ([s Series-ptr?]
+        [index (s) (and/c exact-nonnegative-integer? (</c (series-len s)))])
+       any))
 
-(define-compat series-ref-i8/raw
-  (_fun _Series-ptr _size -> _CompatOptI8)
-  #:c-id series_ref_i8)
+(define-syntax-parse-rule (define-series-refs [type:id result:expr] ...)
+  #:with ((name c-id) ...)
+  (for/list ([t (in-list (syntax->list #'(type ...)))])
+    (list (format-id t "series-ref-~a/raw" t)
+          (format-id t "series_ref_~a" t)))
+  (begin
+    (define-compat name
+      (_fun _Series-ptr _size -> result)
+      #:c-id c-id)
+    ...
+    (provide (contract-out [name series-index/c] ...))))
 
-(define-compat series-ref-i16/raw
-  (_fun _Series-ptr _size -> _CompatOptI16)
-  #:c-id series_ref_i16)
+(define-series-refs
+  [i8 _CompatOptI8]
+  [i16 _CompatOptI16]
+  [i32 _CompatOptI32]
+  [i64 _CompatOptI64]
+  [u8 _CompatOptU8]
+  [u16 _CompatOptU16]
+  [u32 _CompatOptU32]
+  [u64 _CompatOptU64]
+  [f32 _CompatOptF32]
+  [f64 _CompatOptF64]
+  [bool _CompatOptBool]
+  [str _rsstring]
+  [date _CompatOptYMD]
+  [duration _CompatOptI64]
+  [time _CompatOptI64])
 
-(define-compat series-ref-i64/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_i64)
+(define (series-ref-unsupported who dtype)
+  (error who "unsupported dtype ~v" dtype))
 
-(define-compat series-ref-u8/raw
-  (_fun _Series-ptr _size -> _CompatOptU8)
-  #:c-id series_ref_u8)
-
-(define-compat series-ref-u16/raw
-  (_fun _Series-ptr _size -> _CompatOptU16)
-  #:c-id series_ref_u16)
-
-(define-compat series-ref-u32/raw
-  (_fun _Series-ptr _size -> _CompatOptU32)
-  #:c-id series_ref_u32)
-
-(define-compat series-ref-u64/raw
-  (_fun _Series-ptr _size -> _CompatOptU64)
-  #:c-id series_ref_u64)
-
-(define-compat series-ref-f64/raw
-  (_fun _Series-ptr _size -> _CompatOptF64)
-  #:c-id series_ref_f64)
-
-(define-compat series-ref-f32/raw
-  (_fun _Series-ptr _size -> _CompatOptF32)
-  #:c-id series_ref_f32)
-
-(define-compat series-ref-bool/raw
-  (_fun _Series-ptr _size -> _CompatOptBool)
-  #:c-id series_ref_bool)
-
-(define-compat series-ref-str/raw
-  (_fun _Series-ptr _size -> _rsstring)
-  #:c-id series_ref_str)
-
-(define-compat series-ref-date/raw
-  (_fun _Series-ptr _size -> _CompatOptYMD)
-  #:c-id series_ref_date)
-
-(define-compat series-ref-duration/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_duration)
-
-(define-compat series-ref-time/raw
-  (_fun _Series-ptr _size -> _CompatOptI64)
-  #:c-id series_ref_time)
-
-(define (series-ref-unsupported dtype)
-  (error 'series-ref "unsupported dtype ~v" dtype))
-
-(define (require-ref-value dtype value)
-  (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
+(define (require-ref-value who dtype value)
+  (or value (error who "could not read non-null value for dtype ~v" dtype)))
 
 (define (duration-value->period dtype value)
   (match dtype
@@ -1196,34 +1179,61 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
-;; The validity buffer is GC memory the collector may move: never #:blocking?.
-(define-compat series-copy-i64
-  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+;; The validity buffers are GC memory the collector may move: never #:blocking?.
+(define-syntax-parse-rule (define-copies name:id ...)
+  (begin
+    (define-compat name
+      (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _int64))
+    ...))
+
+(define-copies
+  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64
+  series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
+  series-copy-f32 series-copy-f64 series-copy-bool)
+
+(define ((unreadable-datetime who zone) reason)
+  (error who "cannot read a datetime in ~s: ~a" zone (respell reason)))
 
 ;; `count` rows of a zoned column from `start`: each UTC instant into
 ;; `instants`, and into `walls` its wall clock in (offset-unit unit).
-(define (copy-zoned-datetimes who s dtype start count instants walls valid)
+(define (copy-zoned-datetimes who s dtype start count instants walls valid
+                              #:unreadable [unreadable (unreadable-datetime who (caddr dtype))])
   (match-define (list _ unit zone) dtype)
   (define (copied status)
     (when (negative? status)
       (error who "could not copy a series of dtype ~v (status ~a)" dtype status)))
   (with-release ([rows (series-slice s start count) series-drop]
                  [view (series-cast-datetime-tz who rows (list 'datetime (offset-unit unit) zone))
-                       series-drop]
-                 [clocks (series-dt-replace-time-zone who view #f 'raise 'raise) series-drop])
-    (copied (series-copy-i64 rows 0 count instants count valid (if valid (bytes-length valid) 0)))
-    (copied (series-copy-i64 clocks 0 count walls count #f 0))))
+                       series-drop])
+    (define-values (clocks reason)
+      (call/reason (lambda () (series-dt-replace-time-zone/raw view #f "raise" "raise")) values))
+    (cond
+      [clocks
+       (with-release ([walls-of clocks series-drop])
+         (copied (series-copy-i64 rows 0 count instants count valid
+                                  (if valid (bytes-length valid) 0)))
+         (copied (series-copy-i64 walls-of 0 count walls count #f 0)))]
+      [else (unreadable (or reason "no reason recorded"))])))
 
-(define (series-ref-datetime s index unit zone)
+(define (series-ref-datetime who s index unit zone unreadable)
   (with-raw-buffer ([value 2 _int64])
     (cond
-      [zone
-       (copy-zoned-datetimes 'series-ref s (list 'datetime unit zone) index 1
-                             value (ptr-add value 1 _int64) #f)
-       (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone)]
-      [else
+      [(not zone)
        (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
-            (epoch->datetime unit (ptr-ref value _int64 0)))])))
+            (epoch->datetime unit (ptr-ref value _int64 0)))]
+      [else
+       (let/ec return
+         (copy-zoned-datetimes who s (list 'datetime unit zone) index 1
+                               value (ptr-add value 1 _int64) #f
+                               #:unreadable (if unreadable
+                                                (lambda (reason) (return (unreadable reason)))
+                                                (unreadable-datetime who zone)))
+         (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone))])))
+
+(define (series-date-ref s index)
+  (with-raw-buffer ([days 1 _int32])
+    (and (zero? (series-copy-i32 s index 1 days 1 #f 0))
+         (days->date (ptr-ref days _int32 0)))))
 
 (define (decimal-ref words i scale)
   (/ (+ (ptr-ref words _uint64 (* 2 i))
@@ -1236,53 +1246,53 @@
          (decimal-ref words 0 scale))))
 
 (define (series-ref s index)
+  (series-value 'series-ref s index))
+
+(define (series-value who s index #:unreadable [unreadable #f])
   (unless (exact-nonnegative-integer? index)
-    (error 'series-ref "index must be an exact nonnegative integer, got ~v" index))
+    (error who "index must be an exact nonnegative integer, got ~v" index))
   (define len (series-len s))
   (unless (< index len)
-    (error 'series-ref "index ~a out of bounds for series of length ~a" index len))
+    (error who "index ~a out of bounds for series of length ~a" index len))
   (case (series-ref-is-null s index)
     [(1) polars-null]
     [(0)
      (define dtype (compat-dtype->datum (series-dtype/raw s)))
      (case dtype
-       [(int8) (require-ref-value dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
-       [(int16) (require-ref-value dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
-       [(int32) (require-ref-value dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
-       [(int64) (require-ref-value dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
-       [(uint8) (require-ref-value dtype (compat-opt-u8->datum (series-ref-u8/raw s index)))]
-       [(uint16) (require-ref-value dtype (compat-opt-u16->datum (series-ref-u16/raw s index)))]
-       [(uint32) (require-ref-value dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
-       [(uint64) (require-ref-value dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
-       [(float32) (require-ref-value dtype (compat-opt-f32->datum (series-ref-f32/raw s index)))]
-       [(float64) (require-ref-value dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
+       [(int8) (require-ref-value who dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
+       [(int16) (require-ref-value who dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
+       [(int32) (require-ref-value who dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
+       [(int64) (require-ref-value who dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
+       [(uint8) (require-ref-value who dtype (compat-opt-u8->datum (series-ref-u8/raw s index)))]
+       [(uint16) (require-ref-value who dtype (compat-opt-u16->datum (series-ref-u16/raw s index)))]
+       [(uint32) (require-ref-value who dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
+       [(uint64) (require-ref-value who dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
+       [(float32) (require-ref-value who dtype (compat-opt-f32->datum (series-ref-f32/raw s index)))]
+       [(float64) (require-ref-value who dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
        [(boolean)
         (define value (series-ref-bool/raw s index))
         (when (zero? (CompatOptBool-valid value))
-          (error 'series-ref "could not read non-null value for dtype ~v" dtype))
+          (error who "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
-       [(string) (require-ref-value dtype (series-ref-string s index))]
+       [(string) (require-ref-value who dtype (series-ref-string s index))]
        [(categorical enum)
-        (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
-       [(date)
-        (require-ref-value dtype
-                           (compat-opt-ymd->datum (series-ref-date/raw s index)))]
+        (string->symbol (require-ref-value who dtype (series-ref-str/raw s index)))]
+       [(date) (require-ref-value who dtype (series-date-ref s index))]
        [(time)
         (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
-        (require-ref-value dtype (and raw (nanoseconds->time raw)))]
+        (require-ref-value who dtype (and raw (nanoseconds->time raw)))]
        [else
         (match dtype
           [`(duration ,_)
            (define raw (compat-opt-i64->datum (series-ref-duration/raw s index)))
-           (require-ref-value
-            dtype
-            (and raw (duration-value->period dtype raw)))]
+           (require-ref-value who dtype (and raw (duration-value->period dtype raw)))]
           [`(datetime ,unit ,zoned)
-           (require-ref-value dtype
-                              (series-ref-datetime s index unit (and zoned (series-time-zone s))))]
-          [`(decimal ,_ ,scale) (require-ref-value dtype (series-ref-decimal s index scale))]
-          [_ (series-ref-unsupported dtype)])])]
-    [else (error 'series-ref "could not read null state at index ~a" index)]))
+           (require-ref-value who dtype
+                              (series-ref-datetime who s index unit (and zoned (series-time-zone s))
+                                                  unreadable))]
+          [`(decimal ,_ ,scale) (require-ref-value who dtype (series-ref-decimal s index scale))]
+          [_ (series-ref-unsupported who dtype)])])]
+    [else (error who "could not read null state at index ~a" index)]))
 
 (module+ test
   (define-values (ex0 ex1)
@@ -1328,6 +1338,7 @@
                     (format "~s" dtype)))))
 
 (module+ test
+  (define-namespace-anchor ref-anchor)
   (define ref-i32 (series-new-i32 "x" (list 10 polars-null -3)))
   (check-equal? (series-len ref-i32) 3)
   (check-equal? (series-null-count ref-i32) 1)
@@ -1338,6 +1349,18 @@
   (define ref-i64 (series-new-i64 "x" (list 1099511627776 polars-null)))
   (check-equal? (series-ref ref-i64 0) 1099511627776)
   (check-equal? (series-ref ref-i64 1) polars-null)
+  (define client-ref-i64
+    (parameterize ([current-namespace (namespace-anchor->empty-namespace ref-anchor)])
+      (namespace-require 'racket/base)
+      (eval '(module client racket/base
+               (require (only-in polars/private/foreign series-ref-i64/raw))
+               (provide client-ref)
+               (define (client-ref s index) (series-ref-i64/raw s index))))
+      (dynamic-require ''client 'client-ref)))
+  (for ([index (in-list '(-1 a 2 5))])
+    (check-exn #rx"^series-ref-i64/raw: contract violation\n.*\n  blaming: client\n"
+               (lambda () (client-ref-i64 ref-i64 index))))
+  (check-equal? (CompatOptI64-value (client-ref-i64 ref-i64 0)) 1099511627776)
 
   (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
   (check-equal? (series-ref ref-i8 0) -8)
@@ -1440,7 +1463,7 @@
 (define-compat series-cast/c
   (_fun _Series-ptr _CompatDType -> _Series-ptr/null)
   #:c-id series_cast
-  #:wrap (allocator/or-fail series-drop 'series-cast))
+  #:wrap (allocator series-drop))
 
 (define-compat series-cast-enum/raw
   (_fun _Series-ptr
@@ -1476,7 +1499,7 @@
   (define (misses)
     (match (series-dtype s)
       [(or 'string 'categorical (cons 'enum _))
-       (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
+       (with-release ([strings (series-cast-to who s 'string) series-drop]
                       [present (series-drop-nulls strings) series-drop])
          (series-rename present "value")
          (with-release ([known (strings->series who "value" categories) series-drop]
@@ -1569,7 +1592,8 @@
   (cond
     [(enum-dtype? dtype) (series-cast-enum who s dtype)]
     [(zoned-datetime-dtype? dtype) (series-cast-datetime-tz who s dtype)]
-    [else (series-cast/c s (->compat-dtype dtype))]))
+    [else (call/foreign-error who (lambda () (series-cast/c s (->compat-dtype dtype)))
+                              "cannot cast to ~s" dtype)]))
 
 (define (series-cast s dtype)
   (series-cast-to 'series-cast s dtype))
@@ -1975,10 +1999,15 @@
   (or (dataframe-column/raw df name)
       (error 'dataframe-column "no column named ~s" name)))
 
-(define-compat dataframe->string
+(define-compat dataframe->string/raw
   (_fun _DataFrame-ptr -> _rsstring)
   #:c-id dataframe_to_string)
 
+(define (print-dataframe who df)
+  (call/foreign-error who (lambda () (dataframe->string/raw df)) "cannot print the dataframe"))
+
+(define (dataframe->string df)
+  (print-dataframe 'dataframe->string df))
 
 (define (glob-pattern? p)
   (regexp-match? #rx"[*?[]" (if (path? p) (path->string p) p)))
@@ -2353,11 +2382,16 @@
         _int32
         -> _DataFrame-ptr/null)
   #:c-id dataframe_pivot
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-pivot))
+  #:wrap (allocator dataframe-drop))
+
+(define (pivot-frame who df on index values agg)
+  (call/foreign-error who
+                      (lambda () (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg)))
+                      "cannot pivot the dataframe"))
 
 (define (dataframe-pivot df #:on on #:index index #:values values
                          #:agg [agg 'first])
-  (dataframe-pivot/raw df on index values (pivot-agg-symbol->code agg)))
+  (pivot-frame 'dataframe-pivot df on index values agg))
 
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr
@@ -2367,13 +2401,17 @@
         (_size = (length index))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_unpivot
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-unpivot))
+  #:wrap (allocator dataframe-drop))
+
+(define (unpivot-frame who df on index)
+  (call/foreign-error who (lambda () (dataframe-unpivot/raw df on index))
+                      "cannot unpivot the dataframe"))
 
 (define (dataframe-unpivot df #:on on #:index index)
-  (dataframe-unpivot/raw df on index))
+  (unpivot-frame 'dataframe-unpivot df on index))
 
 (define (display-dataframe df [out (current-output-port)])
-  (display (dataframe->string df) out)
+  (display (print-dataframe 'display-dataframe df) out)
   (newline out))
 
 (module+ test

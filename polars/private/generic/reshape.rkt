@@ -167,12 +167,12 @@
 ;; pivot: long -> wide (Polars df.pivot).
 (define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
   (guard-dataframe 'pivot d)
-  (wrap-dataframe (dataframe-pivot d #:on on #:index index #:values values #:agg agg)))
+  (wrap-dataframe (pivot-frame 'pivot d on index values agg)))
 
 ;; unpivot: wide -> long (Polars df.unpivot).
 (define (unpivot d #:on on #:index index)
   (guard-dataframe 'unpivot d)
-  (wrap-dataframe (dataframe-unpivot d #:on on #:index index)))
+  (wrap-dataframe (unpivot-frame 'unpivot d on index)))
 
 ;; --- group-by / agg: the deferred, threading-compatible group handle --------
 (struct grouped (frame keys) #:reflection-name 'grouped)
@@ -451,7 +451,7 @@
     (check-equal? (column-names pv) '("id" "x" "y"))
     (check-equal? (dtype (ref pv "y")) 'int64)
     (check-equal? (column pv "y") '(11 21))
-    (check-exn #rx"^dataframe-pivot: "
+    (check-exn #rx"^pivot: cannot pivot the dataframe: "
                (lambda () (pivot cells #:on '("k") #:index '("id") #:values '("v") #:agg #f))))
   (let* ([gaps (dataframe (list (series '(1 2 2) #:name "id")
                                 (series '("y" "x" "y") #:name "k")

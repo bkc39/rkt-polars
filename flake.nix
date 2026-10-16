@@ -236,7 +236,7 @@
             checkPhase = ''
               runHook preCheck
               export RKT_POLARS_COMPAT_LIB_PATH=${rust}
-              raco test -x -c polars
+              raco test -x --timeout 600 -c polars
               raco test user-guide
               raco test -e -Q --empty-stdin -j 4 examples
               raco test -x bench
