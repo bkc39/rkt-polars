@@ -32,9 +32,10 @@
       [#f (fail (format "expected ~a ~s, nothing raised" kind rx))]))
 
   (define (cause message)
-    (match (regexp-match
-            #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$" message)
-      [(list _ text) text]))
+    (match-define (list _ text)
+      (regexp-match #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$"
+                    message))
+    text)
 
   (define (outcome thunk)
     (with-handlers ([exn:fail? (lambda (e) (list 'raised (cause (exn-message e))))])
@@ -134,13 +135,13 @@
     (check-equal? (dtype (p+ s v)) expected (format "~a + ~v" (dtype s) v)))
   (check-equal? (series->list (p+ u64 0)) (series->list u64))
 
-  (for ([s (list u8 u64)])
-    (for ([thunk (list (lambda () (p+ s -1)) (lambda () (> s -1)) (lambda () (p- -1 s)))])
-      (check-raises 'contract
-                    (regexp (string-append "^[-+>]: the value cannot be an element of a series of "
-                                           "this dtype\n  value: -1\n  series dtype: '"
-                                           (symbol->string (dtype s)) "$"))
-                    thunk)))
+  (for* ([s (list u8 u64)]
+         [thunk (list (lambda () (p+ s -1)) (lambda () (> s -1)) (lambda () (p- -1 s)))])
+    (check-raises 'contract
+                  (regexp (string-append "^[-+>]: the value cannot be an element of a series of "
+                                         "this dtype\n  value: -1\n  series dtype: '"
+                                         (symbol->string (dtype s)) "$"))
+                  thunk))
 
   (for ([op (list = != = !=)]
         [v (list "bogus" "bogus" 'mid 'mid)]
@@ -179,9 +180,8 @@
     (string-append "^" who ": invalid series dtype: expected `Boolean`, got `" got "`"
                    (if named? " for series with name `n`$" "")))
   (define (not-logical who given)
-    (string-append "^" who ": contract violation\n  expected: "
-                   (regexp-quote "(or/c series? boolean? polars-null?)")
-                   (format "\n  given: ~v$" given)))
+    (format "^~a: contract violation\n  expected: ~a\n  given: ~v$"
+            who (regexp-quote "(or/c series? boolean? polars-null?)") given))
   (for ([refused
          (list
           (list (lambda () (p+ nulls (date 2024 1 1))) 'polars "^[+]: [^\n]*date$")
