@@ -45,6 +45,9 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
+(define (null-series? v)
+  (and (series? v) (eq? (series-dtype v) 'null)))
+
 (define (series-agg-via-expr expr-op s)
   (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))
@@ -61,6 +64,7 @@
   (match args
     [(list (? Expr-ptr? e)) (expr-sum e)]
     [(list (? string? s)) (expr-sum (col s))]
+    [(list (? null-series? s)) (series-agg-via-expr expr-sum s)]
     [(list (? series? s)) (series-reduce 'sum sum-table s)]
     [_ (apply base:+ args)]))
 
@@ -107,10 +111,12 @@
 (define (median x)    (expr-median   (->col-expr 'median x)))
 ;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
 (define (std x #:ddof [ddof 1])
-  (cond [(series? x) (series-std x #:ddof ddof)]
+  (cond [(null-series? x) (series-agg-via-expr (lambda (e) (expr-std e #:ddof ddof)) x)]
+        [(series? x) (series-std x #:ddof ddof)]
         [else (expr-std (->col-expr 'std x) #:ddof ddof)]))
 (define (var x #:ddof [ddof 1])
-  (cond [(series? x) (series-var x #:ddof ddof)]
+  (cond [(null-series? x) (series-agg-via-expr (lambda (e) (expr-var e #:ddof ddof)) x)]
+        [(series? x) (series-var x #:ddof ddof)]
         [else (expr-var (->col-expr 'var x) #:ddof ddof)]))
 
 (define (first x)

@@ -36,9 +36,12 @@
 ;; keeps the dtype `lit` gives it, as the expression path does.
 (define (cmp-other who s other)
   (define o
-    (if (series? other)
-        other
-        (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
+    (cond
+      [(series? other) other]
+      [(temporal-value-dtype other) => (lambda (dt) (const-series dt (series-len s) other))]
+      [(and (eq? (series-dtype s) 'null) (not (polars-null? other)))
+       (const-series (infer-dtype (list other)) (series-len s) other)]
+      [else (const-series (series-dtype s) (series-len s) other)]))
   (match* ((series-dtype s) (series-dtype o))
     [((list 'datetime _ zone) (list 'datetime _ other-zone))
      #:when (not (equal? zone other-zone))
@@ -384,6 +387,16 @@
   (for ([op (list p- p/)])
     (define result (op nulls))
     (check-equal? (list (dtype result) (len result) (series-name result)) '(null 2 "n")))
+  (check-equal? (for/list ([result (list (p+ nulls 1) (p* 2.5 nulls) (p+ nulls 2.5) (p+ nulls "a")
+                                         (= nulls 1) (> 1 nulls) (p+ nulls polars-null))])
+                  (list (dtype result) (series->list result)))
+                (list (list 'int64 (list polars-null polars-null))
+                      (list 'float64 (list polars-null polars-null))
+                      (list 'float64 (list polars-null polars-null))
+                      (list 'string (list polars-null polars-null))
+                      (list 'boolean (list polars-null polars-null))
+                      (list 'boolean (list polars-null polars-null))
+                      (list 'null (list polars-null polars-null))))
   (check-eq? (p+ ints) ints)
   (check-eq? (p* ints) ints)
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'uint8"

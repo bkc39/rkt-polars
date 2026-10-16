@@ -19,7 +19,9 @@
                   _Series-ptr
                   Series-ptr?
                   _rsstring
+                  polars-null?
                   series-new-i64 series-new-f64 series-new-str series-new-bool
+                  series-new-null
                   dataframe-drop
                   frame-sort/c sort-flags
                   _CompatDType ->compat-dtype check-enum-categories enum-dtype?
@@ -420,17 +422,20 @@
     [(Expr-ptr? rhs) rhs]
     [(Series-ptr? rhs) (expr-lit-series rhs)]
     [(list? rhs)
+     (define vals (filter (lambda (x) (not (polars-null? x))) rhs))
+     (define (convert f) (map (lambda (x) (if (polars-null? x) x (f x))) rhs))
      (define s
        (cond
          [(null? rhs) (error who "is-in needs a non-empty list of values")]
-         [(andmap exact-integer? rhs) (series-new-i64 "" rhs)]
-         [(andmap real? rhs) (series-new-f64 "" (map exact->inexact rhs))]
-         [(andmap string? rhs) (series-new-str "" rhs)]
-         [(andmap symbol? rhs) (series-new-str "" (map symbol->string rhs))]
-         [(andmap boolean? rhs) (series-new-bool "" rhs)]
-         [(temporal-values-dtype rhs)
+         [(null? vals) (series-new-null "" (length rhs))]
+         [(andmap exact-integer? vals) (series-new-i64 "" rhs)]
+         [(andmap real? vals) (series-new-f64 "" (convert exact->inexact))]
+         [(andmap string? vals) (series-new-str "" rhs)]
+         [(andmap symbol? vals) (series-new-str "" (convert symbol->string))]
+         [(andmap boolean? vals) (series-new-bool "" rhs)]
+         [(temporal-values-dtype vals)
           => (lambda (dtype)
-               (check-one-zone who rhs)
+               (check-one-zone who vals)
                (series-new-temporal who "" rhs dtype))]
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
