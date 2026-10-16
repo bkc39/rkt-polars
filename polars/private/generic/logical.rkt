@@ -20,9 +20,13 @@
       (wrap-series (op (logical-operand who b a) b #:who who))))
 
 (define (combine-and a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b) (series-logical 'and series-and a b)))
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b)]
+        [(null-series-op 'and expr-and a b) => values]
+        [else (series-logical 'and series-and a b)]))
 (define (combine-or a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b) (series-logical 'or series-or a b)))
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)]
+        [(null-series-op 'or expr-or a b) => values]
+        [else (series-logical 'or series-or a b)]))
 
 (define-syntax-parser p-and
   [(_) #'#t]
@@ -49,5 +53,6 @@
 
 (define (p-xor a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
+        [(null-series-op 'xor expr-xor a b) => values]
         [(or (series? a) (series? b))     (series-logical 'xor series-xor a b)]
         [else (and (or a b) (not (and a b)))]))   ; boolean xor

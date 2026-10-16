@@ -507,14 +507,30 @@ it. Racket side: `define-compat` with `#:c-id`.
   `'null` too, as `pl.Series([None])` does, and a null among other values
   takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
   elements only. `is-in` reads a list the same way, so `(list polars-null)`
-  is a Null literal. A series operator given a `'null` series and a plain
-  value runs the operator's expression form with the value as a `lit`, so
-  the two agree; `lit` has no `polars-null` literal. On a `'null` series
-  `sum`, `mean`, `min`, `max`, `std` and `var` give `polars-null` and
-  `n-unique` gives 1, as Python 1.42.1 does, through the expression engine
-  (the typed `series_sum_*` have no Null case). A `'null` column does not
-  vstack or join with a typed one, and `and`, `or`, `xor` and `not` refuse
-  a `'null` series, as in Python.
+  is a Null literal, and an empty list is a member of nothing (`#f`, null for
+  a null), as Python's `is_in([])` is. `(lit polars-null)` is
+  `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
+  comparison with it is null on every row and arithmetic keeps the other
+  operand's dtype. A series operator given a `polars-null`, or a `'null`
+  series and a plain value, runs the operator's expression form with the
+  value as a `lit`, so the two agree; Python's eager `s - None` on a date
+  series gives null durations where its expression raises, and ours raises
+  like the expression. On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  and `var` give `polars-null` and `n-unique` gives 1, through the
+  expression engine (the typed `series_sum_*` have no Null case). A `'null`
+  column does not vstack or join with a typed one, and `and`, `or`, `xor`
+  and `not` refuse a `'null` series, as in Python.
+- Eager reductions on a series return what Python 1.42.1's do (owner's
+  decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
+  where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
+  empty or all-null series, `std` / `var` below `ddof + 1` values, `mean`
+  of a string or categorical series), `sum` 0 for an empty or all-null
+  numeric, boolean or duration series, a boolean `sum` the count of `#t`,
+  and an error under the verb's name for a `sum` of a string, temporal or
+  categorical series and a `std` / `var` of a string, temporal (but a
+  duration's `std`) or categorical one. The table in `generic/reductions.rkt`'s
+  tests is Python's, probed per dtype on empty, all-null and partly null
+  series. The typed low-level `series-sum-i32` and kin still return `#f`.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.

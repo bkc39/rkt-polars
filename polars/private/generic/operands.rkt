@@ -107,21 +107,22 @@
                       dataframe-drop])
     (wrap-series (dataframe-column out name))))
 
-;; A 'null series with a plain operand runs the expression form, the operand
-;; read by `lit`, which has no polars-null literal; #f otherwise.
+;; A series with a polars-null operand, or a 'null series with a plain one,
+;; runs the expression form, the operand read by `lit`; #f otherwise.
 (define (null-series-op who expr-op a b)
-  (define (plain? v) (not (or (series? v) (polars-null? v))))
   (define (literal v)
     (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
       (lit v)))
   (define (run s build)
     (with-handlers ([exn:fail? (lambda (e) (raise-cause who e))])
       (series-through-expr s build)))
+  (define (expression-form? s v)
+    (and (series? s) (or (polars-null? v) (and (null-series? s) (not (series? v))))))
   (cond
-    [(and (null-series? a) (plain? b))
+    [(expression-form? a b)
      (define v (literal b))
      (run a (lambda (e) (expr-op e v)))]
-    [(and (null-series? b) (plain? a))
+    [(expression-form? b a)
      (define v (literal a))
      (run b (lambda (e) (expr-op v e)))]
     [else #f]))

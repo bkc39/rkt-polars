@@ -65,6 +65,7 @@ expr_lit_datetime_tz builder
 expr_lit_f64 builder
 expr_lit_i32 builder
 expr_lit_i64 builder
+expr_lit_null builder
 expr_lit_series builder
 expr_lit_str builder
 expr_lit_temporal builder

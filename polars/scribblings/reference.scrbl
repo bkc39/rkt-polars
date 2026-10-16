@@ -65,7 +65,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
               @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?
-                                     #,(tt "gregor-value"))])
+                                     polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
@@ -122,7 +122,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @tt{date}, @tt{time}, @tt{datetime} and @tt{timedelta}. A moment is a
   zoned literal: in its named zone, or in UTC for a fixed offset. A zoned
   column compares only with a literal in its own zone, as in Python.
-  Every operator below lifts a
+  @racket[polars-null] is a null of dtype @racket['null], as
+  @tt{pl.lit(None)} is: it broadcasts to a @racket['null] column, takes
+  the other operand's dtype in arithmetic, and compares as null, so
+  @racket[(= (col "x") polars-null)] is null on every row (test with
+  @racketid[is-null] instead). Every operator below lifts a
   non-expression operand with @racket[lit] automatically, so it is rarely
   needed explicitly.
 
@@ -141,6 +145,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (lit (date 2013 6 1))
 (select people (alias (lit (datetime 2013 6 1 12 30)) "noon"))
 (select people (alias (lit (moment 2013 6 1 12 30 #:tz "Europe/Paris")) "noon"))
+(select people (alias (lit polars-null) "nothing") (= (col "id") polars-null)
+        (+ (col "weight") polars-null))
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))]}
@@ -1314,8 +1320,16 @@ stations
   @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
   used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
   they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
-  works. A @racket['null] series reduces to @racket[polars-null] and a
-  @racket['null] column aggregates to one, as in Python Polars.
+  works.
+
+  A series reduces as in Python Polars. Where the reduction is undefined it
+  is @racket[polars-null]: the @racket[mean], @racket[min] and @racket[max]
+  of an empty or all-null series, and the @racket[mean] of a string or
+  categorical one. The @racket[sum] of an empty or all-null numeric,
+  boolean or duration series is zero, and of a boolean series the number of
+  @racket[#t] entries; a string, temporal or categorical series has no
+  @racket[sum]. A @racket['null] series reduces to @racket[polars-null] and a
+  @racket['null] column aggregates to one.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
@@ -1323,6 +1337,11 @@ stations
 (max 1 2 3)
 (define nothing (series (list polars-null polars-null) #:name "n"))
 (list (sum nothing) (mean nothing) (min nothing) (max nothing))
+(define no-rows (series '() #:dtype 'int64))
+(list (sum no-rows) (mean no-rows) (min no-rows) (max no-rows))
+(sum (series '(#t #f #t)))
+(mean (series '("a" "b")))
+(eval:error (sum (series '("a" "b"))))
 (~> (dataframe (list nothing)) (select (sum "n")))]}
 
 @deftogether[(@defproc[(count    [x any/c]) any/c]
@@ -1339,12 +1358,18 @@ stations
   @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
   take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.
   On a series, @racket[n-unique], @racket[std] and @racket[var] reduce at
-  once. A @racket['null] series has one unique value and a @racket[std] and
-  @racket[var] of @racket[polars-null], as in Python Polars; its column's
+  once, as in Python Polars: @racket[std] and @racket[var] are
+  @racket[polars-null] for fewer than @racket[(+ ddof 1)] non-null values,
+  take a boolean series as 0 and 1, and raise for a string, temporal or
+  categorical one, though a duration series has a @racket[std]. All nulls
+  count as one unique value. A @racket['null] series has one unique value
+  and a @racket[std] and @racket[var] of @racket[polars-null]; its column's
   @racket[count] is 0.
 
   @examples[#:eval ev
 (list (std nothing) (var nothing) (n-unique nothing))
+(list (std (series '(5))) (std (series '(#t #f))) (n-unique (series (list 1 polars-null))))
+(eval:error (var (series '("a" "b"))))
 (~> (dataframe (list nothing)) (select (count "n")))]}
 
 @deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
@@ -1397,8 +1422,10 @@ stations
   reals, strings, symbols (read as strings, as @racket[lit] reads them),
   booleans or gregor values, all of one kind, among which
   @racket[polars-null] may appear; a list of @racket[polars-null] alone is a
-  @racket['null] list, as Python's @tt{[None]} is. A null is never a member,
-  so a null element of @racket[x] gives null. Its datetimes share one zone, or
+  @racket['null] list, as Python's @tt{[None]} is, and an empty list
+  holds nothing, so every non-null element of @racket[x] gives @racket[#f].
+  A null is never a member, so a null element of @racket[x] gives null.
+  Its datetimes share one zone, or
   none: a list that mixes naive datetimes and moments, or moments in two
   zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
   a column from the same list.
@@ -1407,6 +1434,7 @@ stations
 (define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
 (~> gappy (select (is-in "x" (list 1 polars-null))))
 (~> gappy (select (is-in "x" (list polars-null))))
+(~> gappy (select (is-in "x" '())))
 (~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -2019,7 +2047,9 @@ temps
   @racket[#f] when the reduction is undefined — the min, max or mean of a
   series whose entries are all null — while the sum of such a series is
   @racket[0]. The generic @racket[sum], @racket[min], @racket[max] and
-  @racket[mean] dispatch on the dtype for you and are the preferred surface.}
+  @racket[mean] dispatch on the dtype for you, return @racket[polars-null]
+  where these return @racket[#f] for an undefined reduction, and are the
+  preferred surface.}
 
 @defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical

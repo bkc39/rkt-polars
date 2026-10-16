@@ -45,6 +45,8 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
+(define (or-null v) (or v polars-null))
+
 (define (series-agg-via-expr who expr-op s)
   (define out (dataframe-select-exprs (dataframe-new (list s))
                                       (list (expr-alias (expr-op (expr-all)) "v"))))
@@ -60,8 +62,10 @@
   (match args
     [(list (? Expr-ptr? e)) (expr-sum e)]
     [(list (? string? s)) (expr-sum (col s))]
-    [(list (? null-series? s)) (series-agg-via-expr 'sum expr-sum s)]
-    [(list (? series? s)) (series-reduce 'sum sum-table s)]
+    [(list (? series? s))
+     (match (series-dtype s)
+       [(or 'boolean 'null (list 'duration _)) (series-agg-via-expr 'sum expr-sum s)]
+       [_ (series-reduce 'sum sum-table s)])]
     [_ (apply base:+ args)]))
 
 (define (mean . args)
@@ -69,9 +73,10 @@
     [(list (? Expr-ptr? e)) (expr-mean e)]
     [(list (? string? s)) (expr-mean (col s))]
     [(list (? series? s))
-     (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'mean mean-table s)
-         (series-agg-via-expr 'mean expr-mean s))]   ; boolean -> fraction true
+     (match (series-dtype s)
+       [(? numeric-dtype?) (or-null (series-reduce 'mean mean-table s))]
+       [(or 'string 'categorical 'binary (cons 'enum _)) polars-null]
+       [_ (series-agg-via-expr 'mean expr-mean s)])]
     [(list) (error 'mean "expected at least one argument")]
     [_ (/ (apply base:+ args) (length args))]))
 
@@ -81,8 +86,8 @@
     [(list (? string? s)) (expr-min (col s))]
     [(list (? series? s))
      (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'min min-table s)
-         (series-agg-via-expr 'min expr-min s))]    ; string / temporal / boolean
+         (or-null (series-reduce 'min min-table s))
+         (series-agg-via-expr 'min expr-min s))]
     [_ (apply base:min args)]))
 
 (define (max . args)
@@ -91,7 +96,7 @@
     [(list (? string? s)) (expr-max (col s))]
     [(list (? series? s))
      (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'max max-table s)
+         (or-null (series-reduce 'max max-table s))
          (series-agg-via-expr 'max expr-max s))]
     [_ (apply base:max args)]))
 
@@ -106,14 +111,23 @@
         [else (expr-n-unique (->col-expr 'n-unique x))]))
 (define (median x)    (expr-median   (->col-expr 'median x)))
 ;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
-(define (dispersion who series-op expr-op x ddof)
+(define (dispersion who series-op expr-op via-expr? x ddof)
   (define (aggregate e) (expr-op e #:ddof ddof))
   (match x
-    [(? null-series?) (series-agg-via-expr who aggregate x)]
-    [(? series?) (series-op x #:ddof ddof)]
+    [(? series?)
+     (match (series-dtype x)
+       [(? numeric-dtype?) (or-null (series-op x #:ddof ddof))]
+       ['boolean (or-null (series-op (series-cast x 'float64) #:ddof ddof))]
+       [(? via-expr?) (series-agg-via-expr who aggregate x)]
+       [dt (error who "unsupported dtype for reduction: ~v" dt)])]
     [_ (aggregate (->col-expr who x))]))
-(define (std x #:ddof [ddof 1]) (dispersion 'std series-std expr-std x ddof))
-(define (var x #:ddof [ddof 1]) (dispersion 'var series-var expr-var x ddof))
+(define (std-via-expr? dt)
+  (match dt
+    [(or 'null (list 'duration _)) #t]
+    [_ #f]))
+(define (var-via-expr? dt) (eq? dt 'null))
+(define (std x #:ddof [ddof 1]) (dispersion 'std series-std expr-std std-via-expr? x ddof))
+(define (var x #:ddof [ddof 1]) (dispersion 'var series-var expr-var var-via-expr? x ddof))
 
 (define (first x)
   (cond
@@ -133,7 +147,9 @@
 (define (alias e name) (expr-alias e name))
 
 (module+ test
-  (require rackunit polars/private/generic/test-fixtures)
+  (require rackunit (only-in gregor date datetime)
+           (only-in gregor/time time)
+           (only-in gregor/period microseconds) polars/private/generic/test-fixtures)
   (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
              (lambda () (max past-chrono-zoned)))
   (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
@@ -165,4 +181,71 @@
   (let ([s (series '(1.0 2.0 3.0 4.0))])     ; deviations from mean 2.5 sum-sq = 5.0
     (check-= (var s) (/ 5.0 3.0) 1e-9)        ; sample (ddof=1)
     (check-= (var s #:ddof 0) 1.25 1e-9)      ; population (ddof=0)
-    (check-= (std s #:ddof 0) (sqrt 1.25) 1e-9)))
+    (check-= (std s #:ddof 0) (sqrt 1.25) 1e-9))
+
+  (define N polars-null)
+  (define (hour-period n) (microseconds (* n 3600000000)))
+  (define reducers (hash 'sum sum 'mean mean 'min min 'max max 'std std 'var var
+                         'n-unique n-unique))
+  (define python-reductions
+    `((int64 (1 ,N 3)
+             (sum 0 0 4) (mean ,N ,N 2.0) (min ,N ,N 1) (max ,N ,N 3)
+             (std ,N ,N 1.4142135623730951) (var ,N ,N 2.0) (n-unique 0 1 3))
+      (uint8 (1 ,N 3)
+             (sum 0 0 4) (mean ,N ,N 2.0) (min ,N ,N 1) (max ,N ,N 3)
+             (std ,N ,N 1.4142135623730951) (var ,N ,N 2.0) (n-unique 0 1 3))
+      (float32 (1.5 ,N 3.5)
+               (sum 0.0 0.0 5.0) (mean ,N ,N 2.5) (min ,N ,N 1.5) (max ,N ,N 3.5)
+               (std ,N ,N 1.4142135381698608) (var ,N ,N 2.0) (n-unique 0 1 3))
+      (float64 (1.5 ,N 3.5)
+               (sum 0.0 0.0 5.0) (mean ,N ,N 2.5) (min ,N ,N 1.5) (max ,N ,N 3.5)
+               (std ,N ,N 1.4142135623730951) (var ,N ,N 2.0) (n-unique 0 1 3))
+      (string ("b" ,N "a")
+              (sum error error error) (mean ,N ,N ,N) (min ,N ,N "a") (max ,N ,N "b")
+              (std error error error) (var error error error) (n-unique 0 1 3))
+      (boolean (#t ,N #f)
+               (sum 0 0 1) (mean ,N ,N 0.5) (min ,N ,N #f) (max ,N ,N #t)
+               (std ,N ,N 0.7071067811865476) (var ,N ,N 0.5) (n-unique 0 1 3))
+      (date (,(date 2020 1 2) ,N ,(date 2020 1 1))
+            (sum error error error) (mean ,N ,N ,(datetime 2020 1 1 12))
+            (min ,N ,N ,(date 2020 1 1)) (max ,N ,N ,(date 2020 1 2))
+            (std error error error) (var error error error) (n-unique 0 1 3))
+      (datetime (,(datetime 2020 1 2) ,N ,(datetime 2020 1 1))
+                (sum error error error) (mean ,N ,N ,(datetime 2020 1 1 12))
+                (min ,N ,N ,(datetime 2020 1 1)) (max ,N ,N ,(datetime 2020 1 2))
+                (std error error error) (var error error error) (n-unique 0 1 3))
+      (time (,(time 1) ,N ,(time 3))
+            (sum error error error) (mean ,N ,N ,(time 2)) (min ,N ,N ,(time 1))
+            (max ,N ,N ,(time 3)) (std error error error) (var error error error)
+            (n-unique 0 1 3))
+      ((duration microseconds)
+       (,(hour-period 1) ,N ,(hour-period 3))
+       (sum ,(hour-period 0) ,(hour-period 0) ,(hour-period 4)) (mean ,N ,N ,(hour-period 2))
+       (min ,N ,N ,(hour-period 1)) (max ,N ,N ,(hour-period 3))
+       (std ,N ,N ,(microseconds 5091168824)) (var error error error) (n-unique 0 1 3))
+      (categorical ("b" ,N "a")
+                   (sum error error error) (mean ,N ,N ,N) (min ,N ,N a) (max ,N ,N b)
+                   (std error error error) (var error error error) (n-unique 0 1 3))
+      (null (,N ,N ,N)
+            (sum ,N ,N ,N) (mean ,N ,N ,N) (min ,N ,N ,N) (max ,N ,N ,N)
+            (std ,N ,N ,N) (var ,N ,N ,N) (n-unique 0 1 1))))
+  (define (check-reduction op dt rows expected)
+    (define reduce (hash-ref reducers op))
+    (define s (series rows #:dtype dt))
+    (define label (format "~a of ~a ~v" op dt rows))
+    (match expected
+      ['error (check-exn (regexp (format "^~a: " op)) (lambda () (reduce s)) label)]
+      [(? flonum?) (check-= (reduce s) expected 1e-6 label)]
+      [_ (check-equal? (reduce s) expected label)]))
+  (for ([case (in-list python-reductions)])
+    (match-define (list dt partial expectations ...) case)
+    (for ([expectation (in-list expectations)])
+      (match-define (list op on-empty on-nulls on-partial) expectation)
+      (for ([rows (list '() (list N N) partial)]
+            [expected (list on-empty on-nulls on-partial)])
+        (check-reduction op dt rows expected))))
+  (for ([case `((std int64 (5) ,N) (var float64 (5.0) ,N) (std boolean (#t) ,N)
+                (sum boolean (#t #t #f) 2) (mean boolean (#t #t #f) ,(/ 2.0 3.0))
+                (std boolean (#t #t #f) 0.5773502691896258))])
+    (match-define (list op dt rows expected) case)
+    (check-reduction op dt rows expected)))
