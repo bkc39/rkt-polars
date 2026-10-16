@@ -159,8 +159,11 @@
   ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
            (only-in polars/private/foreign
-                    series-cast series-new-i32 series-new-i64 series-new-str polars-null))
+                    series-cast series-new-i32 series-new-i64 series-new-null series-new-str
+                    polars-null))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
+  (check-equal? (series->string (series-new-null "nothing" 3))
+                "shape: (3,)\nSeries: 'nothing' [null]\n[\n\tnull\n\tnull\n\tnull\n]")
   (check-equal? (series->string (series-new-i32 "e" '())) "shape: (0,)\nSeries: 'e' [i32]\n[\n]")
   (check-equal? (series->string (series-new-i32 "one" '(7)))
                 "shape: (1,)\nSeries: 'one' [i32]\n[\n\t7\n]")
