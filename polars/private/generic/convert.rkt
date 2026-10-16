@@ -58,7 +58,8 @@
            polars/private/generic/core
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/generic/reshape cast head lazy rename slice unique vstack)
+           (only-in polars/private/generic/combine vstack)
+           (only-in polars/private/generic/reshape cast head lazy rename slice unique)
            (only-in polars/private/generic/test-fixtures frame produce-parquet settle! withnull)
            (only-in threading ~>))
 

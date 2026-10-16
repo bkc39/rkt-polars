@@ -204,3 +204,28 @@ fn join_records_why_it_refuses() {
         series_drop(s);
     }
 }
+
+#[test]
+fn join_refuses_key_lists_of_different_lengths() {
+    let (left, right, series) = make_left_right();
+    let (k, v) = (cstr("k"), cstr("v"));
+    let lon: [*const c_char; 2] = [k.as_ptr(), v.as_ptr()];
+    let ron: [*const c_char; 1] = [k.as_ptr()];
+    let out = dataframe_join(
+        left,
+        right,
+        lon.as_ptr(),
+        lon.len(),
+        ron.as_ptr(),
+        ron.len(),
+        CompatJoinKind::Inner as i32,
+    );
+    assert!(out.is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some(
+            "the number of columns given as join key (left: 2, right:1) should be equal"
+        )
+    );
+    cleanup(left, right, series);
+}
