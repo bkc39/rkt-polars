@@ -49,7 +49,6 @@
   (require rackunit
            racket/match
            (only-in gregor datetime)
-           racket/runtime-path
            (only-in ffi/vector f64vector->list f64vector-length f64vector-ref)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/dict in-dict)
@@ -60,7 +59,7 @@
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/reshape cast head lazy rename slice unique vstack)
-           (only-in polars/private/generic/test-fixtures frame settle! withnull)
+           (only-in polars/private/generic/test-fixtures frame produce-parquet settle! withnull)
            (only-in threading ~>))
 
   (random-seed 88)
@@ -422,7 +421,6 @@
                    (~> carrier-names (series #:name "cat") (cast 'categorical) (head row-length))
                    (~> carrier-names (series #:name "enum") (cast '(enum UA AA DL B6))
                        (head row-length))))))
-  (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
   (define produce (read-parquet produce-parquet))
   (define (every-other names)
     (for/list ([name (in-list names)] [i (in-naturals)] #:when (even? i)) name))
