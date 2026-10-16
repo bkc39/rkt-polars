@@ -539,8 +539,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   raises polars' reason, as in Python), beside a Decimal series a real, and
   beside an integer series an Int64 integer past the dtype's range (`(+ u8
   300)` is UInt16). A negative integer beside an unsigned series, an
-  integer past Int64 (inside UInt64's range beside a UInt64 series aside)
-  and a value no literal takes are contract errors naming the value and the
+  integer past Int64 (but one in range beside a UInt64 series), which our
+  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
   series' dtype, as Python's eager `OverflowError` is. Every (operator,
   dtype, operand) outcome is in `generic/operand-audit.rktd`, which
   `generic/operand-audit.rkt` holds the operators to.
