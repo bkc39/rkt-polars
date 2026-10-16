@@ -342,6 +342,7 @@
     (check-equal? (dtype (ref d #:columns "scoref")) 'float64))
   (check-equal? (dtype (contracted:cast (series '(1 2 3)) 'f64)) 'float64)
   (check-equal? (series-cells (cast (series '(1 2 3)) 'str)) '("1" "2" "3"))
+  (check-equal? (series-cells (p/ (cast (series '(1 2 4)) 'f64))) '(1.0 0.5 0.25))
   (let ([d (with-columns frame (contracted:cast "score" 'f32))])
     (check-equal? (dtype (ref d #:columns "score")) 'float32))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c dtype-spec\\? \\(quote binary\\)"
