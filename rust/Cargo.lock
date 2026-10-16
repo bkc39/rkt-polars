@@ -398,14 +398,18 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "chrono",
+ "flate2",
+ "libc",
  "polars",
  "polars-async",
+ "polars-buffer",
  "polars-core",
  "proc-macro2",
  "rayon",
  "syn 2.0.72",
  "tempfile",
  "tokio",
+ "zstd",
 ]
 
 [[package]]

@@ -7,10 +7,12 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dev-dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 polars-core = { version = "0.55.2", default-features = false }
 proc-macro2 = "1"
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
+zstd = "0.13.2"
 
 [dependencies]
 # polars 0.55 hashes with blake3; "pure" leaves out its C and assembly, whose
@@ -19,8 +21,12 @@ blake3 = { version = "1.8.7", features = ["pure"] }
 chrono = "0.4.38"
 polars = { version = "0.55.2", features = ["lazy", "parquet", "json", "ipc", "ipc_streaming", "avro", "scan_lines", "decompress", "http", "aws", "gcp", "azure", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "abs", "round_series", "sign", "log", "is_in", "is_unique", "is_first_distinct", "is_last_distinct", "is_between", "cum_agg", "diff", "rank", "meta", "dtype-categorical", "dtype-decimal", "timezones", "nightly"] }
 polars-async = { version = "0.55.2", default-features = false }
+polars-buffer = { version = "0.55.2", default-features = false }
 rayon = "1.10.0"
 tokio = { version = "1.53.1", default-features = false, features = ["rt"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
 
 [profile.release]
 strip = "symbols"

@@ -80,9 +80,33 @@
 
 (module+ test
   (require rackunit
-           (only-in racket/file delete-directory/files file->string make-temporary-directory))
+           (only-in compiler/find-exe find-exe)
+           (only-in racket/file delete-directory/files file->string make-temporary-directory)
+           (only-in racket/port copy-port)
+           (only-in polars/private/io-contracts size-max))
 
-  (provide check-staged-write)
+  (provide call-in-child check-reads-like-every check-staged-write)
+
+  (define (call-in-child form #:timeout [seconds 120])
+    (define-values (child out in err)
+      (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" form)))
+    (close-output-port in)
+    (define texts (list (open-output-string) (open-output-string)))
+    (define copiers
+      (for/list ([from (list out err)] [to (in-list texts)])
+        (thread (lambda () (copy-port from to) (close-input-port from)))))
+    (define status
+      (cond
+        [(sync/timeout seconds child) (subprocess-status child)]
+        [else (subprocess-kill child #t) 'timeout]))
+    (for-each thread-wait copiers)
+    (apply values status (map get-output-string texts)))
+
+  (define huge-counts (list (expt 2 62) size-max))
+
+  (define (check-reads-like-every label every read-with)
+    (for ([n (in-list huge-counts)])
+      (check-true (frame=? (read-with n) every) (format "~a at ~a" label n))))
 
   (define char-device #o020000)
 

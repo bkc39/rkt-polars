@@ -374,6 +374,30 @@ it. Racket side: `define-compat` with `#:c-id`.
   cause alone. `call/foreign-error` respells 0.55's
   empty-expansion reason, which carries the pattern, as `no files match the
   pattern`.
+- polars reserves 24 bytes a row for a CSV `#:infer-schema-length` before
+  it reads (`streaming.rs`), so `rows_to_infer` (`lazyframe/csv.rs`) reads
+  every row instead when a count over 2^20 reserves more than the host's
+  memory or 2^47 bytes, or more rows than the local inputs could hold. The
+  memory is `POLARS_OVERRIDE_TOTAL_MEMORY`, parsed by `host_memory` as
+  polars does, or else polars' `total_memory()` (`polars_utils::sys`: a
+  container's cgroup limit where one is set, since sysinfo reads the cgroup
+  mount's root, not the process's own cgroup). A malformed override counts
+  as 0 bytes, and `total_memory()` is not called: it panics on one and
+  poisons its `LazyLock` for every later read.
+- A count kept still reserves up to all of memory per file, for up to
+  min(cores, files) files at `collect` and 10 during inference: harmless
+  under the default heuristic overcommit, an abort under
+  `vm.overcommit_memory=2`, as in Python polars.
+- The input bound is fixed when the plan is built, not at `collect`: it
+  expands the paths with polars' `expand_paths`, stats each file, opens a
+  regular one with `O_NONBLOCK` and checks the handle is still one (a file
+  swapped for a FIFO would block the open inside `call-as-atomic`), and
+  reads its first four bytes. So a pipe, a device, an unexpanded cloud path
+  or a file created later gives no bound, and a count past a file's size
+  then reads every row even if the file grows (or reports a size of 0
+  though it has content). One poll of `expand_paths` suffices: its local
+  branch never awaits, and a `Pending` poll counts as no bound (`block_on`
+  could hang under `POLARS_FORCE_ASYNC` inside `call-as-atomic`).
 - IO paths resolve against Racket's `current-directory`, not the process's
   (`path->complete-string` in `foreign.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
