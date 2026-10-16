@@ -1896,6 +1896,15 @@ temps
   (@racketid[series-new-i32/vec], @racketid[series-new-f64/vec], …) that takes a
   vector instead of a list.}
 
+@defproc[(series-new-null [name string?] [length exact-nonnegative-integer?]) Series-ptr?]{
+  Builds a series of @racket[length] nulls of dtype @racket['null]. It is
+  what @racket[(series '())] and @racket[series] with @racket[#:dtype 'null]
+  build on.
+
+  @examples[#:eval ev #:label #f
+    (define nothing (series-new-null "nothing" 3))
+    (list (series-dtype nothing) (series-len nothing) (series-null-count nothing))]}
+
 @deftogether[(@defproc[(series-sum-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
               @defproc[(series-min-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
               @defproc[(series-max-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
