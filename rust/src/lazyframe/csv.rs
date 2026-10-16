@@ -9,6 +9,7 @@ use polars::io::utils::compression::SupportedCompression;
 use polars::polars_utils::pl_path::PlRefPath;
 use polars::polars_utils::sys::total_memory;
 use polars_buffer::Buffer;
+use std::fs::File;
 use std::future::Future;
 use std::io::Read;
 use std::path::Path;
@@ -153,14 +154,13 @@ pub(crate) const NEVER_RESERVED: usize =
 const DEFLATE_EXPANSION: u64 = 1032;
 const ZSTD_EXPANSION: u64 = 32768;
 
-fn compression(path: &Path) -> std::io::Result<Option<SupportedCompression>> {
+fn expansion(file: &File) -> u64 {
     let mut head = Vec::with_capacity(4);
-    std::fs::File::open(path)?.take(4).read_to_end(&mut head)?;
-    Ok(SupportedCompression::check(&head))
-}
-
-fn expansion(path: &Path) -> u64 {
-    match compression(path) {
+    match file
+        .take(4)
+        .read_to_end(&mut head)
+        .map(|_| SupportedCompression::check(&head))
+    {
         Ok(None) => 1,
         Ok(Some(SupportedCompression::GZIP | SupportedCompression::ZLIB)) => {
             DEFLATE_EXPANSION
@@ -169,14 +169,35 @@ fn expansion(path: &Path) -> u64 {
     }
 }
 
+#[cfg(unix)]
+fn open_without_blocking(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_without_blocking(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+pub(crate) fn open_regular(
+    path: &Path,
+) -> std::io::Result<Option<(File, u64)>> {
+    let file = open_without_blocking(path)?;
+    let metadata = file.metadata()?;
+    Ok(metadata.is_file().then(|| (file, metadata.len())))
+}
+
 fn most_rows_in_file(path: &Path) -> Option<u64> {
-    let metadata = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
-    Some(
-        metadata
-            .len()
-            .saturating_mul(expansion(path))
-            .saturating_add(1),
-    )
+    let stated = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+    let (len, expansion) = match open_regular(path) {
+        Ok(found) => found.map(|(file, len)| (len, expansion(&file)))?,
+        Err(_) => (stated.len(), ZSTD_EXPANSION),
+    };
+    Some(len.saturating_mul(expansion).saturating_add(1))
 }
 
 fn input_files(path: &str, glob: bool) -> Option<Vec<PlRefPath>> {
@@ -200,6 +221,19 @@ pub(crate) fn most_rows(path: &str, glob: bool) -> Option<u64> {
         .collect::<Option<Vec<u64>>>()?
         .into_iter()
         .max()
+}
+
+pub(crate) const MEMORY_OVERRIDE: &str = "POLARS_OVERRIDE_TOTAL_MEMORY";
+
+pub(crate) fn host_memory(
+    overridden: Option<&str>,
+    total: impl FnOnce() -> u64,
+) -> u64 {
+    match overridden.map(str::parse::<u64>) {
+        Some(Ok(bytes)) => bytes,
+        Some(Err(_)) => 0,
+        None => total(),
+    }
 }
 
 pub(crate) fn rows_to_infer(
@@ -245,7 +279,10 @@ fn decode(
             options
                 .has_infer_schema_length
                 .then_some(options.infer_schema_length),
-            total_memory,
+            || {
+                let overridden = std::env::var(MEMORY_OVERRIDE).ok();
+                host_memory(overridden.as_deref(), total_memory)
+            },
             || most_rows(path, options.glob),
         ),
         comment_prefix: decode_string(arrays.comment_prefix, "comment prefix")?

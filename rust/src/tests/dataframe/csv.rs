@@ -1318,15 +1318,57 @@ fn newlines_compressed(lines: usize) -> [(&'static str, Vec<u8>, u64); 3] {
     ]
 }
 
-fn within(
+fn within<T: Send + 'static>(
     seconds: u64,
-    work: impl FnOnce() -> Option<u64> + Send + 'static,
-) -> Option<u64> {
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
     let (sent, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || sent.send(work()));
     received
         .recv_timeout(std::time::Duration::from_secs(seconds))
-        .expect("most_rows returned in time")
+        .expect("returned in time")
+}
+
+#[test]
+fn a_malformed_memory_override_reads_every_row_without_asking_the_host() {
+    let unasked = || -> u64 { panic!("asked the host's memory") };
+    for malformed in ["abc", "", "-1", " 5", "1e9", "18446744073709551616"] {
+        assert_eq!(host_memory(Some(malformed), unasked), 0, "{:?}", malformed);
+    }
+    assert_eq!(host_memory(Some("4096"), unasked), 4096);
+    assert_eq!(host_memory(Some("18446744073709551615"), unasked), u64::MAX);
+    assert_eq!(host_memory(None, || 7), 7);
+    assert_eq!(
+        rows_to_infer(
+            Some(1 << 21),
+            || host_memory(Some("abc"), unasked),
+            || None
+        ),
+        None
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fifo_opens_without_blocking_and_is_not_regular() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fifo = dir.path().join("pipe.csv");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success());
+    let opened = within(5, move || {
+        open_regular(&fifo).map(|found| found.map(|(_, len)| len))
+    });
+    assert_eq!(opened.expect("open the fifo"), None);
+    let file = write(dir.path(), "plain.csv", b"x\n1\n");
+    assert_eq!(
+        open_regular(&file)
+            .expect("open the file")
+            .map(|(_, len)| len),
+        Some(4)
+    );
 }
 
 #[test]

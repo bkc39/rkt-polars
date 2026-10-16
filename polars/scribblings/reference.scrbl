@@ -540,11 +540,14 @@ total
   are inferred from the first @racket[infer-schema-length] rows: @racket[#f]
   reads every row, and @racket[0], or @racket[#:infer-schema #f], makes every
   column a string. A count whose reservation, 24 bytes a row, exceeds the
-  host's memory (a cgroup's limit where one is set), or above the rows a
-  local input could hold (one a byte, after the most its compression can
-  expand), reads every row, as @racket[#f] does. Deciding the second stats
-  the inputs when the read or scan is built, so a pipe, a device or a file
-  created after @racket[scan-csv] never bounds the count. Polars reserves
+  host's memory (a container's cgroup limit where one is set, or
+  @tt{POLARS_OVERRIDE_TOTAL_MEMORY} bytes, a malformed value counting as 0),
+  or above the rows a local input could hold (one a byte, after the most its
+  compression can expand), reads every row, as @racket[#f] does. Deciding the
+  second stats the inputs when the read or scan is built, so a pipe, a
+  device or a file created after @racket[scan-csv] never bounds the count,
+  and a count past a file's size then reads every row even if the file
+  grows (or reports a size of 0 though it has content). Polars reserves
   room for the count before it reads, so a smaller count that is still
   enormous can exhaust memory and abort the process.
   @racket[schema-overrides] fixes the named columns' types. A

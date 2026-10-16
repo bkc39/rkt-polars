@@ -4,8 +4,9 @@
   (require rackunit
            racket/file
            racket/runtime-path
-           (only-in racket/list last range second)
+           (only-in racket/list last make-list range second)
            (only-in racket/dict in-dict)
+           (only-in racket/match match-define)
            (only-in racket/string string-append*)
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
@@ -417,24 +418,49 @@
                           (collect (scan-csv parts-dir #:infer-schema-length #f))
                           (lambda (n) (collect (scan-csv parts-dir #:infer-schema-length n))))
 
-  (define late-float-every (read-csv late-float #:infer-schema-length #f))
+  (define late-float-every
+    (let ([d (read-csv late-float #:infer-schema-length #f)]) (list (shape d) (dtype (ref d "x")))))
   (define never-reserved (quotient (expt 2 47) 24))
+  (define bracketed
+    (let ([dir (build-path csv-dir "a[1]")])
+      (make-directory dir)
+      (scratch-file dir "late-float.csv" late-float-text)
+      dir))
+  (define (with-memory bytes form)
+    `(begin (putenv "POLARS_OVERRIDE_TOTAL_MEMORY" ,bytes) ,form))
+  (define unbounded-memory (number->string (sub1 (expt 2 64))))
   (define (scan-before-writing name count)
     (define later (path->string (build-path csv-dir name)))
     `(let ([plan (scan-csv ,later #:infer-schema-length ,count)])
        (call-with-output-file ,later (lambda (out) (write-string ,late-float-text out)))
        (let ([d (collect plan)])
-         (write (list (shape d) (dtype (ref d "x")))))))
-  (define past-every-reservation (scan-before-writing "unreserved.csv" never-reserved))
-  (define past-the-host-memory
-    `(begin (putenv "POLARS_OVERRIDE_TOTAL_MEMORY" ,(number->string (expt 2 34)))
-            ,(scan-before-writing "past-memory.csv" (sub1 never-reserved))))
-  (for ([(label form) (in-dict (list (cons "a count no reservation reaches" past-every-reservation)
-                                     (cons "a count past the host's memory" past-the-host-memory)))])
+         (write (list (list (shape d) (dtype (ref d "x"))))))))
+  (define (read-and-scan path count)
+    `(write (for/list ([reader (list (lambda () (read-csv ,path #:infer-schema-length ,count))
+                                     (lambda () (collect (scan-csv ,path
+                                                                   #:infer-schema-length ,count))))])
+              (let ([d (reader)]) (list (shape d) (dtype (ref d "x")))))))
+  (for ([child (in-list
+                `(("a count no reservation reaches" 1
+                   ,(with-memory unbounded-memory
+                      (scan-before-writing "unreserved.csv" never-reserved)))
+                  ("a count past the host's memory" 1
+                   ,(scan-before-writing "past-memory.csv" (sub1 never-reserved)))
+                  ("a count past a small file" 2
+                   ,(with-memory unbounded-memory
+                      (read-and-scan (path->string late-float) (sub1 never-reserved))))
+                  ("a count past a small file read from a[1]/" 2
+                   ,(with-memory unbounded-memory
+                      `(parameterize ([current-directory ,(path->string bracketed)])
+                         ,(read-and-scan "late-float.csv" (sub1 never-reserved)))))
+                  ("a malformed memory override" 2
+                   ,(with-memory "abc" (read-and-scan (path->string late-float) (expt 2 21))))))])
+    (match-define (list label reads form) child)
     (define-values (status output errors) (call-in-child form))
-    (check-equal? status 0 (format "~a, before the file exists: ~a" label errors))
+    (check-equal? status 0 (format "~a: ~a" label errors))
+    (check-equal? errors "" label)
     (check-equal? (read (open-input-string output))
-                  (list (shape late-float-every) (dtype (ref late-float-every "x")))
+                  (make-list reads late-float-every)
                   label))
 
   (delete-directory/files csv-dir))

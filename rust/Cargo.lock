@@ -399,6 +399,7 @@ dependencies = [
  "blake3",
  "chrono",
  "flate2",
+ "libc",
  "polars",
  "polars-buffer",
  "tempfile",
