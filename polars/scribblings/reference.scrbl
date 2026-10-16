@@ -260,7 +260,8 @@ total
   operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
   work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
   @racket[(not (= _a _b))]. A plain value compared with a series is a
-  constant of the series' dtype; with a @racket['null] series it is a
+  constant of the series' dtype (a gregor value keeps the dtype @racket[lit]
+  gives it); with a @racket['null] series it is a
   @racket[lit], as in the expression form, and the result is null, where
   Python's eager comparisons on a Null series raise
   @tt{NotImplementedError}. These shadow the @racketmodname[racket/base]
