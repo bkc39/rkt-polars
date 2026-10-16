@@ -8,7 +8,7 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  ->* ->i contract-out flat-named-contract listof non-empty-listof or/c
+                  [-> ->/c] ->* ->i contract-out flat-named-contract listof non-empty-listof or/c
                   rename-contract)
          racket/match
          (only-in racket/dict in-dict)
@@ -25,8 +25,11 @@
   (require rackunit))
 
 (provide (except-out (all-defined-out)
-                     series-sort dataframe-sort series-ref-string strings->series)
+                     series-sort dataframe-sort series-ref-string strings->series series-drop
+                     dataframe-drop)
          (contract-out
+          [series-drop (->/c Series-ptr? void?)]
+          [dataframe-drop (->/c DataFrame-ptr? void?)]
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
           [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]))
@@ -354,11 +357,76 @@
   (let unwrap ([v (car args)])
     (if (owned-pointer? v) (unwrap ((owned-pointer-accessor v) v)) v)))
 
-(define-cpointer-type _Series-ptr)
+(define (raise-dropped who noun)
+  (raise-arguments-error who (format "~a has been dropped" noun)))
 
-(define-compat series-drop
-  (_fun _Series-ptr -> _void)
-  #:wrap (deallocator owned-pointer-arg))
+(define (dropped? v dropped)
+  (and (cpointer? v) (cpointer-has-tag? v dropped)))
+
+(define ((write-owned kind dropped show) v port mode)
+  (write-string (if (dropped? v dropped) (format "#<~a: dropped>" kind) (show v)) port))
+
+(define (owned-cpointer-types tag kind noun dropped wrap)
+  (define (refuse p)
+    (cond
+      [(dropped? p dropped) (raise-dropped kind noun)]
+      [else (raise-arguments-error (string->symbol (format "~a->C" tag))
+                                   (format "argument is not non-null `~a' pointer" tag)
+                                   "argument" p)]))
+  (define (->c p)
+    (cond
+      [(and (cpointer? p) (cpointer-has-tag? p tag)) p]
+      [else (refuse p)]))
+  (define (->racket p)
+    (cond
+      [p (cpointer-push-tag! p tag)
+         (wrap p)]
+      [else (refuse p)]))
+  (define ((or-null convert) p)
+    (and p (convert p)))
+  (values (make-ctype _pointer ->c ->racket)
+          (make-ctype _pointer (or-null ->c) (or-null ->racket))))
+
+(define (release-owned who noun dropped drop/raw v)
+  (call-as-atomic
+   (lambda ()
+     (define p (owned-pointer-arg (list v)))
+     (cond
+       [(dropped? p dropped) (raise-dropped who noun)]
+       [else (drop/raw p)
+             (set-cpointer-tag! p dropped)]))))
+
+(define-syntax-parse-rule (define-owned-cpointer-type
+                           type:id
+                           kind:id
+                           (~alt (~optional
+                                  (~seq #:noun noun:str)
+                                  #:defaults
+                                  ([noun (datum->syntax #'kind (symbol->string (syntax-e #'kind)))]))
+                                 (~optional (~seq #:wrap wrap:expr) #:defaults ([wrap #'values]))) ...
+                           (~and release ((~datum define-compat) drop/raw:id _ ...)))
+  #:do [(define tag (substring (symbol->string (syntax-e #'type)) 1))]
+  #:with type/null (format-id #'type "~a/null" #'type)
+  #:with type? (format-id #'type "~a?" tag)
+  #:with type-tag (format-id #'type "~a-tag" tag)
+  #:with tag-name (datum->syntax #'type (string->symbol tag))
+  #:with dropped (format-id #'kind "~a-dropped" #'kind)
+  #:with drop (format-id #'kind "~a-drop" #'kind)
+  (begin
+    (define type-tag 'tag-name)
+    (define dropped (gensym 'dropped))
+    (define (type? v)
+      (and (cpointer? v) (or (cpointer-has-tag? v type-tag) (cpointer-has-tag? v dropped))))
+    (define-values (type type/null) (owned-cpointer-types type-tag 'kind noun dropped wrap))
+    release
+    (define (drop v)
+      (release-owned 'drop noun dropped drop/raw v))))
+
+(define-owned-cpointer-type _Series-ptr series
+  (define-compat series-drop/raw
+    (_fun _Series-ptr -> _void)
+    #:c-id series_drop
+    #:wrap (deallocator)))
 
 (define-compat series-drop-count
   (_fun -> _size))
@@ -1777,11 +1845,11 @@
   (check-exn #rx"operation failed"
              (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3))))
 
-(define-cpointer-type _DataFrame-ptr)
-
-(define-compat dataframe-drop
-  (_fun _DataFrame-ptr -> _void)
-  #:wrap (deallocator owned-pointer-arg))
+(define-owned-cpointer-type _DataFrame-ptr dataframe
+  (define-compat dataframe-drop/raw
+    (_fun _DataFrame-ptr -> _void)
+    #:c-id dataframe_drop
+    #:wrap (deallocator)))
 
 (define-compat dataframe-drop-count
   (_fun -> _size))
