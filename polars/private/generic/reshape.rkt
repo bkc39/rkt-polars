@@ -515,12 +515,3 @@
    #rx"^explain: failed to explain the query: [^\n]*\"nope\""
    (with-handlers ([exn:fail? exn-message])
      (contracted:explain (select (lazy ops-df) "nope")))))
-
-(module+ test
-  (require (only-in gregor date)
-           (only-in polars/private/bulk series->list))
-  (check-equal? (ref past-chrono-date 0) (date 5477784 1 6))
-  (check-equal? (series->list past-chrono-date) (list (ref past-chrono-date 0)))
-  (check-regexp-match #rx"\n\t[+]5477784-01-06\n" (format "~a" past-chrono-date))
-  (check-exn #rx"required keyword"
-             (lambda () (contracted:unpivot (dataframe (list past-chrono-date)) #:on '("d")))))

@@ -353,11 +353,11 @@
 
 (module+ test
   (require rackunit
-           (only-in gregor ->datetime/local ->tzid ->utc-offset datetime)
+           (only-in gregor ->datetime/local ->tzid ->utc-offset date datetime)
            (only-in racket/sequence sequence->list)
            (only-in polars/private/foreign
                     dataframe-new polars-null? series-cast series-drop-count series-head
-                    series-new-i64 series-new-str series-new-str/vec series-ref)
+                    series-new-i32 series-new-i64 series-new-str series-new-str/vec series-ref)
            (only-in polars/private/gc-pressure call-with-collections))
 
   (define (gappy-ints n)
@@ -433,4 +433,14 @@
     (for ([_ (in-range 20)]) (thunk))
     (for ([_ (in-range 4)]) (collect-garbage) (sleep 0.1))
     (- (series-drop-count) before))
-  (check >= (released-by (lambda () (series->list carriers))) 20))
+  (check >= (released-by (lambda () (series->list carriers))) 20)
+
+  (define past-chrono-date (series-cast (series-new-i32 "d" '(2000000000)) 'date))
+  (check-equal? (series-ref past-chrono-date 0) (date 5477784 1 6))
+  (check-equal? (series->list past-chrono-date) (list (date 5477784 1 6)))
+  (define past-chrono-zoned
+    (series-cast (series-new-i64 "k" '(9000000000000000000)) '(datetime microseconds "Europe/Brussels")))
+  (check-exn #rx"^series->list: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (series->list past-chrono-zoned)))
+  (check-exn #rx"^series-ref: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (series-ref past-chrono-zoned 0))))

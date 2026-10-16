@@ -20,7 +20,6 @@
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
 (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
 
-;; Past chrono's years, which only a cast can make: the reference's example.
 (define past-chrono-date (wrap-series (series-cast (series-new-i32 "d" '(2000000000)) 'date)))
 (define past-chrono-datetime
   (wrap-series (series-cast (series-new-i64 "t" '(9223372036854775807))

@@ -23,14 +23,14 @@
                   [abs polars:abs] [round polars:round] [floor polars:floor]
                   [sqrt polars:sqrt] [exp polars:exp] [log polars:log]))
 
-(define-syntax-parse-rule (provide-public #:internal internal:id [module:id name:id ...] ...)
+(define-syntax-parse-rule (provide-public #:internal internal:id [mod:id name:id ...] ...)
   (begin
-    (provide (except-out (all-from-out module) name ...) ...)
+    (provide (except-out (all-from-out mod) name ...) ...)
     (module+ test (define internal '(name ... ...)))))
 
 (provide-public
  #:internal internal-names
- [polars/private/expr expr-cast-to expr-meta-output-name/raw]
+ [polars/private/expr expr-cast-to expr-meta-output-name/raw lazyframe-collect/raw]
  [polars/private/foreign
   allocator/or-fail call/foreign-error check-enum-categories
   dataframe-drop-count decimal-ref last-error-message owned-pointer-accessor
@@ -43,7 +43,7 @@
   series-dt-convert-time-zone series-dt-convert-time-zone/raw
   series-dt-replace-time-zone series-dt-replace-time-zone/raw
   series-time-zone replace-zone-failure zoned-datetime-dtype?
-  dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame
+  dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
   series-copy-i8 series-copy-i16 series-copy-i32 series-copy-u8 series-copy-u16
   series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool])
 

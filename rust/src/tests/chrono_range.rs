@@ -85,6 +85,21 @@ fn printing_a_frame_in_range_clears_the_reason() {
 }
 
 #[test]
+fn an_unnamed_expression_over_a_date_past_chrono_has_no_output_name() {
+    let dates = past_chrono_date();
+    let values = expr_lit_series(dates);
+    let all = expr_all();
+    let member = expr_is_in(all, values);
+    set_last_error("stale");
+    assert!(expr_meta_output_name(member).is_null());
+    assert_panic_reason(DATE_CAUSE);
+    expr_drop(member);
+    expr_drop(all);
+    expr_drop(values);
+    series_drop(dates);
+}
+
+#[test]
 fn printing_an_expression_over_a_date_past_chrono_records_the_panic() {
     let dates = past_chrono_date();
     let name = cstr("x");

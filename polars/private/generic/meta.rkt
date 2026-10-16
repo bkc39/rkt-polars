@@ -2,7 +2,7 @@
 
 (require racket/contract/base
          (only-in polars/private/expr
-                  Expr-ptr? expr->string expr-meta-eq? expr-meta-output-name/raw
+                  Expr-ptr? expr-meta-eq? expr-meta-output-name/raw
                   expr-meta-root-names)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
@@ -14,7 +14,7 @@
 (define (meta-output-name x)
   (define e (->col-expr 'meta-output-name x))
   (or (expr-meta-output-name/raw e)
-      (error 'meta-output-name "cannot determine the output name of ~a" (expr->string e))))
+      (error 'meta-output-name "cannot determine the output name of ~a" e)))
 
 (define (meta-root-names x)
   (expr-meta-root-names (->col-expr 'meta-root-names x)))
@@ -26,7 +26,9 @@
   (require rackunit
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in threading ~>)
-           (only-in polars/private/expr col expr-add expr-meta-output-name expr-mul lit)
+           (only-in polars/private/expr
+                    col expr-add expr-is-in expr-meta-output-name expr-mul lit)
+           (only-in polars/private/foreign series-cast series-new-i32)
            (only-in polars/private/generic/reductions alias sum)
            (prefix-in contracted: (submod "..")))
   (define ab (expr-add (col "a") (col "b")))
@@ -57,6 +59,12 @@
              (lambda () (meta-output-name (col 'float64))))
   (check-exn #rx"^expr-meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
              (lambda () (expr-meta-output-name (col "*"))))
+  (define past-chrono-in
+    (expr-is-in (col "*") (series-cast (series-new-i32 "d" '(2000000000)) 'date)))
+  (check-exn #rx"^meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>$"
+             (lambda () (meta-output-name past-chrono-in)))
+  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>$"
+             (lambda () (expr-meta-output-name past-chrono-in)))
   (check-equal? (meta-root-names (col #rx"^he")) '())
   (check-equal? (meta-root-names (expr-mul (col 'float64) (lit 2))) '())
   (check-true (meta-eq? (col 'float64) (col 'f64)))

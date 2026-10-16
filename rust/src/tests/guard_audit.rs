@@ -505,12 +505,16 @@ fn guarded_block(block: &Block, guarding: &BTreeSet<String>) -> bool {
     for (i, stmt) in block.stmts.iter().enumerate() {
         match stmt {
             Stmt::Local(local) => {
-                if local
+                let flows = local
                     .init
                     .as_ref()
-                    .is_some_and(|init| guarded(&init.expr, guarding, &locals))
-                {
-                    bind(&local.pat, &mut locals);
+                    .is_some_and(|init| guarded(&init.expr, guarding, &locals));
+                let mut names = BTreeSet::new();
+                bind(&local.pat, &mut names);
+                if flows {
+                    locals.extend(names);
+                } else {
+                    locals.retain(|name| !names.contains(name));
                 }
             }
             Stmt::Expr(tail, None) if Some(i) == last => {
@@ -884,6 +888,13 @@ pub extern "C" fn guard_in_a_branch(flag: bool) -> i32 {
 pub extern "C" fn method_named_like_a_helper(x: X) -> i32 {
     x.guard_panic(|| work())
 }
+
+#[no_mangle]
+pub extern "C" fn guard_shadowed(s: S, dt: D) -> *mut Series {
+    let out = guard_panic(|| Some(1));
+    let out = s.cast(&dt).unwrap();
+    Box::into_raw(Box::new(out))
+}
 "#,
     );
     assert_eq!(
@@ -893,6 +904,7 @@ pub extern "C" fn method_named_like_a_helper(x: X) -> i32 {
             "guard_discarded runs outside guard_panic and is not exempt",
             "guard_in_a_branch runs outside guard_panic and is not exempt",
             "method_named_like_a_helper runs outside guard_panic and is not exempt",
+            "guard_shadowed runs outside guard_panic and is not exempt",
         ]
     );
 }

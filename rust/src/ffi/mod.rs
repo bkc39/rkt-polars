@@ -7,6 +7,8 @@ pub use self::errors::last_error_message;
 pub(crate) use self::errors::{
     clear_last_error, decode_path, guard_panic, record, set_last_error,
 };
+#[cfg(test)]
+pub(crate) use self::errors::{on_polars_worker, panic_is_quiet};
 pub(crate) use self::schema::decode_schema;
 pub(crate) use self::slices::{
     collect_c_strings, collect_exprs, sort_multiple_options,

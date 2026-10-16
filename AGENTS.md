@@ -61,7 +61,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `foreign.rkt`, where `series-ref` reads through them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
-   wrapped by a checking function of the plain name.
+   wrapped by a checking function of the plain name, except the
+   `series-ref-<type>/raw` readers: a contract checks their index, and
+   `series-ref` reads through their unchecked `series-ref-<type>/c` bindings.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -181,9 +183,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
-  `polars panicked: <cause>` as the reason and returns NULL, and keeps the
-  panic hook quiet while it runs, so a caught panic prints nothing to
-  stderr. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
+  `polars panicked: <cause>` as the reason and returns NULL. The panic hook
+  stays quiet for a panic on a thread inside a guard, or on a polars worker
+  (a rayon thread, polars' async executor or a tokio thread) while any
+  guard runs, so a caught panic prints nothing to stderr; every other panic
+  reaches the previous hook. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
   (#93), a `scan-csv` that reads the header (`#:schema-overrides`) aborted it
   on a compressed file (#177), and printing, a `cast` to a string, `pivot` and
   `unpivot` did on a date or datetime outside chrono's range (#141). Which
@@ -484,7 +488,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `ref`, the conversions and the series printer read it as gregor's value
   (`ref` reads a date through the bulk copy, as `series->list` does, so the
   two agree; a zoned series prints without its zone abbreviations when
-  polars cannot format them). A frame or an expression that holds one
+  polars cannot format them). In a zone other than UTC polars cannot give
+  its local clock: `ref` and the conversions raise under their own names
+  with polars' reason, and the series printer shows that cell as
+  `#<cannot print: ...>`. A frame or an expression that holds one
   prints as `#<dataframe: cannot print: polars panicked: ...>` (or
   `#<expr: ...>`): a custom-write never raises, since an error message that
   shows the value would hide its own error. `display-dataframe`,

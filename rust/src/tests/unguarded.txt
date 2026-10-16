@@ -74,7 +74,6 @@ expr_lit_str builder
 expr_lit_temporal builder
 expr_log builder
 expr_meta_eq accessor
-expr_meta_output_name accessor
 expr_meta_root_name accessor
 expr_meta_root_names_len accessor
 expr_multi_column builder

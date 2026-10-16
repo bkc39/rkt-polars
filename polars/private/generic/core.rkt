@@ -154,7 +154,7 @@
     (error 'ref "series row slicing not supported"))
   (when (eq? key unset)
     (error 'ref "ref on a series requires an index"))
-  (series-ref s key))
+  (series-value 'ref s key))
 
 ;; a dataframe column selector, as a name.
 (define (column->name d c)
@@ -192,6 +192,13 @@
 
   ;; series custom-write goes through series->string
   (check-equal? (format "~a" ints) (series->string ints))
+  (define past-chrono-zoned
+    (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
+                              '(datetime microseconds "Europe/Brussels"))))
+  (check-regexp-match #rx"\n\t#<cannot print: polars panicked: [^>]+>\n]$"
+                      (format "~a" past-chrono-zoned))
+  (check-exn #rx"^ref: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (ref past-chrono-zoned 0)))
 
   ;; constructor returns a series wrapper; series? distinguishes it
   (check-pred series? (series '(1 2 3)))
@@ -385,17 +392,18 @@
 
 (module+ test
   (require (only-in compiler/find-exe find-exe)
-           (only-in racket/system system*/exit-code))
-  ;; Every probe runs in one child process, which a regression would abort.
-  (define placeholder-rx "^#<~a: cannot print: polars panicked: [^>]+>$")
+           (only-in racket/match match-define)
+           (only-in racket/port port->string))
+  (define (placeholder what)
+    (format "^#<~a: cannot print: polars panicked: [^>]+>$" what))
   (define past-chrono-probes
-    `([(format "~a" (dataframe (list past-chrono-date))) ,(format placeholder-rx "dataframe")]
-      [(format "~s" (dataframe (list past-chrono-datetime))) ,(format placeholder-rx "dataframe")]
-      [(format "~v" (dataframe (list past-chrono-date))) ,(format placeholder-rx "dataframe")]
+    `([(format "~a" (dataframe (list past-chrono-date))) ,(placeholder "dataframe")]
+      [(format "~s" (dataframe (list past-chrono-datetime))) ,(placeholder "dataframe")]
+      [(format "~v" (dataframe (list past-chrono-date))) ,(placeholder "dataframe")]
       [(format "~a" (collect (lazy (dataframe (list past-chrono-datetime)))))
-       ,(format placeholder-rx "dataframe")]
-      [(format "~a" (is-in "x" past-chrono-date)) ,(format placeholder-rx "expr")]
-      [(format "~s" (is-in "x" past-chrono-date)) ,(format placeholder-rx "expr")]
+       ,(placeholder "dataframe")]
+      [(format "~a" (is-in "x" past-chrono-date)) ,(placeholder "expr")]
+      [(format "~s" (is-in "x" past-chrono-date)) ,(placeholder "expr")]
       [(display-dataframe (dataframe (list past-chrono-date)) (open-output-string))
        "^display-dataframe: cannot print the dataframe: polars panicked: "]
       [(dataframe->string (dataframe (list past-chrono-date)))
@@ -410,25 +418,33 @@
       [(unpivot (dataframe (list past-chrono-date (series '("a") #:name "k") (series '(1) #:name "i")))
                 #:on '("d" "k") #:index '("i"))
        "^unpivot: cannot unpivot the dataframe: polars panicked: "]
-      [(series-ref-i64/raw (series-new-i64 "a" '(1)) 5) "^series-ref-i64/raw: index is out of range"]
       [(series-new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0)))
        "^series-new-ymdhms: operation failed"]))
   (define past-chrono-program
     `(write (for/list ([probe (list ,@(for/list ([p (in-list past-chrono-probes)])
-                                        `(lambda () ,(car p))))])
+                                        (match-define (list probe _) p)
+                                        `(lambda () ,probe)))])
               (with-handlers ([exn:fail? exn-message]) (format "~a" (probe))))))
-  (define past-chrono-output (open-output-string))
-  (define past-chrono-stderr (open-output-string))
-  (define past-chrono-status
-    (parameterize ([current-output-port past-chrono-output]
-                   [current-error-port past-chrono-stderr])
-      (system*/exit-code (find-exe) "-l" "racket/base" "-l" "polars"
-                         "-l" "polars/private/generic/test-fixtures"
-                         "-e" (format "~s" past-chrono-program))))
-  (check-equal? past-chrono-status 0)
-  (check-equal? (get-output-string past-chrono-stderr) "")
-  (define past-chrono-results (read (open-input-string (get-output-string past-chrono-output))))
+  (define-values (past-chrono-child child-out child-in child-err)
+    (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars"
+                "-l" "polars/private/generic/test-fixtures"
+                "-e" (format "~s" past-chrono-program)))
+  (close-output-port child-in)
+  (define (drained port)
+    (define text (make-channel))
+    (thread (lambda () (channel-put text (port->string port #:close? #t))))
+    text)
+  (define child-stdout (drained child-out))
+  (define child-stderr (drained child-err))
+  (define past-chrono-finished (sync/timeout 300 past-chrono-child))
+  (unless past-chrono-finished
+    (subprocess-kill past-chrono-child #t))
+  (check-not-false past-chrono-finished "the child finished within 300 s")
+  (check-equal? (subprocess-status past-chrono-child) 0)
+  (check-equal? (channel-get child-stderr) "")
+  (define past-chrono-results (read (open-input-string (channel-get child-stdout))))
   (check-equal? (length past-chrono-results) (length past-chrono-probes))
   (for ([probe (in-list past-chrono-probes)]
         [result (in-list past-chrono-results)])
-    (check-true (regexp-match? (cadr probe) result) (format "~s gave ~s" (car probe) result))))
+    (match-define (list form expected) probe)
+    (check-regexp-match expected result (format "~s gave ~s" form result))))

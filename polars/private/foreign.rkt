@@ -8,8 +8,9 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  ->* ->i contract-out flat-named-contract listof non-empty-listof or/c
-                  rename-contract)
+                  </c ->* ->i and/c any contract-out flat-named-contract listof
+                  non-empty-listof or/c rename-contract)
+         (only-in racket/contract/region define/contract)
          racket/match
          (only-in racket/dict in-dict)
          (only-in racket/list check-duplicates)
@@ -26,8 +27,12 @@
 
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-string strings->series
-                     call/reason define-copies define-series-refs in-bounds print-dataframe
-                     series-date-ref)
+                     call/reason define-copies define-series-refs print-dataframe
+                     series-date-ref series-index/c
+                     series-ref-i8/c series-ref-i16/c series-ref-i32/c series-ref-i64/c
+                     series-ref-u8/c series-ref-u16/c series-ref-u32/c series-ref-u64/c
+                     series-ref-f32/c series-ref-f64/c series-ref-bool/c series-ref-str/c
+                     series-ref-date/c series-ref-duration/c series-ref-time/c)
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -111,8 +116,6 @@
     [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
     [else (apply error who fmt args)]))
 
-;; A custom-write never raises: an error message that shows the value would
-;; hide its own error.
 (define (printed-or-placeholder what render)
   (define-values (text reason) (call/reason render values))
   (or text (format "#<~a: cannot print: ~a>" what (or reason "no reason recorded"))))
@@ -398,7 +401,7 @@
 (define (series-enum-categories s)
   (define names (series-enum-categories/raw s))
   (begin0 (for/list ([i (in-range (series-len names))])
-            (string->symbol (series-ref-str/raw names i)))
+            (string->symbol (series-ref-str/c names i)))
           (series-drop names)))
 
 (define-compat series-time-zone
@@ -1039,45 +1042,47 @@
 (define-compat series-ref-is-null
   (_fun _Series-ptr _size -> _int32))
 
-(define ((in-bounds who) ref)
-  (procedure-rename
-   (lambda (s index)
-     (define len (series-len s))
-     (unless (< index len)
-       (raise-range-error who "series" "" index s 0 (sub1 len)))
-     (ref s index))
-   who))
+(define series-index/c
+  (->i ([s Series-ptr?]
+        [index (s) (and/c exact-nonnegative-integer? (</c (series-len s)))])
+       any))
 
-(define-syntax-parse-rule (define-series-refs [name:id c-id:id result:expr] ...)
+(define-syntax-parse-rule (define-series-refs [type:id result:expr] ...)
+  #:with ((checked unchecked c-id) ...)
+  (for/list ([t (in-list (syntax->list #'(type ...)))])
+    (list (format-id t "series-ref-~a/raw" t)
+          (format-id t "series-ref-~a/c" t)
+          (format-id t "series_ref_~a" t)))
   (begin
-    (define-compat name
+    (define-compat unchecked
       (_fun _Series-ptr _size -> result)
-      #:c-id c-id
-      #:wrap (in-bounds 'name))
+      #:c-id c-id)
+    ...
+    (define/contract checked series-index/c unchecked)
     ...))
 
 (define-series-refs
-  [series-ref-i32/raw series_ref_i32 _CompatOptI32]
-  [series-ref-i8/raw series_ref_i8 _CompatOptI8]
-  [series-ref-i16/raw series_ref_i16 _CompatOptI16]
-  [series-ref-i64/raw series_ref_i64 _CompatOptI64]
-  [series-ref-u8/raw series_ref_u8 _CompatOptU8]
-  [series-ref-u16/raw series_ref_u16 _CompatOptU16]
-  [series-ref-u32/raw series_ref_u32 _CompatOptU32]
-  [series-ref-u64/raw series_ref_u64 _CompatOptU64]
-  [series-ref-f64/raw series_ref_f64 _CompatOptF64]
-  [series-ref-f32/raw series_ref_f32 _CompatOptF32]
-  [series-ref-bool/raw series_ref_bool _CompatOptBool]
-  [series-ref-str/raw series_ref_str _rsstring]
-  [series-ref-date/raw series_ref_date _CompatOptYMD]
-  [series-ref-duration/raw series_ref_duration _CompatOptI64]
-  [series-ref-time/raw series_ref_time _CompatOptI64])
+  [i8 _CompatOptI8]
+  [i16 _CompatOptI16]
+  [i32 _CompatOptI32]
+  [i64 _CompatOptI64]
+  [u8 _CompatOptU8]
+  [u16 _CompatOptU16]
+  [u32 _CompatOptU32]
+  [u64 _CompatOptU64]
+  [f32 _CompatOptF32]
+  [f64 _CompatOptF64]
+  [bool _CompatOptBool]
+  [str _rsstring]
+  [date _CompatOptYMD]
+  [duration _CompatOptI64]
+  [time _CompatOptI64])
 
-(define (series-ref-unsupported dtype)
-  (error 'series-ref "unsupported dtype ~v" dtype))
+(define (series-ref-unsupported who dtype)
+  (error who "unsupported dtype ~v" dtype))
 
-(define (require-ref-value dtype value)
-  (or value (error 'series-ref "could not read non-null value for dtype ~v" dtype)))
+(define (require-ref-value who dtype value)
+  (or value (error who "could not read non-null value for dtype ~v" dtype)))
 
 (define (duration-value->period dtype value)
   (match dtype
@@ -1119,30 +1124,44 @@
   series-copy-u8 series-copy-u16 series-copy-u32 series-copy-u64
   series-copy-f32 series-copy-f64 series-copy-bool)
 
+(define ((unreadable-datetime who zone) reason)
+  (error who "cannot read a datetime in ~s: ~a" zone (respell reason)))
+
 ;; `count` rows of a zoned column from `start`: each UTC instant into
 ;; `instants`, and into `walls` its wall clock in (offset-unit unit).
-(define (copy-zoned-datetimes who s dtype start count instants walls valid)
+(define (copy-zoned-datetimes who s dtype start count instants walls valid
+                              #:unreadable [unreadable (unreadable-datetime who (caddr dtype))])
   (match-define (list _ unit zone) dtype)
   (define (copied status)
     (when (negative? status)
       (error who "could not copy a series of dtype ~v (status ~a)" dtype status)))
   (with-release ([rows (series-slice s start count) series-drop]
                  [view (series-cast-datetime-tz who rows (list 'datetime (offset-unit unit) zone))
-                       series-drop]
-                 [clocks (series-dt-replace-time-zone who view #f 'raise 'raise) series-drop])
-    (copied (series-copy-i64 rows 0 count instants count valid (if valid (bytes-length valid) 0)))
-    (copied (series-copy-i64 clocks 0 count walls count #f 0))))
+                       series-drop])
+    (define-values (clocks reason)
+      (call/reason (lambda () (series-dt-replace-time-zone/raw view #f "raise" "raise")) values))
+    (cond
+      [clocks
+       (with-release ([walls-of clocks series-drop])
+         (copied (series-copy-i64 rows 0 count instants count valid
+                                  (if valid (bytes-length valid) 0)))
+         (copied (series-copy-i64 walls-of 0 count walls count #f 0)))]
+      [else (unreadable (or reason "no reason recorded"))])))
 
-(define (series-ref-datetime s index unit zone)
+(define (series-ref-datetime who s index unit zone unreadable)
   (with-raw-buffer ([value 2 _int64])
     (cond
-      [zone
-       (copy-zoned-datetimes 'series-ref s (list 'datetime unit zone) index 1
-                             value (ptr-add value 1 _int64) #f)
-       (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone)]
-      [else
+      [(not zone)
        (and (zero? (series-copy-i64 s index 1 value 1 #f 0))
-            (epoch->datetime unit (ptr-ref value _int64 0)))])))
+            (epoch->datetime unit (ptr-ref value _int64 0)))]
+      [else
+       (let/ec return
+         (copy-zoned-datetimes who s (list 'datetime unit zone) index 1
+                               value (ptr-add value 1 _int64) #f
+                               #:unreadable (if unreadable
+                                                (lambda (reason) (return (unreadable reason)))
+                                                (unreadable-datetime who zone)))
+         (epoch->moment unit (ptr-ref value _int64 0) (ptr-ref value _int64 1) zone))])))
 
 (define (series-date-ref s index)
   (with-raw-buffer ([days 1 _int32])
@@ -1160,51 +1179,53 @@
          (decimal-ref words 0 scale))))
 
 (define (series-ref s index)
+  (series-value 'series-ref s index))
+
+(define (series-value who s index #:unreadable [unreadable #f])
   (unless (exact-nonnegative-integer? index)
-    (error 'series-ref "index must be an exact nonnegative integer, got ~v" index))
+    (error who "index must be an exact nonnegative integer, got ~v" index))
   (define len (series-len s))
   (unless (< index len)
-    (error 'series-ref "index ~a out of bounds for series of length ~a" index len))
+    (error who "index ~a out of bounds for series of length ~a" index len))
   (case (series-ref-is-null s index)
     [(1) polars-null]
     [(0)
      (define dtype (compat-dtype->datum (series-dtype/raw s)))
      (case dtype
-       [(int8) (require-ref-value dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
-       [(int16) (require-ref-value dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
-       [(int32) (require-ref-value dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
-       [(int64) (require-ref-value dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
-       [(uint8) (require-ref-value dtype (compat-opt-u8->datum (series-ref-u8/raw s index)))]
-       [(uint16) (require-ref-value dtype (compat-opt-u16->datum (series-ref-u16/raw s index)))]
-       [(uint32) (require-ref-value dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
-       [(uint64) (require-ref-value dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
-       [(float32) (require-ref-value dtype (compat-opt-f32->datum (series-ref-f32/raw s index)))]
-       [(float64) (require-ref-value dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
+       [(int8) (require-ref-value who dtype (compat-opt-i8->datum (series-ref-i8/c s index)))]
+       [(int16) (require-ref-value who dtype (compat-opt-i16->datum (series-ref-i16/c s index)))]
+       [(int32) (require-ref-value who dtype (compat-opt-i32->datum (series-ref-i32/c s index)))]
+       [(int64) (require-ref-value who dtype (compat-opt-i64->datum (series-ref-i64/c s index)))]
+       [(uint8) (require-ref-value who dtype (compat-opt-u8->datum (series-ref-u8/c s index)))]
+       [(uint16) (require-ref-value who dtype (compat-opt-u16->datum (series-ref-u16/c s index)))]
+       [(uint32) (require-ref-value who dtype (compat-opt-u32->datum (series-ref-u32/c s index)))]
+       [(uint64) (require-ref-value who dtype (compat-opt-u64->datum (series-ref-u64/c s index)))]
+       [(float32) (require-ref-value who dtype (compat-opt-f32->datum (series-ref-f32/c s index)))]
+       [(float64) (require-ref-value who dtype (compat-opt-f64->datum (series-ref-f64/c s index)))]
        [(boolean)
-        (define value (series-ref-bool/raw s index))
+        (define value (series-ref-bool/c s index))
         (when (zero? (CompatOptBool-valid value))
-          (error 'series-ref "could not read non-null value for dtype ~v" dtype))
+          (error who "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
-       [(string) (require-ref-value dtype (series-ref-string s index))]
+       [(string) (require-ref-value who dtype (series-ref-string s index))]
        [(categorical enum)
-        (string->symbol (require-ref-value dtype (series-ref-str/raw s index)))]
-       [(date) (require-ref-value dtype (series-date-ref s index))]
+        (string->symbol (require-ref-value who dtype (series-ref-str/c s index)))]
+       [(date) (require-ref-value who dtype (series-date-ref s index))]
        [(time)
-        (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
-        (require-ref-value dtype (and raw (nanoseconds->time raw)))]
+        (define raw (compat-opt-i64->datum (series-ref-time/c s index)))
+        (require-ref-value who dtype (and raw (nanoseconds->time raw)))]
        [else
         (match dtype
           [`(duration ,_)
-           (define raw (compat-opt-i64->datum (series-ref-duration/raw s index)))
-           (require-ref-value
-            dtype
-            (and raw (duration-value->period dtype raw)))]
+           (define raw (compat-opt-i64->datum (series-ref-duration/c s index)))
+           (require-ref-value who dtype (and raw (duration-value->period dtype raw)))]
           [`(datetime ,unit ,zoned)
-           (require-ref-value dtype
-                              (series-ref-datetime s index unit (and zoned (series-time-zone s))))]
-          [`(decimal ,_ ,scale) (require-ref-value dtype (series-ref-decimal s index scale))]
-          [_ (series-ref-unsupported dtype)])])]
-    [else (error 'series-ref "could not read null state at index ~a" index)]))
+           (require-ref-value who dtype
+                              (series-ref-datetime who s index unit (and zoned (series-time-zone s))
+                                                  unreadable))]
+          [`(decimal ,_ ,scale) (require-ref-value who dtype (series-ref-decimal s index scale))]
+          [_ (series-ref-unsupported who dtype)])])]
+    [else (error who "could not read null state at index ~a" index)]))
 
 (module+ test
   (define-values (ex0 ex1)
@@ -1239,6 +1260,10 @@
   (define ref-i64 (series-new-i64 "x" (list 1099511627776 polars-null)))
   (check-equal? (series-ref ref-i64 0) 1099511627776)
   (check-equal? (series-ref ref-i64 1) polars-null)
+  (for ([index (in-list '(-1 a 2 5))])
+    (check-exn #rx"^series-ref-i64/raw: contract violation"
+               (lambda () (series-ref-i64/raw ref-i64 index))))
+  (check-equal? (CompatOptI64-value (series-ref-i64/raw ref-i64 0)) 1099511627776)
 
   (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
   (check-equal? (series-ref ref-i8 0) -8)

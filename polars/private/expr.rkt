@@ -102,7 +102,7 @@
          expr-over
          expr-when
          dataframe-lazy
-         lazyframe-with-columns lazyframe-collect
+         lazyframe-with-columns lazyframe-collect lazyframe-collect/raw
          lazyframe-filter lazyframe-select
          lazyframe-group-by-agg
          lazyframe-unique lazyframe-drop-nulls
@@ -127,7 +127,7 @@
 (define (expr-meta-output-name e)
   (or (expr-meta-output-name/raw e)
       (error 'expr-meta-output-name
-             "cannot determine the output name of ~a" (expr->string e))))
+             "cannot determine the output name of ~a" e)))
 
 (define-compat expr-meta-root-names-len
   (_fun _Expr-ptr -> _size)

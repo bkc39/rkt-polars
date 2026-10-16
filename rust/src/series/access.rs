@@ -25,159 +25,37 @@ fn series_at<'a>(s_ptr: *mut Series, index: usize) -> Option<&'a Series> {
     (index < s.len()).then_some(s)
 }
 
-#[no_mangle]
-pub extern "C" fn series_ref_i32(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI32 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI32::NONE;
+macro_rules! series_ref {
+    ($name:ident -> $opt:ident, $s:ident => $values:expr) => {
+        #[no_mangle]
+        pub extern "C" fn $name(s_ptr: *mut Series, index: usize) -> $opt {
+            match series_at(s_ptr, index).map(|$s| $values) {
+                Some(Ok(ca)) => $opt::from_option(ca.get(index)),
+                _ => $opt::NONE,
+            }
+        }
     };
-    match s.i32() {
-        Ok(ca) => CompatOptI32::from_option(ca.get(index)),
-        Err(_) => CompatOptI32::NONE,
-    }
 }
 
-#[no_mangle]
-pub extern "C" fn series_ref_i8(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI8 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI8::NONE;
-    };
-    match s.i8() {
-        Ok(ca) => CompatOptI8::from_option(ca.get(index)),
-        Err(_) => CompatOptI8::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_i16(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI16 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI16::NONE;
-    };
-    match s.i16() {
-        Ok(ca) => CompatOptI16::from_option(ca.get(index)),
-        Err(_) => CompatOptI16::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_i64(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI64 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI64::NONE;
-    };
-    match s.i64() {
-        Ok(ca) => CompatOptI64::from_option(ca.get(index)),
-        Err(_) => CompatOptI64::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_u8(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptU8 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptU8::NONE;
-    };
-    match s.u8() {
-        Ok(ca) => CompatOptU8::from_option(ca.get(index)),
-        Err(_) => CompatOptU8::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_u16(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptU16 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptU16::NONE;
-    };
-    match s.u16() {
-        Ok(ca) => CompatOptU16::from_option(ca.get(index)),
-        Err(_) => CompatOptU16::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_u32(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptU32 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptU32::NONE;
-    };
-    match s.u32() {
-        Ok(ca) => CompatOptU32::from_option(ca.get(index)),
-        Err(_) => CompatOptU32::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_u64(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptU64 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptU64::NONE;
-    };
-    match s.u64() {
-        Ok(ca) => CompatOptU64::from_option(ca.get(index)),
-        Err(_) => CompatOptU64::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_f32(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptF32 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptF32::NONE;
-    };
-    match s.f32() {
-        Ok(ca) => CompatOptF32::from_option(ca.get(index)),
-        Err(_) => CompatOptF32::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_f64(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptF64 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptF64::NONE;
-    };
-    match s.f64() {
-        Ok(ca) => CompatOptF64::from_option(ca.get(index)),
-        Err(_) => CompatOptF64::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_bool(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptBool {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptBool::NONE;
-    };
-    match s.bool() {
-        Ok(ca) => CompatOptBool::from_option(ca.get(index)),
-        Err(_) => CompatOptBool::NONE,
-    }
-}
+series_ref!(series_ref_i8 -> CompatOptI8, s => s.i8());
+series_ref!(series_ref_i16 -> CompatOptI16, s => s.i16());
+series_ref!(series_ref_i32 -> CompatOptI32, s => s.i32());
+series_ref!(series_ref_i64 -> CompatOptI64, s => s.i64());
+series_ref!(series_ref_u8 -> CompatOptU8, s => s.u8());
+series_ref!(series_ref_u16 -> CompatOptU16, s => s.u16());
+series_ref!(series_ref_u32 -> CompatOptU32, s => s.u32());
+series_ref!(series_ref_u64 -> CompatOptU64, s => s.u64());
+series_ref!(series_ref_f32 -> CompatOptF32, s => s.f32());
+series_ref!(series_ref_f64 -> CompatOptF64, s => s.f64());
+series_ref!(series_ref_bool -> CompatOptBool, s => s.bool());
+series_ref!(
+    series_ref_duration -> CompatOptI64,
+    s => s.duration().map(|ca| ca.physical())
+);
+series_ref!(
+    series_ref_time -> CompatOptI64,
+    s => s.time().map(|ca| ca.physical())
+);
 
 #[no_mangle]
 pub extern "C" fn series_ref_str(
@@ -229,33 +107,5 @@ pub extern "C" fn series_ref_date(
             .map(CompatOptYMD::some)
             .unwrap_or(CompatOptYMD::NONE),
         Err(_) => CompatOptYMD::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_duration(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI64 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI64::NONE;
-    };
-    match s.duration() {
-        Ok(ca) => CompatOptI64::from_option(ca.physical().get(index)),
-        Err(_) => CompatOptI64::NONE,
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ref_time(
-    s_ptr: *mut Series,
-    index: usize,
-) -> CompatOptI64 {
-    let Some(s) = series_at(s_ptr, index) else {
-        return CompatOptI64::NONE;
-    };
-    match s.time() {
-        Ok(ca) => CompatOptI64::from_option(ca.physical().get(index)),
-        Err(_) => CompatOptI64::NONE,
     }
 }

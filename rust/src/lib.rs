@@ -32,6 +32,8 @@ pub(crate) use ffi::{
     sort_multiple_options,
 };
 #[cfg(test)]
+pub(crate) use ffi::{on_polars_worker, panic_is_quiet};
+#[cfg(test)]
 pub(crate) use series::ymdhms_to_naive_datetime;
 pub(crate) use series::{
     ambiguous_name, datetime_tz_dtype, enum_dtype, name_from_ptr,
