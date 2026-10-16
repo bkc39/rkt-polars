@@ -396,29 +396,31 @@
        [else (drop/raw p)
              (set-cpointer-tag! p dropped)]))))
 
-(define-syntax-parser define-owned-cpointer-type
-  [(_ type:id kind:id
-      (~alt (~optional (~seq #:noun noun:str)
-                       #:defaults ([noun (datum->syntax #'kind (symbol->string
-                                                                (syntax-e #'kind)))]))
-            (~optional (~seq #:wrap wrap:expr) #:defaults ([wrap #'values])))
-      ...
-      (~and release ((~datum define-compat) drop/raw:id _ ...)))
-   #:do [(define tag (substring (symbol->string (syntax-e #'type)) 1))]
-   #:with type/null (format-id #'type "~a/null" #'type)
-   #:with type? (format-id #'type "~a?" tag)
-   #:with type-tag (format-id #'type "~a-tag" tag)
-   #:with tag-name (datum->syntax #'type (string->symbol tag))
-   #:with dropped (format-id #'kind "~a-dropped" #'kind)
-   #:with drop (format-id #'kind "~a-drop" #'kind)
-   #'(begin
-       (define type-tag 'tag-name)
-       (define dropped (gensym 'dropped))
-       (define (type? v)
-         (and (cpointer? v) (or (cpointer-has-tag? v type-tag) (cpointer-has-tag? v dropped))))
-       (define-values (type type/null) (owned-cpointer-types type-tag 'kind noun dropped wrap))
-       release
-       (define (drop v) (release-owned 'drop noun dropped drop/raw v)))])
+(define-syntax-parse-rule (define-owned-cpointer-type
+                           type:id
+                           kind:id
+                           (~alt (~optional
+                                  (~seq #:noun noun:str)
+                                  #:defaults
+                                  ([noun (datum->syntax #'kind (symbol->string (syntax-e #'kind)))]))
+                                 (~optional (~seq #:wrap wrap:expr) #:defaults ([wrap #'values]))) ...
+                           (~and release ((~datum define-compat) drop/raw:id _ ...)))
+  #:do [(define tag (substring (symbol->string (syntax-e #'type)) 1))]
+  #:with type/null (format-id #'type "~a/null" #'type)
+  #:with type? (format-id #'type "~a?" tag)
+  #:with type-tag (format-id #'type "~a-tag" tag)
+  #:with tag-name (datum->syntax #'type (string->symbol tag))
+  #:with dropped (format-id #'kind "~a-dropped" #'kind)
+  #:with drop (format-id #'kind "~a-drop" #'kind)
+  (begin
+    (define type-tag 'tag-name)
+    (define dropped (gensym 'dropped))
+    (define (type? v)
+      (and (cpointer? v) (or (cpointer-has-tag? v type-tag) (cpointer-has-tag? v dropped))))
+    (define-values (type type/null) (owned-cpointer-types type-tag 'kind noun dropped wrap))
+    release
+    (define (drop v)
+      (release-owned 'drop noun dropped drop/raw v))))
 
 (define-owned-cpointer-type _Series-ptr series
   (define-compat series-drop/raw
