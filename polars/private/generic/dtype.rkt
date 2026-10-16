@@ -70,8 +70,7 @@
   ;; Defaults mirror Polars' inference for a Python list: integers -> Int64,
   ;; reals -> Float64, strings -> String, booleans -> Boolean.
   (cond
-    [(null? all) 'null]
-    [(null? vals) 'int64]
+    [(null? vals) 'null]
     [(andmap boolean? vals) 'boolean]
     [(andmap exact-integer? vals) 'int64]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64

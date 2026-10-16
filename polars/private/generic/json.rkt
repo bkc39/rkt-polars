@@ -247,6 +247,22 @@
   (check-equal? (car (column nd-ms "day")) (datetime 2024 1 1))
   (check-equal? (dtypes-of (read-ndjson stations-nd #:schema '(("day" . datetime))))
                 '(("day" (datetime microseconds #f))))
+  (define (nd-columns d)
+    (for/list ([name (in-list (column-names d))])
+      (list name (dtype (ref d name)) (column d name))))
+  (check-equal? (~> (read-ndjson stations-nd #:schema '(("station" . str) ("extra" . null)))
+                    nd-columns)
+                (list (list "station" 'string '("north" "south" "north" "south"))
+                      (list "extra" 'null (make-list 4 polars-null))))
+  (check-equal? (~> (scan-ndjson stations-nd #:schema '(("reading" . f64) ("extra" . null)))
+                    collect
+                    nd-columns)
+                (list (list "reading" 'float64 '(3.0 4.5 2.0 5.25))
+                      (list "extra" 'null (make-list 4 polars-null))))
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*late$"
+             (lambda () (read-ndjson stations-nd #:schema '(("station" . str) ("note" . null)))))
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*ok$"
+             (lambda () (read-ndjson stations-nd #:schema-overrides '(("flag" . null)))))
   (check-equal? (dtypes-of (~> (read-ndjson stations-nd #:schema-overrides '(("day" . date)))
                                (select "day" "reading")))
                 '(("day" date) ("reading" float64)))
@@ -398,7 +414,6 @@
   (define nd-bad
     `((#:schema . (("a" . i8))) (#:schema . (("a" . time))) (#:schema . (("a" . (enum x))))
       (#:schema-overrides . (("a" . (duration microseconds)))) (#:schema-overrides . (("a" . u16)))
-      (#:schema . (("a" . null)))
       (#:infer-schema-length . 0) (#:batch-size . 0) (#:n-rows . -1) (#:n-rows . 1.5)
       (#:low-memory . 1) (#:rechunk . "yes") (#:ignore-errors . 1)
       (#:row-index-name . row) (#:row-index-offset . -1) (#:row-index-offset . 4294967296)

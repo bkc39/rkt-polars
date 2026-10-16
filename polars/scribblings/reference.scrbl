@@ -265,8 +265,16 @@ total
   is a mask. Otherwise they fall back to the numeric @racketmodname[racket/base]
   operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
   work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
-  @racket[(not (= _a _b))]. These shadow the @racketmodname[racket/base]
-  comparisons; see @secref["fluent-shadowing"].}
+  @racket[(not (= _a _b))]. A plain value compared with a series is a
+  constant of the series' dtype (a gregor value keeps the dtype @racket[lit]
+  gives it); with a @racket['null] series it is a
+  @racket[lit], as in the expression form, and the result is null, where
+  Python's eager comparisons on a Null series raise
+  @tt{NotImplementedError}. These shadow the @racketmodname[racket/base]
+  comparisons; see @secref["fluent-shadowing"].
+
+  @examples[#:eval ev #:label #f
+(= (series (list polars-null polars-null)) 1)]}
 
 @deftogether[(@defform[(and expr ...)]
               @defform[(or expr ...)]
@@ -296,7 +304,9 @@ total
   expression (via @racket[expr-add], @racket[expr-sub], @racket[expr-mul],
   @racket[expr-div], @racket[expr-mod]), so @racket[(* (col "value") 2)] reads
   like @tt{col("value") * 2}, and a series operand yields an eagerly computed
-  series. These shadow the @racketmodname[racket/base] bindings; see
+  series. With a @racket['null] series a plain operand is a @racket[lit], so
+  the result has the expression form's dtype; Python's eager @tt{+ - * %}
+  raise for an integer or boolean operand. These shadow the @racketmodname[racket/base] bindings; see
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
@@ -322,6 +332,7 @@ total
 (/ (series '(1 -1 2 -2 0)))
 (/ (series '(-7 7 1)) (series '(2 2 0)))
 (/ (cast (series '(1 2 4)) 'f64))
+(+ (series (list polars-null polars-null)) 1)
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
@@ -1102,7 +1113,8 @@ stations
   applying even with a schema; @racket[scan-ndjson] reports a bad override
   at once. An @racket[ndjson-schema/c] is a @racket[json-schema/c] whose
   dtypes are a boolean, a 32- or 64-bit integer, a float, a string, a date,
-  a datetime or a categorical.
+  a datetime, a categorical or @racket['null]; a @racket['null] column
+  holds no value, and a value in the file for it is an error, as in Python.
 
   @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
   @racket['uint32] column of row numbers from @racket[row-index-offset];
@@ -1126,6 +1138,8 @@ stations
     collect)
 (read-ndjson (build-path nd-dir "part-*.ndjson") #:n-rows 4 #:row-index-name "row")
 (column-names (read-ndjson "stations.ndjson" #:include-file-paths "file"))
+(read-ndjson "stations.ndjson" #:schema '(("station" . str) ("extra" . null)))
+(eval:error (read-ndjson "stations.ndjson" #:schema '(("station" . str) ("note" . null))))
 (eval:error (read-ndjson "stations.ndjson" #:infer-schema-length 1))
 (~> (read-ndjson "stations.ndjson" #:infer-schema-length 1 #:ignore-errors #t)
     (select "station" "reading"))
@@ -1275,12 +1289,16 @@ stations
   @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
   used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
   they fall back to the usual numeric behaviour, so @racket[(max 1 2 3)] still
-  works.
+  works. A @racket['null] series reduces to @racket[polars-null] and a
+  @racket['null] column aggregates to one, as in Python Polars.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
 (list (sum s) (mean s) (min s) (max s))
-(max 1 2 3)]}
+(max 1 2 3)
+(define nothing (series (list polars-null polars-null) #:name "n"))
+(list (sum nothing) (mean nothing) (min nothing) (max nothing))
+(~> (dataframe (list nothing)) (select (sum "n")))]}
 
 @deftogether[(@defproc[(count    [x any/c]) any/c]
               @defproc[(n-unique [x any/c]) any/c]
@@ -1294,7 +1312,15 @@ stations
   @racket[col]), so @racket[(count "value")] and @racket[(count (col "value"))]
   are equivalent. @racket[alias] names a result, matching Polars' @tt{.alias}:
   @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
-  take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.}
+  take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.
+  On a series, @racket[n-unique], @racket[std] and @racket[var] reduce at
+  once. A @racket['null] series has one unique value and a @racket[std] and
+  @racket[var] of @racket[polars-null], as in Python Polars; its column's
+  @racket[count] is 0.
+
+  @examples[#:eval ev
+(list (std nothing) (var nothing) (n-unique nothing))
+(~> (dataframe (list nothing)) (select (count "n")))]}
 
 @deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
               @defproc[(last  [x (or/c string? pair? any/c)]) any/c])]{
@@ -1344,10 +1370,19 @@ stations
   lifted with @racket[lit], so gregor dates and datetimes bound a temporal
   column (@secref["ref-temporal-values"]). A list @racket[rhs] holds integers,
   reals, strings, symbols (read as strings, as @racket[lit] reads them),
-  booleans or gregor values, all of one kind. Its datetimes share one zone, or
+  booleans or gregor values, all of one kind, among which
+  @racket[polars-null] may appear; a list of @racket[polars-null] alone is a
+  @racket['null] list, as Python's @tt{[None]} is. A null is never a member,
+  so a null element of @racket[x] gives null. Its datetimes share one zone, or
   none: a list that mixes naive datetimes and moments, or moments in two
   zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
-  a column from the same list.}
+  a column from the same list.
+
+  @examples[#:eval ev
+(define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
+(~> gappy (select (is-in "x" (list 1 polars-null))))
+(~> gappy (select (is-in "x" (list polars-null))))
+(~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
               @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -1509,8 +1544,10 @@ an implementation detail and not part of the public series API.)
                  [#:dtype dtype (or/c #f symbol? pair?) #f])
          series?]{
   Builds a series from a list or vector. When @racket[#:dtype] is omitted the
-  dtype is inferred from the elements, and an empty list or vector is a
-  @racket['null] series, as Python's @tt{pl.Series([])}; otherwise it is
+  dtype is inferred from the elements: an empty list or vector, or one
+  holding @racket[polars-null] alone, is a @racket['null] series, as
+  Python's @tt{pl.Series([])} and @tt{pl.Series([None])} are, and a null
+  among other values takes their dtype. Otherwise it is
   taken from @racket[dtype], and @racket['null] takes only
   @racket[polars-null] elements. Both short spellings (@racket['i32], @racket['f64],
   @racket['str], @racket['bool]) and canonical symbols (@racket['int32],
@@ -1528,8 +1565,8 @@ an implementation detail and not part of the public series API.)
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (series '())
+(series (list polars-null polars-null))
 (series '() #:name "empty" #:dtype 'f64)
-(series (list polars-null polars-null) #:dtype 'null)
 (eval:error (series '(1 2) #:dtype 'null))
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
 (series (list 1 polars-null 3) #:name "with-null")

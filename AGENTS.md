@@ -412,7 +412,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   fails with "directory contained paths with different file extensions",
   in Python too). Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
   Duration and Enum: 0.55's NDJSON buffer panics on the first six, which
-  Python passes through. `#:batch-size` and `#:low-memory` reach
+  Python passes through. Null is allowed, as in `read-json`: a column the
+  file lacks reads as nulls, and a value for a Null column is an error, as
+  in Python. `#:batch-size` and `#:low-memory` reach
   `LazyJsonLineReader` as in Python, and 0.55 reads neither.
   `#:row-index-name` and `#:include-file-paths` must differ (polars panics
   otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
@@ -495,8 +497,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   list, not a bare name (#62).
 - An empty list or vector is an empty series of `#:dtype`, or `'null` without
   one, as Python's `pl.Series([])` (#98); every constructor, native ones
-  included, takes zero rows. A list of nulls alone still infers int64;
-  `#:dtype 'null` (`series_new_null`) takes `polars-null` elements only.
+  included, takes zero rows. A list or vector of `polars-null` alone infers
+  `'null` too, as `pl.Series([None])` does, and a null among other values
+  takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
+  elements only. `is-in` reads a list the same way, so `(list polars-null)`
+  is a Null literal. A series operator given a `'null` series and a plain
+  value runs the operator's expression form with the value as a `lit`, so
+  the two agree; `lit` has no `polars-null` literal. On a `'null` series
+  `sum`, `mean`, `min`, `max`, `std` and `var` give `polars-null` and
+  `n-unique` gives 1, as Python 1.42.1 does, through the expression engine
+  (the typed `series_sum_*` have no Null case). A `'null` column does not
+  vstack or join with a typed one, and `and`, `or`, `xor` and `not` refuse
+  a `'null` series, as in Python.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.

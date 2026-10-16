@@ -46,9 +46,8 @@
   (f s))
 
 (define (series-agg-via-expr who expr-op s)
-  (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))
-                                      (list (expr-alias (expr-op (col name)) "v"))))
+                                      (list (expr-alias (expr-op (expr-all)) "v"))))
   (series-value who (dataframe-column out "v") 0))
 
 ;; sum / mean / min / max are generic across three worlds:
@@ -61,6 +60,7 @@
   (match args
     [(list (? Expr-ptr? e)) (expr-sum e)]
     [(list (? string? s)) (expr-sum (col s))]
+    [(list (? null-series? s)) (series-agg-via-expr 'sum expr-sum s)]
     [(list (? series? s)) (series-reduce 'sum sum-table s)]
     [_ (apply base:+ args)]))
 
@@ -106,12 +106,14 @@
         [else (expr-n-unique (->col-expr 'n-unique x))]))
 (define (median x)    (expr-median   (->col-expr 'median x)))
 ;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
-(define (std x #:ddof [ddof 1])
-  (cond [(series? x) (series-std x #:ddof ddof)]
-        [else (expr-std (->col-expr 'std x) #:ddof ddof)]))
-(define (var x #:ddof [ddof 1])
-  (cond [(series? x) (series-var x #:ddof ddof)]
-        [else (expr-var (->col-expr 'var x) #:ddof ddof)]))
+(define (dispersion who series-op expr-op x ddof)
+  (define (aggregate e) (expr-op e #:ddof ddof))
+  (match x
+    [(? null-series?) (series-agg-via-expr who aggregate x)]
+    [(? series?) (series-op x #:ddof ddof)]
+    [_ (aggregate (->col-expr who x))]))
+(define (std x #:ddof [ddof 1]) (dispersion 'std series-std expr-std x ddof))
+(define (var x #:ddof [ddof 1]) (dispersion 'var series-var expr-var x ddof))
 
 (define (first x)
   (cond
