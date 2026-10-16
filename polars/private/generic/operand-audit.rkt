@@ -32,8 +32,8 @@
       [#f (fail (format "expected ~a ~s, nothing raised" kind rx))]))
 
   (define (cause message)
-    (match (regexp-match #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$"
-                         message)
+    (match (regexp-match
+            #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$" message)
       [(list _ text) text]))
 
   (define (outcome thunk)
@@ -175,6 +175,13 @@
     (string-append "the value cannot be an element of a series of this dtype"
                    (regexp-quote (format "\n  value: ~v" value))
                    (regexp-quote (format "\n  series dtype: ~v" dtype)) "$"))
+  (define (not-boolean who got [named? #f])
+    (string-append "^" who ": invalid series dtype: expected `Boolean`, got `" got "`"
+                   (if named? " for series with name `n`$" "")))
+  (define (not-logical who given)
+    (string-append "^" who ": contract violation\n  expected: "
+                   (regexp-quote "(or/c series? boolean? polars-null?)")
+                   (format "\n  given: ~v$" given)))
   (for ([refused
          (list
           (list (lambda () (p+ nulls (date 2024 1 1))) 'polars "^[+]: [^\n]*date$")
@@ -202,31 +209,26 @@
           (list (lambda () (p+ (series '(1 2)) (series '(1 2 3)))) 'polars
                 "^[+]: cannot do arithmetic operation on series of different lengths")
           (list (lambda () (p-and nulls (series '(#t #f)))) 'polars
-                "^and: invalid series dtype: expected `Boolean`, got `null` for series with name `n`$")
+                (not-boolean "and" "null" #t))
           (list (lambda () (p-and nulls #t)) 'polars
-                "^and: invalid series dtype: expected `Boolean`, got `null` for series with name `n`$")
+                (not-boolean "and" "null" #t))
           (list (lambda () (p-or nulls #f)) 'polars
-                "^or: invalid series dtype: expected `Boolean`, got `null` for series with name `n`$")
+                (not-boolean "or" "null" #t))
           (list (lambda () (p-xor nulls #t)) 'polars
-                "^xor: invalid series dtype: expected `Boolean`, got `null` for series with name `n`$")
+                (not-boolean "xor" "null" #t))
           (list (lambda () (p-xor nulls polars-null)) 'polars
-                "^xor: invalid series dtype: expected `Boolean`, got `null`")
+                (not-boolean "xor" "null"))
           (list (lambda () (p-xor (series '(1 2)) polars-null)) 'polars
-                "^xor: invalid series dtype: expected `Boolean`, got `i64`")
+                (not-boolean "xor" "i64"))
           (list (lambda () (p-xor (series '(1 2)) #t)) 'polars
-                "^xor: invalid series dtype: expected `Boolean`, got `i64`")
+                (not-boolean "xor" "i64"))
           (list (lambda () (p-not (series '(1 2)))) 'polars
-                "^not: invalid series dtype: expected `Boolean`, got `i64`")
+                (not-boolean "not" "i64"))
           (list (lambda () (p-not nulls)) 'polars
-                "^not: invalid series dtype: expected `Boolean`, got `null`")
-          (list (lambda () (p-xor (series '(#t #f)) 1)) 'contract
-                (string-append "^xor: contract violation\n  expected: "
-                               (regexp-quote "(or/c series? boolean? polars-null?)")
-                               "\n  given: 1"))
-          (list (lambda () (p-and (series '(#t #f)) 5)) 'contract
-                "^and: contract violation\n  expected: [(]or/c series[?] boolean[?] polars-null[?][)]\n  given: 5$")
-          (list (lambda () (p-or (series '(#t #f)) 5)) 'contract
-                "^or: contract violation\n  expected: [(]or/c series[?] boolean[?] polars-null[?][)]\n  given: 5$"))])
+                (not-boolean "not" "null"))
+          (list (lambda () (p-xor (series '(#t #f)) 1)) 'contract (not-logical "xor" 1))
+          (list (lambda () (p-and (series '(#t #f)) 5)) 'contract (not-logical "and" 5))
+          (list (lambda () (p-or (series '(#t #f)) 5)) 'contract (not-logical "or" 5)))])
     (match-define (list thunk kind rx) refused)
     (check-raises kind (regexp rx) thunk))
 
@@ -284,22 +286,26 @@
       [(list _ message)
        (set! strays (cons (list who message) strays))
        "?"]))
+  (define (cells who f operands)
+    (apply string-append (for/list ([v (in-list operands)]) (audit who (lambda () (f v))))))
   (define (row who f l)
-    (list (apply string-append
-                 (for/list ([r (in-list audit-series)]) (audit who (lambda () (f l (cadr r))))))
-          (apply string-append (for/list ([v (in-list audit-plain)]) (audit who (lambda () (f l v)))))
-          (apply string-append (for/list ([v (in-list audit-plain)]) (audit who (lambda () (f v l)))))))
+    (list (cells who (lambda (r) (f l r)) (map (match-lambda [(list _ s) s]) audit-series))
+          (cells who (lambda (v) (f l v)) audit-plain)
+          (cells who (lambda (v) (f v l)) audit-plain)))
   (define audit-table
     (append
      (for*/list ([op (in-list audit-ops)] [l (in-list audit-series)])
-       (match-define (list who f) op)
-       (list* who (car l) (row who f (cadr l))))
+       (match* (op l)
+         [((list who f) (list label s)) (list* who label (row who f s))]))
      (for/list ([l (in-list audit-series)])
-       (list 'not (car l) (audit 'not (lambda () (p-not (cadr l))))))))
+       (match-define (list label s) l)
+       (list 'not label (audit 'not (lambda () (p-not s)))))))
   (define-runtime-path expected-path "operand-audit.rktd")
   (define expected (file->value expected-path))
-  (check-equal? (map (lambda (r) (list (car r) (cadr r))) audit-table)
-                (map (lambda (r) (list (car r) (cadr r))) expected))
+  (define (case-key r)
+    (match-define (list* who label _) r)
+    (list who label))
+  (check-equal? (map case-key audit-table) (map case-key expected))
   (for ([actual (in-list audit-table)] [want (in-list expected)])
-    (check-equal? actual want (format "~a ~a" (car actual) (cadr actual))))
+    (check-equal? actual want (format "~a" (case-key actual))))
   (check-equal? strays '()))

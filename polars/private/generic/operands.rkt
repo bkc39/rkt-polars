@@ -3,8 +3,8 @@
 (require (only-in racket/list make-list)
          (only-in racket/match match match*)
          (only-in polars/private/foreign
-                  call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype? polars-null?
-                  series-dtype series-len series-name)
+                  call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
+                  polars-null? series-dtype series-len series-name)
          (only-in polars/private/expr
                   dataframe-lazy expr-alias expr-all lazyframe-collect/raw lazyframe-select lit)
          (only-in polars/private/generic/core null-series? series? wrap-series)

@@ -113,7 +113,8 @@
   (cond
     [(ok? result) result]
     [(explain) => (lambda (message) (error who "~a" message))]
-    [(and reason fmt) (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
+    [(and reason fmt)
+     (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
     [reason (error who "~a" (cause-of reason))]
     [fmt (apply error who fmt args)]
     [else (error who "no reason recorded")]))
