@@ -277,9 +277,15 @@ total
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
-  @racket[(/ 1 _v)], integer division on an integer column, each output
-  keeping its own name; @racket[+] and @racket[*] return an expression or
-  series operand unchanged, and @racket[mod] needs two arguments.
+  @racket[(/ 1 _v)], each output keeping its own name; @racket[+] and
+  @racket[*] return an expression or series operand unchanged, and
+  @racket[mod] needs two arguments.
+
+  On integer columns @racket[/] is integer division, rounding toward negative
+  infinity, with a null where the divisor is 0: @racket[(/ (col "v") 2)] gives
+  -4 for -7, unlike @racket[quotient], and the one-argument reciprocal of an
+  integer column is 1, -1, 0 or null. Python's @tt{/} gives floats there;
+  @racket[cast] an operand to @racket['f64] first for the same result.
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -290,6 +296,9 @@ total
 (- (series '(1 -2 3) #:name "v"))
 (/ (series '(1.0 2.0 4.0) #:name "v"))
 (/ (series '(1 2 4)))
+(/ (series '(1 -1 2 -2 0)))
+(/ (series '(-7 7 1)) (series '(2 2 0)))
+(/ (cast (series '(1 2 4)) 'f64))
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))

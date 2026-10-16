@@ -373,6 +373,8 @@
                 '(-10 -25 -7))
   (check-equal? (series->list (p/ (series '(1.0 2.0 4.0)))) '(1.0 0.5 0.25))
   (check-equal? (series->list (p/ (series '(1 2 4)))) '(1 0 0))
+  (check-equal? (series->list (p/ (series '(1 -1 2 -2 0)))) (list 1 -1 0 -1 polars-null))
+  (check-equal? (series->list (p/ (series '(-7 7 1)) (series '(2 2 0)))) (list -4 3 polars-null))
   (check-equal? (series->list (p/ ints)) '(1 0 0 0))
   (check-equal? (dtype (p/ ints)) 'int32)
   (check-equal? (series-name (p/ floats)) "floats")
