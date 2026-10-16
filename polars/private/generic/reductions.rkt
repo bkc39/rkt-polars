@@ -11,14 +11,10 @@
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
 (provide (contract-out
-          [sum (-> any/c ... any/c)]
-          [mean (-> any/c any/c ... any/c)]
-          [min (-> any/c ... any/c)]
-          [max (-> any/c ... any/c)]
-          [std (->* ((or/c series? col-expr/c)) (#:ddof exact-nonnegative-integer?) any/c)]
-          [var (->* ((or/c series? col-expr/c)) (#:ddof exact-nonnegative-integer?) any/c)]
+          [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
+          [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
           [n-unique (-> (or/c series? col-expr/c) any/c)])
-         count median first last alias)
+         sum mean min max count median first last alias)
 
 (define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
   (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
@@ -78,18 +74,18 @@
     ['std (expr-std e #:ddof ddof)]
     ['var (expr-var e #:ddof ddof)]))
 
-(define-syntax-parse-rule (define-reducer name:id plain:expr)
-  (define (name . args)
-    (match args
+(define-syntax-parse-rule (define-reducer (name:id formal:id ... . rest:id) plain:expr)
+  (define (name formal ... . rest)
+    (match (list* formal ... rest)
       [(list (? Expr-ptr? e)) (aggregation 'name e 1)]
       [(list (? string? column)) (aggregation 'name (col column) 1)]
       [(list (? series? s)) (reduce-series 'name s)]
-      [_ (apply plain args)])))
+      [args (apply plain args)])))
 
-(define-reducer sum base:+)
-(define-reducer mean (lambda args (/ (apply base:+ args) (length args))))
-(define-reducer min base:min)
-(define-reducer max base:max)
+(define-reducer (sum . vs) base:+)
+(define-reducer (mean v . vs) (lambda args (/ (apply base:+ args) (length args))))
+(define-reducer (min . vs) base:min)
+(define-reducer (max . vs) base:max)
 
 (define (dispersion op x ddof)
   (match x
@@ -187,8 +183,15 @@
   (define gaps (series (list polars-null polars-null) #:dtype 'float64))
   (check-equal? (list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))
                 (list #f 0.0 polars-null))
-  (check-exn #rx"^mean: contract violation" (lambda () (contracted:mean)))
+  (check-exn #rx"^mean: arity mismatch" (lambda () (contracted:mean)))
   (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
+  (for* ([reduce (list contracted:std contracted:var)]
+         [x (list (series '(1 2 3)) (col "v") (series '(1.0 2.0) #:dtype 'float32))])
+    (check-exn (regexp (format "^~a: contract violation.*expected: \\(integer-in 0 255\\)"
+                               (object-name reduce)))
+               (lambda () (reduce x #:ddof 256))))
+  (check-equal? (mean (series (list (date 2020 1 2) (date 2020 1 1))))
+                (datetime 2020 1 1 12 0 0 0))
   (check-exn #rx"^n-unique: contract violation" (lambda () (contracted:n-unique 3)))
   (check-equal? (contracted:sum 1 2 3) 6)
   (define-runtime-path expected-file "../../scribblings/data/reductions-expected.rktd")

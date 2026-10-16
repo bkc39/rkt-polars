@@ -303,10 +303,14 @@ total
   @racket[and] and @racket[or] short-circuit and return the deciding value, and
   @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
   expression or series operand it evaluates its remaining operands eagerly to
-  combine them. These shadow the @racketmodname[racket/base] bindings; see
-  @secref["fluent-shadowing"].
+  combine them. A @racket[polars-null] operand decides nothing: they evaluate
+  the operands after it and combine it with an expression or series among
+  them, as Python's @tt{pl.lit(None) & e} does. These shadow the
+  @racketmodname[racket/base] bindings; see @secref["fluent-shadowing"].
 
   @examples[#:eval ev #:label #f
+(and polars-null (series (list #t #f)))
+(or polars-null (series (list #t #f)))
 (xor (series '(#t #f)) #t)
 (eval:error (not (series '(1 2))))]}
 
@@ -1349,9 +1353,11 @@ stations
               @defproc[(max [v any/c] ...) any/c])]{
   These dispatch on their argument. Applied to a single series, they reduce it
   (dispatching on its dtype): @racket[min] and @racket[max] preserve the
-  input dtype, as @racket[sum] does above 16 bits, while @racket[mean] always returns a
-  @racket[float64], so the mean of an integer series is a flonum (see
-  @secref["promotion"]). Applied to a single expression or a bare column-name
+  input dtype, as @racket[sum] does above 16 bits, while @racket[mean] of an
+  integer, boolean or decimal series is a @racket[float64], so the mean of an
+  integer series is a flonum (see @secref["promotion"]); a @racket['float32]
+  series' mean is a @racket['float32] value, and a temporal mean is temporal, a date's a
+  datetime. Applied to a single expression or a bare column-name
   string, they produce the corresponding aggregation expression — so
   @racket[(sum (col "value"))] reads like Polars' @tt{col("value").sum()} and is
   used inside @racket[agg] (see @secref["ref-fluent"]). Applied to anything else
@@ -1360,8 +1366,9 @@ stations
 
   A series reduces as in Python Polars: to @racket[polars-null] where the
   reduction is undefined, and to zero for the @racket[sum] of no values.
-  A string, temporal or categorical series has no @racket[sum], and a small
-  integer one sums as @racket['int64], so its total does not wrap.
+  A string, temporal or categorical series has no @racket[sum], but a
+  duration does, and a small integer one sums as @racket['int64], so its
+  total does not wrap.
 
   @examples[#:eval ev
 (define s (series '(1 2 3 4) #:name "v"))
@@ -1374,6 +1381,7 @@ stations
 (sum (series '(#t #f #t)))
 (sum (series '(100 100 100) #:dtype 'int8))
 (mean (series '("a" "b")))
+(mean (series (list (date 2020 1 2) (date 2020 1 1))))
 (eval:error (sum (series '("a" "b"))))
 (~> (dataframe (list nothing)) (select (sum "n")))]}
 
@@ -1381,9 +1389,9 @@ stations
               @defproc[(n-unique [x (or/c series? string? Expr-ptr?)]) any/c]
               @defproc[(median   [x any/c]) any/c]
               @defproc[(std [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof exact-nonnegative-integer? 1]) any/c]
+                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
               @defproc[(alias [e any/c] [name string?]) any/c])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
