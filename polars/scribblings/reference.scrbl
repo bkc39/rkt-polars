@@ -1838,8 +1838,7 @@ dtype or a specific typed result.
   build on.
 
   @examples[#:eval ev #:label #f
-    (define nothing (series-new-null "nothing" 3))
-    (list (series-dtype nothing) (series-len nothing) (series-null-count nothing))]}
+    (display (series->string (series-new-null "nothing" 3)))]}
 
 @deftogether[(@defproc[(series-sum-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
               @defproc[(series-min-i32  [s Series-ptr?]) (or/c exact-integer? #f)]
