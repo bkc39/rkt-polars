@@ -15,7 +15,8 @@
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
                   check-enum-categories define-owned-cpointer-type enum-dtype? polars-null?
-                  sort-flags-mismatch sort-flags/c time-unit-symbol->code write-owned zoned-datetime-dtype?)
+                  sort-flags-mismatch sort-flags/c time-unit-symbol->code write-owned
+                  zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))

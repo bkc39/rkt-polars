@@ -6,7 +6,7 @@
 ;; Inside `nix develop`:
 ;;   racket examples/74-null-literal.rkt
 
-(require polars)
+(require polars (only-in racket/match match-define))
 
 (define df
   (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
@@ -23,6 +23,7 @@
 
 (define no-rows (series '() #:dtype 'int64))
 (define all-null (series (list polars-null polars-null) #:dtype 'float64))
-(for ([reduce (list sum mean min max std var n-unique)]
-      [name '(sum mean min max std var n-unique)])
+(for ([named (list (cons 'sum sum) (cons 'mean mean) (cons 'min min) (cons 'max max)
+                   (cons 'std std) (cons 'var var) (cons 'n-unique n-unique))])
+  (match-define (cons name reduce) named)
   (printf "~a: ~v ~v\n" name (reduce no-rows) (reduce all-null)))
