@@ -43,8 +43,11 @@
 (define (int64-value? v)
   (and (exact-integer? v) (in-range-of 'int64 v)))
 
+(define (non-integer-real? v)
+  (and (real? v) (not (exact-integer? v))))
+
 (define (literal-value? v)
-  (or (boolean? v) (int64-value? v) (and (real? v) (not (exact-integer? v)))
+  (or (boolean? v) (int64-value? v) (non-integer-real? v)
       (string? v) (symbol? v) (polars-null? v) (and (temporal-value-dtype v) #t)))
 
 (struct constant (dtype value))
@@ -54,8 +57,7 @@
     [(temporal-value-dtype v) => (lambda (value-dtype) (constant value-dtype v))]
     [(and (memq dt '(float32 float64)) (real? v)) (constant dt (exact->inexact v))]
     [(and (exact-integer? v) (in-range-of dt v)) (constant dt v)]
-    [(and (numeric-dtype? dt) (real? v) (not (exact-integer? v)))
-     (constant 'float64 (exact->inexact v))]
+    [(and (numeric-dtype? dt) (non-integer-real? v)) (constant 'float64 (exact->inexact v))]
     [(and (eq? dt 'boolean) (boolean? v)) (constant dt v)]
     [(and (memq dt '(string categorical)) (string? v)) (constant dt v)]
     [(and (memq dt '(string categorical)) (symbol? v)) (constant dt (symbol->string v))]
@@ -66,7 +68,7 @@
     [_ #:when (polars-null? v) #t]
     ['null (literal-value? v)]
     [(? enum-dtype?) (or (string? v) (symbol? v))]
-    [(list 'decimal _ _) (or (int64-value? v) (and (real? v) (not (exact-integer? v))))]
+    [(list 'decimal _ _) (or (int64-value? v) (non-integer-real? v))]
     [(or 'int8 'int16 'int32 'int64) (and (int64-value? v) (not (in-range-of dt v)))]
     [(or 'uint8 'uint16 'uint32 'uint64)
      (and (int64-value? v) (not (negative? v)) (not (in-range-of dt v)))]
