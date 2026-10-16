@@ -45,11 +45,11 @@
     (error who "unsupported dtype for reduction: ~v" dt))
   (f s))
 
-(define (series-agg-via-expr expr-op s)
+(define (series-agg-via-expr who expr-op s)
   (define name (series-name s))
   (define out (dataframe-select-exprs (dataframe-new (list s))
                                       (list (expr-alias (expr-op (col name)) "v"))))
-  (series-ref (dataframe-column out "v") 0))
+  (series-value who (dataframe-column out "v") 0))
 
 ;; sum / mean / min / max are generic across three worlds:
 ;;   * a single Expr   -> the corresponding aggregation Expr (expr-sum, …)
@@ -71,7 +71,7 @@
     [(list (? series? s))
      (if (numeric-dtype? (series-dtype s))
          (series-reduce 'mean mean-table s)
-         (series-agg-via-expr expr-mean s))]   ; boolean -> fraction true
+         (series-agg-via-expr 'mean expr-mean s))]   ; boolean -> fraction true
     [(list) (error 'mean "expected at least one argument")]
     [_ (/ (apply base:+ args) (length args))]))
 
@@ -82,7 +82,7 @@
     [(list (? series? s))
      (if (numeric-dtype? (series-dtype s))
          (series-reduce 'min min-table s)
-         (series-agg-via-expr expr-min s))]    ; string / temporal / boolean
+         (series-agg-via-expr 'min expr-min s))]    ; string / temporal / boolean
     [_ (apply base:min args)]))
 
 (define (max . args)
@@ -92,7 +92,7 @@
     [(list (? series? s))
      (if (numeric-dtype? (series-dtype s))
          (series-reduce 'max max-table s)
-         (series-agg-via-expr expr-max s))]
+         (series-agg-via-expr 'max expr-max s))]
     [_ (apply base:max args)]))
 
 ;; --- additional Expr aggregators (Polars col(...).agg() spellings) ----------
@@ -132,6 +132,10 @@
 
 (module+ test
   (require rackunit polars/private/generic/test-fixtures)
+  (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (max past-chrono-zoned)))
+  (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (min past-chrono-zoned)))
   ;; reductions dispatch on dtype (numeric series)
   (check-equal? (sum ints) 10)
   (check-equal? (max floats) 8.0)

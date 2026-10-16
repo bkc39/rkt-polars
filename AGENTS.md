@@ -61,9 +61,7 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `foreign.rkt`, where `series-ref` reads through them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
-   wrapped by a checking function of the plain name, except the
-   `series-ref-<type>/raw` readers: a contract checks their index, and
-   `series-ref` reads through their unchecked `series-ref-<type>/c` bindings.
+   wrapped by a checking function of the plain name.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -187,7 +185,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   stays quiet for a panic on a thread inside a guard, or on a polars worker
   (a rayon thread, polars' async executor or a tokio thread) while any
   guard runs, so a caught panic prints nothing to stderr; every other panic
-  reaches the previous hook. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
+  reaches the previous hook. The worker test is process-wide, which assumes
+  one place calls polars: while a guard runs in one place, a panic on a
+  worker from an unguarded entry point in another prints nothing and then
+  aborts, a case guarding the `todo-129` entry points (#129) removes. A
+  streaming task that panics after an earlier error cancelled it is dropped
+  with its payload, so the reason is that error's and the panic prints
+  nothing. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
   (#93), a `scan-csv` that reads the header (`#:schema-overrides`) aborted it
   on a compressed file (#177), and printing, a `cast` to a string, `pivot` and
   `unpivot` did on a date or datetime outside chrono's range (#141). Which
@@ -612,7 +616,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
+- `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`

@@ -10,7 +10,7 @@
          (only-in racket/contract/base
                   </c ->* ->i and/c any contract-out flat-named-contract listof
                   non-empty-listof or/c rename-contract)
-         (only-in racket/contract/region define/contract)
+         (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
          (only-in racket/list check-duplicates)
@@ -29,10 +29,7 @@
                      series-sort dataframe-sort series-ref-string strings->series
                      call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c
-                     series-ref-i8/c series-ref-i16/c series-ref-i32/c series-ref-i64/c
-                     series-ref-u8/c series-ref-u16/c series-ref-u32/c series-ref-u64/c
-                     series-ref-f32/c series-ref-f64/c series-ref-bool/c series-ref-str/c
-                     series-ref-date/c series-ref-duration/c series-ref-time/c)
+                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out)))
          (contract-out
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -401,7 +398,7 @@
 (define (series-enum-categories s)
   (define names (series-enum-categories/raw s))
   (begin0 (for/list ([i (in-range (series-len names))])
-            (string->symbol (series-ref-str/c names i)))
+            (string->symbol (series-ref-str/raw names i)))
           (series-drop names)))
 
 (define-compat series-time-zone
@@ -1048,18 +1045,16 @@
        any))
 
 (define-syntax-parse-rule (define-series-refs [type:id result:expr] ...)
-  #:with ((checked unchecked c-id) ...)
+  #:with ((name c-id) ...)
   (for/list ([t (in-list (syntax->list #'(type ...)))])
     (list (format-id t "series-ref-~a/raw" t)
-          (format-id t "series-ref-~a/c" t)
           (format-id t "series_ref_~a" t)))
   (begin
-    (define-compat unchecked
+    (define-compat name
       (_fun _Series-ptr _size -> result)
       #:c-id c-id)
     ...
-    (define/contract checked series-index/c unchecked)
-    ...))
+    (provide (contract-out [name series-index/c] ...))))
 
 (define-series-refs
   [i8 _CompatOptI8]
@@ -1192,32 +1187,32 @@
     [(0)
      (define dtype (compat-dtype->datum (series-dtype/raw s)))
      (case dtype
-       [(int8) (require-ref-value who dtype (compat-opt-i8->datum (series-ref-i8/c s index)))]
-       [(int16) (require-ref-value who dtype (compat-opt-i16->datum (series-ref-i16/c s index)))]
-       [(int32) (require-ref-value who dtype (compat-opt-i32->datum (series-ref-i32/c s index)))]
-       [(int64) (require-ref-value who dtype (compat-opt-i64->datum (series-ref-i64/c s index)))]
-       [(uint8) (require-ref-value who dtype (compat-opt-u8->datum (series-ref-u8/c s index)))]
-       [(uint16) (require-ref-value who dtype (compat-opt-u16->datum (series-ref-u16/c s index)))]
-       [(uint32) (require-ref-value who dtype (compat-opt-u32->datum (series-ref-u32/c s index)))]
-       [(uint64) (require-ref-value who dtype (compat-opt-u64->datum (series-ref-u64/c s index)))]
-       [(float32) (require-ref-value who dtype (compat-opt-f32->datum (series-ref-f32/c s index)))]
-       [(float64) (require-ref-value who dtype (compat-opt-f64->datum (series-ref-f64/c s index)))]
+       [(int8) (require-ref-value who dtype (compat-opt-i8->datum (series-ref-i8/raw s index)))]
+       [(int16) (require-ref-value who dtype (compat-opt-i16->datum (series-ref-i16/raw s index)))]
+       [(int32) (require-ref-value who dtype (compat-opt-i32->datum (series-ref-i32/raw s index)))]
+       [(int64) (require-ref-value who dtype (compat-opt-i64->datum (series-ref-i64/raw s index)))]
+       [(uint8) (require-ref-value who dtype (compat-opt-u8->datum (series-ref-u8/raw s index)))]
+       [(uint16) (require-ref-value who dtype (compat-opt-u16->datum (series-ref-u16/raw s index)))]
+       [(uint32) (require-ref-value who dtype (compat-opt-u32->datum (series-ref-u32/raw s index)))]
+       [(uint64) (require-ref-value who dtype (compat-opt-u64->datum (series-ref-u64/raw s index)))]
+       [(float32) (require-ref-value who dtype (compat-opt-f32->datum (series-ref-f32/raw s index)))]
+       [(float64) (require-ref-value who dtype (compat-opt-f64->datum (series-ref-f64/raw s index)))]
        [(boolean)
-        (define value (series-ref-bool/c s index))
+        (define value (series-ref-bool/raw s index))
         (when (zero? (CompatOptBool-valid value))
           (error who "could not read non-null value for dtype ~v" dtype))
         (compat-opt-bool->datum value)]
        [(string) (require-ref-value who dtype (series-ref-string s index))]
        [(categorical enum)
-        (string->symbol (require-ref-value who dtype (series-ref-str/c s index)))]
+        (string->symbol (require-ref-value who dtype (series-ref-str/raw s index)))]
        [(date) (require-ref-value who dtype (series-date-ref s index))]
        [(time)
-        (define raw (compat-opt-i64->datum (series-ref-time/c s index)))
+        (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
         (require-ref-value who dtype (and raw (nanoseconds->time raw)))]
        [else
         (match dtype
           [`(duration ,_)
-           (define raw (compat-opt-i64->datum (series-ref-duration/c s index)))
+           (define raw (compat-opt-i64->datum (series-ref-duration/raw s index)))
            (require-ref-value who dtype (and raw (duration-value->period dtype raw)))]
           [`(datetime ,unit ,zoned)
            (require-ref-value who dtype
@@ -1250,6 +1245,7 @@
    '(datetime milliseconds #f)))
 
 (module+ test
+  (define-namespace-anchor ref-anchor)
   (define ref-i32 (series-new-i32 "x" (list 10 polars-null -3)))
   (check-equal? (series-len ref-i32) 3)
   (check-equal? (series-null-count ref-i32) 1)
@@ -1260,10 +1256,18 @@
   (define ref-i64 (series-new-i64 "x" (list 1099511627776 polars-null)))
   (check-equal? (series-ref ref-i64 0) 1099511627776)
   (check-equal? (series-ref ref-i64 1) polars-null)
+  (define client-ref-i64
+    (parameterize ([current-namespace (namespace-anchor->empty-namespace ref-anchor)])
+      (namespace-require 'racket/base)
+      (eval '(module client racket/base
+               (require (only-in polars/private/foreign series-ref-i64/raw))
+               (provide client-ref)
+               (define (client-ref s index) (series-ref-i64/raw s index))))
+      (dynamic-require ''client 'client-ref)))
   (for ([index (in-list '(-1 a 2 5))])
-    (check-exn #rx"^series-ref-i64/raw: contract violation"
-               (lambda () (series-ref-i64/raw ref-i64 index))))
-  (check-equal? (CompatOptI64-value (series-ref-i64/raw ref-i64 0)) 1099511627776)
+    (check-exn #rx"^series-ref-i64/raw: contract violation\n.*\n  blaming: client\n"
+               (lambda () (client-ref-i64 ref-i64 index))))
+  (check-equal? (CompatOptI64-value (client-ref-i64 ref-i64 0)) 1099511627776)
 
   (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
   (check-equal? (series-ref ref-i8 0) -8)

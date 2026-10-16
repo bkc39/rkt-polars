@@ -70,6 +70,21 @@ fn a_polars_pool_thread_is_a_polars_worker() {
     assert!(polars_core::runtime::THREAD_POOL.install(on_polars_worker));
 }
 
+#[test]
+fn a_polars_executor_task_runs_on_a_polars_worker() {
+    let task = polars_async::executor::spawn(
+        polars_async::executor::TaskPriority::High,
+        async { on_polars_worker() },
+    );
+    assert!(polars_async::ASYNC.block_on(task));
+}
+
+#[test]
+fn a_polars_blocking_task_runs_on_a_polars_worker() {
+    let task = polars_async::ASYNC.spawn_blocking(on_polars_worker);
+    assert!(polars_async::ASYNC.block_on(task).unwrap());
+}
+
 const HOOK_CHILD: &str = "RKT_POLARS_HOOK_CHILD";
 
 fn panic_on_a_thread(message: &'static str) {

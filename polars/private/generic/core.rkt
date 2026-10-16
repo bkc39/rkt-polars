@@ -418,6 +418,11 @@
       [(unpivot (dataframe (list past-chrono-date (series '("a") #:name "k") (series '(1) #:name "i")))
                 #:on '("d" "k") #:index '("i"))
        "^unpivot: cannot unpivot the dataframe: polars panicked: "]
+      [(let ([path (make-temporary-file "rkt-polars-~a.ndjson")])
+         (dynamic-wind void
+                       (lambda () (write-ndjson (dataframe (list past-chrono-date)) path))
+                       (lambda () (delete-file path))))
+       "^write-ndjson: .*polars panicked: "]
       [(series-new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0)))
        "^series-new-ymdhms: operation failed"]))
   (define past-chrono-program
@@ -426,7 +431,7 @@
                                         `(lambda () ,probe)))])
               (with-handlers ([exn:fail? exn-message]) (format "~a" (probe))))))
   (define-values (past-chrono-child child-out child-in child-err)
-    (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars"
+    (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "racket/file" "-l" "polars"
                 "-l" "polars/private/generic/test-fixtures"
                 "-e" (format "~s" past-chrono-program)))
   (close-output-port child-in)

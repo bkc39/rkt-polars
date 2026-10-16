@@ -24,6 +24,9 @@
 (define past-chrono-datetime
   (wrap-series (series-cast (series-new-i64 "t" '(9223372036854775807))
                             '(datetime milliseconds #f))))
+(define past-chrono-zoned
+  (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
+                            '(datetime microseconds "Europe/Brussels"))))
 
 (define frame
   (dataframe (list (series '("alice" "bob" "carol") #:name "user")
