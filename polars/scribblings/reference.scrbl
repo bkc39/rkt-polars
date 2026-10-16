@@ -1870,7 +1870,11 @@ dtype or a specific typed result.
 
   A drop must not run while another thread uses the same series: the check
   is made as the call converts its arguments, so a drop between that and the
-  native call frees memory the call goes on to read.
+  native call frees memory the call goes on to read, which can crash Racket
+  or return wrong values. Nothing guards against it; a program that shares a
+  value between threads synchronises the drop with them, or leaves the
+  release to the collector, which never runs it while a thread can still
+  reach the value.
 
   @examples[#:eval ev
 (define temps (series '(21.5 23.0 19.8) #:name "temp"))
