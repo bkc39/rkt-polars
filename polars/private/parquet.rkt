@@ -334,7 +334,7 @@
                     (lambda ()
                       (lazyframe-collect
                        (apply-keywords lazyframe-scan-parquet past-last numbers-parquet))))])
-    (check-regexp-match #rx"^[^:]*: failed to [^:]*: row index from offset 4294967293 overflows u32$"
+    (check-regexp-match #rx"^[^:]*: (failed to [^:]*: )?row index from offset 4294967293 overflows u32$"
                         (message-of read)))
 
   (define kept-dir (in-scratch "kept"))

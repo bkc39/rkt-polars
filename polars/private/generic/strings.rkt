@@ -198,7 +198,7 @@
   (check-equal? (parsed (str->datetime "offset" #:format "%Y-%m-%dT%H:%M:%S%z"))
                 (list (list '(datetime microseconds "UTC")
                             (moment 2021 3 26 23 #:tz "UTC") (moment 2021 3 28 22 #:tz "UTC"))))
-  (check-exn #rx"^lazyframe-collect: .*no format and no time zone, but a time zone is part of"
+  (check-exn #rx"^select: .*no format and no time zone, but a time zone is part of"
              (lambda () (parsed (str->datetime "offset"))))
   (check-equal? (parsed (str->datetime "offset" #:time-zone "Asia/Tokyo" #:unit 'milliseconds))
                 (list (list '(datetime milliseconds "Asia/Tokyo")
@@ -214,10 +214,10 @@
                                                        #:ambiguous 'null #:strict #f)))
                           2)
                 polars-null)
-  (check-exn #rx"^lazyframe-collect: .*conversion from `str` to `datetime\\[μs, Europe/Brussels\\]`"
+  (check-exn #rx"^select: .*conversion from `str` to `datetime\\[μs, Europe/Brussels\\]`"
              (lambda () (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"
                                                #:ambiguous 'null))))
-  (check-exn #rx"^lazyframe-collect: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
+  (check-exn #rx"^select: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
              (lambda () (parsed (str->datetime "clock" #:time-zone "Europe/Brussels"))))
   (check-exn (regexp (string-append "^str->datetime: cannot parse into the time zone"
                                     " \"Mars/Base\": unable to parse time zone: 'Mars/Base'"))

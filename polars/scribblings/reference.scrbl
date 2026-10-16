@@ -64,7 +64,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?
+              @defproc[(lit [v (or/c boolean?
+                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                     (and/c real? (not/c exact-integer?)) string? symbol?
                                      polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
@@ -112,8 +114,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
-  exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
-  @racket['float64]) and strings. A symbol is the string of its name, so a
+  exact integers (32-bit when they fit, 64-bit otherwise; one outside 64
+  bits is a contract error), other reals (as @racket['float64]) and
+  strings. A symbol is the string of its name, so a
   categorical column compares with the symbols it reads back as. A
   @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
   @tt{moment} or @tt{period}, and becomes a literal of the dtype
@@ -150,7 +153,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
         (+ (col "weight") polars-null))
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
-                       (column-names people)))]}
+                       (column-names people)))
+(eval:error (lit (expt 2 63)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -546,6 +550,14 @@ far-zoned
 (vstack top (dataframe (list (series '(3) #:name "v"))))
 (eval:error (vstack top (dataframe (list (series '("3") #:name "v")))))]}
 
+@defproc[(hstack [d dataframe?] [column series?] ...) dataframe?]{
+  Appends each @racket[column] to @racket[d] (Polars' @tt{hstack}). A
+  column must have @racket[d]'s height and a name @racket[d] lacks.
+
+  @examples[#:eval ev
+(hstack top (series '(10 20) #:name "w"))
+(eval:error (hstack top (series '(10) #:name "w")))]}
+
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
                              [n exact-nonnegative-integer?]) any/c]
               @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
@@ -588,17 +600,19 @@ far-zoned
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c (listof string?) #f) #f]
-               [#:left-on left-on (or/c (listof string?) #f) #f]
-               [#:right-on right-on (or/c (listof string?) #f) #f]
-               [#:how how (or/c 'inner 'left 'outer 'cross 'semi 'anti) 'inner])
+               [#:on on (or/c #f (non-empty-listof string?)) #f]
+               [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
+               [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+               [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          (or/c dataframe? lazyframe?)]{
-  Joins @racket[right] onto @racket[left] on the shared key columns
-  @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
-  (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}. As in Python Polars, only a @racket['cross] join promises
-  a row order; sort the result when order matters. Eager keys whose dtypes
-  differ, or a key a frame lacks, raise with Polars' reason.
+  Joins @racket[right], of the same kind as @racket[left], onto it on the
+  shared key columns @racket[#:on], or on @racket[#:left-on] /
+  @racket[#:right-on] (@tt{left.join(right, ...)}); a @racket['cross] join
+  takes no keys, and @racket['full] is @racket['outer]. Eager on a
+  @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
+  a @racket['cross] join promises a row order; sort the result when order
+  matters. Keys whose dtypes differ, a key a frame lacks, or key lists of
+  different lengths raise with Polars' reason.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
@@ -607,7 +621,39 @@ far-zoned
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)
-(eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))]}
+(eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
+(eval:error (join left right))]}
+
+@defproc[(join-asof [left dataframe?]
+                    [right dataframe?]
+                    [#:on on (or/c #f string?) #f]
+                    [#:left-on left-on (or/c #f string?) #f]
+                    [#:right-on right-on (or/c #f string?) #f]
+                    [#:by by (or/c #f (listof string?)) #f]
+                    [#:left-by left-by (or/c #f (listof string?)) #f]
+                    [#:right-by right-by (or/c #f (listof string?)) #f]
+                    [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
+                    [#:tolerance tolerance
+                                 (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                       (and/c real? (not/c exact-integer?)))
+                                 #f])
+         dataframe?]{
+  Matches each row of @racket[left] to the nearest row of @racket[right] by
+  the sorted key column @racket[#:on], or @racket[#:left-on] /
+  @racket[#:right-on] (@tt{left.join_asof(right, ...)}): the last one at or
+  before it for @racket['backward], the first at or after it for
+  @racket['forward]. @racket[#:by], or equally long @racket[#:left-by] and
+  @racket[#:right-by], match within equal groups only, and a key further than
+  @racket[#:tolerance] away matches nothing.
+
+  @examples[#:eval ev
+(define readings (dataframe (list (series '(1 3 5) #:name "t")
+                                  (series '(100 300 500) #:name "v"))))
+(define offsets (dataframe (list (series '(1 2 4) #:name "t")
+                                 (series '(10 20 40) #:name "o"))))
+(join-asof readings offsets #:on "t")
+(join-asof readings offsets #:on "t" #:tolerance 0)
+(eval:error (join-asof readings offsets #:on "t" #:left-by '("v")))]}
 
 @defproc/arguments[csv-read-arguments (read-csv [path path-string?] dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
@@ -2564,10 +2610,10 @@ query
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
                          [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (listof string?)) #f]
-                         [#:left-on left-on (or/c #f (listof string?)) #f]
-                         [#:right-on right-on (or/c #f (listof string?)) #f]
-                         [#:how how (or/c 'inner 'left 'outer 'full 'cross) 'inner])
+                         [#:on on (or/c #f (non-empty-listof string?)) #f]
+                         [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],
   when they have the same names on both sides, or as parallel

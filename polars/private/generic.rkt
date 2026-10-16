@@ -26,6 +26,7 @@
          polars/private/generic/operators
          polars/private/generic/math
          polars/private/generic/reshape
+         polars/private/generic/combine
          polars/private/generic/strings
          polars/private/generic/datetime
          polars/private/generic/nullable

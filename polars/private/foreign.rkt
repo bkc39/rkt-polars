@@ -17,6 +17,9 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/join-options
+                  asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
+                  frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
@@ -29,8 +32,16 @@
                      series-sort dataframe-sort series-ref-string strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c
-                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out)))
+                     dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
+                     define-frame-op/reason
+                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
+                     (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
+          [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
+          [dataframe-vstack (->/c DataFrame-ptr? DataFrame-ptr? DataFrame-ptr?)]
+          [dataframe-join (frame-join/c DataFrame-ptr? (lambda (_) DataFrame-ptr?)
+                                        (lambda (_) DataFrame-ptr?) 'dataframe-join/c)]
+          [dataframe-join-asof (frame-join-asof/c DataFrame-ptr? 'dataframe-join-asof/c)]
           [series-drop (->/c Series-ptr? void?)]
           [dataframe-drop (->/c DataFrame-ptr? void?)]
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
@@ -1989,16 +2000,24 @@
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
   #:wrap (allocator/or-fail dataframe-drop 'dataframe-with-column))
 
-(define-compat dataframe-hstack/raw
-  (_fun _DataFrame-ptr
-        (v : (_list i _Series-ptr))
-        (_size = (length v))
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_hstack
-  #:wrap (allocator dataframe-drop))
+(define-syntax-parse-rule (define-frame-op/reason (name:id arg:id ...) call:expr compat:expr)
+  #:with name/who (format-id #'name "~a/who" #'name)
+  (begin
+    compat
+    (define (name/who who arg ...) (call/polars-reason who (lambda () call)))))
 
-(define (dataframe-hstack d columns #:who [who 'dataframe-hstack])
-  (call/polars-reason who (lambda () (dataframe-hstack/raw d columns))))
+(define-frame-op/reason (dataframe-hstack d columns)
+  (dataframe-hstack/raw d columns)
+  (define-compat dataframe-hstack/raw
+    (_fun _DataFrame-ptr
+          (v : (_list i _Series-ptr))
+          (_size = (length v))
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_hstack
+    #:wrap (allocator dataframe-drop)))
+
+(define (dataframe-hstack d columns)
+  (dataframe-hstack/who 'dataframe-hstack d columns))
 
 (define-compat dataframe-new/raw
   (_fun (v : (_list i _Series-ptr))
@@ -2182,15 +2201,16 @@
                                  keyword flags
                                  "keys" keys)]))
 
+(define (dataframe-sort/who who df names descending nulls-last maintain-order)
+  (define flags (sort-flags who "#:descending" descending names))
+  (define nulls (sort-flags who "#:nulls-last" nulls-last names))
+  (call/polars-reason who (lambda () (dataframe-sort/raw df names flags nulls maintain-order))))
+
 (define (dataframe-sort df names
                         #:descending [descending #f]
                         #:nulls-last [nulls-last #f]
                         #:maintain-order [maintain-order #f])
-  (define flags (sort-flags 'dataframe-sort "#:descending" descending names))
-  (define nulls (sort-flags 'dataframe-sort "#:nulls-last" nulls-last names))
-  (call/foreign-error 'dataframe-sort
-                      (lambda () (dataframe-sort/raw df names flags nulls maintain-order))
-                      "failed to sort by ~v" names))
+  (dataframe-sort/who 'dataframe-sort df names descending nulls-last maintain-order))
 
 (define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
   (define-compat name
@@ -2228,105 +2248,50 @@
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
   #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-nulls))
 
-(define compat-join-kind/inner 1)
-(define compat-join-kind/left  2)
-(define compat-join-kind/outer 3)
-(define compat-join-kind/cross 4)
-(define compat-join-kind/semi  5)
-(define compat-join-kind/anti  6)
-
-(define (join-symbol->code who sym)
-  (case sym
-    [(inner) compat-join-kind/inner]
-    [(left)  compat-join-kind/left]
-    [(outer full) compat-join-kind/outer]
-    [(cross) compat-join-kind/cross]
-    [(semi)  compat-join-kind/semi]
-    [(anti)  compat-join-kind/anti]
-    [else (error who
-                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross 'semi 'anti)"
-                 sym)]))
-
-(define-compat dataframe-join/c
-  (_fun _DataFrame-ptr _DataFrame-ptr
-        (left-on : _string-list)
-        (_size = (length left-on))
-        (right-on : _string-list)
-        (_size = (length right-on))
-        _int32
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_join
-  #:wrap (allocator dataframe-drop))
+(define-frame-op/reason (dataframe-join left right left-on right-on how)
+  (dataframe-join/c left right left-on right-on (join-symbol->code how))
+  (define-compat dataframe-join/c
+    (_fun _DataFrame-ptr _DataFrame-ptr
+          (left-on : _string-list)
+          (_size = (length left-on))
+          (right-on : _string-list)
+          (_size = (length right-on))
+          _int32
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_join
+    #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join left right
                         #:on [on #f]
                         #:left-on [left-on #f]
                         #:right-on [right-on #f]
-                        #:how [how 'inner]
-                        #:who [who 'dataframe-join])
-  (define-values (lon ron)
-    (cond
-      [(eq? how 'cross) (values '() '())]
-      [on (values on on)]
-      [(and left-on right-on) (values left-on right-on)]
-      [else (error who "must supply #:on, or #:left-on and #:right-on")]))
-  (define code (join-symbol->code who how))
-  (call/polars-reason who (lambda () (dataframe-join/c left right lon ron code))))
-
-(define compat-asof-strategy/backward 1)
-(define compat-asof-strategy/forward  2)
-(define compat-asof-strategy/nearest  3)
-
-(define compat-asof-tolerance/none    0)
-(define compat-asof-tolerance/integer 1)
-(define compat-asof-tolerance/float   2)
-
-(define (asof-strategy-symbol->code who sym)
-  (case sym
-    [(backward) compat-asof-strategy/backward]
-    [(forward)  compat-asof-strategy/forward]
-    [(nearest)  compat-asof-strategy/nearest]
-    [else (error who "unknown asof strategy ~v (expected 'backward 'forward 'nearest)" sym)]))
+                        #:how [how 'inner])
+  (define-values (lon ron) (join-keys how on left-on right-on))
+  (dataframe-join/who 'dataframe-join left right lon ron how))
 
 (define-compat dataframe-join-asof/raw
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _DataFrame-ptr/null)
   #:c-id dataframe_join_asof
   #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-join-asof-options/raw
-  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
-        (left-by : _string-list)
-        (_size = (length left-by))
-        (right-by : _string-list)
-        (_size = (length right-by))
-        _int32
-        _int64
-        _double
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_join_asof_options
-  #:wrap (allocator dataframe-drop))
-
-(define (asof-tolerance->parts who tolerance)
-  (cond
-    [(not tolerance) (values compat-asof-tolerance/none 0 0.0)]
-    [(exact-integer? tolerance)
-     (values compat-asof-tolerance/integer tolerance 0.0)]
-    [(real? tolerance)
-     (values compat-asof-tolerance/float 0 (exact->inexact tolerance))]
-    [else
-     (error who "tolerance must be #f, an exact integer, or a real number, got ~v" tolerance)]))
-
-(define (asof-by-values who by left-by right-by)
-  (cond
-    [(and by (or left-by right-by))
-     (error who "supply either #:by or #:left-by and #:right-by, not both")]
-    [by (values by by)]
-    [(and (not left-by) (not right-by)) (values '() '())]
-    [(not (and left-by right-by)) (error who "must supply both #:left-by and #:right-by")]
-    [(not (= (length left-by) (length right-by)))
-     (error who "left-by length ~a does not match right-by length ~a"
-            (length left-by) (length right-by))]
-    [else (values left-by right-by)]))
+(define-frame-op/reason (dataframe-join-asof left right left-on right-on left-by right-by
+                                             strategy tolerance)
+  (let-values ([(kind integer float) (asof-tolerance->parts tolerance)])
+    (dataframe-join-asof-options/raw left right left-on right-on
+                                     (asof-strategy-symbol->code strategy)
+                                     left-by right-by kind integer float))
+  (define-compat dataframe-join-asof-options/raw
+    (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
+          (left-by : _string-list)
+          (_size = (length left-by))
+          (right-by : _string-list)
+          (_size = (length right-by))
+          _int32
+          _int64
+          _double
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_join_asof_options
+    #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join-asof left right
                              #:on [on #f]
@@ -2336,30 +2301,23 @@
                              #:left-by [left-by #f]
                              #:right-by [right-by #f]
                              #:strategy [strategy 'backward]
-                             #:tolerance [tolerance #f]
-                             #:who [who 'dataframe-join-asof])
-  (define-values (lon ron)
-    (cond
-      [on (values on on)]
-      [(and left-on right-on) (values left-on right-on)]
-      [else (error who "must supply #:on, or #:left-on and #:right-on")]))
-  (define-values (lby rby) (asof-by-values who by left-by right-by))
-  (define-values (tolerance-kind tolerance-integer tolerance-float)
-    (asof-tolerance->parts who tolerance))
-  (define code (asof-strategy-symbol->code who strategy))
-  (call/polars-reason
-   who
-   (lambda ()
-     (dataframe-join-asof-options/raw left right lon ron code lby rby
-                                      tolerance-kind tolerance-integer tolerance-float))))
+                             #:tolerance [tolerance #f])
+  (define-values (lon ron lby rby) (asof-keys on left-on right-on by left-by right-by))
+  (dataframe-join-asof/who 'dataframe-join-asof left right lon ron lby rby strategy tolerance))
 
-(define-compat dataframe-vstack/raw
-  (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr/null)
-  #:c-id dataframe_vstack
-  #:wrap (allocator dataframe-drop))
+(define-frame-op/reason (dataframe-vstack top bottom)
+  (dataframe-vstack/raw top bottom)
+  (define-compat dataframe-vstack/raw
+    (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr/null)
+    #:c-id dataframe_vstack
+    #:wrap (allocator dataframe-drop)))
 
-(define (dataframe-vstack top bottom #:who [who 'dataframe-vstack])
-  (call/polars-reason who (lambda () (dataframe-vstack/raw top bottom))))
+(define (dataframe-vstack top bottom)
+  (dataframe-vstack/who 'dataframe-vstack top bottom))
+
+(module+ internal
+  (provide dataframe-hstack/who dataframe-join/who dataframe-join-asof/who dataframe-sort/who
+           dataframe-vstack/who))
 
 (define compat-pivot-agg/none  0)
 (define compat-pivot-agg/first 1)
@@ -2729,7 +2687,7 @@
              (lambda () (contracted:dataframe-sort sort-src "x")))
   (check-exn (sort-blame? #rx"^series-sort: contract violation")
              (lambda () (contracted:series-sort (series-new-i64 "x" '(1)) #:nulls-last '(#t))))
-  (check-exn #rx"^dataframe-sort: failed to sort by .*nope"
+  (check-exn #rx"^dataframe-sort: not found: \"nope\" not found$"
              (lambda () (contracted:dataframe-sort sort-src '("nope"))))
   (check-equal? (let ([s (contracted:series-sort (dataframe-column sort-src "x") #:nulls-last #t)])
                   (for/list ([i (in-range (series-len s))]) (series-ref s i)))

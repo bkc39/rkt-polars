@@ -8,6 +8,7 @@
          (only-in racket/contract/base contract-out)
          polars/private/foreign
          polars/private/expr
+         (only-in (submod polars/private/expr internal) lazyframe-collect/who)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
          (only-in polars/private/generic/dtype dtype-spec?))
@@ -19,12 +20,15 @@
 
 (define cast-target/c (or/c dtype-spec? 'binary 'duration))
 
+(define (collect-frame who d extend)
+  (wrap-dataframe (lazyframe-collect/who who (extend (dataframe-lazy d)))))
+
 ;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
 ;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
 (define (filter . args)
   (match args
     [(list (? dataframe? d) (? Expr-ptr? pred))
-     (wrap-dataframe (dataframe-filter-expr d pred))]
+     (collect-frame 'filter d (lambda (plan) (lazyframe-filter plan pred)))]
     [(list (? dataframe? d) (? series? mask))
      (wrap-dataframe (dataframe-filter d mask))]
     [(list (? lazyframe? lf) (? Expr-ptr? pred))
@@ -92,7 +96,7 @@
 (define (select d . specs)
   (cond
     [(dataframe? d)
-     (wrap-dataframe (dataframe-select-exprs d (specs->exprs 'select d specs)))]
+     (collect-frame 'select d (lambda (plan) (lazyframe-select plan (specs->exprs 'select d specs))))]
     [(lazyframe? d)
      (wrap-lazyframe (lazyframe-select d (specs->exprs 'select d specs)))]
     [else (error 'select "expected a dataframe or lazyframe, got ~v" d)]))
@@ -103,7 +107,8 @@
 (define (with-columns d . specs)
   (cond
     [(dataframe? d)
-     (wrap-dataframe (dataframe-with-columns d (specs->exprs 'with-columns d specs)))]
+     (collect-frame 'with-columns d
+                    (lambda (plan) (lazyframe-with-columns plan (specs->exprs 'with-columns d specs))))]
     [(lazyframe? d)
      (wrap-lazyframe (lazyframe-with-columns d (specs->exprs 'with-columns d specs)))]
     [else (error 'with-columns "expected a dataframe or lazyframe, got ~v" d)]))
@@ -125,47 +130,6 @@
   (cond [(Expr-ptr? x) (expr-cast-to 'cast x dtype)]
         [(series? x)   (wrap-series (series-cast-to 'cast x dtype))]
         [else          (expr-cast-to 'cast (col x) dtype)]))
-
-;; join: left.join(right, ...) -> dataframe.  #:on (shared key) or
-;; #:left-on/#:right-on; #:how 'inner/'left/'outer/'cross/'semi/'anti.
-(define (join left right
-              #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
-              #:how [how 'inner])
-  (cond
-    [(dataframe? left)
-     (guard-dataframe 'join right)
-     (wrap-dataframe
-      (dataframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how
-                      #:who 'join))]
-    [(lazyframe? left)
-     (wrap-lazyframe
-      (lazyframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]
-    [else (error 'join "expected a dataframe or lazyframe, got ~v" left)]))
-
-;; vstack: append the rows of another (compatible) dataframe -> dataframe.
-(define (vstack a b)
-  (guard-dataframe 'vstack a)
-  (guard-dataframe 'vstack b)
-  (wrap-dataframe (dataframe-vstack a b #:who 'vstack)))
-
-;; hstack: append column(s) (series) to a dataframe -> dataframe (Polars df.hstack).
-(define (hstack d . cols)
-  (guard-dataframe 'hstack d)
-  (wrap-dataframe (dataframe-hstack d cols #:who 'hstack)))
-
-;; join-asof: as-of join (Polars left.join_asof).  #:on (shared key) or
-;; #:left-on/#:right-on; #:strategy 'backward/'forward/'nearest; optional
-;; #:by / #:left-by / #:right-by and #:tolerance.
-(define (join-asof left right
-                   #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
-                   #:by [by #f] #:left-by [left-by #f] #:right-by [right-by #f]
-                   #:strategy [strategy 'backward] #:tolerance [tolerance #f])
-  (guard-dataframe 'join-asof left)
-  (wrap-dataframe
-   (dataframe-join-asof left right
-                        #:on on #:left-on left-on #:right-on right-on
-                        #:by by #:left-by left-by #:right-by right-by
-                        #:strategy strategy #:tolerance tolerance #:who 'join-asof)))
 
 ;; pivot: long -> wide (Polars df.pivot).
 (define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
@@ -193,7 +157,7 @@
   ;; dispatch on whether the grouped frame is eager or lazy
   (if (lazyframe? frame)
       (wrap-lazyframe (lazyframe-group-by-agg frame keys agg-exprs))
-      (wrap-dataframe (dataframe-group-by-agg frame keys agg-exprs))))
+      (collect-frame 'agg frame (lambda (plan) (lazyframe-group-by-agg plan keys agg-exprs)))))
 
 ;; --- lazy: a DataFrame's deferred query plan, and back ----------------------
 (define (lazy d)
@@ -203,7 +167,7 @@
 (define (collect lf)
   (unless (lazyframe? lf)
     (error 'collect "expected a lazyframe, got ~v" lf))
-  (wrap-dataframe (lazyframe-collect lf)))
+  (wrap-dataframe (lazyframe-collect/who 'collect lf)))
 
 (define explain (lazyframe-explainer 'explain))
 
@@ -393,7 +357,7 @@
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
-  (check-exn #rx"^lazyframe-collect: .*\"IAH\""
+  (check-exn #rx"^with-columns: [^\n]*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
   (define nul-dests (list 'enum 'JFK (string->symbol "MI\u0000A") 'IAH))
   (for ([target (list (ref flights "dest") "dest")])
@@ -414,61 +378,6 @@
     (check-equal? (column-names d) '("user" "th"))
     (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10)))
 
-  ;; --- join / vstack --------------------------------------------------------
-  (define usr (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
-                               (series '("alice" "bob" "carol" "dora") #:name "name"))))
-  (define ord (dataframe (list (series '(1 2 2 5) #:name "uid" #:dtype 'i32)
-                               (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
-  (check-equal? (height (join usr ord #:on '("uid") #:how 'inner)) 3)   ; uid 1,2,2
-  (check-equal? (height (join usr ord #:on '("uid") #:how 'left)) 5)    ; +uid 3,4 (null)
-  (check-equal? (height (join (head usr 2) (head ord 2) #:how 'cross)) 4)
-  (check-equal? (sort (column-names (join usr ord #:on '("uid") #:how 'inner)) string<?)
-                '("amount" "name" "uid"))
-  (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
-                                (series '("eve" "frank") #:name "name"))))
-  (check-equal? (height (vstack usr more)) 6)
-  (check-equal? (column-names (vstack usr more)) '("uid" "name"))
-  ;; hstack: append column(s)
-  (check-equal? (column-names (hstack usr (series '(10 20 30 40) #:name "extra")))
-                '("uid" "name" "extra"))
-  (check-equal? (shape (hstack (dataframe '()) (series '(1 2 3) #:name "a"))) '(3 1))
-  (let ([stacked (vstack (dataframe (list (series '(1 2) #:name "x")))
-                         (dataframe (list (series (list polars-null 4) #:name "x"))))])
-    (check-equal? (column stacked "x") (list 1 2 polars-null 4)))
-  (define ints-x (dataframe (list (series '(1) #:name "x"))))
-  (define strs-x (dataframe (list (series '("s") #:name "x"))))
-  (for ([case
-         `((,(lambda () (vstack (dataframe (list (series (list polars-null) #:name "x"
-                                                         #:dtype 'null)))
-                                ints-x))
-            "^vstack: type Int64 is incompatible with expected type Null: failed to vstack column 'x'$")
-           (,(lambda () (vstack ints-x strs-x))
-            "^vstack: type String is incompatible with expected type Int64: failed to vstack column 'x'$")
-           (,(lambda () (vstack ints-x (dataframe (list (series '(1) #:name "y")))))
-            "^vstack: [^\n]*unable to vstack, column names don't match: \"x\" and \"y\"$")
-           (,(lambda () (vstack ints-x 5)) "^vstack: expected a dataframe, got 5$")
-           (,(lambda () (join ints-x strs-x #:on '("x")))
-            "^join: datatypes of join keys don't match - `x`: i64 on left does not match `x`: str")
-           (,(lambda () (join ints-x ints-x #:on '("y"))) "^join: [^\n]*\"y\"")
-           (,(lambda () (join ints-x ints-x #:on '("x") #:how 'sideways))
-            "^join: unknown join kind 'sideways")
-           (,(lambda () (join ints-x ints-x)) "^join: must supply #:on")
-           (,(lambda () (join ints-x 5 #:on '("x"))) "^join: expected a dataframe, got 5$")
-           (,(lambda () (hstack ints-x (series '(2) #:name "x"))) "^hstack: [^\n]*'x'")
-           (,(lambda () (hstack ints-x (series '(2 3) #:name "y"))) "^hstack: [^\n]*height")
-           (,(lambda () (join-asof ints-x ints-x #:on "nope")) "^join-asof: [^\n]*\"nope\"")
-           (,(lambda () (join-asof ints-x ints-x #:on "x" #:strategy 'sideways))
-            "^join-asof: unknown asof strategy 'sideways"))])
-    (match-define (list thunk rx) case)
-    (define message (with-handlers ([exn:fail? exn-message]) (thunk) #f))
-    (check-regexp-match (pregexp rx) message)
-    (check-false (regexp-match? #rx"dataframe-|operation failed|Resolved plan" message)))
-  ;; join-asof / pivot / unpivot
-  (let ([obs (dataframe (list (series '(1 3 5) #:name "time" #:dtype 'i32)
-                              (series '(100 300 500) #:name "reading" #:dtype 'i32)))]
-        [cal (dataframe (list (series '(1 2 4) #:name "time" #:dtype 'i32)
-                              (series '(10 20 40) #:name "offset" #:dtype 'i32)))])
-    (check-equal? (height (join-asof obs cal #:on "time" #:strategy 'backward)) 3))
   (let* ([sales (dataframe (list (series '("a" "a" "b" "b")     #:name "store")
                                  (series '("q1" "q2" "q1" "q2") #:name "quarter")
                                  (series '(10 20 30 40)         #:name "sales" #:dtype 'i32)))]
@@ -507,19 +416,26 @@
          [long (unpivot wide #:on '() #:index '("id"))])
     (check-equal? (column-names long) '("id" "variable" "value"))
     (check-equal? (column long "variable") '("a" "a" "b" "b")))
-  (let ([crossed (join (dataframe (list (series '("a" "b") #:name "l")))
-                       (dataframe (list (series '(1 2) #:name "r")))
-                       #:how 'cross)])
-    (check-equal? (map list (column crossed "l") (column crossed "r"))
-                  '(("a" 1) ("a" 2) ("b" 1) ("b" 2))))
 
+  (for ([refusal
+         (list (list 'select (lambda () (select ops-df (col "nope"))))
+               (list 'with-columns (lambda () (with-columns ops-df (p+ (col "nope") 1))))
+               (list 'filter (lambda () (filter ops-df (> (col "nope") 1))))
+               (list 'agg (lambda () (~> ops-df (group-by "group") (agg (sum "nope")))))
+               (list 'agg (lambda () (~> ops-df (group-by "nope") (agg (sum "value")))))
+               (list 'collect (lambda () (~> ops-df lazy (select "nope") collect)))
+               (list 'collect (lambda () (~> ops-df lazy (filter (> (col "nope") 2)) collect))))])
+    (match-define (list who thunk) refusal)
+    (define message
+      (pregexp (format "^~a: not found: unable to find column \"nope\"; valid columns: \\[[^\n]*\\]$" who)))
+    (check-exn (lambda (e) (and (not (exn:fail:contract? e)) (regexp-match? message (exn-message e))))
+               thunk
+               (object-name message)))
   (check-pred lazyframe? (lazy ops-df))
   ;; lazy head / tail / slice (build the plan, then collect)
   (check-equal? (height (~> ops-df lazy (head 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
-  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
-  ;; lazy join (both sides lazy)
-  (check-equal? (height (~> usr lazy (join (lazy ord) #:on '("uid") #:how 'inner) collect)) 3))
+  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3))
 
 (module+ test
   (require racket/runtime-path

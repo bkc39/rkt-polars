@@ -427,8 +427,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:row-index-name` and `#:include-file-paths` must differ (polars panics
   otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
   Rust, as for `read-json`: Python's `read_ndjson` ignores the overrides
-  once a schema is given. The eager NDJSON verbs strip the "Resolved plan
-  until failure" dump polars appends to a planning error (`without_plan`).
+  once a schema is given. The eager NDJSON verbs and `lazyframe_collect`
+  strip the "Resolved plan until failure" dump polars appends to a planning
+  error (`without_plan`). A fluent verb that builds a plan and collects it
+  (`select`, `with-columns`, `filter`, `agg`) reports the cause under its own
+  name, through `lazyframe-collect/who` (the `internal` submodule of
+  `expr.rkt`), and `collect` under `collect`.
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, through `write_frame` like the
   other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and

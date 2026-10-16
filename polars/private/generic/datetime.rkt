@@ -298,7 +298,7 @@
   (define parsed (select offsets (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")))
   (check-equal? (dtype (ref parsed "data")) '(datetime microseconds "UTC"))
   (check-equal? (one (ref parsed "data")) (moment 2021 3 26 23 #:tz "UTC"))
-  (check-exn #rx"^lazyframe-collect: .*no format and no time zone, but a time zone is part of"
+  (check-exn #rx"^select: .*no format and no time zone, but a time zone is part of"
              (lambda () (select offsets (str->datetime "data"))))
   (define mixed-parsed
     (~> offsets
@@ -394,7 +394,7 @@
   (check-equal? (ref (dt-replace-time-zone tokyo-edge #f) 0) (datetime 1677 9 21 8 25 26 290448385))
   (define skipped-text
     (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock"))))
-  (check-exn (regexp (string-append "^lazyframe-collect: .*'2021-03-28 02:30:00' is non-existent"
+  (check-exn (regexp (string-append "^select: .*'2021-03-28 02:30:00' is non-existent"
                                     " in time zone 'Europe/Brussels'\\. You may be able to use"
                                     " dt-replace-time-zone's #:non-existent 'null to return"))
              (lambda ()
@@ -502,7 +502,7 @@
   (check-exn (regexp (string-append "^<: datetimes in different time zones\n"
                                     "  series dtype: '\\(datetime microseconds #f\\)"))
              (lambda () (p:< (series (list (datetime 2021 5 1))) brussels)))
-  (check-exn #rx"^lazyframe-collect: .*comparison"
+  (check-exn #rx"^filter: .*comparison"
              (lambda () (filter zoned-frame (p:> (col "t") (moment 2021 5 1 #:tz "Asia/Tokyo")))))
   (check-equal? (literal (moment 2021 3 27 #:tz 3600)) (list '(datetime microseconds "UTC")
                                                              (moment 2021 3 26 23 #:tz "UTC")))
@@ -573,7 +573,7 @@
                 (moment 2021 10 31 11 30 #:tz "Asia/Tokyo"))
   (check-equal? (cells (dt-replace-time-zone (dt-replace-time-zone wall "UTC") #f))
                 (cells wall))
-  (check-exn #rx"^lazyframe-collect: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
+  (check-exn #rx"^select: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
              (lambda ()
                (select (dataframe (list wall)) (dt-replace-time-zone "wall" "Europe/Brussels"))))
   (check-equal? (column (select (dataframe (list wall))

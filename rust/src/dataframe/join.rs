@@ -71,6 +71,12 @@ fn join_frames(
         !left_on.is_empty() && !right_on.is_empty(),
         InvalidOperation: "a join needs at least one key column"
     );
+    polars_ensure!(
+        left_on.len() == right_on.len(),
+        InvalidOperation: "the number of columns given as join key (left: {}, right:{}) should be equal",
+        left_on.len(),
+        right_on.len()
+    );
     let args = polars::prelude::JoinArgs::new(join_type);
     left.join(right, left_on, right_on, args, None)
 }

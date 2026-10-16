@@ -8,8 +8,8 @@
          (only-in polars/private/expr
                   Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort)
          (only-in polars/private/expr-core sort-by/c)
-         (only-in polars/private/foreign
-                  dataframe-sort series-sort sort-flags-mismatch sort-flags/c)
+         (only-in polars/private/foreign series-sort sort-flags-mismatch sort-flags/c)
+         (only-in (submod polars/private/foreign internal) dataframe-sort/who)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? series? wrap-dataframe wrap-lazyframe wrap-series)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
@@ -77,8 +77,7 @@
   (cond
     [(dataframe? x)
      (wrap-dataframe
-      (dataframe-sort x (->keys by) #:descending descending #:nulls-last nulls-last
-                      #:maintain-order maintain-order))]
+      (dataframe-sort/who 'sort x (->keys by) descending nulls-last maintain-order))]
     [(lazyframe? x)
      (wrap-lazyframe
       (lazyframe-sort x (->keys by) #:descending descending #:nulls-last nulls-last
@@ -519,13 +518,15 @@
   (check-equal? (contracted:sort '(3 1 2) <) '(1 2 3))
 
   (check-exn (lambda (e) (and (not (exn:fail:contract:blame? e))
-                              (regexp-match? #rx"^dataframe-sort: failed to sort .*nope"
+                              (regexp-match? #rx"^sort: not found: [^\n]*\"nope\"[^\n]*$"
                                              (exn-message e))))
              (lambda () (contracted:sort ops-df "nope")))
   (define lazy-missing (contracted:sort (lazy ops-df) "nope"))
   (check-pred lazyframe? lazy-missing)
-  (check-exn #rx"^lazyframe-collect: failed to collect the query: .*nope"
+  (check-exn #rx"^collect: not found: unable to find column \"nope\"[^\n]*$"
              (lambda () (collect lazy-missing)))
+  (check-exn #rx"^select: not found: unable to find column \"nope\"[^\n]*$"
+             (lambda () (select ops-df (sort (col "nope")))))
 
   (define dtypes '(int64 int32 float64 string boolean datetime))
   (for* ([dtype (in-list dtypes)] [shape (in-list '((0 7) (1/4 1) (3/4 23) (1 5)))])
