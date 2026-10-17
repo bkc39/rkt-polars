@@ -13,7 +13,7 @@
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
-(define version "0.1")
+(define version "0.1.1")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 
@@ -22,4 +22,6 @@
 (define pre-install-collection "private/install-compat.rkt")
 (define compile-omit-files '("private/install-compat.rkt"))
 
-(define test-timeouts '(("private/generic/core.rkt" 600)))
+(define test-timeouts
+  '(("private/generic/core.rkt" 600)
+    ("private/generic/csv-options.rkt" 900)))
