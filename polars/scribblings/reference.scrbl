@@ -1281,8 +1281,9 @@ stations
 (eval:error (explain (select (lazy produce) "colour")))
 (eval:error (explain late #:format 'dot))]}
 
-@deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
-              @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
+@deftogether[(@defproc[(group-by [d (or/c dataframe? lazyframe?)] [key (or/c string? Expr-ptr?)] ...+)
+                       grouped?]
+              @defproc[(agg [g grouped?] [agg-expr Expr-ptr?] ...) (or/c dataframe? lazyframe?)]
               @defproc[(grouped? [v any/c]) boolean?])]{
   @racket[group-by] captures @racket[d] and one or more group keys in a deferred
   @racket[grouped] handle — no work happens yet — so it threads cleanly.
@@ -1392,7 +1393,7 @@ stations
                             [#:ddof ddof (integer-in 0 255) 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
                             [#:ddof ddof (integer-in 0 255) 1]) any/c]
-              @defproc[(alias [e any/c] [name string?]) any/c])]{
+              @defproc[(alias [e (or/c Expr-ptr? string?)] [name string?]) Expr-ptr?])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
   Each accepts an expression or a bare column-name string (lifted with
@@ -2007,14 +2008,17 @@ its expression form, @racket[(_op (col _name) _value)], with that form's
 dtypes and values: beside a @racket['null] series (where Python's eager
 operators raise) or with @racket[polars-null], beside an Enum
 series a string or symbol, beside a Decimal series a real, and beside an
-integer series an integer past the dtype's range. A negative integer beside
-an unsigned series, as in Python's eager operators, and a value no literal
-takes raise @racket[exn:fail:contract] naming it and the series' dtype.
+integer series an integer past the dtype's range. Any other value raises
+@racket[exn:fail:contract] naming it and the series' dtype: a string, symbol or
+boolean beside a numeric series, a number beside a string series, a negative
+integer beside an unsigned series (as in Python's eager operators), or a value
+no literal takes.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
-(eval:error (+ (series '(1 2) #:dtype 'u8) -1))]
+(eval:error (+ (series '(1 2) #:dtype 'u8) -1))
+(eval:error (= (series '("x")) 1))]
 
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 

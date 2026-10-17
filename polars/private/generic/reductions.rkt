@@ -13,8 +13,9 @@
 (provide (contract-out
           [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
           [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
-          [n-unique (-> (or/c series? col-expr/c) any/c)])
-         sum mean min max count median first last alias)
+          [n-unique (-> (or/c series? col-expr/c) any/c)]
+          [alias (-> col-expr/c string? Expr-ptr?)])
+         sum mean min max count median first last)
 
 (define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
   (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
@@ -118,7 +119,7 @@
     [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
     [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
 
-(define (alias e name) (expr-alias e name))
+(define (alias e name) (expr-alias (->col-expr 'alias e) name))
 
 (module+ test
   (require rackunit

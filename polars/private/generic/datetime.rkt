@@ -55,7 +55,8 @@
 (define (dt-timestamp x #:unit [unit 'microseconds])
   (expr-dt-timestamp (->col-expr 'dt-timestamp x) #:unit unit))
 (define (dt-strftime x fmt) (expr-dt-strftime (->col-expr 'dt-strftime x) fmt))
-(define (dt-truncate x every) (expr-dt-truncate (->col-expr 'dt-truncate x) every))
+(define (dt-truncate x every)
+  (expr-dt-truncate (->col-expr 'dt-truncate x) (->expr/who 'dt-truncate every)))
 
 (define (dt-convert-time-zone x zone)
   (define who 'dt-convert-time-zone)

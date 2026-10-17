@@ -26,7 +26,8 @@
 ;; the vacated slots instead of null.  diff takes successive differences over a
 ;; lag of #:n, with #:null-behavior 'ignore | 'drop.
 (define (shift x #:n [n 1] #:fill-value [fill-value #f])
-  (expr-shift (->col-expr 'shift x) #:n n #:fill-value fill-value))
+  (expr-shift (->col-expr 'shift x) #:n n
+              #:fill-value (and fill-value (->expr/who 'shift fill-value))))
 (define (diff x #:n [n 1] #:null-behavior [null-behavior 'ignore])
   (expr-diff (->col-expr 'diff x) #:n n #:null-behavior null-behavior))
 

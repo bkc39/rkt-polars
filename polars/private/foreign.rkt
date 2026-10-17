@@ -33,7 +33,7 @@
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
-                     define-frame-op/reason
+                     define-frame-op/reason define-reasoned
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out

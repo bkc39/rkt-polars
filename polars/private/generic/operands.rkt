@@ -6,13 +6,13 @@
                   call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
                   polars-null? series-dtype series-len series-name)
          (only-in polars/private/expr
-                  dataframe-lazy expr-alias expr-all lazyframe-collect/raw lazyframe-select lit)
+                  dataframe-lazy expr-alias expr-all lazyframe-collect/raw lazyframe-select lit/who)
          (only-in polars/private/generic/core null-series? series? wrap-series)
          (only-in polars/private/generic/dtype
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
          (only-in polars/private/resource with-release)
          (only-in polars/private/series series-repeat-temporal)
-         (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
+         (only-in polars/private/temporal temporal-value-dtype))
 
 (provide const-series
          expression-form-op
@@ -95,9 +95,6 @@
     [(or (boolean? other) (polars-null? other)) (const-series who 'boolean (series-len s) other)]
     [else (raise-argument-error who "(or/c series? boolean? polars-null?)" other)]))
 
-(define (without-plan reason)
-  (car (regexp-split #rx"\n\nResolved plan until failure:" reason)))
-
 (define (series-through-expr who s build)
   (define name (series-name s))
   (with-release ([frame (dataframe-new (list s)) dataframe-drop]
@@ -106,25 +103,18 @@
                        (lambda ()
                          (lazyframe-collect/raw
                           (lazyframe-select (dataframe-lazy frame)
-                                            (list (expr-alias (build (expr-all)) name)))))
-                       #:cause without-plan)
+                                            (list (expr-alias (build (expr-all)) name))))))
                       dataframe-drop])
     (wrap-series (dataframe-column out name))))
-
-(define (literal who v)
-  (match (temporal-value-dtype v)
-    [#f (void)]
-    [dtype ((temporal-encoder who dtype) v)])
-  (lit v))
 
 (define (expression-form-op who expr-op a b)
   (define (expression-form? s v)
     (and (series? s) (not (series? v)) (expression-operand? (series-dtype s) v)))
   (cond
     [(expression-form? a b)
-     (define v (literal who b))
+     (define v (lit/who who b))
      (series-through-expr who a (lambda (e) (expr-op e v)))]
     [(expression-form? b a)
-     (define v (literal who a))
+     (define v (lit/who who a))
      (series-through-expr who b (lambda (e) (expr-op v e)))]
     [else #f]))

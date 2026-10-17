@@ -21,7 +21,7 @@
       [_ #:when (andmap base:number? args) (apply base-op args)]
       [(list a b)
        (cond
-         [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+         [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who 'name a) (->expr/who 'name b))]
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a) (wrap-series (series-op 'name a (operand-series 'name a b)))]
          [(series? b) (wrap-series (series-op-reflected 'name b (operand-series 'name b a)))]
@@ -38,7 +38,7 @@
 (define-cmp != expr-ne series-ne/who series-ne/who base:!=)
 
 (define (binary-arith who expr-op series-op base-op a b)
-  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who who a) (->expr/who who b))]
         [(expression-form-op who expr-op a b) => values]
         [(series? a) (wrap-series (series-op who a (operand-series who a b)))]
         [(series? b) (wrap-series (series-op who (operand-series who b a) b))]
@@ -105,20 +105,20 @@
   (unless (when-pending? wp)
     (error 'then "`then` must follow `when` / `else-when`, got ~v" wp))
   (when-acc (append (when-pending-clauses wp)
-                    (list (list (when-pending-cond wp) value)))))
+                    (list (list (when-pending-cond wp) (->expr/who 'then value))))))
 
 (define (else-when wa cond)
   (unless (when-acc? wa)
     (error 'else-when "`else-when` must follow `then`, got ~v" wa))
-  (when-pending (when-acc-clauses wa) cond))
+  (when-pending (when-acc-clauses wa) (->expr/who 'else-when cond)))
 
 (define (otherwise wa default)
   (unless (when-acc? wa)
     (error 'otherwise "`otherwise` must follow `then`, got ~v" wa))
-  (expr-when (when-acc-clauses wa) #:otherwise default))
+  (expr-when (when-acc-clauses wa) #:otherwise (->expr/who 'otherwise default)))
 
 (define-syntax-parser p-when
-  [(_ c:expr) #'(when-pending '() c)]
+  [(_ c:expr) #'(when-pending '() (->expr/who 'when c))]
   [(_ test:expr body:expr ...) #'(base:when test body ...)])
 
 (module+ test

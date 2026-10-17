@@ -1,16 +1,25 @@
 #lang racket/base
 
 (require racket/generic
+         (only-in racket/contract/base ->i contract-out listof)
+         (only-in racket/list check-duplicates)
+         (only-in racket/match match)
          syntax/parse/define
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
          (only-in polars/private/bulk in-series)
+         (only-in polars/private/expr col dataframe-lazy lazyframe-select)
+         (only-in (submod polars/private/expr internal) lazyframe-collect/who)
          (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
          polars/private/generic/dtype
          polars/private/generic/printing)
 
-(provide (all-defined-out))
+(provide (except-out (all-defined-out) dataframe)
+         (contract-out
+          [dataframe (->i ([columns (listof Series-ptr?)])
+                          #:pre/desc (columns) (frame-columns-problem columns)
+                          [result dataframe?])]))
 
 ;; sentinel for "argument not supplied" in ref's optional positional/keyword args
 (define unset (gensym 'unset))
@@ -89,6 +98,21 @@
 
 ;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
 ;; they marshal as _Series-ptr).  Keep the raw dataframe-new as the low-level API.
+(define (frame-columns-problem columns)
+  (define (problem detail) (string-append "could not create a new DataFrame: " detail))
+  (match columns
+    ['() #t]
+    [(cons first-column _)
+     (define height (series-len first-column))
+     (cond
+       [(for/first ([c (in-list columns)] #:unless (= (series-len c) height)) c)
+        => (lambda (c)
+             (problem (format "height of column '~a' (~a) does not match height of column '~a' (~a)"
+                              (series-name c) (series-len c) (series-name first-column) height)))]
+       [(check-duplicates (map series-name columns))
+        => (lambda (name) (problem (format "column with name '~a' has more than one occurrence" name)))]
+       [else #t])]))
+
 (define (dataframe series-list)
   (wrap-dataframe (dataframe-new series-list)))
 
@@ -160,7 +184,10 @@
 (define (column->name d c)
   (cond
     [(string? c) c]
-    [(exact-nonnegative-integer? c) (dataframe-column-name d c)]
+    [(and (exact-nonnegative-integer? c) (< c (dataframe-width d))) (dataframe-column-name d c)]
+    [(exact-nonnegative-integer? c)
+     (raise-arguments-error 'ref "column index out of range"
+                            "index" c "width" (dataframe-width d))]
     [else (error 'ref "dataframe column selector must be a string or index, got ~v" c)]))
 
 ;; ref for a dataframe: a single selector -> wrapped series; a list -> wrapped
@@ -175,8 +202,11 @@
       [else (error 'ref "ref on a dataframe requires a column key or #:columns")]))
   (cond
     [(list? sel)
-     (wrap-dataframe (dataframe-select d (map (lambda (c) (column->name d c)) sel)))]
-    [else (wrap-series (dataframe-column d (column->name d sel)))]))
+     (define columns (map (lambda (c) (col (column->name d c))) sel))
+     (wrap-dataframe (lazyframe-collect/who 'ref (lazyframe-select (dataframe-lazy d) columns)))]
+    [else
+     (define name (column->name d sel))
+     (wrap-series (or (dataframe-column/raw d name) (error 'ref "~s not found" name)))]))
 
 (module+ test
   ;; fixtures are inline here: core can't require test-fixtures (which requires

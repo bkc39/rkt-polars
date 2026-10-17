@@ -70,7 +70,7 @@
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          expr->string
-         lit col ->expr ->key-expr
+         lit lit/who col ->expr ->expr/who ->key-expr
          expr-all expr-exclude expr-dtype-col multi-column-expr? dtype-spec?
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
@@ -678,16 +678,14 @@
 
 ;; Eager-feeling conveniences: take a DataFrame, return a DataFrame.
 (define (dataframe-with-columns df exprs)
-  (lazyframe-collect
-   (lazyframe-with-columns (dataframe-lazy df) exprs)))
+  (lazyframe-collect/who 'dataframe-with-columns
+                         (lazyframe-with-columns (dataframe-lazy df) exprs)))
 
 (define (dataframe-select-exprs df exprs)
-  (lazyframe-collect
-   (lazyframe-select (dataframe-lazy df) exprs)))
+  (lazyframe-collect/who 'dataframe-select-exprs (lazyframe-select (dataframe-lazy df) exprs)))
 
 (define (dataframe-filter-expr df predicate)
-  (lazyframe-collect
-   (lazyframe-filter (dataframe-lazy df) predicate)))
+  (lazyframe-collect/who 'dataframe-filter-expr (lazyframe-filter (dataframe-lazy df) predicate)))
 
 ;; --- Phase A4: lazy group-by ---
 ;;
@@ -716,8 +714,8 @@
   (lazyframe-group-by-agg/c lf (map ->key-expr keys) aggs))
 
 (define (dataframe-group-by-agg df keys aggs)
-  (lazyframe-collect
-   (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
+  (lazyframe-collect/who 'dataframe-group-by-agg
+                         (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
 
 ;; --- Phase A6: more LazyFrame ops (sort / unique / drop_nulls) ---
 

@@ -206,6 +206,10 @@
                 (string-append "^[+]: " (refusal (expt 2 63) 'uint8)))
           (list (lambda () (> (series '(1 2)) "a")) 'contract
                 (string-append "^>: " (refusal "a" 'int64)))
+          (list (lambda () (= (series '("x")) 1)) 'contract
+                (string-append "^=: " (refusal 1 'string)))
+          (list (lambda () (p+ (series '(1 2)) #t)) 'contract
+                (string-append "^[+]: " (refusal #t 'int64)))
           (list (lambda () (p+ (series '(1 2)) (series '(1 2 3)))) 'polars
                 "^[+]: cannot do arithmetic operation on series of different lengths")
           (list (lambda () (p-and nulls (series '(#t #f)))) 'polars
@@ -292,6 +296,24 @@
     (list (cells who (lambda (r) (f l r)) (map (match-lambda [(list _ s) s]) audit-series))
           (cells who (lambda (v) (f l v)) audit-plain)
           (cells who (lambda (v) (f v l)) audit-plain)))
+  (define expression-refused (list #\a (expt 2 63) far-date (datetime 300000 1 1) (vector 1)))
+  (for* ([op (in-list audit-ops)] [v (in-list expression-refused)])
+    (match-define (list who f) op)
+    (define first-operand (audit who (lambda () (f (col "n") v))))
+    (define second-operand (audit who (lambda () (f v (col "n")))))
+    (check-equal? (if (memq who '(and or)) first-operand (string-append first-operand second-operand))
+                  (if (memq who '(and or)) "c" "cc")
+                  (format "~a ~v" who v)))
+  (for ([thunk (list (lambda () (> (col "v") #\a)) (lambda () (> #\a (col "v"))))])
+    (check-raises 'contract #rx"^>: contract violation\n  expected: [(]or/c boolean?" thunk))
+  (for ([thunk (list (lambda () (p+ (col "v") (expt 2 63))) (lambda () (p+ (expt 2 63) (col "v"))))])
+    (check-raises 'contract
+                  #rx"^[+]: contract violation\n  expected: [(]integer-in -9223372036854775808" thunk))
+  (for ([thunk (list (lambda () (> (col "d") far-date)) (lambda () (> far-date (col "d"))))])
+    (check-raises 'contract #rx"^>: value out of range for this dtype\n" thunk))
+  (check-raises 'contract #rx"^and: contract violation\n" (lambda () (p-and (col "v") #\a)))
+  (check-raises 'contract #rx"^xor: contract violation\n" (lambda () (p-xor #\a (col "v"))))
+
   (define audit-table
     (append
      (for*/list ([op (in-list audit-ops)] [l (in-list audit-series)])

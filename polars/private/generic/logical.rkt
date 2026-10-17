@@ -2,7 +2,7 @@
 
 (require (only-in polars/private/foreign
                   polars-null? series-and/who series-not/who series-or/who series-xor/who)
-         (only-in polars/private/expr Expr-ptr? expr-and expr-not expr-or expr-xor)
+         (only-in polars/private/expr ->expr/who Expr-ptr? expr-and expr-not expr-or expr-xor)
          (only-in polars/private/generic/core series? wrap-series)
          (only-in polars/private/generic/operands logical-operand)
          syntax/parse/define
@@ -14,7 +14,7 @@
 
 (define (combine who expr-op series-op a b)
   (cond
-    [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+    [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who who a) (->expr/who who b))]
     [(series? a) (wrap-series (series-op who a (logical-operand who a b)))]
     [else (wrap-series (series-op who (logical-operand who b a) b))]))
 

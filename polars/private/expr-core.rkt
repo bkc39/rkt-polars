@@ -138,12 +138,12 @@
   #:c-id expr_lit_datetime_tz
   #:wrap (allocator expr-drop))
 
-(define (temporal-lit v dtype)
-  (define value ((temporal-encoder 'lit dtype) v))
+(define (temporal-lit who v dtype)
+  (define value ((temporal-encoder who dtype) v))
   (match dtype
     [(list 'datetime unit (? string? zone))
      (define code (time-unit-symbol->code unit))
-     (call/foreign-error 'lit
+     (call/foreign-error who
                          (lambda () (expr-lit-datetime-tz/raw value code zone))
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
@@ -171,7 +171,7 @@
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
     [(polars-null? v) (expr-lit-null)]
-    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit v dtype))]
+    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit who v dtype))]
     [else (raise-argument-error who (format "~s" (contract-name lit-value/c)) v)]))
 
 (define (lit v)
