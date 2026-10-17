@@ -1,16 +1,25 @@
 use crate::prelude::*;
 
+/// The `len` elements at `data`; `data` may be NULL only when `len` is 0.
+///
+/// # Safety
+/// A non-NULL `data` points to `len` initialised elements that outlive `'a`.
+pub(crate) unsafe fn slice_or_empty<'a, T>(
+    data: *const T,
+    len: usize,
+) -> Option<&'a [T]> {
+    match (len, data.is_null()) {
+        (0, _) => Some(&[]),
+        (_, true) => None,
+        (_, false) => Some(std::slice::from_raw_parts(data, len)),
+    }
+}
+
 pub(crate) unsafe fn collect_c_strings(
     ptrs: *const *const c_char,
     n: usize,
 ) -> Option<Vec<String>> {
-    if n == 0 {
-        return Some(Vec::new());
-    }
-    if ptrs.is_null() {
-        return None;
-    }
-    let slice = std::slice::from_raw_parts(ptrs, n);
+    let slice = slice_or_empty(ptrs, n)?;
     let mut out = Vec::with_capacity(n);
     for &p in slice {
         if p.is_null() {
@@ -28,13 +37,7 @@ pub(crate) unsafe fn collect_exprs(
     ptrs: *const *const Expr,
     n: usize,
 ) -> Option<Vec<Expr>> {
-    if n == 0 {
-        return Some(Vec::new());
-    }
-    if ptrs.is_null() {
-        return None;
-    }
-    let slice = std::slice::from_raw_parts(ptrs, n);
+    let slice = slice_or_empty(ptrs, n)?;
     let mut out = Vec::with_capacity(n);
     for &p in slice {
         if p.is_null() {

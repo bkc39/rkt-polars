@@ -9,7 +9,7 @@ pub(crate) use self::errors::{
 };
 pub(crate) use self::schema::decode_schema;
 pub(crate) use self::slices::{
-    collect_c_strings, collect_exprs, sort_multiple_options,
+    collect_c_strings, collect_exprs, slice_or_empty, sort_multiple_options,
 };
 pub(crate) use self::strings::rust_string_to_ptr;
 pub use self::strings::string_drop;

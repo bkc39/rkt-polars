@@ -7,17 +7,13 @@ pub extern "C" fn series_new_bool(
     data: *const u8,
     length: usize,
 ) -> *mut Series {
-    if name.is_null() || (data.is_null() && length != 0) {
+    if name.is_null() {
         return ptr::null_mut();
     }
-    let bools: Vec<bool> = if length == 0 {
-        Vec::new()
-    } else {
-        unsafe { std::slice::from_raw_parts(data, length) }
-            .iter()
-            .map(|&b| b != 0)
-            .collect()
+    let Some(data) = (unsafe { slice_or_empty(data, length) }) else {
+        return ptr::null_mut();
     };
+    let bools: Vec<bool> = data.iter().map(|&b| b != 0).collect();
     let n = name_from_ptr(name);
     Box::into_raw(Box::new(Series::new(n, bools)))
 }

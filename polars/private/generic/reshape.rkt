@@ -17,7 +17,7 @@
           [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
           [explain (explain/c lazyframe?)]))
 
-(define cast-target/c (or/c dtype-spec? 'binary 'null 'duration))
+(define cast-target/c (or/c dtype-spec? 'binary 'duration))
 
 ;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
 ;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.

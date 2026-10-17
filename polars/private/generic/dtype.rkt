@@ -4,6 +4,7 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
+         (only-in racket/sequence sequence-length)
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -42,7 +43,7 @@
   (for/fold ([aliases dtype-short-names])
             ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
                                    float32 float64 boolean string
-                                   date time datetime categorical))])
+                                   date time datetime categorical null))])
     (hash-set aliases canonical canonical)))
 
 (define (dtype-spec? v)
@@ -61,16 +62,15 @@
     [else dt]))
 
 (define (infer-dtype elements)
+  (define all (if (vector? elements) (vector->list elements) elements))
   (define vals
-    (for/list ([x (in-list (if (vector? elements)
-                               (vector->list elements)
-                               elements))]
+    (for/list ([x (in-list all)]
                #:unless (polars-null? x))
       x))
   ;; Defaults mirror Polars' inference for a Python list: integers -> Int64,
   ;; reals -> Float64, strings -> String, booleans -> Boolean.
   (cond
-    [(null? vals) 'int64]
+    [(null? vals) 'null]
     [(andmap boolean? vals) 'boolean]
     [(andmap exact-integer? vals) 'int64]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
@@ -94,6 +94,12 @@
     [(float64) (if vec? series-new-f64/vec series-new-f64)]
     [(boolean) (if vec? series-new-bool/vec series-new-bool)]
     [(string)  (if vec? series-new-str/vec series-new-str)]
+    [(null)
+     (lambda (name elements)
+       (unless (for/and ([x elements]) (polars-null? x))
+         (raise-arguments-error 'series "a 'null series holds only polars-null"
+                                "elements" elements))
+       (series-new-null name (sequence-length elements)))]
     [else
      (match canonical
        [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))

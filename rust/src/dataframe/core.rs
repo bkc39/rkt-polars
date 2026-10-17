@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::slice_or_empty;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -33,21 +34,16 @@ pub extern "C" fn dataframe_new(
     series_ptrs: *const *const Series,
     length: usize,
 ) -> *mut DataFrame {
-    if series_ptrs.is_null() && length != 0 {
+    let Some(slice) = (unsafe { slice_or_empty(series_ptrs, length) }) else {
+        return ptr::null_mut();
+    };
+    if slice.iter().any(|p| p.is_null()) {
         return ptr::null_mut();
     }
-    let columns: Vec<Column> = if length == 0 {
-        Vec::new()
-    } else {
-        let slice = unsafe { std::slice::from_raw_parts(series_ptrs, length) };
-        if slice.iter().any(|p| p.is_null()) {
-            return ptr::null_mut();
-        }
-        slice
-            .iter()
-            .map(|&p| unsafe { (*p).clone() }.into_column())
-            .collect()
-    };
+    let columns: Vec<Column> = slice
+        .iter()
+        .map(|&p| unsafe { (*p).clone() }.into_column())
+        .collect();
     match DataFrame::new_infer_height(columns) {
         Ok(df) => Box::into_raw(Box::new(df)),
         Err(_) => ptr::null_mut(),

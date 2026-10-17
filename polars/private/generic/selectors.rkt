@@ -76,6 +76,11 @@
   (check-equal? (column-names (select people (col 'datetime))) '("birthdate"))
   (check-equal? (column-names (select people (col '(datetime milliseconds)))) '())
   (check-equal? (shape (select ints-only (col 'float64))) '(0 0))
+  (check-equal? (~> (dataframe (list (series '(1) #:name "a")
+                                     (series (list polars-null) #:name "n" #:dtype 'null)))
+                    (select (col 'null))
+                    column-names)
+                '("n"))
 
   (check-equal? (column-names (select iris (col #rx"^sepal_")))
                 '("sepal_length" "sepal_width"))

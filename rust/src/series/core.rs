@@ -94,41 +94,23 @@ pub extern "C" fn series_null_count(s_ptr: *mut Series) -> usize {
     }
 }
 
-pub(crate) fn create_chunked_array_from_raw<T>(
-    name: *const c_char,
-    data: *const T::Native,
-    length: usize,
-) -> ChunkedArray<T>
-where
-    T: PolarsNumericType,
-{
-    let slice = unsafe { std::slice::from_raw_parts(data as *const _, length) };
-    let vec = slice.to_vec();
-
-    unsafe {
-        if let Ok(name) = CStr::from_ptr(name).to_str() {
-            ChunkedArray::from_vec(name.into(), vec)
-        } else {
-            ChunkedArray::from_vec(PlSmallStr::EMPTY, vec)
-        }
-    }
-}
-
 pub(crate) fn series_new<T>(
     name: *const c_char,
     data: *const T::Native,
     length: usize,
 ) -> *mut Series
 where
-    T: PolarsNumericType + Clone,
+    T: PolarsNumericType,
     ChunkedArray<T>: IntoSeries,
 {
-    if name.is_null() || data.is_null() {
+    if name.is_null() {
         return ptr::null_mut();
     }
-
-    let s = create_chunked_array_from_raw(name, data, length);
-    Box::into_raw(Box::new(s.into()))
+    let Some(values) = (unsafe { slice_or_empty(data, length) }) else {
+        return ptr::null_mut();
+    };
+    let ca = ChunkedArray::<T>::from_vec(name_from_ptr(name), values.to_vec());
+    Box::into_raw(Box::new(ca.into_series()))
 }
 
 pub(crate) fn valid_slices<'a, T>(
@@ -136,18 +118,10 @@ pub(crate) fn valid_slices<'a, T>(
     valid: *const u8,
     length: usize,
 ) -> Option<(&'a [T], &'a [u8])> {
-    if (data.is_null() || valid.is_null()) && length != 0 {
-        return None;
+    unsafe {
+        Some((
+            slice_or_empty(data, length)?,
+            slice_or_empty(valid, length)?,
+        ))
     }
-    let values = if length == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(data, length) }
-    };
-    let valid = if length == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(valid, length) }
-    };
-    Some((values, valid))
 }
