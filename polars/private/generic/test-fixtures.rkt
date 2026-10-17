@@ -51,6 +51,9 @@
 (define (series-cells s)
   (for/list ([i (in-range (len s))]) (ref s i)))
 
+(define (series-shape s)
+  (list (dtype s) (series-cells s)))
+
 (define (column d name)
   (series-cells (ref d #:columns name)))
 
@@ -61,7 +64,7 @@
               (equal? (column a name) (column b name))))))
 
 (define (cause-of message)
-  (cadr (regexp-match #rx"^[^:]*: [^:]*: ([^\n]*)" message)))
+  (caddr (regexp-match #rx"^[^:]*: (failed to [^:]*: )?([^\n]*)" message)))
 
 (define (reads-agree? read scan collect path kvs)
   (define eager (with-handlers ([exn:fail? exn-message]) (apply-keywords read kvs path)))

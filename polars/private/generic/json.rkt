@@ -320,7 +320,7 @@
   (check-exn #rx"^read-ndjson: failed to read ndjson from [^:]*gone.ndjson: cannot open file: [Nn]o such file"
              (lambda () (read-ndjson gone)))
   (check-pred lazyframe? (scan-ndjson gone))
-  (check-exn #rx"^lazyframe-collect: " (lambda () (collect (scan-ndjson gone))))
+  (check-exn #rx"^collect: " (lambda () (collect (scan-ndjson gone))))
 
   (define bracketed (build-path scratch "nd[1]"))
   (make-directory bracketed)

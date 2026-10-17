@@ -163,14 +163,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
-  `call-as-atomic`: the slot is per OS thread and every Racket thread in a
+  `call-as-atomic` (given no format, the reason alone follows the verb;
+  `call/polars-reason` is that call, and `define-reasoned` binds a
+  keyword-free public name with a `name/who` variant taking the verb, as for
+  the series operators): the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
   `dataframe_to_string`, `expr_to_string`, `series_cast`,
   `dataframe_pivot`, `dataframe_unpivot`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
-  `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
+  `series_new_str_packed`, the series-by-series operators (`series_add`,
+  `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
+  `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
+  `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
+  `dataframe_hstack`, `dataframe_join`, `dataframe_join_asof`,
+  `dataframe_join_asof_options`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
@@ -443,8 +451,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:row-index-name` and `#:include-file-paths` must differ (polars panics
   otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
   Rust, as for `read-json`: Python's `read_ndjson` ignores the overrides
-  once a schema is given. The eager NDJSON verbs strip the "Resolved plan
-  until failure" dump polars appends to a planning error (`without_plan`).
+  once a schema is given. The eager NDJSON verbs and `lazyframe_collect`
+  strip the "Resolved plan until failure" dump polars appends to a planning
+  error (`without_plan`). A fluent verb that builds a plan and collects it
+  (`select`, `with-columns`, `filter`, `agg`) reports the cause under its own
+  name, through `lazyframe-collect/who` (the `internal` submodule of
+  `expr.rkt`), and `collect` under `collect`.
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, through `write_frame` like the
   other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
@@ -525,14 +537,57 @@ it. Racket side: `define-compat` with `#:c-id`.
   `'null` too, as `pl.Series([None])` does, and a null among other values
   takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
   elements only. `is-in` reads a list the same way, so `(list polars-null)`
-  is a Null literal. A series operator given a `'null` series and a plain
-  value runs the operator's expression form with the value as a `lit`, so
-  the two agree; `lit` has no `polars-null` literal. On a `'null` series
-  `sum`, `mean`, `min`, `max`, `std` and `var` give `polars-null` and
-  `n-unique` gives 1, as Python 1.42.1 does, through the expression engine
-  (the typed `series_sum_*` have no Null case). A `'null` column does not
-  vstack or join with a typed one, and `and`, `or`, `xor` and `not` refuse
-  a `'null` series, as in Python.
+  is a Null literal, and an empty list is a member of nothing (`#f`, null for
+  a null), as Python's `is_in([])` is. `(lit polars-null)` is
+  `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
+  comparison with it is null on every row and arithmetic keeps a numeric
+  operand's dtype; with a temporal operand (date, datetime, zoned, time,
+  duration) arithmetic raises, as Python's expression form does. An
+  arithmetic or comparison operator given a `polars-null`, or a `'null`
+  series and a plain value, runs its expression form (see the operand fact
+  below); Python's eager `s - None` on a date series gives null durations
+  where its expression raises, and ours raises like the expression. `and`,
+  `or` and `xor` lift `polars-null` beside a series to a Boolean null, which
+  gives the expression form's Kleene result; with `polars-null` on the left
+  and an expression or series after it, `and` and `or` combine as Python's
+  `pl.lit(None) & e` does, not as Racket's short-circuit (so an `or`
+  evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  and `var` give `polars-null` and `n-unique` gives 1, through the
+  expression engine (the typed `series_sum_*` have no Null case). A `'null`
+  column does not vstack or join with a typed one, and `and`, `or`, `xor`
+  and `not` refuse a `'null` series, as Python's eager operators do, and any
+  other non-Boolean series, where Python's `& | ^` are bitwise on integers.
+- A plain value beside a typed series in an operator is a constant of the
+  series' dtype when it fits (a gregor value keeps its own dtype; a
+  non-integer real beside an integer series is Float64). Otherwise the
+  operator runs its expression form, `(op (col name) (lit v))` on a
+  one-column frame (`series-through-expr`), with that form's dtypes, as
+  Python's expressions give them: beside an Enum series a string or symbol
+  (`=` with a value outside the categories is `#f`, null on a null, and `<`
+  raises polars' reason, as in Python), beside a Decimal series a real, and
+  beside an integer series an Int64 integer past the dtype's range (`(+ u8
+  300)` is UInt16). A negative integer beside an unsigned series, an
+  integer past Int64 (but one in range beside a UInt64 series), which our
+  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
+  series' dtype, as Python's eager `OverflowError` is. Every (operator,
+  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
+  `generic/operand-audit.rkt` holds the operators to.
+- Eager reductions on a series return what Python 1.42.1's do (owner's
+  decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
+  where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
+  empty or all-null series, `std` / `var` below `ddof + 1` values, `mean`
+  of a string or categorical series), `sum` 0 for an empty or all-null
+  numeric, boolean or duration series, a boolean `sum` the count of `#t`,
+  and an error under the verb's name for a `sum` of a string, temporal or
+  categorical series and a `std` / `var` of a string, temporal (but a
+  duration's `std`) or categorical one. An Int8, Int16, UInt8 or UInt16
+  `sum` is an Int64 total, a Float32 `std` / `var` the Float32 value and a
+  Decimal reduces as Python's does, all through the expression engine. The
+  expectations are `polars/scribblings/data/reductions-expected.rktd`,
+  written by `scripts/reductions-expected.py` from Python on empty,
+  all-null and partly null series of each dtype; `generic/reductions.rkt`'s
+  tests read it. The typed low-level `series-sum-i32` and kin still return
+  `#f`.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.

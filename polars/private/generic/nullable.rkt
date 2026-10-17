@@ -23,8 +23,10 @@
 ;; fill-null / fill-nan replace missing / NaN with a value (auto-lifted to a
 ;; literal); forward/backward-fill carry the last/next valid value forward or
 ;; back (#:limit caps how far a single run is carried).
-(define (fill-null x value) (expr-fill-null (->col-expr 'fill-null x) value))
-(define (fill-nan x value)  (expr-fill-nan  (->col-expr 'fill-nan x) value))
+(define (fill-null x value)
+  (expr-fill-null (->col-expr 'fill-null x) (->expr/who 'fill-null value)))
+(define (fill-nan x value)
+  (expr-fill-nan (->col-expr 'fill-nan x) (->expr/who 'fill-nan value)))
 (define (forward-fill x #:limit [limit #f])
   (expr-forward-fill (->col-expr 'forward-fill x) #:limit limit))
 (define (backward-fill x #:limit [limit #f])
@@ -38,7 +40,9 @@
            polars/private/generic/reshape      ; with-columns / select / drop-nulls
            (only-in racket/list make-list)
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/generic/ordering sort))
+           (only-in polars/private/generic/ordering sort)
+           (only-in polars/private/generic/operators [= p=] p+)
+           (only-in polars/private/generic/test-fixtures series-shape))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
                      (series (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:name "y"))))
@@ -53,6 +57,22 @@
              (alias (is-finite "y") "y_is_finite")
              (alias (is-infinite "y") "y_is_inf"))))
   (check-equal? (ref (ref out #:columns "x_filled") 1) 0.0)
+  (check-equal? (~> df (select (fill-null "x" polars-null)) (ref "x") series->list)
+                (list 1.0 polars-null 3.0 polars-null 5.0))
+  (define broadcast (~> df (with-columns (alias (lit polars-null) "n")) (ref "n")))
+  (check-equal? (series-shape broadcast)
+                (list 'null (make-list 5 polars-null)))
+  (define people
+    (dataframe (list (series '(1 2 3) #:name "id" #:dtype 'i32)
+                     (series '(57.9 72.5 53.6) #:name "weight"))))
+  (define null-literals
+    (select people (alias (lit polars-null) "nothing") (p= (col "id") polars-null)
+            (p+ (col "weight") polars-null)))
+  (check-equal? (map (lambda (name) (series-shape (ref null-literals name)))
+                     '("nothing" "id" "weight"))
+                (list (list 'null (make-list 3 polars-null))
+                      (list 'boolean (make-list 3 polars-null))
+                      (list 'float64 (make-list 3 polars-null))))
   (check-equal? (ref (ref out #:columns "x_ffill") 1) 1.0)
   (check-equal? (ref (ref out #:columns "x_bfill") 1) 3.0)
   (check-equal? (ref (ref out #:columns "x_is_null") 1) #t)
@@ -77,9 +97,7 @@
   (define null-frame (dataframe (list (series '(a b a) #:name "g")
                                       (series (list polars-null polars-null polars-null)
                                               #:name "n"))))
-  (define (column-of d name)
-    (define s (ref d name))
-    (list (dtype s) (series->list s)))
+  (define (column-of d name) (series-shape (ref d name)))
   (for ([reduce (list sum mean min max median first last std var)])
     (check-equal? (column-of (select null-frame (reduce "n")) "n")
                   (list 'null (list polars-null))

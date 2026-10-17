@@ -46,3 +46,25 @@ fn arith_series_null_input_returns_null() {
     assert!(series_add(a, ptr::null_mut()).is_null());
     series_drop(a);
 }
+
+#[test]
+fn series_ops_record_why_they_refuse() {
+    let ints = make_i32("i", &[1, 2]);
+    let strs = make_str("s", &["a", "b"]);
+    let long = make_i32("l", &[1, 2, 3]);
+    assert!(series_sub(ints, strs).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("str"), "{}", reason);
+    assert!(series_add(ints, long).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("different lengths"), "{}", reason);
+    assert!(series_lt(ints, long).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("different length"), "{}", reason);
+    let ok = series_eq(ints, ints);
+    assert!(!ok.is_null());
+    assert_eq!(recorded_error(), None);
+    for s in [ok, ints, strs, long] {
+        series_drop(s);
+    }
+}

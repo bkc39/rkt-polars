@@ -7,16 +7,21 @@
 
 (require polars/private/foreign
          polars/private/expr
-         polars/private/generic/expr-util)
+         polars/private/generic/expr-util
+         (only-in racket/contract/base ->* any/c contract-out or/c))
 
-(provide is-in is-between
+(provide is-in
+         (contract-out
+          [is-between (->* (col-expr/c any/c any/c) (#:closed (or/c 'both 'left 'right 'none))
+                           Expr-ptr?)])
          is-unique is-duplicated is-first-distinct is-last-distinct)
 
 ;; is-in: membership against a homogeneous Racket list, a Series, or an Expr.
 (define (is-in x rhs) (expr-is-in (->col-expr 'is-in x) rhs #:who 'is-in))
 ;; is-between: lower..upper, #:closed 'both | 'left | 'right | 'none.
 (define (is-between x lower upper #:closed [closed 'both])
-  (expr-is-between (->col-expr 'is-between x) lower upper #:closed closed))
+  (expr-is-between (->col-expr 'is-between x) (->expr/who 'is-between lower)
+                   (->expr/who 'is-between upper) #:closed closed))
 
 (define-expr-unop is-unique         'is-unique         expr-is-unique)
 (define-expr-unop is-duplicated     'is-duplicated     expr-is-duplicated)
@@ -66,6 +71,18 @@
   (check-equal? (membership (list polars-null)) (list #f polars-null #f))
   (check-equal? (membership (list 1 polars-null)) (list #t polars-null #f))
   (check-equal? (membership (list 1.0 polars-null 3)) (list #t polars-null #t))
+  (check-equal? (membership '()) (list #f polars-null #f))
+  (for ([column (list (series (list "a" polars-null) #:name "x")
+                      (series (list #t polars-null) #:name "x")
+                      (series (list polars-null polars-null) #:name "x"))]
+        [expected (list (list #f polars-null) (list #f polars-null)
+                        (list polars-null polars-null))])
+    (check-equal? (~> (dataframe (list column)) (select (is-in "x" '())) (ref "x") series->list)
+                  expected))
+  (for ([lower (list polars-null 1 polars-null)]
+        [upper (list 5 polars-null polars-null)])
+    (check-equal? (~> gappy (select (is-between "x" lower upper)) (ref "x") series->list)
+                  (list polars-null polars-null polars-null)))
   (check-equal? (~> gappy (select (is-between "x" 2 5)) (ref "x") series->list)
                 (list #f polars-null #t))
   (check-equal? (~> carriers (select (is-in "carrier" (list polars-null 'UA))) (ref "carrier")

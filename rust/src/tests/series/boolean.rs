@@ -49,3 +49,30 @@ fn boolean_ops_null_inputs_return_null() {
     assert!(series_is_not_null(ptr::null_mut()).is_null());
     series_drop(a);
 }
+
+const UNPACK_I32: &str =
+    "invalid series dtype: expected `Boolean`, got `i32` for series with name `i`";
+
+#[test]
+fn logical_ops_record_why_they_refuse() {
+    let ints = make_i32("i", &[1, 2]);
+    let bools = make_bool("b", &[1, 0]);
+    let long = make_bool("l", &[1, 0, 1]);
+    for out in [series_and(ints, bools), series_or(bools, ints)] {
+        assert!(out.is_null());
+        assert_eq!(recorded_error().as_deref(), Some(UNPACK_I32));
+    }
+    assert!(series_not(ints).is_null());
+    assert_eq!(recorded_error().as_deref(), Some(UNPACK_I32));
+    assert!(series_xor(bools, long).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("cannot combine series of different lengths: got 2 and 3")
+    );
+    let ok = series_and(bools, bools);
+    assert!(!ok.is_null());
+    assert_eq!(recorded_error(), None);
+    for s in [ok, ints, bools, long] {
+        series_drop(s);
+    }
+}

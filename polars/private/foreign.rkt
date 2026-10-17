@@ -17,6 +17,9 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/join-options
+                  asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
+                  frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
@@ -29,8 +32,16 @@
                      series-sort dataframe-sort series-ref-string strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c
-                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out)))
+                     dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
+                     define-frame-op/reason define-reasoned
+                     (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
+                     (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
+          [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
+          [dataframe-vstack (->/c DataFrame-ptr? DataFrame-ptr? DataFrame-ptr?)]
+          [dataframe-join (frame-join/c DataFrame-ptr? (lambda (_) DataFrame-ptr?)
+                                        (lambda (_) DataFrame-ptr?) 'dataframe-join/c)]
+          [dataframe-join-asof (frame-join-asof/c DataFrame-ptr? 'dataframe-join-asof/c)]
           [series-drop (->/c Series-ptr? void?)]
           [dataframe-drop (->/c DataFrame-ptr? void?)]
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
@@ -83,6 +94,7 @@
      . "")
     ("Please use `ambiguous` to tell" . "Please use #:ambiguous to tell")
     ("use `non_existent='null'`" . "use dt-replace-time-zone's #:non-existent 'null")
+    ("with `.alias(\"new_name\")`" . "with `(alias expr \"new-name\")`")
     (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
                      " set POLARS_IGNORE_TIMEZONE_PARSE_ERROR=1.")
      . "")))
@@ -107,13 +119,29 @@
      (values result (and (not (ok? result)) (last-error-message))))))
 
 (define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
-                            fmt . args)
+                            #:cause [cause values] [fmt #f] . args)
   (define-values (result reason) (call/reason thunk ok?))
+  (define (cause-of reason) (cause (respell reason)))
   (cond
     [(ok? result) result]
     [(explain) => (lambda (message) (error who "~a" message))]
-    [reason (apply error who (string-append fmt ": ~a") (append args (list (respell reason))))]
-    [else (apply error who fmt args)]))
+    [(and reason fmt)
+     (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
+    [reason (error who "~a" (cause-of reason))]
+    [fmt (apply error who fmt args)]
+    [else (error who "no reason recorded")]))
+
+(define (call/polars-reason who thunk)
+  (call/foreign-error who thunk))
+
+(define-syntax-parse-rule (define-reasoned (name:id arg:id ...) #:who-variant name/who:id
+                            (~and compat ((~datum define-compat) raw:id _ ...)))
+  (begin
+    compat
+    (define (name/who who arg ...)
+      (call/polars-reason who (lambda () (raw arg ...))))
+    (define (name arg ...)
+      (name/who 'name arg ...))))
 
 (define (printed-or-placeholder what render)
   (define-values (text reason) (call/reason render values))
@@ -1666,24 +1694,25 @@
    (series-quantile/raw s (exact->inexact quantile)
                         (quantile-interpolation->code 'series-quantile interpolation))))
 
-(define-syntax-parse-rule (define-series-series-op public-name:id rust-id:id)
-  (define-compat public-name
-    (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
-    #:c-id rust-id
-    #:wrap (allocator/or-fail series-drop 'public-name)))
+(define-syntax-parse-rule (define-series-series-op name:id name/who:id raw-name:id rust-id:id)
+  (define-reasoned (name a b) #:who-variant name/who
+    (define-compat raw-name
+      (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
+      #:c-id rust-id
+      #:wrap (allocator series-drop))))
 
-(define-series-series-op series-eq series_eq)
-(define-series-series-op series-ne series_ne)
-(define-series-series-op series-gt series_gt)
-(define-series-series-op series-ge series_ge)
-(define-series-series-op series-lt series_lt)
-(define-series-series-op series-le series_le)
+(define-series-series-op series-eq series-eq/who series-eq/raw series_eq)
+(define-series-series-op series-ne series-ne/who series-ne/raw series_ne)
+(define-series-series-op series-gt series-gt/who series-gt/raw series_gt)
+(define-series-series-op series-ge series-ge/who series-ge/raw series_ge)
+(define-series-series-op series-lt series-lt/who series-lt/raw series_lt)
+(define-series-series-op series-le series-le/who series-le/raw series_le)
 
-(define-series-series-op series-add series_add)
-(define-series-series-op series-sub series_sub)
-(define-series-series-op series-mul series_mul)
-(define-series-series-op series-div series_div)
-(define-series-series-op series-mod series_mod)
+(define-series-series-op series-add series-add/who series-add/raw series_add)
+(define-series-series-op series-sub series-sub/who series-sub/raw series_sub)
+(define-series-series-op series-mul series-mul/who series-mul/raw series_mul)
+(define-series-series-op series-div series-div/who series-div/raw series_div)
+(define-series-series-op series-mod series-mod/who series-mod/raw series_mod)
 
 (define-syntax-parse-rule (define-series-scalar-op public-name:id rust-id:id ctype:id)
   (define-compat public-name
@@ -1831,6 +1860,8 @@
                 (string-append "is ambiguous. Please use #:ambiguous to tell how it should be"
                                " localized. You may be able to use dt-replace-time-zone's"
                                " #:non-existent 'null to return `null`"))
+  (check-equal? (respell "try renaming the columns with `.alias(\"new_name\")` to avoid")
+                "try renaming the columns with `(alias expr \"new-name\")` to avoid")
   (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 
@@ -1867,7 +1898,7 @@
   (check-equal? (series-dtype divided-f64) 'float64)
   (check-equal? (series-ref divided-f64 1) 10.0)
   (check-equal? (series-ref (series-mod batch2-y batch2-x) 3) 0)
-  (check-exn #rx"operation failed"
+  (check-exn #rx"^series-add: cannot do arithmetic operation on series of different lengths"
              (lambda ()
                (series-add (series-new-i32 "short" '(1 2))
                            (series-new-i32 "long" '(1 2 3)))))
@@ -1948,10 +1979,10 @@
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_select
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-select))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-select df cols)
-  (dataframe-select/c df cols))
+  (or (dataframe-select/c df cols) (error 'dataframe-select "operation failed")))
 
 (define-compat dataframe-drop-columns/c
   (_fun _DataFrame-ptr
@@ -1959,35 +1990,55 @@
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_drop_columns
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-columns))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-drop-columns df cols)
-  (dataframe-drop-columns/c df cols))
+  (or (dataframe-drop-columns/c df cols) (error 'dataframe-drop-columns "operation failed")))
 
-(define-compat dataframe-rename
+(define-compat dataframe-rename/raw
   (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-rename))
+  #:c-id dataframe_rename
+  #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-with-column
+(define (dataframe-rename df old new)
+  (or (dataframe-rename/raw df old new) (error 'dataframe-rename "operation failed")))
+
+(define-compat dataframe-with-column/raw
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-with-column))
+  #:c-id dataframe_with_column
+  #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-hstack
-  (_fun _DataFrame-ptr
-        (v : (_list i _Series-ptr))
-        (_size = (length v))
-        -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-hstack))
+(define (dataframe-with-column df s)
+  (or (dataframe-with-column/raw df s) (error 'dataframe-with-column "operation failed")))
+
+(define-syntax-parse-rule (define-frame-op/reason (name:id arg:id ...) call:expr compat:expr)
+  #:with name/who (format-id #'name "~a/who" #'name)
+  (begin
+    compat
+    (define (name/who who arg ...) (call/polars-reason who (lambda () call)))))
+
+(define-frame-op/reason (dataframe-hstack d columns)
+  (dataframe-hstack/raw d columns)
+  (define-compat dataframe-hstack/raw
+    (_fun _DataFrame-ptr
+          (v : (_list i _Series-ptr))
+          (_size = (length v))
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_hstack
+    #:wrap (allocator dataframe-drop)))
+
+(define (dataframe-hstack d columns)
+  (dataframe-hstack/who 'dataframe-hstack d columns))
 
 (define-compat dataframe-new/raw
   (_fun (v : (_list i _Series-ptr))
         (_size = (length v))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_new
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-new))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-new series-list)
-  (dataframe-new/raw series-list))
+  (or (dataframe-new/raw series-list) (error 'dataframe-new "operation failed")))
 
 (define-compat dataframe-column-name
   (_fun _DataFrame-ptr _size -> _rsstring))
@@ -2081,21 +2132,15 @@
   (_fun _Series-ptr -> _Series-ptr)
   #:wrap (allocator series-drop))
 
-(define-compat series-and
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
-  #:wrap (allocator/or-fail series-drop 'series-and))
+(define-series-series-op series-and series-and/who series-and/raw series_and)
+(define-series-series-op series-or series-or/who series-or/raw series_or)
+(define-series-series-op series-xor series-xor/who series-xor/raw series_xor)
 
-(define-compat series-or
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
-  #:wrap (allocator/or-fail series-drop 'series-or))
-
-(define-compat series-xor
-  (_fun _Series-ptr _Series-ptr -> _Series-ptr/null)
-  #:wrap (allocator/or-fail series-drop 'series-xor))
-
-(define-compat series-not
-  (_fun _Series-ptr -> _Series-ptr/null)
-  #:wrap (allocator/or-fail series-drop 'series-not))
+(define-reasoned (series-not s) #:who-variant series-not/who
+  (define-compat series-not/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_not
+    #:wrap (allocator series-drop)))
 
 (module+ test
   (define bool-df
@@ -2167,15 +2212,16 @@
                                  keyword flags
                                  "keys" keys)]))
 
+(define (dataframe-sort/who who df names descending nulls-last maintain-order)
+  (define flags (sort-flags who "#:descending" descending names))
+  (define nulls (sort-flags who "#:nulls-last" nulls-last names))
+  (call/polars-reason who (lambda () (dataframe-sort/raw df names flags nulls maintain-order))))
+
 (define (dataframe-sort df names
                         #:descending [descending #f]
                         #:nulls-last [nulls-last #f]
                         #:maintain-order [maintain-order #f])
-  (define flags (sort-flags 'dataframe-sort "#:descending" descending names))
-  (define nulls (sort-flags 'dataframe-sort "#:nulls-last" nulls-last names))
-  (call/foreign-error 'dataframe-sort
-                      (lambda () (dataframe-sort/raw df names flags nulls maintain-order))
-                      "failed to sort by ~v" names))
+  (dataframe-sort/who 'dataframe-sort df names descending nulls-last maintain-order))
 
 (define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
   (define-compat name
@@ -2213,115 +2259,50 @@
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
   #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-nulls))
 
-(define compat-join-kind/inner 1)
-(define compat-join-kind/left  2)
-(define compat-join-kind/outer 3)
-(define compat-join-kind/cross 4)
-(define compat-join-kind/semi  5)
-(define compat-join-kind/anti  6)
-
-(define (join-symbol->code sym)
-  (case sym
-    [(inner) compat-join-kind/inner]
-    [(left)  compat-join-kind/left]
-    [(outer full) compat-join-kind/outer]
-    [(cross) compat-join-kind/cross]
-    [(semi)  compat-join-kind/semi]
-    [(anti)  compat-join-kind/anti]
-    [else (error 'dataframe-join
-                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross 'semi 'anti)"
-                 sym)]))
-
-(define-compat dataframe-join/c
-  (_fun _DataFrame-ptr _DataFrame-ptr
-        (left-on : _string-list)
-        (_size = (length left-on))
-        (right-on : _string-list)
-        (_size = (length right-on))
-        _int32
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_join
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join))
+(define-frame-op/reason (dataframe-join left right left-on right-on how)
+  (dataframe-join/c left right left-on right-on (join-symbol->code how))
+  (define-compat dataframe-join/c
+    (_fun _DataFrame-ptr _DataFrame-ptr
+          (left-on : _string-list)
+          (_size = (length left-on))
+          (right-on : _string-list)
+          (_size = (length right-on))
+          _int32
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_join
+    #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join left right
                         #:on [on #f]
                         #:left-on [left-on #f]
                         #:right-on [right-on #f]
                         #:how [how 'inner])
-  (define-values (lon ron)
-    (cond
-      [(eq? how 'cross) (values '() '())]
-      [on (values on on)]
-      [(and left-on right-on) (values left-on right-on)]
-      [else (error 'dataframe-join
-                   "must supply #:on, or #:left-on and #:right-on")]))
-  (dataframe-join/c left right lon ron (join-symbol->code how)))
-
-(define compat-asof-strategy/backward 1)
-(define compat-asof-strategy/forward  2)
-(define compat-asof-strategy/nearest  3)
-
-(define compat-asof-tolerance/none    0)
-(define compat-asof-tolerance/integer 1)
-(define compat-asof-tolerance/float   2)
-
-(define (asof-strategy-symbol->code sym)
-  (case sym
-    [(backward) compat-asof-strategy/backward]
-    [(forward)  compat-asof-strategy/forward]
-    [(nearest)  compat-asof-strategy/nearest]
-    [else (error 'dataframe-join-asof
-                 "unknown asof strategy ~v (expected 'backward 'forward 'nearest)"
-                 sym)]))
+  (define-values (lon ron) (join-keys how on left-on right-on))
+  (dataframe-join/who 'dataframe-join left right lon ron how))
 
 (define-compat dataframe-join-asof/raw
   (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _DataFrame-ptr/null)
   #:c-id dataframe_join_asof
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join-asof))
+  #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-join-asof-options/raw
-  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
-        (left-by : _string-list)
-        (_size = (length left-by))
-        (right-by : _string-list)
-        (_size = (length right-by))
-        _int32
-        _int64
-        _double
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_join_asof_options
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-join-asof))
-
-(define (asof-tolerance->parts tolerance)
-  (cond
-    [(not tolerance) (values compat-asof-tolerance/none 0 0.0)]
-    [(exact-integer? tolerance)
-     (values compat-asof-tolerance/integer tolerance 0.0)]
-    [(real? tolerance)
-     (values compat-asof-tolerance/float 0 (exact->inexact tolerance))]
-    [else
-     (error 'dataframe-join-asof
-            "tolerance must be #f, an exact integer, or a real number, got ~v"
-            tolerance)]))
-
-(define (asof-by-values by left-by right-by)
-  (cond
-    [by
-     (when (or left-by right-by)
-       (error 'dataframe-join-asof
-              "supply either #:by or #:left-by and #:right-by, not both"))
-     (values by by)]
-    [(or left-by right-by)
-     (unless (and left-by right-by)
-       (error 'dataframe-join-asof
-              "must supply both #:left-by and #:right-by"))
-     (unless (= (length left-by) (length right-by))
-       (error 'dataframe-join-asof
-              "left-by length ~a does not match right-by length ~a"
-              (length left-by)
-              (length right-by)))
-     (values left-by right-by)]
-    [else (values '() '())]))
+(define-frame-op/reason (dataframe-join-asof left right left-on right-on left-by right-by
+                                             strategy tolerance)
+  (let-values ([(kind integer float) (asof-tolerance->parts tolerance)])
+    (dataframe-join-asof-options/raw left right left-on right-on
+                                     (asof-strategy-symbol->code strategy)
+                                     left-by right-by kind integer float))
+  (define-compat dataframe-join-asof-options/raw
+    (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
+          (left-by : _string-list)
+          (_size = (length left-by))
+          (right-by : _string-list)
+          (_size = (length right-by))
+          _int32
+          _int64
+          _double
+          -> _DataFrame-ptr/null)
+    #:c-id dataframe_join_asof_options
+    #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join-asof left right
                              #:on [on #f]
@@ -2332,25 +2313,22 @@
                              #:right-by [right-by #f]
                              #:strategy [strategy 'backward]
                              #:tolerance [tolerance #f])
-  (define-values (lon ron)
-    (cond
-      [on (values on on)]
-      [(and left-on right-on) (values left-on right-on)]
-      [else (error 'dataframe-join-asof
-                   "must supply #:on, or #:left-on and #:right-on")]))
-  (define-values (lby rby) (asof-by-values by left-by right-by))
-  (define-values (tolerance-kind tolerance-integer tolerance-float)
-    (asof-tolerance->parts tolerance))
-  (dataframe-join-asof-options/raw left right lon ron
-                                   (asof-strategy-symbol->code strategy)
-                                   lby rby
-                                   tolerance-kind
-                                   tolerance-integer
-                                   tolerance-float))
+  (define-values (lon ron lby rby) (asof-keys on left-on right-on by left-by right-by))
+  (dataframe-join-asof/who 'dataframe-join-asof left right lon ron lby rby strategy tolerance))
 
-(define-compat dataframe-vstack
-  (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-vstack))
+(define-frame-op/reason (dataframe-vstack top bottom)
+  (dataframe-vstack/raw top bottom)
+  (define-compat dataframe-vstack/raw
+    (_fun _DataFrame-ptr _DataFrame-ptr -> _DataFrame-ptr/null)
+    #:c-id dataframe_vstack
+    #:wrap (allocator dataframe-drop)))
+
+(define (dataframe-vstack top bottom)
+  (dataframe-vstack/who 'dataframe-vstack top bottom))
+
+(module+ internal
+  (provide dataframe-hstack/who dataframe-join/who dataframe-join-asof/who dataframe-sort/who
+           dataframe-vstack/who))
 
 (define compat-pivot-agg/none  0)
 (define compat-pivot-agg/first 1)
@@ -2510,12 +2488,12 @@
   (check-equal? (dataframe-column-names stacked-cols)
                 '("user" "score" "cost" "rank" "tier"))
   (check-equal? (series-sum-i32 (dataframe-column stacked-cols "rank")) 10)
-  (check-exn #rx"operation failed"
+  (check-exn #rx"^dataframe-hstack: [^\n]*'score'"
              (lambda ()
                (dataframe-hstack
                 example-df
                 (list (series-new-i32 "score" '(1 2 3 4))))))
-  (check-exn #rx"operation failed"
+  (check-exn #rx"^dataframe-hstack: [^\n]*'too-short'"
              (lambda ()
                (dataframe-hstack
                 example-df
@@ -2720,7 +2698,7 @@
              (lambda () (contracted:dataframe-sort sort-src "x")))
   (check-exn (sort-blame? #rx"^series-sort: contract violation")
              (lambda () (contracted:series-sort (series-new-i64 "x" '(1)) #:nulls-last '(#t))))
-  (check-exn #rx"^dataframe-sort: failed to sort by .*nope"
+  (check-exn #rx"^dataframe-sort: not found: \"nope\" not found$"
              (lambda () (contracted:dataframe-sort sort-src '("nope"))))
   (check-equal? (let ([s (contracted:series-sort (dataframe-column sort-src "x") #:nulls-last #t)])
                   (for/list ([i (in-range (series-len s))]) (series-ref s i)))
@@ -2931,8 +2909,10 @@
                                                         #:values '("v"))))
                 1)
 
-  (check-exn #rx"^series-not: operation failed$" (lambda () (series-not owned-i32)))
-  (check-exn #rx"^series-and: operation failed$" (lambda () (series-and owned-i32 owned-bool)))
+  (check-exn #rx"^series-not: invalid series dtype: expected `Boolean`, got `i32`"
+             (lambda () (series-not owned-i32)))
+  (check-exn #rx"^series-and: invalid series dtype: expected `Boolean`, got `i32`"
+             (lambda () (series-and owned-i32 owned-bool)))
   (check-exn #rx"^series-lt-i32: operation failed$" (lambda () (series-lt-i32 owned-f64 1)))
   (check-exn #rx"^series-eq-str: operation failed$" (lambda () (series-eq-str owned-i32 "a")))
   (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
@@ -2942,11 +2922,11 @@
              (lambda () (dataframe-new (list owned-i32 (series-head owned-i32 2)))))
   (check-exn #rx"^dataframe-drop-columns: operation failed$"
              (lambda () (dataframe-drop-columns owned-frame '("nope"))))
-  (check-exn #rx"^dataframe-vstack: operation failed$"
+  (check-exn #rx"^dataframe-vstack: [^\n]*unable to append to a DataFrame of shape"
              (lambda () (dataframe-vstack owned-frame (dataframe-select owned-frame '("x")))))
   (check-exn #rx"^dataframe-filter: operation failed$"
              (lambda () (dataframe-filter owned-frame owned-i32)))
-  (check-exn #rx"^dataframe-join-asof: operation failed$"
+  (check-exn #rx"^dataframe-join-asof: [^\n]*\"nope\""
              (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope"))))
 
 (module+ test

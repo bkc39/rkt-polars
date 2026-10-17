@@ -410,3 +410,25 @@ fn parquet_round_trips_categorical_enum_and_decimal() {
     dataframe_drop(df);
     dataframe_drop(back);
 }
+
+#[test]
+fn collect_records_the_cause_without_the_plan() {
+    let x = make_i32("x", &[1, 2]);
+    let df = make_df(&[x]);
+    let lf = dataframe_lazy(df);
+    let name = cstr("nope");
+    let missing = expr_col(name.as_ptr());
+    let exprs = [missing as *const Expr];
+    let projected = lazyframe_select(lf, exprs.as_ptr(), exprs.len());
+    assert!(lazyframe_collect(projected).is_null());
+    let msg = recorded_error().expect("a reason");
+    assert_eq!(
+        msg,
+        "not found: unable to find column \"nope\"; valid columns: [\"x\"]"
+    );
+    lazyframe_drop(projected);
+    lazyframe_drop(lf);
+    expr_drop(missing);
+    dataframe_drop(df);
+    series_drop(x);
+}

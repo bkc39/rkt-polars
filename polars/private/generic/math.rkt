@@ -44,10 +44,12 @@
 
 ;; raise to a power (exponent auto-lifted to a literal); clamp to [lower, upper]
 ;; (either bound may be omitted).
-(define (pow x exponent) (expr-pow (->col-expr 'pow x) exponent))
+(define (pow x exponent) (expr-pow (->col-expr 'pow x) (->expr/who 'pow exponent)))
 
 (define (clip x #:lower [lower #f] #:upper [upper #f])
-  (expr-clip (->col-expr 'clip x) #:lower lower #:upper upper))
+  (expr-clip (->col-expr 'clip x)
+             #:lower (and lower (->expr/who 'clip lower))
+             #:upper (and upper (->expr/who 'clip upper))))
 
 (module+ test
   (require rackunit (only-in threading ~>)

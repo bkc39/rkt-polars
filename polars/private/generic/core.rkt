@@ -1,6 +1,9 @@
 #lang racket/base
 
 (require racket/generic
+         (only-in racket/contract/base -> contract-out listof)
+         (only-in racket/list check-duplicates)
+         (only-in racket/match match*)
          syntax/parse/define
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
@@ -10,32 +13,24 @@
          polars/private/generic/dtype
          polars/private/generic/printing)
 
-(provide (all-defined-out))
+(provide (except-out (all-defined-out) dataframe)
+         (contract-out
+          [dataframe (-> (listof Series-ptr?) dataframe?)]))
 
-;; sentinel for "argument not supplied" in ref's optional positional/keyword args
 (define unset (gensym 'unset))
 
-;; ---------------------------------------------------------------------------
-;; capability generics (small, purpose-named; per "name capability generics").
-
-;; ref: index a series (returns the element) or slice columns out of a
-;; dataframe.  Data-first, so it threads.  See series-ref* / dataframe-ref*.
 (define-generics has-ref
   (ref has-ref [key] #:columns [columns] #:rows [rows]))
 
-;; len: number of elements (series) / number of rows (dataframe).
 (define-generics sized
   (len sized))
 
-;; shape: (n) for a series, (rows cols) for a dataframe.
 (define-generics has-shape
   (shape has-shape))
 
-;; dtype: a series' element dtype (canonical symbol).
 (define-generics has-dtype
   (dtype has-dtype))
 
-;; null-count: number of null entries in a series.
 (define-generics has-null-count
   (null-count has-null-count))
 
@@ -87,18 +82,37 @@
 (define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
 
-;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
-;; they marshal as _Series-ptr).  Keep the raw dataframe-new as the low-level API.
+(define (frame-columns-problem columns)
+  (define heights (map series-len columns))
+  (define names (map series-name columns))
+  (match* ((for/first ([h (in-list heights)] [n (in-list names)] #:unless (= h (car heights)))
+             (list n h))
+           (check-duplicates names))
+    [((list name height) _)
+     (format "could not create a new DataFrame: height of column '~a' (~a) does not match ~a"
+             name height (format "height of column '~a' (~a)" (car names) (car heights)))]
+    [(#f (? string? name))
+     (format "could not create a new DataFrame: column with name '~a' has more than one occurrence"
+             name)]
+    [(#f #f) #f]))
+
+(define (column-problem present names)
+  (cond
+    [(for/first ([name (in-list names)] #:unless (member name present)) name)
+     => (lambda (name) (format "~s not found" name))]
+    [(check-duplicates names) => (lambda (name) (format "~s named more than once" name))]
+    [else #f]))
+
+(define (refuse who problem fallback)
+  (raise-arguments-error who (or problem fallback)))
+
 (define (dataframe series-list)
-  (wrap-dataframe (dataframe-new series-list)))
+  (wrap-dataframe
+   (or (dataframe-new/raw series-list)
+       (refuse 'dataframe (frame-columns-problem series-list) "could not create a new DataFrame"))))
 
 ;; ---------------------------------------------------------------------------
 ;; the lazyframe wrapper
-;;
-;; A lazyframe is a deferred query plan, not a materialized table, so (unlike the
-;; series/dataframe wrappers) it has no len/shape/ref/dtype — you build a plan
-;; with the data-first verbs and run it with `collect`.  prop:cpointer lets it
-;; marshal as a _LazyFrame-ptr through the lazyframe-* bindings.
 
 (struct lazyframe-rec (ptr)
   #:reflection-name 'lazyframe
@@ -129,14 +143,11 @@
   (guard-dataframe 'column-names d)
   (dataframe-column-names d))
 
-;; shape as a list (examples); shape/values is the multiple-values variant.
 (define (shape/values x) (apply values (shape x)))
 
 ;; ---------------------------------------------------------------------------
 ;; series: keyword constructor with dtype inference (see dtype.rkt)
 
-;; (series elements #:name "n" #:dtype 'i32)
-;; elements may be a list or a vector; nulls are polars-null.  Returns a series.
 (define (series elements #:name [name ""] #:dtype [dtype #f])
   (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
   (check-categorical-values 'series canonical elements)
@@ -146,7 +157,6 @@
 ;; ---------------------------------------------------------------------------
 ;; ref dispatch helpers (referenced by the struct methods above)
 
-;; ref for a series: positional index only.
 (define (series-ref* s key columns rows)
   (unless (eq? columns unset)
     (error 'ref "a series has no columns to select"))
@@ -156,15 +166,14 @@
     (error 'ref "ref on a series requires an index"))
   (series-value 'ref s key))
 
-;; a dataframe column selector, as a name.
 (define (column->name d c)
   (cond
     [(string? c) c]
-    [(exact-nonnegative-integer? c) (dataframe-column-name d c)]
+    [(and (exact-nonnegative-integer? c) (< c (dataframe-width d))) (dataframe-column-name d c)]
+    [(exact-nonnegative-integer? c)
+     (raise-arguments-error 'ref "column index out of range" "index" c "width" (dataframe-width d))]
     [else (error 'ref "dataframe column selector must be a string or index, got ~v" c)]))
 
-;; ref for a dataframe: a single selector -> wrapped series; a list -> wrapped
-;; dataframe (column-projected slice).  Row slicing (#:rows) is reserved.
 (define (dataframe-ref* d key columns rows)
   (unless (eq? rows unset)
     (error 'ref "dataframe row slicing not yet implemented"))
@@ -175,8 +184,14 @@
       [else (error 'ref "ref on a dataframe requires a column key or #:columns")]))
   (cond
     [(list? sel)
-     (wrap-dataframe (dataframe-select d (map (lambda (c) (column->name d c)) sel)))]
-    [else (wrap-series (dataframe-column d (column->name d sel)))]))
+     (define names (map (lambda (c) (column->name d c)) sel))
+     (wrap-dataframe
+      (or (dataframe-select/c d names)
+          (refuse 'ref (column-problem (dataframe-column-names d) names)
+                  "cannot select the columns")))]
+    [else
+     (define name (column->name d sel))
+     (wrap-series (or (dataframe-column/raw d name) (error 'ref "~s not found" name)))]))
 
 (module+ test
   ;; fixtures are inline here: core can't require test-fixtures (which requires
@@ -190,7 +205,6 @@
                      (series '(10 25 18) #:name "score" #:dtype 'i32)
                      (series '(1.2 3.5 2.0) #:name "cost"))))
 
-  ;; series custom-write goes through series->string
   (check-equal? (format "~a" ints) (series->string ints))
   (define past-chrono-zoned
     (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
@@ -200,12 +214,10 @@
   (check-exn #rx"^ref: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
              (lambda () (ref past-chrono-zoned 0)))
 
-  ;; constructor returns a series wrapper; series? distinguishes it
   (check-pred series? (series '(1 2 3)))
   (check-false (series? 5))
   (check-false (series? '(1 2 3)))
 
-  ;; dtype inference + alias parity
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'i32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'int32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3))) 'int64)   ; Polars default

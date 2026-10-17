@@ -1,119 +1,109 @@
 #lang racket/base
 
-(require racket/match
+(require racket/contract/base
+         racket/match
          (prefix-in base: racket/base)
+         syntax/parse/define
          polars/private/foreign
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
-         polars/private/generic/expr-util)
+         (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
-(provide (all-defined-out))
+(provide (contract-out
+          [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
+          [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
+          [n-unique (-> (or/c series? col-expr/c) any/c)]
+          [alias (-> col-expr/c string? Expr-ptr?)])
+         sum mean min max count median first last)
 
-(define sum-table
-  (hash 'int8 series-sum-i8 'int16 series-sum-i16
-        'int32 series-sum-i32 'int64 series-sum-i64
-        'uint8 series-sum-u8 'uint16 series-sum-u16
-        'uint32 series-sum-u32 'uint64 series-sum-u64
-        'float32 series-sum-f32 'float64 series-sum-f64))
+(define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
+  (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
+        'uint8 u8 'uint16 u16 'uint32 u32 'uint64 u64
+        'float32 f32 'float64 f64))
 
-(define min-table
-  (hash 'int8 series-min-i8 'int16 series-min-i16
-        'int32 series-min-i32 'int64 series-min-i64
-        'uint8 series-min-u8 'uint16 series-min-u16
-        'uint32 series-min-u32 'uint64 series-min-u64
-        'float32 series-min-f32 'float64 series-min-f64))
+(define native-reducers
+  (hash 'sum (typed-table series-sum-i8 series-sum-i16 series-sum-i32 series-sum-i64
+                          series-sum-u8 series-sum-u16 series-sum-u32 series-sum-u64
+                          series-sum-f32 series-sum-f64)
+        'mean (typed-table series-mean-i8 series-mean-i16 series-mean-i32 series-mean-i64
+                           series-mean-u8 series-mean-u16 series-mean-u32 series-mean-u64
+                           series-mean-f32 series-mean-f64)
+        'min (typed-table series-min-i8 series-min-i16 series-min-i32 series-min-i64
+                          series-min-u8 series-min-u16 series-min-u32 series-min-u64
+                          series-min-f32 series-min-f64)
+        'max (typed-table series-max-i8 series-max-i16 series-max-i32 series-max-i64
+                          series-max-u8 series-max-u16 series-max-u32 series-max-u64
+                          series-max-f32 series-max-f64)))
 
-(define max-table
-  (hash 'int8 series-max-i8 'int16 series-max-i16
-        'int32 series-max-i32 'int64 series-max-i64
-        'uint8 series-max-u8 'uint16 series-max-u16
-        'uint32 series-max-u32 'uint64 series-max-u64
-        'float32 series-max-f32 'float64 series-max-f64))
-
-(define mean-table
-  (hash 'int8 series-mean-i8 'int16 series-mean-i16
-        'int32 series-mean-i32 'int64 series-mean-i64
-        'uint8 series-mean-u8 'uint16 series-mean-u16
-        'uint32 series-mean-u32 'uint64 series-mean-u64
-        'float32 series-mean-f32 'float64 series-mean-f64))
-
-(define (series-reduce who table s)
-  (define dt (series-dtype s))
-  (define f (hash-ref table dt #f))
-  (unless f
-    (error who "unsupported dtype for reduction: ~v" dt))
-  (f s))
+(define (reduction-route op dt)
+  (match* (op dt)
+    [('mean (or 'string 'categorical 'binary (cons 'enum _))) 'null]
+    [('sum (or 'int8 'int16 'uint8 'uint16)) 'expr]
+    [((or 'std 'var) 'float32) 'expr]
+    [((or 'sum 'mean 'min 'max) (? numeric-dtype?)) 'native]
+    [((or 'std 'var) (? numeric-dtype?)) 'dispersion]
+    [((or 'std 'var) 'boolean) 'float64]
+    [(_ (or 'null (? decimal-dtype?))) 'expr]
+    [('sum (or 'boolean (list 'duration _))) 'expr]
+    [('std (list 'duration _)) 'expr]
+    [((or 'mean 'min 'max) _) 'expr]
+    [(_ _) #f]))
 
 (define (series-agg-via-expr who expr-op s)
   (define out (dataframe-select-exprs (dataframe-new (list s))
                                       (list (expr-alias (expr-op (expr-all)) "v"))))
   (series-value who (dataframe-column out "v") 0))
 
-;; sum / mean / min / max are generic across three worlds:
-;;   * a single Expr   -> the corresponding aggregation Expr (expr-sum, …)
-;;   * a single series -> reduce to a scalar (numeric: fast typed FFI;
-;;                        non-numeric min/max/mean: the expr engine)
-;;   * anything else   -> racket/base numeric behaviour (variadic preserved)
+(define (reduce-series op s #:ddof [ddof 1])
+  (define dt (series-dtype s))
+  (define series-dispersion (if (eq? op 'std) series-std series-var))
+  (match (reduction-route op dt)
+    ['native (or ((hash-ref (hash-ref native-reducers op) dt) s) polars-null)]
+    ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
+    ['float64 (or (series-dispersion (series-cast s 'float64) #:ddof ddof) polars-null)]
+    ['expr (series-agg-via-expr op (lambda (e) (aggregation op e ddof)) s)]
+    ['null polars-null]
+    [#f (error op "unsupported dtype for reduction: ~v" dt)]))
 
-(define (sum . args)
-  (match args
-    [(list (? Expr-ptr? e)) (expr-sum e)]
-    [(list (? string? s)) (expr-sum (col s))]
-    [(list (? null-series? s)) (series-agg-via-expr 'sum expr-sum s)]
-    [(list (? series? s)) (series-reduce 'sum sum-table s)]
-    [_ (apply base:+ args)]))
+(define (aggregation op e ddof)
+  (match op
+    ['sum (expr-sum e)]
+    ['mean (expr-mean e)]
+    ['min (expr-min e)]
+    ['max (expr-max e)]
+    ['std (expr-std e #:ddof ddof)]
+    ['var (expr-var e #:ddof ddof)]))
 
-(define (mean . args)
-  (match args
-    [(list (? Expr-ptr? e)) (expr-mean e)]
-    [(list (? string? s)) (expr-mean (col s))]
-    [(list (? series? s))
-     (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'mean mean-table s)
-         (series-agg-via-expr 'mean expr-mean s))]   ; boolean -> fraction true
-    [(list) (error 'mean "expected at least one argument")]
-    [_ (/ (apply base:+ args) (length args))]))
+(define-syntax-parse-rule (define-reducer (name:id formal:id ... . rest:id) plain:expr)
+  (define (name formal ... . rest)
+    (match (list* formal ... rest)
+      [(list (? Expr-ptr? e)) (aggregation 'name e 1)]
+      [(list (? string? column)) (aggregation 'name (col column) 1)]
+      [(list (? series? s)) (reduce-series 'name s)]
+      [args (apply plain args)])))
 
-(define (min . args)
-  (match args
-    [(list (? Expr-ptr? e)) (expr-min e)]
-    [(list (? string? s)) (expr-min (col s))]
-    [(list (? series? s))
-     (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'min min-table s)
-         (series-agg-via-expr 'min expr-min s))]    ; string / temporal / boolean
-    [_ (apply base:min args)]))
+(define-reducer (sum . vs) base:+)
+(define-reducer (mean v . vs) (lambda args (/ (apply base:+ args) (length args))))
+(define-reducer (min . vs) base:min)
+(define-reducer (max . vs) base:max)
 
-(define (max . args)
-  (match args
-    [(list (? Expr-ptr? e)) (expr-max e)]
-    [(list (? string? s)) (expr-max (col s))]
-    [(list (? series? s))
-     (if (numeric-dtype? (series-dtype s))
-         (series-reduce 'max max-table s)
-         (series-agg-via-expr 'max expr-max s))]
-    [_ (apply base:max args)]))
-
-;; --- additional Expr aggregators (Polars col(...).agg() spellings) ----------
-;; Take an Expr or a bare column name (lifted via col).  first / last also keep
-;; their racket/list list-accessor behaviour.
-
-(define (count x)     (expr-count    (->col-expr 'count x)))
-;; n-unique: eager count on a series; otherwise an aggregation Expr.
-(define (n-unique x)
-  (cond [(series? x) (series-n-unique x)]
-        [else (expr-n-unique (->col-expr 'n-unique x))]))
-(define (median x)    (expr-median   (->col-expr 'median x)))
-;; std / var: eager on a series (dispatching #:ddof), otherwise an Expr aggregator.
-(define (dispersion who series-op expr-op x ddof)
-  (define (aggregate e) (expr-op e #:ddof ddof))
+(define (dispersion op x ddof)
   (match x
-    [(? null-series?) (series-agg-via-expr who aggregate x)]
-    [(? series?) (series-op x #:ddof ddof)]
-    [_ (aggregate (->col-expr who x))]))
-(define (std x #:ddof [ddof 1]) (dispersion 'std series-std expr-std x ddof))
-(define (var x #:ddof [ddof 1]) (dispersion 'var series-var expr-var x ddof))
+    [(? series?) (reduce-series op x #:ddof ddof)]
+    [_ (aggregation op (->col-expr op x) ddof)]))
+
+(define (std x #:ddof [ddof 1]) (dispersion 'std x ddof))
+(define (var x #:ddof [ddof 1]) (dispersion 'var x ddof))
+
+(define (count x) (expr-count (->col-expr 'count x)))
+
+(define (n-unique x)
+  (match x
+    [(? series?) (series-n-unique x)]
+    [_ (expr-n-unique (->col-expr 'n-unique x))]))
+
+(define (median x) (expr-median (->col-expr 'median x)))
 
 (define (first x)
   (cond
@@ -129,11 +119,18 @@
     [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
     [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
 
-;; alias: name an Expr (Polars' .alias) — e.g. (alias (sum (col "value")) "total").
-(define (alias e name) (expr-alias e name))
+(define (alias e name) (expr-alias (->col-expr 'alias e) name))
 
 (module+ test
-  (require rackunit polars/private/generic/test-fixtures)
+  (require rackunit
+           racket/runtime-path
+           (only-in racket/file file->value)
+           (only-in racket/list make-list)
+           (only-in gregor date datetime)
+           (only-in gregor/time time)
+           (only-in gregor/period microseconds)
+           polars/private/generic/test-fixtures
+           (prefix-in contracted: (submod "..")))
   (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
              (lambda () (max past-chrono-zoned)))
   (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
@@ -165,4 +162,73 @@
   (let ([s (series '(1.0 2.0 3.0 4.0))])     ; deviations from mean 2.5 sum-sq = 5.0
     (check-= (var s) (/ 5.0 3.0) 1e-9)        ; sample (ddof=1)
     (check-= (var s #:ddof 0) 1.25 1e-9)      ; population (ddof=0)
-    (check-= (std s #:ddof 0) (sqrt 1.25) 1e-9)))
+    (check-= (std s #:ddof 0) (sqrt 1.25) 1e-9))
+
+  (define nothing (series (list polars-null polars-null) #:name "n"))
+  (define no-rows (series '() #:dtype 'int64))
+  (check-equal? (list (sum nothing) (mean nothing) (min nothing) (max nothing))
+                (make-list 4 polars-null))
+  (check-equal? (list (sum no-rows) (mean no-rows) (min no-rows) (max no-rows))
+                (list 0 polars-null polars-null polars-null))
+  (check-equal? (sum (series '(#t #f #t))) 2)
+  (check-equal? (sum (series '(100 100 100) #:dtype 'int8)) 300)
+  (check-equal? (mean (series '("a" "b"))) polars-null)
+  (check-exn #rx"^sum: unsupported dtype for reduction: 'string$"
+             (lambda () (sum (series '("a" "b")))))
+  (check-equal? (list (std nothing) (var nothing) (n-unique nothing)) (list polars-null polars-null 1))
+  (check-equal? (list (std (series '(5))) (std (series '(#t #f)))
+                      (n-unique (series (list 1 polars-null))))
+                (list polars-null 0.7071067811865476 2))
+  (check-exn #rx"^var: unsupported dtype for reduction: 'string$"
+             (lambda () (var (series '("a" "b")))))
+  (define gaps (series (list polars-null polars-null) #:dtype 'float64))
+  (check-equal? (list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))
+                (list #f 0.0 polars-null))
+  (check-exn #rx"^mean: arity mismatch" (lambda () (contracted:mean)))
+  (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
+  (for* ([reduce (list contracted:std contracted:var)]
+         [x (list (series '(1 2 3)) (col "v") (series '(1.0 2.0) #:dtype 'float32))])
+    (check-exn (regexp (format "^~a: contract violation.*expected: \\(integer-in 0 255\\)"
+                               (object-name reduce)))
+               (lambda () (reduce x #:ddof 256))))
+  (check-equal? (mean (series (list (date 2020 1 2) (date 2020 1 1))))
+                (datetime 2020 1 1 12 0 0 0))
+  (check-exn #rx"^n-unique: contract violation" (lambda () (contracted:n-unique 3)))
+  (check-equal? (contracted:sum 1 2 3) 6)
+  (define-runtime-path expected-file "../../scribblings/data/reductions-expected.rktd")
+  (define reducers (hash 'sum sum 'mean mean 'min min 'max max 'std std 'var var
+                         'n-unique n-unique))
+  (define (decode v)
+    (match v
+      ['null polars-null]
+      [(list 'date y m d) (date y m d)]
+      [(list 'datetime y mo d h mi s ns) (datetime y mo d h mi s ns)]
+      [(list 'time h m s ns) (time h m s ns)]
+      [(list 'duration-us n) (microseconds n)]
+      [(list 'category name) (string->symbol name)]
+      [(list 'decimal digits) (string->number digits 10 'number-or-false 'decimal-as-exact)]
+      [_ v]))
+  (define (check-reduction op s expected #:ddof [ddof #f])
+    (define reduce (hash-ref reducers op))
+    (define label (format "~a of ~a ~v ddof ~a" op (dtype s) (series-cells s) ddof))
+    (define (run) (if ddof (reduce s #:ddof ddof) (reduce s)))
+    (match expected
+      ['error (check-exn (regexp (format "^~a: " op)) run label)]
+      [_ (check-equal? (run) (decode expected) label)]))
+  (define (check-reduction-table inputs expectations)
+    (for* ([expectation (in-list expectations)]
+           [cell (in-list (map cons inputs (cdr expectation)))])
+      (check-reduction (car expectation) (car cell) (cdr cell))))
+  (match-define `((cases ,cases ...) (decimal ,decimal-table ...) (singles ,singles ...))
+    (file->value expected-file))
+  (for ([row (in-list cases)])
+    (match-define (list dt partial expectations ...) row)
+    (define (rows->series rows) (series (map decode rows) #:dtype dt))
+    (check-reduction-table (map rows->series (list '() '(null null) partial)) expectations))
+  (check-reduction-table (list (wrap-series (series-head prices 0))
+                               (wrap-series (series-slice prices 2 1))
+                               prices)
+                         decimal-table)
+  (for ([single (in-list singles)])
+    (match-define (list op dt rows ddof expected) single)
+    (check-reduction op (series (map decode rows) #:dtype dt) expected #:ddof ddof)))

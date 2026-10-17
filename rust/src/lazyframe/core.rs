@@ -1,6 +1,7 @@
 use crate::prelude::*;
 use crate::{
     clear_last_error, guard_panic, record, rust_string_to_ptr, set_last_error,
+    without_plan,
 };
 
 #[no_mangle]
@@ -19,6 +20,15 @@ pub extern "C" fn dataframe_lazy(df: *mut DataFrame) -> *mut LazyFrame {
     Box::into_raw(Box::new(cloned.lazy()))
 }
 
+/// The innermost error, without the step names polars wraps it in or the
+/// plan it appends.
+pub(crate) fn cause_alone(err: PolarsError) -> PolarsError {
+    match err {
+        PolarsError::Context { error, .. } => cause_alone(*error),
+        err => without_plan(err),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
     clear_last_error();
@@ -27,7 +37,7 @@ pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
         return ptr::null_mut();
     }
     let owned = unsafe { (*lf).clone() };
-    guard_panic(|| record(owned.collect()))
+    guard_panic(|| record(owned.collect().map_err(cause_alone)))
         .map_or(ptr::null_mut(), |df| Box::into_raw(Box::new(df)))
 }
 

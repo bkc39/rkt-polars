@@ -75,3 +75,30 @@ fn hstack_null_inputs_return_null() {
     dataframe_drop(a);
     series_drop(a_x);
 }
+
+#[test]
+fn stacks_record_why_they_refuse() {
+    let a_x = make_i32("x", &[1]);
+    let a = make_df(&[a_x]);
+    let b_x = make_str("x", &["s"]);
+    let b = make_df(&[b_x]);
+    assert!(dataframe_vstack(a, b).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("type String is incompatible with expected type Int32: failed to vstack column 'x'")
+    );
+    let dup = make_i32("x", &[2]);
+    let ptrs: [*const Series; 1] = [dup as *const _];
+    assert!(dataframe_hstack(a, ptrs.as_ptr(), ptrs.len()).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("'x'"), "{}", reason);
+    let ok = dataframe_vstack(a, a);
+    assert!(!ok.is_null());
+    assert_eq!(recorded_error(), None);
+    for d in [ok, a, b] {
+        dataframe_drop(d);
+    }
+    for s in [a_x, b_x, dup] {
+        series_drop(s);
+    }
+}
