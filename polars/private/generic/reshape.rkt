@@ -50,10 +50,10 @@
 
 (define (column-height-problem d s)
   (define height (dataframe-height d))
-  (define length (series-len s))
-  (if (or (= length height) (= length 1) (zero? (dataframe-width d)))
+  (define n (series-len s))
+  (if (or (= n height) (= n 1) (zero? (dataframe-width d)))
       #t
-      (format "unable to add a column of length ~a to a DataFrame of height ~a" length height)))
+      (format "unable to add a column of length ~a to a DataFrame of height ~a" n height)))
 
 (define (rename-problem x old new)
   (cond
@@ -85,7 +85,6 @@
     [(list (? Expr-ptr? e) (? Expr-ptr? pred))
      (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
-
 
 (define (head x n)
   (cond [(series? x)    (wrap-series    (series-head x n))]
