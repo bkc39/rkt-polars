@@ -562,22 +562,36 @@ far-zoned
 (hstack top (series '(10 20) #:name "w"))
 (eval:error (hstack top (series '(10) #:name "w")))]}
 
+@defproc[(with-column [d dataframe?] [column series?]) dataframe?]{
+  Adds @racket[column] to @racket[d], or replaces the column of its name
+  (@tt{df.with_columns(s)}). A one-row @racket[column] is repeated to
+  @racket[d]'s height; any other length must equal it.
+
+  @examples[#:eval ev
+(with-column top (series '(10 20) #:name "w"))
+(with-column top (series '(0) #:name "v"))
+(eval:error (with-column top (series '(1 2 3) #:name "w")))]}
+
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
+                             [n (integer-in 0 18446744073709551615)]) any/c]
               @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
+                             [n (integer-in 0 18446744073709551615)]) any/c]
               @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                              [offset exact-integer?]
-                              [length exact-nonnegative-integer?]) any/c])]{
+                              [offset (integer-in -9223372036854775808 9223372036854775807)]
+                              [length (integer-in 0 18446744073709551615)]) any/c])]{
   The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
   starting at @racket[offset], of the same kind as @racket[x] (Polars'
-  @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
-  and belong inside @racket[select].
+  @tt{head}, @tt{tail}, @tt{slice}); a negative @racket[offset] counts from
+  the end. On an expression they change the length and belong inside
+  @racket[select]. The counts are unsigned and the offset signed 64-bit
+  integers, as Polars takes them; a count past the end takes every row.
 
   @examples[#:eval ev
 (define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
 (head nums 2)
-(tail nums 2)]}
+(tail nums 2)
+(slice nums -2 (expt 2 40))
+(eval:error (head nums -1))]}
 
 @deftogether[(@defproc[(unique [x (or/c series? dataframe?)]) (or/c series? dataframe?)]
               @defproc[(drop-nulls [x (or/c series? dataframe? Expr-ptr?)]) any/c])]{
@@ -599,8 +613,53 @@ far-zoned
 (eval:error (unique '(1 1 2)))]}
 
 @defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
-  Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
-  to @racketmodname[racket/list]'s @racketid[drop].}
+  Removes the named column(s) (@tt{df.drop}). A name @racket[d] lacks, or one
+  given twice, raises. Applied to a list it falls back to
+  @racketmodname[racket/list]'s @racketid[drop].
+
+  @examples[#:eval ev
+(define pair (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(drop pair "a")
+(eval:error (drop pair '("a" "nope")))
+(drop '(1 2 3) 1)]}
+
+@defproc[(pivot [d dataframe?]
+                [#:on on (listof string?)]
+                [#:index index (listof string?)]
+                [#:values values (listof string?)]
+                [#:agg agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count) 'first])
+         dataframe?]{
+  Spreads @racket[d] wide (@tt{df.pivot}): one row per distinct key of the
+  @racket[index] columns (@racket['()] takes every column outside
+  @racket[on] and @racket[values]), and one column per distinct value of
+  @racket[on], sorted by value as Python's @tt{sort_columns=True}, holding the
+  @racket[values] of that cell under @racket[agg]. As in Python, a
+  @racket['sum] of an empty cell is 0 and @racket['count] is @tt{len};
+  @racket[#f] and @racket['none] raise when a cell holds more than one value.
+  A column @racket[d] lacks raises with Polars' reason.
+
+  @examples[#:eval ev
+(define sales
+  (dataframe (list (series '("a" "a" "b") #:name "store")
+                   (series '("q1" "q2" "q1") #:name "quarter")
+                   (series '(10 20 30) #:name "sales"))))
+(define by-quarter
+  (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
+        "store"))
+by-quarter
+(eval:error (pivot sales #:on '("nope") #:index '("store") #:values '("sales")))]}
+
+@defproc[(unpivot [d dataframe?] [#:on on (listof string?)] [#:index index (listof string?)])
+         dataframe?]{
+  Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
+  rows of a @racket["variable"] and a @racket["value"] column beside the
+  @racket[index] columns; @racket[#:on '()] takes every column outside
+  @racket[index], as Python's @tt{on=None}. A column @racket[d] lacks raises
+  with Polars' reason.
+
+  @examples[#:eval ev
+(unpivot by-quarter #:on '("q1" "q2") #:index '("store"))
+(eval:error (unpivot by-quarter #:on '("nope") #:index '("store")))]}
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
@@ -1703,13 +1762,24 @@ an implementation detail and not part of the public series API.)
 (series-name (series '(1 2) #:name "ints"))]}
 
 @deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
+              @defproc[#:link-target? #f
+                       (rename [d dataframe?] [old string?] [new string?]) dataframe?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
               @defproc[(series-clone [s series?]) series?])]{
   @racket[rename!] renames a series in place (matching Polars), returning
   @racket[void] as is conventional for @litchar{!} mutators; @racket[rename]
-  returns a renamed copy and leaves the original untouched. @racket[clone] (and
-  its series-specific alias @racket[series-clone]) returns an independent copy.}
+  returns a renamed copy and leaves the original untouched. On a dataframe,
+  @racket[rename] returns a copy whose column @racket[old] is named
+  @racket[new] (@tt{df.rename}); @racket[old] must be a column, and
+  @racket[new] must not name another. @racket[clone] (and its series-specific
+  alias @racket[series-clone]) returns an independent copy.
+
+  @examples[#:eval ev
+(series-name (rename (series '(1) #:name "a") "b"))
+(define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(rename named "a" "z")
+(eval:error (rename named "a" "b"))]}
 
 @subsection[#:tag "ref-series-convert"]{Converting to Racket values}
 
@@ -2154,11 +2224,12 @@ renders it with no separate display call.
 @defproc[(dataframe [columns (listof series?)]) dataframe?]{
   Builds a dataframe from a list of equal-length series. The columns may be
   series wrappers built with @racket[series]; their names become the column
-  names.
+  names, and must differ.
 
   @examples[#:eval ev
 (dataframe (list (series '("a" "b") #:name "k")
-                 (series '(1 2) #:name "v")))]}
+                 (series '(1 2) #:name "v")))
+(eval:error (dataframe (list (series '(1) #:name "k") (series '(2) #:name "k"))))]}
 
 @deftogether[(@defproc[(shape [x has-shape?]) (listof exact-nonnegative-integer?)]
               @defproc[(shape/values [x has-shape?]) (values exact-nonnegative-integer? ...)]
@@ -2189,10 +2260,17 @@ renders it with no separate display call.
   the element at index @racket[i]. On a dataframe, a single selector — given
   positionally or as @racket[#:columns] — returns that column (by name or index)
   as a series, and a @emph{list} of selectors returns a column-projected
-  dataframe. It is data-first, so it threads. @racket[#:rows] is reserved for
+  dataframe. It is data-first, so it threads. A name in the list is taken
+  literally, never as a pattern; a name the frame lacks, or a column selected
+  twice, raises. @racket[#:rows] is reserved for
   row slicing and currently raises an error. Provided by the @racket[gen:has-ref]
   interface. For a whole column, @racket[series->list] and its siblings convert
-  in one pass where a @racket[ref] loop makes one foreign call per element.}
+  in one pass where a @racket[ref] loop makes one foreign call per element.
+
+  @examples[#:eval ev
+(define starred (dataframe (list (series '(1) #:name "*") (series '(2) #:name "b"))))
+(ref starred '("*"))
+(eval:error (ref starred '("b" 1)))]}
 
 @defproc[(describe [x (or/c series? dataframe?)]) dataframe?]{
   Mirrors Polars' @tt{.describe()}: returns a summary-statistics @tech{dataframe}

@@ -1,15 +1,13 @@
 #lang racket/base
 
 (require racket/generic
-         (only-in racket/contract/base ->i contract-out listof)
+         (only-in racket/contract/base -> contract-out listof)
          (only-in racket/list check-duplicates)
          (only-in racket/match match*)
          syntax/parse/define
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
          (only-in polars/private/bulk in-series)
-         (only-in polars/private/expr col dataframe-lazy lazyframe-select)
-         (only-in (submod polars/private/expr internal) lazyframe-collect/who)
          (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
          polars/private/generic/dtype
@@ -17,9 +15,7 @@
 
 (provide (except-out (all-defined-out) dataframe)
          (contract-out
-          [dataframe (->i ([columns (listof Series-ptr?)])
-                          #:pre/desc (columns) (frame-columns-problem columns)
-                          [result dataframe?])]))
+          [dataframe (-> (listof Series-ptr?) dataframe?)]))
 
 (define unset (gensym 'unset))
 
@@ -98,18 +94,25 @@
     [(#f (? string? name))
      (format "could not create a new DataFrame: column with name '~a' has more than one occurrence"
              name)]
-    [(#f #f) #t]))
+    [(#f #f) #f]))
+
+(define (column-problem present names)
+  (cond
+    [(for/first ([name (in-list names)] #:unless (member name present)) name)
+     => (lambda (name) (format "~s not found" name))]
+    [(check-duplicates names) => (lambda (name) (format "~s named more than once" name))]
+    [else #f]))
+
+(define (refuse who problem fallback)
+  (raise-arguments-error who (or problem fallback)))
 
 (define (dataframe series-list)
-  (wrap-dataframe (dataframe-new series-list)))
+  (wrap-dataframe
+   (or (dataframe-new/raw series-list)
+       (refuse 'dataframe (frame-columns-problem series-list) "could not create a new DataFrame"))))
 
 ;; ---------------------------------------------------------------------------
 ;; the lazyframe wrapper
-;;
-;; A lazyframe is a deferred query plan, not a materialized table, so (unlike the
-;; series/dataframe wrappers) it has no len/shape/ref/dtype — you build a plan
-;; with the data-first verbs and run it with `collect`.  prop:cpointer lets it
-;; marshal as a _LazyFrame-ptr through the lazyframe-* bindings.
 
 (struct lazyframe-rec (ptr)
   #:reflection-name 'lazyframe
@@ -140,14 +143,11 @@
   (guard-dataframe 'column-names d)
   (dataframe-column-names d))
 
-;; shape as a list (examples); shape/values is the multiple-values variant.
 (define (shape/values x) (apply values (shape x)))
 
 ;; ---------------------------------------------------------------------------
 ;; series: keyword constructor with dtype inference (see dtype.rkt)
 
-;; (series elements #:name "n" #:dtype 'i32)
-;; elements may be a list or a vector; nulls are polars-null.  Returns a series.
 (define (series elements #:name [name ""] #:dtype [dtype #f])
   (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
   (check-categorical-values 'series canonical elements)
@@ -184,8 +184,11 @@
       [else (error 'ref "ref on a dataframe requires a column key or #:columns")]))
   (cond
     [(list? sel)
-     (define columns (map (lambda (c) (col (column->name d c))) sel))
-     (wrap-dataframe (lazyframe-collect/who 'ref (lazyframe-select (dataframe-lazy d) columns)))]
+     (define names (map (lambda (c) (column->name d c)) sel))
+     (wrap-dataframe
+      (or (dataframe-select/c d names)
+          (refuse 'ref (column-problem (dataframe-column-names d) names)
+                  "cannot select the columns")))]
     [else
      (define name (column->name d sel))
      (wrap-series (or (dataframe-column/raw d name) (error 'ref "~s not found" name)))]))
@@ -202,7 +205,6 @@
                      (series '(10 25 18) #:name "score" #:dtype 'i32)
                      (series '(1.2 3.5 2.0) #:name "cost"))))
 
-  ;; series custom-write goes through series->string
   (check-equal? (format "~a" ints) (series->string ints))
   (define past-chrono-zoned
     (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
@@ -212,12 +214,10 @@
   (check-exn #rx"^ref: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
              (lambda () (ref past-chrono-zoned 0)))
 
-  ;; constructor returns a series wrapper; series? distinguishes it
   (check-pred series? (series '(1 2 3)))
   (check-false (series? 5))
   (check-false (series? '(1 2 3)))
 
-  ;; dtype inference + alias parity
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'i32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3) #:dtype 'int32)) 'int32)
   (check-equal? (series-dtype (series '(1 2 3))) 'int64)   ; Polars default

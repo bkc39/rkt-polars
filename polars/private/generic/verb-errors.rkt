@@ -4,7 +4,7 @@
   (require rackunit
            racket/match
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/foreign polars-null)
+           (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
                     dataframe-with-columns)
@@ -14,6 +14,7 @@
            polars/private/generic/math
            polars/private/generic/nullable
            polars/private/generic/operators
+           (only-in polars/private/generic/ordering sort)
            polars/private/generic/predicates
            polars/private/generic/reductions
            polars/private/generic/reshape
@@ -42,48 +43,127 @@
   (check-equal? (height (filter frame (series '(#t)))) 3)
 
   (for ([names (list "nope" '("v" "nope"))])
-    (check-raises 'contract #rx"^drop: contract violation;\n \"nope\" not found\n"
-                  (lambda () (drop frame names))))
+    (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop frame names))))
+  (check-raises 'contract #rx"^drop: \"v\" named more than once$"
+                (lambda () (drop frame '("v" "v"))))
   (check-equal? (column-names (drop frame "v")) '("s"))
   (check-equal? (drop '(1 2 3) 1) '(2 3))
 
+  (define count-range "[(]integer-in 0 18446744073709551615[)]")
+  (define offset-range "[(]integer-in -9223372036854775808 9223372036854775807[)]")
   (for* ([x (list frame (series '(1 2)) (lazy frame) (col "v"))]
-         [call (list (cons 'head (lambda () (head x -1)))
-                     (cons 'tail (lambda () (tail x -1)))
-                     (cons 'slice (lambda () (slice x 0 -1))))])
-    (match-define (cons who thunk) call)
-    (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: natural[?]\n" who))
+         [call (list (list 'head count-range (lambda () (head x -1)))
+                     (list 'tail count-range (lambda () (tail x -1)))
+                     (list 'slice count-range (lambda () (slice x 0 -1)))
+                     (list 'head count-range (lambda () (head x (expt 2 64))))
+                     (list 'tail count-range (lambda () (tail x (expt 2 64))))
+                     (list 'slice count-range (lambda () (slice x 0 (expt 2 64))))
+                     (list 'slice offset-range (lambda () (slice x (expt 2 63) 1)))
+                     (list 'slice offset-range (lambda () (slice x (sub1 (- (expt 2 63))) 1))))])
+    (match-define (list who range thunk) call)
+    (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: ~a\n" who range))
                   thunk))
+
+  (define edge-counts
+    (list 0 2 3 4 (sub1 (expt 2 32)) (expt 2 32) (sub1 (expt 2 63)) (expt 2 63)
+          (sub1 (expt 2 64))))
+  (define edge-offsets
+    (list (- (expt 2 63)) (- 1 (expt 2 63)) (- (expt 2 32)) (- 1 (expt 2 32)) -4 -3 -1 0 2 3
+          (sub1 (expt 2 32)) (sub1 (expt 2 63))))
+  (define (rows-of v)
+    (match v
+      [(? series?) (series->list v)]
+      [(? dataframe?) (series->list (ref v "v"))]
+      [(? lazyframe?) (rows-of (collect v))]
+      [_ (rows-of (select frame v))]))
+  (define (same-rows-everywhere label pick)
+    (define expected (rows-of (pick frame)))
+    (for ([x (list (ref frame "v") (lazy frame) (col "v"))])
+      (check-equal? (rows-of (pick x)) expected (format "~a on ~a" label x))))
+  (for ([n (in-list edge-counts)])
+    (same-rows-everywhere (list 'head n) (lambda (x) (head x n)))
+    (same-rows-everywhere (list 'tail n) (lambda (x) (tail x n))))
+  (for* ([offset (in-list edge-offsets)] [n (in-list edge-counts)])
+    (same-rows-everywhere (list 'slice offset n) (lambda (x) (slice x offset n))))
   (check-equal? (series->list (slice (series '(1 2 3)) -2 2)) '(2 3))
 
   (check-raises 'contract
-                (string-append "^with-column: contract violation;\n unable to add a column of "
-                               "length 2 to a DataFrame of height 3\n")
+                #rx"^with-column: unable to add a column of length 2 to a DataFrame of height 3$"
                 (lambda () (with-column frame (series '(1 2) #:name "w"))))
+  (check-raises 'contract
+                #rx"^with-column: unable to add a column of length 2 to a DataFrame of height 0$"
+                (lambda () (with-column (head frame 0) (series '(1 2) #:name "w"))))
+  (check-equal? (shape (with-column (dataframe '()) (series '(1 2) #:name "w"))) '(2 1))
   (check-equal? (series->list (ref (with-column frame (series '(9) #:name "w")) "w")) '(9 9 9))
 
-  (check-raises 'contract #rx"^rename: contract violation;\n \"nope\" not found\n"
-                (lambda () (rename frame "nope" "x")))
-  (check-raises 'contract #rx"^rename: contract violation;\n column 's' is duplicate\n"
-                (lambda () (rename frame "v" "s")))
+  (check-raises 'contract #rx"^rename: \"nope\" not found$" (lambda () (rename frame "nope" "x")))
+  (check-raises 'contract #rx"^rename: column 's' is duplicate$" (lambda () (rename frame "v" "s")))
+  (check-raises 'contract #rx"^rename: contract violation;\n renaming a dataframe column needs"
+                (lambda () (rename frame "v")))
   (check-equal? (column-names (rename frame "v" "v")) '("v" "s"))
 
   (check-raises 'polars #rx"^ref: \"nope\" not found$" (lambda () (ref frame "nope")))
   (check-raises 'contract #rx"^ref: column index out of range\n  index: 9\n  width: 2$"
                 (lambda () (ref frame 9)))
-  (check-raises 'polars #rx"^ref: [^\n]*unable to find column \"nope\""
-                (lambda () (ref frame '("v" "nope"))))
+  (check-raises 'contract #rx"^ref: \"nope\" not found$" (lambda () (ref frame '("v" "nope"))))
+  (check-raises 'contract #rx"^ref: \"v\" named more than once$" (lambda () (ref frame '("v" 0))))
   (check-equal? (column-names (ref frame '("s" 0))) '("s" "v"))
+  (check-equal? (shape (ref frame '())) '(3 0))
+  (define patterned
+    (dataframe (list (series '(1) #:name "^a$") (series '(2) #:name "ab") (series '(3) #:name "*"))))
+  (check-equal? (column-names (ref patterned '("^a$"))) '("^a$"))
+  (check-equal? (column-names (ref patterned '("*" "ab"))) '("*" "ab"))
+  (check-raises 'contract #rx"^ref: \"[\\^]a[.][*][$]\" not found$"
+                (lambda () (ref patterned '("^a.*$"))))
+  (check-raises 'polars #rx"^select: [^\n]*duplicate[^\n]*with `[(]alias expr \"new-name\"[)]` to"
+                (lambda () (select frame "v" "v")))
 
   (check-raises 'contract
-                (string-append "^dataframe: contract violation\n  could not create a new DataFrame: "
-                               "height of column 'b' [(]2[)] does not match height of column 'a' "
-                               "[(]3[)]\n")
+                (string-append "^dataframe: could not create a new DataFrame: height of column 'b' "
+                               "[(]2[)] does not match height of column 'a' [(]3[)]$")
                 (lambda () (dataframe (list (series '(1 2 3) #:name "a") (series '(1 2) #:name "b")))))
   (check-raises 'contract
-                (string-append "^dataframe: contract violation\n  could not create a new DataFrame: "
-                               "column with name 'a' has more than one occurrence\n")
+                (string-append "^dataframe: could not create a new DataFrame: column with name 'a' "
+                               "has more than one occurrence$")
                 (lambda () (dataframe (list (series '(1) #:name "a") (series '(2) #:name "a")))))
+
+  (define (columns-of d) (for/list ([name (column-names d)]) (cons name (series->list (ref d name)))))
+  (define top (dataframe (list (series '(1 2) #:name "v"))))
+  (check-equal? (columns-of (with-column top (series '(10 20) #:name "w"))) '(("v" 1 2) ("w" 10 20)))
+  (check-equal? (columns-of (with-column top (series '(0) #:name "v"))) '(("v" 0 0)))
+  (check-raises 'contract
+                #rx"^with-column: unable to add a column of length 3 to a DataFrame of height 2$"
+                (lambda () (with-column top (series '(1 2 3) #:name "w"))))
+  (define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
+  (check-equal? (columns-of (slice nums -2 (expt 2 40))) '(("v" 4 5)))
+  (check-raises 'contract #rx"^head: contract violation\n" (lambda () (head nums -1)))
+  (define pair (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (check-equal? (column-names (drop pair "a")) '("b"))
+  (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop pair '("a" "nope"))))
+  (define sales
+    (dataframe (list (series '("a" "a" "b") #:name "store")
+                     (series '("q1" "q2" "q1") #:name "quarter")
+                     (series '(10 20 30) #:name "sales"))))
+  (define by-quarter
+    (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
+          "store"))
+  (check-equal? (columns-of by-quarter) '(("store" "a" "b") ("q1" 10 30) ("q2" 20 0)))
+  (check-raises 'polars #rx"^pivot: cannot pivot the dataframe: [^\n]*\"nope\" not found$"
+                (lambda () (pivot sales #:on '("nope") #:index '("store") #:values '("sales"))))
+  (check-equal? (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))
+                '(("store" "a" "b" "a" "b") ("variable" "q1" "q1" "q2" "q2")
+                  ("value" 10 30 20 0)))
+  (check-raises 'polars #rx"^unpivot: cannot unpivot the dataframe: [^\n]*\"nope\" not found$"
+                (lambda () (unpivot by-quarter #:on '("nope") #:index '("store"))))
+  (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
+  (define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (check-equal? (column-names (rename named "a" "z")) '("z" "b"))
+  (check-raises 'contract #rx"^rename: column 'b' is duplicate$" (lambda () (rename named "a" "b")))
+  (check-raises 'contract #rx"^dataframe: [^\n]*column with name 'k' has more than one occurrence$"
+                (lambda () (dataframe (list (series '(1) #:name "k") (series '(2) #:name "k")))))
+  (define starred (dataframe (list (series '(1) #:name "*") (series '(2) #:name "b"))))
+  (check-equal? (column-names (ref starred '("*"))) '("*"))
+  (check-raises 'contract #rx"^ref: \"b\" named more than once$" (lambda () (ref starred '("b" 1))))
 
   (check-raises 'contract #rx"^group-by: contract violation\n" (lambda () (group-by frame 5)))
   (check-raises 'contract #rx"^agg: contract violation\n" (lambda () (agg (group-by frame "s") "v")))

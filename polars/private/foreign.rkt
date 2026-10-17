@@ -94,6 +94,7 @@
      . "")
     ("Please use `ambiguous` to tell" . "Please use #:ambiguous to tell")
     ("use `non_existent='null'`" . "use dt-replace-time-zone's #:non-existent 'null")
+    ("with `.alias(\"new_name\")`" . "with `(alias expr \"new-name\")`")
     (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
                      " set POLARS_IGNORE_TIMEZONE_PARSE_ERROR=1.")
      . "")))
@@ -1859,6 +1860,8 @@
                 (string-append "is ambiguous. Please use #:ambiguous to tell how it should be"
                                " localized. You may be able to use dt-replace-time-zone's"
                                " #:non-existent 'null to return `null`"))
+  (check-equal? (respell "try renaming the columns with `.alias(\"new_name\")` to avoid")
+                "try renaming the columns with `(alias expr \"new-name\")` to avoid")
   (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 
@@ -1976,10 +1979,10 @@
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_select
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-select))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-select df cols)
-  (dataframe-select/c df cols))
+  (or (dataframe-select/c df cols) (error 'dataframe-select "operation failed")))
 
 (define-compat dataframe-drop-columns/c
   (_fun _DataFrame-ptr
@@ -1987,18 +1990,26 @@
         (_size = (length names))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_drop_columns
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-columns))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-drop-columns df cols)
-  (dataframe-drop-columns/c df cols))
+  (or (dataframe-drop-columns/c df cols) (error 'dataframe-drop-columns "operation failed")))
 
-(define-compat dataframe-rename
+(define-compat dataframe-rename/raw
   (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-rename))
+  #:c-id dataframe_rename
+  #:wrap (allocator dataframe-drop))
 
-(define-compat dataframe-with-column
+(define (dataframe-rename df old new)
+  (or (dataframe-rename/raw df old new) (error 'dataframe-rename "operation failed")))
+
+(define-compat dataframe-with-column/raw
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-with-column))
+  #:c-id dataframe_with_column
+  #:wrap (allocator dataframe-drop))
+
+(define (dataframe-with-column df s)
+  (or (dataframe-with-column/raw df s) (error 'dataframe-with-column "operation failed")))
 
 (define-syntax-parse-rule (define-frame-op/reason (name:id arg:id ...) call:expr compat:expr)
   #:with name/who (format-id #'name "~a/who" #'name)
@@ -2024,10 +2035,10 @@
         (_size = (length v))
         -> _DataFrame-ptr/null)
   #:c-id dataframe_new
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-new))
+  #:wrap (allocator dataframe-drop))
 
 (define (dataframe-new series-list)
-  (dataframe-new/raw series-list))
+  (or (dataframe-new/raw series-list) (error 'dataframe-new "operation failed")))
 
 (define-compat dataframe-column-name
   (_fun _DataFrame-ptr _size -> _rsstring))
