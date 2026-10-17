@@ -56,7 +56,9 @@
   series-add/who series-sub/who series-mul/who series-div/who series-mod/who
   series-eq/who series-ne/who series-gt/who series-ge/who series-lt/who series-le/who
   series-and/who series-or/who series-xor/who series-not/who
-  dataframe-vstack/raw dataframe-hstack/raw])
+  dataframe-vstack/raw dataframe-hstack/raw
+  dataframe-select/c dataframe-drop-columns/c dataframe-rename/raw
+  dataframe-with-column/raw dataframe-new/raw])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -87,7 +89,10 @@
   (for ([internal (in-list (append internal-names
                                     '(expr-drop/raw expr-dropped
                                       lazyframe-drop/raw lazyframe-dropped
-                                      define-frame-op/reason define-reasoned)))])
+                                      define-frame-op/reason define-reasoned
+                                      dataframe-select/c dataframe-drop-columns/c
+                                      dataframe-rename/raw dataframe-with-column/raw
+                                      dataframe-new/raw)))])
     (check-false (memq internal exported) (format "~a is internal" internal))))
 
 (module+ test

@@ -3,6 +3,7 @@
 (module+ test
   (require rackunit
            racket/match
+           (prefix-in rkt: (only-in racket/base max min))
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
@@ -86,6 +87,45 @@
   (for* ([offset (in-list edge-offsets)] [n (in-list edge-counts)])
     (same-rows-everywhere (list 'slice offset n) (lambda (x) (slice x offset n))))
   (check-equal? (series->list (slice (series '(1 2 3)) -2 2)) '(2 3))
+
+  (define grouped
+    (dataframe (list (series '(5 1 7 3 4 6 2) #:name "v")
+                     (series '("a" "b" "a" "a" "b" "a" "b") #:name "g"))))
+  (define group-values '(("a" 5 7 3 6) ("b" 1 4 2)))
+  (define (slice-list xs offset n)
+    (define l (length xs))
+    (define (clamp k) (rkt:max 0 (rkt:min k l)))
+    (define from (if (negative? offset) (+ l offset) offset))
+    (define start (clamp from))
+    (define stop (clamp (+ from n)))
+    (for/list ([x (in-list xs)] [i (in-naturals)] #:when (and (<= start i) (< i stop))) x))
+  (define (same-rows-per-group label pick pick-list)
+    (define result
+      (sort (agg (group-by grouped "g")
+                 (alias (min (pick (col "v"))) "lo")
+                 (alias (max (pick (col "v"))) "hi")
+                 (alias (count (pick (col "v"))) "n"))
+            "g"))
+    (define expected
+      (for/list ([group (in-list group-values)])
+        (match-define (cons g xs) group)
+        (define picked (pick-list xs))
+        (if (null? picked)
+            (list g polars-null polars-null 0)
+            (list g (apply rkt:min picked) (apply rkt:max picked) (length picked)))))
+    (check-equal? (apply map list (for/list ([name (in-list '("g" "lo" "hi" "n"))])
+                                    (series->list (ref result name))))
+                  expected
+                  (format "~a per group" label)))
+  (for ([n (in-list edge-counts)])
+    (same-rows-per-group (list 'head n) (lambda (x) (head x n)) (lambda (xs) (slice-list xs 0 n)))
+    (same-rows-per-group (list 'tail n)
+                         (lambda (x) (tail x n))
+                         (lambda (xs) (slice-list xs (- (length xs) (rkt:min n (length xs))) n))))
+  (for* ([offset (in-list edge-offsets)] [n (in-list edge-counts)])
+    (same-rows-per-group (list 'slice offset n)
+                         (lambda (x) (slice x offset n))
+                         (lambda (xs) (slice-list xs offset n))))
 
   (check-raises 'contract
                 #rx"^with-column: unable to add a column of length 2 to a DataFrame of height 3$"

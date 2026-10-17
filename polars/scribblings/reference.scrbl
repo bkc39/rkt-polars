@@ -565,11 +565,13 @@ far-zoned
 @defproc[(with-column [d dataframe?] [column series?]) dataframe?]{
   Adds @racket[column] to @racket[d], or replaces the column of its name
   (@tt{df.with_columns(s)}). A one-row @racket[column] is repeated to
-  @racket[d]'s height; any other length must equal it.
+  @racket[d]'s height; any other length must equal it (a frame with no
+  columns takes any length).
 
   @examples[#:eval ev
 (with-column top (series '(10 20) #:name "w"))
 (with-column top (series '(0) #:name "v"))
+(shape (with-column (dataframe '()) (series '(1 2) #:name "w")))
 (eval:error (with-column top (series '(1 2 3) #:name "w")))]}
 
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
