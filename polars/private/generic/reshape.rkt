@@ -74,8 +74,6 @@
 (define (collect-frame who d extend)
   (wrap-dataframe (lazyframe-collect/who who (extend (dataframe-lazy d)))))
 
-;; filter: (filter df predicate-expr) / (filter df mask-series) -> dataframe.
-;; Falls back to racket/base filter, so (filter even? '(1 2 3 4)) still works.
 (define (filter . args)
   (match args
     [(list (? dataframe? d) (? Expr-ptr? pred))
@@ -88,8 +86,6 @@
      (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
 
-;; --- reshaping verbs (series + dataframe) -----------------------------------
-;; reverse is series-only with a racket/base list fallback (no dataframe-reverse).
 
 (define (head x n)
   (cond [(series? x)    (wrap-series    (series-head x n))]
@@ -161,14 +157,12 @@
      (wrap-lazyframe (lazyframe-with-columns d (specs->exprs 'with-columns d specs)))]
     [else (error 'with-columns "expected a dataframe or lazyframe, got ~v" d)]))
 
-;; drop: dataframe -> drop the named column(s); list -> racket/list drop.
 (define (drop x arg)
   (cond
     [(dataframe? x)
      (wrap-dataframe (dataframe-drop-columns x (if (list? arg) arg (list arg))))]
     [else (list-drop x arg)]))
 
-;; with-column: attach a Series as a new column -> dataframe.
 (define (with-column d s)
   (wrap-dataframe (dataframe-with-column d s)))
 
@@ -177,11 +171,9 @@
         [(series? x)   (wrap-series (series-cast-to 'cast x dtype))]
         [else          (expr-cast-to 'cast (col x) dtype)]))
 
-;; pivot: long -> wide (Polars df.pivot).
 (define (pivot d #:on on #:index index #:values values #:agg [agg 'first])
   (wrap-dataframe (pivot-frame 'pivot d on index values agg)))
 
-;; unpivot: wide -> long (Polars df.unpivot).
 (define (unpivot d #:on on #:index index)
   (wrap-dataframe (unpivot-frame 'unpivot d on index)))
 
@@ -227,8 +219,6 @@
     [(series? x) (series-rename x new-name)]
     [else (error 'rename! "expected a series, got ~v" x)]))
 
-;; non-mutating: (rename series new-name) renames the series; (rename df old new)
-;; renames a dataframe column.
 (define (rename x a [b unset])
   (cond
     [(series? x)

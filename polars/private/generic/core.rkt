@@ -3,7 +3,7 @@
 (require racket/generic
          (only-in racket/contract/base ->i contract-out listof)
          (only-in racket/list check-duplicates)
-         (only-in racket/match match)
+         (only-in racket/match match*)
          syntax/parse/define
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
@@ -21,30 +21,20 @@
                           #:pre/desc (columns) (frame-columns-problem columns)
                           [result dataframe?])]))
 
-;; sentinel for "argument not supplied" in ref's optional positional/keyword args
 (define unset (gensym 'unset))
 
-;; ---------------------------------------------------------------------------
-;; capability generics (small, purpose-named; per "name capability generics").
-
-;; ref: index a series (returns the element) or slice columns out of a
-;; dataframe.  Data-first, so it threads.  See series-ref* / dataframe-ref*.
 (define-generics has-ref
   (ref has-ref [key] #:columns [columns] #:rows [rows]))
 
-;; len: number of elements (series) / number of rows (dataframe).
 (define-generics sized
   (len sized))
 
-;; shape: (n) for a series, (rows cols) for a dataframe.
 (define-generics has-shape
   (shape has-shape))
 
-;; dtype: a series' element dtype (canonical symbol).
 (define-generics has-dtype
   (dtype has-dtype))
 
-;; null-count: number of null entries in a series.
 (define-generics has-null-count
   (null-count has-null-count))
 
@@ -96,22 +86,19 @@
 (define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
 
-;; smart constructor: wraps dataframe-new (which accepts series wrappers, since
-;; they marshal as _Series-ptr).  Keep the raw dataframe-new as the low-level API.
 (define (frame-columns-problem columns)
-  (define (problem detail) (string-append "could not create a new DataFrame: " detail))
-  (match columns
-    ['() #t]
-    [(cons first-column _)
-     (define height (series-len first-column))
-     (cond
-       [(for/first ([c (in-list columns)] #:unless (= (series-len c) height)) c)
-        => (lambda (c)
-             (problem (format "height of column '~a' (~a) does not match height of column '~a' (~a)"
-                              (series-name c) (series-len c) (series-name first-column) height)))]
-       [(check-duplicates (map series-name columns))
-        => (lambda (name) (problem (format "column with name '~a' has more than one occurrence" name)))]
-       [else #t])]))
+  (define heights (map series-len columns))
+  (define names (map series-name columns))
+  (match* ((for/first ([h (in-list heights)] [n (in-list names)] #:unless (= h (car heights)))
+             (list n h))
+           (check-duplicates names))
+    [((list name height) _)
+     (format "could not create a new DataFrame: height of column '~a' (~a) does not match ~a"
+             name height (format "height of column '~a' (~a)" (car names) (car heights)))]
+    [(#f (? string? name))
+     (format "could not create a new DataFrame: column with name '~a' has more than one occurrence"
+             name)]
+    [(#f #f) #t]))
 
 (define (dataframe series-list)
   (wrap-dataframe (dataframe-new series-list)))
@@ -170,7 +157,6 @@
 ;; ---------------------------------------------------------------------------
 ;; ref dispatch helpers (referenced by the struct methods above)
 
-;; ref for a series: positional index only.
 (define (series-ref* s key columns rows)
   (unless (eq? columns unset)
     (error 'ref "a series has no columns to select"))
@@ -180,18 +166,14 @@
     (error 'ref "ref on a series requires an index"))
   (series-value 'ref s key))
 
-;; a dataframe column selector, as a name.
 (define (column->name d c)
   (cond
     [(string? c) c]
     [(and (exact-nonnegative-integer? c) (< c (dataframe-width d))) (dataframe-column-name d c)]
     [(exact-nonnegative-integer? c)
-     (raise-arguments-error 'ref "column index out of range"
-                            "index" c "width" (dataframe-width d))]
+     (raise-arguments-error 'ref "column index out of range" "index" c "width" (dataframe-width d))]
     [else (error 'ref "dataframe column selector must be a string or index, got ~v" c)]))
 
-;; ref for a dataframe: a single selector -> wrapped series; a list -> wrapped
-;; dataframe (column-projected slice).  Row slicing (#:rows) is reserved.
 (define (dataframe-ref* d key columns rows)
   (unless (eq? rows unset)
     (error 'ref "dataframe row slicing not yet implemented"))
