@@ -10,15 +10,13 @@ pub extern "C" fn series_new_ymdhms(
     let Some(ymdhms_slice) = (unsafe { slice_or_empty(data, length) }) else {
         return ptr::null_mut();
     };
-    let naive_dates: Vec<NaiveDateTime> = ymdhms_slice
+    let Some(naive_dates) = ymdhms_slice
         .iter()
-        .map(|ymdhms| {
-            NaiveDate::from_ymd_opt(ymdhms.year, ymdhms.month, ymdhms.day)
-                .unwrap()
-                .and_hms_opt(ymdhms.hour, ymdhms.minute, ymdhms.second)
-                .unwrap()
-        })
-        .collect();
+        .map(ymdhms_to_naive_datetime)
+        .collect::<Option<Vec<NaiveDateTime>>>()
+    else {
+        return ptr::null_mut();
+    };
     Box::into_raw(Box::new(Series::new(name_from_ptr(name), naive_dates)))
 }
 

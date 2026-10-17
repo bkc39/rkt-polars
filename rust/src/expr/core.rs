@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{
-    clear_last_error, datetime_tz_dtype, polars_dtype_from_compat,
+    clear_last_error, datetime_tz_dtype, guard_panic, polars_dtype_from_compat,
     rust_string_to_ptr, CompatDType,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,10 +22,13 @@ pub extern "C" fn expr_drop(e: *mut Expr) {
 
 #[no_mangle]
 pub extern "C" fn expr_to_string(e: *const Expr) -> *const c_char {
+    clear_last_error();
     if e.is_null() {
         return ptr::null();
     }
-    rust_string_to_ptr(format!("{}", unsafe { &*e }))
+    let e = unsafe { &*e };
+    guard_panic(|| Some(format!("{}", e)))
+        .map_or(ptr::null(), rust_string_to_ptr)
 }
 
 #[no_mangle]

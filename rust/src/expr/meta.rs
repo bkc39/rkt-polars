@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::rust_string_to_ptr;
+use crate::{guard_panic, rust_string_to_ptr};
 
 #[no_mangle]
 pub extern "C" fn expr_meta_output_name(e: *const Expr) -> *const c_char {
@@ -7,10 +7,8 @@ pub extern "C" fn expr_meta_output_name(e: *const Expr) -> *const c_char {
         return ptr::null();
     }
     let expr = unsafe { (*e).clone() };
-    match expr.meta().output_name() {
-        Ok(name) => rust_string_to_ptr(&*name),
-        Err(_) => ptr::null(),
-    }
+    guard_panic(|| expr.meta().output_name().ok())
+        .map_or(ptr::null(), |name| rust_string_to_ptr(&name))
 }
 
 fn root_names(e: *const Expr) -> Vec<PlSmallStr> {

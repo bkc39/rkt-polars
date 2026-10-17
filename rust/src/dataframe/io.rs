@@ -358,11 +358,13 @@ pub extern "C" fn dataframe_write_csv_with_options(
 
 #[no_mangle]
 pub extern "C" fn dataframe_to_string(df_ptr: *mut DataFrame) -> *const c_char {
+    clear_last_error();
     if df_ptr.is_null() {
         return ptr::null();
     }
     let df = unsafe { &*df_ptr };
-    rust_string_to_ptr(format!("{}", df))
+    guard_panic(|| Some(format!("{}", df)))
+        .map_or(ptr::null(), rust_string_to_ptr)
 }
 
 #[no_mangle]

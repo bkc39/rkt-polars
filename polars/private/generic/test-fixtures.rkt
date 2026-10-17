@@ -9,7 +9,9 @@
          polars/private/generic/core
          polars/private/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
-         (only-in polars/private/foreign dataframe-column polars-null polars-null?)
+         (only-in polars/private/foreign
+                  dataframe-column polars-null polars-null? series-cast series-new-i32
+                  series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
          (only-in gregor datetime))
 
@@ -20,6 +22,14 @@
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
 (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
+
+(define past-chrono-date (wrap-series (series-cast (series-new-i32 "d" '(2000000000)) 'date)))
+(define past-chrono-datetime
+  (wrap-series (series-cast (series-new-i64 "t" '(9223372036854775807))
+                            '(datetime milliseconds #f))))
+(define past-chrono-zoned
+  (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
+                            '(datetime microseconds "Europe/Brussels"))))
 
 (define frame
   (dataframe (list (series '("alice" "bob" "carol") #:name "user")
@@ -54,7 +64,7 @@
               (equal? (column a name) (column b name))))))
 
 (define (cause-of message)
-  (cadr (regexp-match #rx"^[^:]*: [^:]*: ([^\n]*)" message)))
+  (caddr (regexp-match #rx"^[^:]*: (failed to [^:]*: )?([^\n]*)" message)))
 
 (define (reads-agree? read scan collect path kvs)
   (define eager (with-handlers ([exn:fail? exn-message]) (apply-keywords read kvs path)))

@@ -13,8 +13,9 @@
 (provide (contract-out
           [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
           [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
-          [n-unique (-> (or/c series? col-expr/c) any/c)])
-         sum mean min max count median first last alias)
+          [n-unique (-> (or/c series? col-expr/c) any/c)]
+          [alias (-> col-expr/c string? Expr-ptr?)])
+         sum mean min max count median first last)
 
 (define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
   (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
@@ -49,10 +50,10 @@
     [((or 'mean 'min 'max) _) 'expr]
     [(_ _) #f]))
 
-(define (series-agg-via-expr expr-op s)
+(define (series-agg-via-expr who expr-op s)
   (define out (dataframe-select-exprs (dataframe-new (list s))
                                       (list (expr-alias (expr-op (expr-all)) "v"))))
-  (series-ref (dataframe-column out "v") 0))
+  (series-value who (dataframe-column out "v") 0))
 
 (define (reduce-series op s #:ddof [ddof 1])
   (define dt (series-dtype s))
@@ -61,7 +62,7 @@
     ['native (or ((hash-ref (hash-ref native-reducers op) dt) s) polars-null)]
     ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
     ['float64 (or (series-dispersion (series-cast s 'float64) #:ddof ddof) polars-null)]
-    ['expr (series-agg-via-expr (lambda (e) (aggregation op e ddof)) s)]
+    ['expr (series-agg-via-expr op (lambda (e) (aggregation op e ddof)) s)]
     ['null polars-null]
     [#f (error op "unsupported dtype for reduction: ~v" dt)]))
 
@@ -118,7 +119,7 @@
     [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
     [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
 
-(define (alias e name) (expr-alias e name))
+(define (alias e name) (expr-alias (->col-expr 'alias e) name))
 
 (module+ test
   (require rackunit
@@ -130,6 +131,10 @@
            (only-in gregor/period microseconds)
            polars/private/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
+  (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (max past-chrono-zoned)))
+  (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (min past-chrono-zoned)))
   ;; reductions dispatch on dtype (numeric series)
   (check-equal? (sum ints) 10)
   (check-equal? (max floats) 8.0)

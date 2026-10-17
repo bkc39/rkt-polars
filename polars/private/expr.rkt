@@ -13,7 +13,9 @@
          polars/private/expr-dt
          polars/private/expr-str
          (only-in polars/private/foreign
+                  allocator/or-fail
                   call/foreign-error
+                  call/polars-reason
                   _DataFrame-ptr
                   _DataFrame-ptr/null
                   DataFrame-ptr?
@@ -27,11 +29,14 @@
                   frame-sort/c sort-flags
                   _CompatDType ->compat-dtype check-enum-categories enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
+         (only-in polars/private/join-options
+                  frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
-         syntax/parse/define)
+         syntax/parse/define
+         (for-syntax racket/base racket/syntax))
 
 (module+ test
   (require gregor
@@ -65,7 +70,7 @@
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          expr->string
-         lit col ->expr ->key-expr
+         lit lit/who col ->expr ->expr/who ->key-expr
          expr-all expr-exclude expr-dtype-col multi-column-expr? dtype-spec?
          expr-add expr-sub expr-mul expr-div expr-mod
          expr-gt expr-lt expr-ge expr-le expr-eq expr-ne
@@ -105,14 +110,15 @@
          expr-over
          expr-when
          dataframe-lazy
-         lazyframe-with-columns lazyframe-collect
+         lazyframe-with-columns lazyframe-collect lazyframe-collect/raw
          lazyframe-filter lazyframe-select
          lazyframe-group-by-agg
          lazyframe-unique lazyframe-drop-nulls
          lazyframe-head lazyframe-tail lazyframe-slice
-         lazyframe-join
          (contract-out
-          [lazyframe-explain (explain/c LazyFrame-ptr?)])
+          [lazyframe-explain (explain/c LazyFrame-ptr?)]
+          [lazyframe-join (frame-join/c LazyFrame-ptr? (lambda (_) LazyFrame-ptr?)
+                                        (lambda (_) LazyFrame-ptr?) 'lazyframe-join/c)])
          expr-cast expr-cast-to
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
@@ -130,7 +136,7 @@
 (define (expr-meta-output-name e)
   (or (expr-meta-output-name/raw e)
       (error 'expr-meta-output-name
-             "cannot determine the output name of ~a" (expr->string e))))
+             "cannot determine the output name of ~a" e)))
 
 (define-compat expr-meta-root-names-len
   (_fun _Expr-ptr -> _size)
@@ -172,100 +178,40 @@
   #:c-id lazyframe_collect
   #:wrap (allocator dataframe-drop))
 
+(define (lazyframe-collect/who who lf)
+  (call/polars-reason who (lambda () (lazyframe-collect/raw lf))))
+
 (define (lazyframe-collect lf)
-  (call/foreign-error 'lazyframe-collect
-                      (lambda () (lazyframe-collect/raw lf))
-                      "failed to collect the query"))
+  (lazyframe-collect/who 'lazyframe-collect lf))
+
+(module+ internal
+  (provide lazyframe-collect/who))
 
 ;; --- Phase A2: Expr operations ---
 
-;; Each binary op has a /raw Expr-Expr binding plus a public wrapper
-;; that auto-lifts non-Expr arguments via `lit`.  Hand-written rather
-;; than macro-generated because define-compat needs a literal #:c-id.
+(define-syntax-parse-rule (define-expr-binop name:id c-id:id)
+  #:with raw (format-id #'name "~a/raw" #'name)
+  (begin
+    (define-compat raw
+      (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
+      #:c-id c-id
+      #:wrap (allocator expr-drop))
+    (define (name a b) (raw (->expr/who 'name a) (->expr/who 'name b)))))
 
-(define-compat expr-add/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_add
-  #:wrap (allocator expr-drop))
-(define (expr-add a b) (expr-add/raw (->expr a) (->expr b)))
-
-(define-compat expr-sub/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_sub
-  #:wrap (allocator expr-drop))
-(define (expr-sub a b) (expr-sub/raw (->expr a) (->expr b)))
-
-(define-compat expr-mul/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_mul
-  #:wrap (allocator expr-drop))
-(define (expr-mul a b) (expr-mul/raw (->expr a) (->expr b)))
-
-(define-compat expr-div/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_div
-  #:wrap (allocator expr-drop))
-(define (expr-div a b) (expr-div/raw (->expr a) (->expr b)))
-
-(define-compat expr-mod/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_mod
-  #:wrap (allocator expr-drop))
-(define (expr-mod a b) (expr-mod/raw (->expr a) (->expr b)))
-
-(define-compat expr-gt/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_gt
-  #:wrap (allocator expr-drop))
-(define (expr-gt a b) (expr-gt/raw (->expr a) (->expr b)))
-
-(define-compat expr-lt/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_lt
-  #:wrap (allocator expr-drop))
-(define (expr-lt a b) (expr-lt/raw (->expr a) (->expr b)))
-
-(define-compat expr-ge/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_ge
-  #:wrap (allocator expr-drop))
-(define (expr-ge a b) (expr-ge/raw (->expr a) (->expr b)))
-
-(define-compat expr-le/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_le
-  #:wrap (allocator expr-drop))
-(define (expr-le a b) (expr-le/raw (->expr a) (->expr b)))
-
-(define-compat expr-eq/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_eq
-  #:wrap (allocator expr-drop))
-(define (expr-eq a b) (expr-eq/raw (->expr a) (->expr b)))
-
-(define-compat expr-ne/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_ne
-  #:wrap (allocator expr-drop))
-(define (expr-ne a b) (expr-ne/raw (->expr a) (->expr b)))
-
-(define-compat expr-and/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_and
-  #:wrap (allocator expr-drop))
-(define (expr-and a b) (expr-and/raw (->expr a) (->expr b)))
-
-(define-compat expr-or/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_or
-  #:wrap (allocator expr-drop))
-(define (expr-or a b) (expr-or/raw (->expr a) (->expr b)))
-
-(define-compat expr-xor/raw
-  (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
-  #:c-id expr_xor
-  #:wrap (allocator expr-drop))
-(define (expr-xor a b) (expr-xor/raw (->expr a) (->expr b)))
+(define-expr-binop expr-add expr_add)
+(define-expr-binop expr-sub expr_sub)
+(define-expr-binop expr-mul expr_mul)
+(define-expr-binop expr-div expr_div)
+(define-expr-binop expr-mod expr_mod)
+(define-expr-binop expr-gt expr_gt)
+(define-expr-binop expr-lt expr_lt)
+(define-expr-binop expr-ge expr_ge)
+(define-expr-binop expr-le expr_le)
+(define-expr-binop expr-eq expr_eq)
+(define-expr-binop expr-ne expr_ne)
+(define-expr-binop expr-and expr_and)
+(define-expr-binop expr-or expr_or)
+(define-expr-binop expr-xor expr_xor)
 
 (define-compat expr-not
   (_fun _Expr-ptr -> _Expr-ptr)
@@ -732,16 +678,14 @@
 
 ;; Eager-feeling conveniences: take a DataFrame, return a DataFrame.
 (define (dataframe-with-columns df exprs)
-  (lazyframe-collect
-   (lazyframe-with-columns (dataframe-lazy df) exprs)))
+  (lazyframe-collect/who 'dataframe-with-columns
+                         (lazyframe-with-columns (dataframe-lazy df) exprs)))
 
 (define (dataframe-select-exprs df exprs)
-  (lazyframe-collect
-   (lazyframe-select (dataframe-lazy df) exprs)))
+  (lazyframe-collect/who 'dataframe-select-exprs (lazyframe-select (dataframe-lazy df) exprs)))
 
 (define (dataframe-filter-expr df predicate)
-  (lazyframe-collect
-   (lazyframe-filter (dataframe-lazy df) predicate)))
+  (lazyframe-collect/who 'dataframe-filter-expr (lazyframe-filter (dataframe-lazy df) predicate)))
 
 ;; --- Phase A4: lazy group-by ---
 ;;
@@ -770,8 +714,8 @@
   (lazyframe-group-by-agg/c lf (map ->key-expr keys) aggs))
 
 (define (dataframe-group-by-agg df keys aggs)
-  (lazyframe-collect
-   (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
+  (lazyframe-collect/who 'dataframe-group-by-agg
+                         (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
 
 ;; --- Phase A6: more LazyFrame ops (sort / unique / drop_nulls) ---
 
@@ -832,25 +776,6 @@
   #:wrap (allocator lazyframe-drop))
 
 ;; --- Phase A8: lazy join ---
-;;
-;; Mirrors the eager `dataframe-join` keyword surface (#:on, #:left-on,
-;; #:right-on, #:how) and shares its CompatJoinKind tags.  Cross join
-;; ignores keys; resolved before crossing the FFI boundary.
-
-(define compat-join-kind/inner 1)
-(define compat-join-kind/left  2)
-(define compat-join-kind/outer 3)
-(define compat-join-kind/cross 4)
-
-(define (lazyframe-join-symbol->code sym)
-  (case sym
-    [(inner) compat-join-kind/inner]
-    [(left)  compat-join-kind/left]
-    [(outer full) compat-join-kind/outer]
-    [(cross) compat-join-kind/cross]
-    [else (error 'lazyframe-join
-                 "unknown join kind ~v (expected 'inner 'left 'outer 'cross)"
-                 sym)]))
 
 (define-compat lazyframe-join/c
   (_fun _LazyFrame-ptr _LazyFrame-ptr
@@ -859,23 +784,17 @@
         (right-on : _string-list)
         (_size = (length right-on))
         _int32
-        -> _LazyFrame-ptr)
+        -> _LazyFrame-ptr/null)
   #:c-id lazyframe_join
-  #:wrap (allocator lazyframe-drop))
+  #:wrap (allocator/or-fail lazyframe-drop 'lazyframe-join))
 
 (define (lazyframe-join left right
                         #:on [on #f]
                         #:left-on [left-on #f]
                         #:right-on [right-on #f]
                         #:how [how 'inner])
-  (define-values (lon ron)
-    (cond
-      [(eq? how 'cross) (values '() '())]
-      [on (values on on)]
-      [(and left-on right-on) (values left-on right-on)]
-      [else (error 'lazyframe-join
-                   "must supply #:on, or #:left-on and #:right-on")]))
-  (lazyframe-join/c left right lon ron (lazyframe-join-symbol->code how)))
+  (define-values (lon ron) (join-keys how on left-on right-on))
+  (lazyframe-join/c left right lon ron (join-symbol->code how)))
 
 ;; --- Phase A9: expr cast ---
 
@@ -1815,7 +1734,7 @@
     (settle!)
     (check >= (- (dataframe-drop-count) before) (quotient wanted 2)))
 
-  (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
+  (check-exn #rx"^lazyframe-collect: not found: unable to find column \"nope\"[^\n]*$"
              (lambda ()
                (lazyframe-collect
                 (lazyframe-select (dataframe-lazy reclaim-src) (list (col "nope"))))))
@@ -1825,13 +1744,19 @@
     (delete-file gone))
   (define deferred (lazyframe-scan-csv gone))
   (check-pred LazyFrame-ptr? deferred)
-  (check-exn #rx"^lazyframe-collect: failed to collect the query: .+"
+  (check-exn #rx"^lazyframe-collect: [^\n]+$"
              (lambda () (lazyframe-collect deferred)))
 
   (define bad-glob (lazyframe-scan-csv "/tmp/[.csv"))
   (check-pred LazyFrame-ptr? bad-glob)
   (check-exn #rx"^lazyframe-collect: .*glob"
-             (lambda () (lazyframe-collect bad-glob))))
+             (lambda () (lazyframe-collect bad-glob)))
+  (for ([op (list expr-add expr-sub expr-mul expr-div expr-mod expr-gt expr-lt expr-ge expr-le
+                  expr-eq expr-ne expr-and expr-or expr-xor)])
+    (check-exn (regexp (format "^~a: contract violation\n  expected: \\(integer-in " (object-name op)))
+               (lambda () (op (col "x") (expt 2 63))))
+    (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
+               (lambda () (op #\a (col "x"))))))
 
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)

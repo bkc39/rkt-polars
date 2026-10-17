@@ -255,7 +255,7 @@
     (check-equal? (sequence->list (in-series s #:chunk-rows 4093)) expected name))
 
   (define gone (build-path scratch "gone.csv"))
-  (check-exn #rx"^lazyframe-collect: " (lambda () (collect (scan-csv gone))))
+  (check-exn #rx"^collect: " (lambda () (collect (scan-csv gone))))
   (check-exn #rx"^scan-csv: failed to scan "
              (lambda () (scan-csv gone #:schema-overrides '(("a" . int32)))))
 
