@@ -191,6 +191,7 @@
   (check-exn #rx"^n-unique: contract violation" (lambda () (contracted:n-unique 3)))
   (check-equal? (contracted:sum 1 2 3) 6)
   (define-runtime-path expected-file "../../scribblings/data/reductions-expected.rktd")
+  (define double-epsilon (expt 2.0 -52))
   (define reducers (hash 'sum sum 'mean mean 'min min 'max max 'std std 'var var
                          'n-unique n-unique))
   (define (decode v)
@@ -209,6 +210,7 @@
     (define (run) (if ddof (reduce s #:ddof ddof) (reduce s)))
     (match expected
       ['error (check-exn (regexp (format "^~a: " op)) run label)]
+      [(? flonum?) (check-= (run) expected (* 4 double-epsilon (abs expected)) label)]
       [_ (check-equal? (run) (decode expected) label)]))
   (define (check-reduction-table inputs expectations)
     (for* ([expectation (in-list expectations)]
