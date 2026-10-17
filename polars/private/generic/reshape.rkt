@@ -35,9 +35,8 @@
           [with-column (->i ([d dataframe?] [s series?])
                             #:pre/desc (d s) (column-height-problem d s)
                             [result dataframe?])]
-          [group-by (->* ((or/c dataframe? lazyframe?) col-expr/c) #:rest (listof col-expr/c)
-                         grouped?)]
-          [agg (->* (grouped?) #:rest (listof Expr-ptr?) (or/c dataframe? lazyframe?))]
+          [group-by (-> (or/c dataframe? lazyframe?) col-expr/c col-expr/c ... grouped?)]
+          [agg (-> grouped? Expr-ptr? ... (or/c dataframe? lazyframe?))]
           (rename rename rename (->i ([x (or/c series? dataframe?)] [a string?])
                                      ([b string?])
                                      #:pre/desc (x a b) (rename-problem x a b)
