@@ -95,6 +95,7 @@ Dtype spellings accepted by @racket[series]' @racket[#:dtype]:
         (list @racket['(duration microseconds)] "Duration")
         (list @racket['categorical] "Categorical")
         (list @racket['(enum low mid high)] "Enum")
+        (list @racket['null] "Null")
         (list "—" "Decimal, Binary, Array, List, Struct"))]
 
 @racket[series] builds the temporal dtypes from gregor @tt{date}, @tt{time},
@@ -115,6 +116,20 @@ spellings.
 @examples[#:eval ev #:label #f
 (dtype (cast (series '(1 2 3)) 'float64))
 (dtype (cast (series '(1 2 3)) 'f64))
+]
+
+An empty list, or one of @racket[polars-null] alone, makes a series of dtype
+@racket['null], as Python's @tt{pl.Series([])} and @tt{pl.Series([None])} do;
+@racket[#:dtype] types it. @racket[(lit polars-null)] is Python's
+@tt{pl.lit(None)}: a null of dtype Null, and arithmetic with it keeps the
+other operand's dtype.
+
+@examples[#:eval ev #:label #f
+(list (dtype (series '())) (dtype (series (list polars-null))))
+(series '() #:name "empty" #:dtype 'f64)
+(series (list polars-null polars-null) #:name "n" #:dtype 'null)
+(~> (dataframe (list (series '(1 2 3) #:name "x")))
+    (select (alias (lit polars-null) "nothing") (+ (col "x") polars-null)))
 ]
 
 @section[#:tag "concepts-expressions-contexts"]{Expressions and contexts}

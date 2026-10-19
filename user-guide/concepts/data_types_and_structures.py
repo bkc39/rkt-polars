@@ -70,3 +70,13 @@ df = pl.DataFrame(
 )
 
 print(df)
+
+# --- empty and all-null series -------------------------------------------
+print(pl.Series([]).dtype, pl.Series([None]).dtype)
+print(pl.Series("empty", [], dtype=pl.Float64))
+print(pl.Series("n", [None, None], dtype=pl.Null))
+print(
+    pl.DataFrame({"x": [1, 2, 3]}).select(
+        pl.lit(None).alias("nothing"), pl.col("x") + None
+    )
+)
