@@ -8,7 +8,8 @@
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
-         (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
+         (only-in polars/private/generic/expr-util ->col-expr col-expr/c)
+         (only-in polars/private/resource with-release))
 
 (provide (contract-out
           [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
@@ -50,9 +51,13 @@
     [(_ _) #f]))
 
 (define (series-agg-via-expr expr-op s)
-  (define out (dataframe-select-exprs (dataframe-new (list s))
-                                      (list (expr-alias (expr-op (expr-all)) "v"))))
-  (series-ref (dataframe-column out "v") 0))
+  (with-release ([all (expr-all) expr-drop]
+                 [reduced (expr-op all) expr-drop]
+                 [named (expr-alias reduced "v") expr-drop]
+                 [frame (dataframe-new (list s)) dataframe-drop]
+                 [out (dataframe-select-exprs frame (list named)) dataframe-drop]
+                 [column (dataframe-column out "v") series-drop])
+    (series-ref column 0)))
 
 (define (reduce-series op s #:ddof [ddof 1])
   (define dt (series-dtype s))
@@ -60,7 +65,8 @@
   (match (reduction-route op dt)
     ['native (or ((hash-ref (hash-ref native-reducers op) dt) s) polars-null)]
     ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
-    ['float64 (or (series-dispersion (series-cast s 'float64) #:ddof ddof) polars-null)]
+    ['float64 (with-release ([floats (series-cast s 'float64) series-drop])
+                (or (series-dispersion floats #:ddof ddof) polars-null))]
     ['expr (series-agg-via-expr (lambda (e) (aggregation op e ddof)) s)]
     ['null polars-null]
     [#f (error op "unsupported dtype for reduction: ~v" dt)]))
@@ -128,6 +134,8 @@
            (only-in gregor date datetime)
            (only-in gregor/time time)
            (only-in gregor/period microseconds)
+           (only-in polars/private/expr-core expr-drop-count)
+           (only-in polars/private/test-helpers settle!)
            polars/private/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
   ;; reductions dispatch on dtype (numeric series)
@@ -190,6 +198,17 @@
                 (datetime 2020 1 1 12 0 0 0))
   (check-exn #rx"^n-unique: contract violation" (lambda () (contracted:n-unique 3)))
   (check-equal? (contracted:sum 1 2 3) 6)
+  (define release-counters (list series-drop-count dataframe-drop-count expr-drop-count))
+  (define (releases-across reduce s)
+    (settle!)
+    (define before (map (lambda (counter) (counter)) release-counters))
+    (reduce s)
+    (map (lambda (counter was) (- (counter) was)) release-counters before))
+  (check-equal? (releases-across std (series '(#t #f #t))) '(1 0 0))
+  (check-equal? (releases-across var (series '(#t #f #t))) '(1 0 0))
+  (check-equal? (releases-across sum (series '(1 2) #:dtype 'int8)) '(1 2 3))
+  (check-equal? (releases-across mean (series '("a" "b"))) '(0 0 0))
+  (check-equal? (releases-across min (series '("b" "a"))) '(1 2 3))
   (define-runtime-path expected-file "../../scribblings/data/reductions-expected.rktd")
   (define double-epsilon (expt 2.0 -52))
   (define reducers (hash 'sum sum 'mean mean 'min min 'max max 'std std 'var var
