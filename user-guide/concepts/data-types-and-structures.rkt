@@ -53,3 +53,10 @@
          (series '(27 39 41 43) #:name "age" #:dtype 'u8))))
 
 (displayln df-u8)
+
+;; --- empty and all-null series -------------------------------------------
+(printf "~a ~a\n" (dtype (series '())) (dtype (series (list polars-null))))
+(displayln (series '() #:name "empty" #:dtype 'f64))
+(displayln (series (list polars-null polars-null) #:name "n" #:dtype 'null))
+(displayln (~> (dataframe (list (series '(1 2 3) #:name "x")))
+               (select (alias (lit polars-null) "nothing") (+ (col "x") polars-null))))

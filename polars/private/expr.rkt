@@ -31,7 +31,7 @@
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
-         (only-in polars/private/resource _string-list)
+         (only-in polars/private/resource _string-list with-release)
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
@@ -184,8 +184,16 @@
 (define (lazyframe-collect lf)
   (lazyframe-collect/who 'lazyframe-collect lf))
 
+(define (call-with-plan df extend proc)
+  (with-release ([source (dataframe-lazy df) lazyframe-drop]
+                 [plan (extend source) lazyframe-drop])
+    (proc plan)))
+
+(define (collect-plan/who who df extend)
+  (call-with-plan df extend (lambda (plan) (lazyframe-collect/who who plan))))
+
 (module+ internal
-  (provide lazyframe-collect/who))
+  (provide call-with-plan collect-plan/who lazyframe-collect/who))
 
 ;; --- Phase A2: Expr operations ---
 
@@ -678,14 +686,13 @@
 
 ;; Eager-feeling conveniences: take a DataFrame, return a DataFrame.
 (define (dataframe-with-columns df exprs)
-  (lazyframe-collect/who 'dataframe-with-columns
-                         (lazyframe-with-columns (dataframe-lazy df) exprs)))
+  (collect-plan/who 'dataframe-with-columns df (lambda (lf) (lazyframe-with-columns lf exprs))))
 
 (define (dataframe-select-exprs df exprs)
-  (lazyframe-collect/who 'dataframe-select-exprs (lazyframe-select (dataframe-lazy df) exprs)))
+  (collect-plan/who 'dataframe-select-exprs df (lambda (lf) (lazyframe-select lf exprs))))
 
 (define (dataframe-filter-expr df predicate)
-  (lazyframe-collect/who 'dataframe-filter-expr (lazyframe-filter (dataframe-lazy df) predicate)))
+  (collect-plan/who 'dataframe-filter-expr df (lambda (lf) (lazyframe-filter lf predicate))))
 
 ;; --- Phase A4: lazy group-by ---
 ;;
@@ -714,8 +721,7 @@
   (lazyframe-group-by-agg/c lf (map ->key-expr keys) aggs))
 
 (define (dataframe-group-by-agg df keys aggs)
-  (lazyframe-collect/who 'dataframe-group-by-agg
-                         (lazyframe-group-by-agg (dataframe-lazy df) keys aggs)))
+  (collect-plan/who 'dataframe-group-by-agg df (lambda (lf) (lazyframe-group-by-agg lf keys aggs))))
 
 ;; --- Phase A6: more LazyFrame ops (sort / unique / drop_nulls) ---
 
@@ -752,11 +758,12 @@
                               #:descending [descending #f]
                               #:nulls-last [nulls-last #f]
                               #:maintain-order [maintain-order #f])
-  (lazyframe-collect
-   (lazyframe-sort (dataframe-lazy df) names
-                   #:descending descending
-                   #:nulls-last nulls-last
-                   #:maintain-order maintain-order)))
+  (collect-plan/who 'lazyframe-collect df
+                    (lambda (lf)
+                      (lazyframe-sort lf names
+                                      #:descending descending
+                                      #:nulls-last nulls-last
+                                      #:maintain-order maintain-order))))
 
 ;; --- Phase A7: lazy head / tail / slice ---
 ;;
@@ -841,6 +848,26 @@
 
   (define lf (dataframe-lazy df))
   (check-pred LazyFrame-ptr? lf)
+
+  (define (plans-built-for column)
+    (define built (box '()))
+    (define (extend source)
+      (define plan (lazyframe-select source (list (col column))))
+      (set-box! built (list source plan))
+      plan)
+    (values built extend))
+  (let-values ([(built extend) (plans-built-for "x")])
+    (check-equal? (dataframe-height (collect-plan/who 'plans df extend)) 4)
+    (check-equal? (length (unbox built)) 2)
+    (for ([plan (in-list (unbox built))])
+      (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
+                 (lambda () (lazyframe-drop plan)))))
+  (let-values ([(built extend) (plans-built-for "nope")])
+    (check-exn #rx"^plans: .*nope" (lambda () (collect-plan/who 'plans df extend)))
+    (check-equal? (length (unbox built)) 2)
+    (for ([plan (in-list (unbox built))])
+      (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
+                 (lambda () (lazyframe-drop plan)))))
   (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
              (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 

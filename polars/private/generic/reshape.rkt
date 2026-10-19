@@ -10,7 +10,8 @@
          (only-in racket/contract/base contract-out)
          polars/private/foreign
          polars/private/expr
-         (only-in (submod polars/private/expr internal) lazyframe-collect/who)
+         (only-in (submod polars/private/expr internal) collect-plan/who lazyframe-collect/who)
+         (only-in polars/private/resource with-release)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
          (only-in polars/private/io-contracts size-max)
@@ -75,14 +76,15 @@
     [else #f]))
 
 (define (collect-frame who d extend)
-  (wrap-dataframe (lazyframe-collect/who who (extend (dataframe-lazy d)))))
+  (wrap-dataframe (collect-plan/who who d extend)))
 
 (define (filter . args)
   (match args
     [(list (? dataframe? d) (? Expr-ptr? pred))
      (collect-frame 'filter d (lambda (plan) (lazyframe-filter plan pred)))]
     [(list (? dataframe? d) (? series? mask))
-     (collect-frame 'filter d (lambda (plan) (lazyframe-filter plan (expr-lit-series mask))))]
+     (with-release ([predicate (expr-lit-series mask) expr-drop])
+       (collect-frame 'filter d (lambda (plan) (lazyframe-filter plan predicate))))]
     [(list (? lazyframe? lf) (? Expr-ptr? pred))
      (wrap-lazyframe (lazyframe-filter lf pred))]
     [(list (? Expr-ptr? e) (? Expr-ptr? pred))
@@ -246,6 +248,7 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/operators
+           (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/foreign dataframe-sort)
            polars/private/generic/reductions
            polars/private/generic/test-fixtures
@@ -266,6 +269,10 @@
   (define mask (> v64 15))
   (check-equal? (height (filter ops-df (> (col "value") 15))) 3)
   (check-equal? (height (filter ops-df mask)) 3)
+  (settle!)
+  (let ([before (expr-drop-count)])
+    (filter ops-df mask)
+    (check >= (- (expr-drop-count) before) 1))
   (check-equal? (filter even? '(1 2 3 4)) '(2 4))
 
   ;; group-by + agg
