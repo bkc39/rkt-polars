@@ -23,8 +23,11 @@
        (cond
          [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who 'name a) (->expr/who 'name b))]
          [(expression-form-op 'name expr-op a b) => values]
-         [(series? a) (wrap-series (series-op 'name a (operand-series 'name a b)))]
-         [(series? b) (wrap-series (series-op-reflected 'name b (operand-series 'name b a)))]
+         [(series? a)
+          (call-with-operand-series 'name a b (lambda (o) (wrap-series (series-op 'name a o))))]
+         [(series? b)
+          (call-with-operand-series 'name b a
+                                    (lambda (o) (wrap-series (series-op-reflected 'name b o))))]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
 
@@ -40,8 +43,10 @@
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who who a) (->expr/who who b))]
         [(expression-form-op who expr-op a b) => values]
-        [(series? a) (wrap-series (series-op who a (operand-series who a b)))]
-        [(series? b) (wrap-series (series-op who (operand-series who b a) b))]
+        [(series? a)
+         (call-with-operand-series who a b (lambda (o) (wrap-series (series-op who a o))))]
+        [(series? b)
+         (call-with-operand-series who b a (lambda (o) (wrap-series (series-op who o b))))]
         [else (base-op a b)]))
 
 (define (series-negate s)
@@ -131,6 +136,20 @@
            polars/private/generic/core
            polars/private/generic/test-fixtures
            (only-in threading ~>))
+
+  (define operand-ints (series '(1 2) #:name "x"))
+  (define operand-flags (series '(#t #f) #:name "f"))
+  (for ([apply-operator (list (lambda () (p+ operand-ints 1))
+                              (lambda () (< 1 operand-ints))
+                              (lambda () (p-and operand-flags #t)))])
+    (settle!)
+    (let ([before (series-drop-count)])
+      (apply-operator)
+      (check >= (- (series-drop-count) before) 1)))
+  (check-equal? (series->list (p+ operand-ints operand-ints)) '(2 4))
+  (check-equal? (series->list (p-and operand-flags operand-flags)) '(#t #f))
+  (check-equal? (series->list operand-ints) '(1 2))
+  (check-equal? (series->list operand-flags) '(#t #f))
 
   (check-pred Expr-ptr? (> (col "value") 15))
   (check-pred Expr-ptr? (< 15 (col "value")))

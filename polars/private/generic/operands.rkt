@@ -4,9 +4,10 @@
          (only-in racket/match match match*)
          (only-in polars/private/foreign
                   call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
-                  polars-null? series-dtype series-len series-name)
+                  polars-null? series-drop series-dtype series-len series-name)
          (only-in polars/private/expr
-                  dataframe-lazy expr-alias expr-all lazyframe-collect/raw lazyframe-select lit/who)
+                  expr-alias expr-all expr-drop lazyframe-collect/raw lazyframe-select lit/who)
+         (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/generic/core null-series? series? wrap-series)
          (only-in polars/private/generic/dtype
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
@@ -14,10 +15,10 @@
          (only-in polars/private/series series-repeat-temporal)
          (only-in polars/private/temporal temporal-value-dtype))
 
-(provide const-series
+(provide call-with-logical-operand
+         call-with-operand-series
+         const-series
          expression-form-op
-         logical-operand
-         operand-series
          series-through-expr)
 
 (define (const-series who dt n value)
@@ -95,15 +96,28 @@
     [(or (boolean? other) (polars-null? other)) (const-series who 'boolean (series-len s) other)]
     [else (raise-argument-error who "(or/c series? boolean? polars-null?)" other)]))
 
+(define (call-with-lifted lifted other proc)
+  (define release (if (eq? lifted other) void series-drop))
+  (with-release ([operand lifted release])
+    (proc operand)))
+
+(define (call-with-operand-series who s other proc)
+  (call-with-lifted (operand-series who s other) other proc))
+
+(define (call-with-logical-operand who s other proc)
+  (call-with-lifted (logical-operand who s other) other proc))
+
 (define (series-through-expr who s build)
   (define name (series-name s))
+  (define (collect plan)
+    (call/foreign-error who (lambda () (lazyframe-collect/raw plan))))
   (with-release ([frame (dataframe-new (list s)) dataframe-drop]
-                 [out (call/foreign-error
-                       who
-                       (lambda ()
-                         (lazyframe-collect/raw
-                          (lazyframe-select (dataframe-lazy frame)
-                                            (list (expr-alias (build (expr-all)) name))))))
+                 [all (expr-all) expr-drop]
+                 [built (build all) expr-drop]
+                 [named (expr-alias built name) expr-drop]
+                 [out (call-with-plan frame
+                                      (lambda (source) (lazyframe-select source (list named)))
+                                      collect)
                       dataframe-drop])
     (wrap-series (dataframe-column out name))))
 
@@ -112,9 +126,42 @@
     (and (series? s) (not (series? v)) (expression-operand? (series-dtype s) v)))
   (cond
     [(expression-form? a b)
-     (define v (lit/who who b))
-     (series-through-expr who a (lambda (e) (expr-op e v)))]
+     (with-release ([v (lit/who who b) expr-drop])
+       (series-through-expr who a (lambda (e) (expr-op e v))))]
     [(expression-form? b a)
-     (define v (lit/who who a))
-     (series-through-expr who b (lambda (e) (expr-op v e)))]
+     (with-release ([v (lit/who who a) expr-drop])
+       (series-through-expr who b (lambda (e) (expr-op v e))))]
     [else #f]))
+
+(module+ test
+  (require rackunit
+           (only-in polars/private/expr expr-add expr-neg)
+           (only-in polars/private/expr-core expr-drop-count)
+           (only-in polars/private/foreign polars-null series-new-i64 series-ref)
+           (only-in polars/private/test-helpers settle!))
+  (define (noting build)
+    (define given (box '()))
+    (values given
+            (lambda operands
+              (define built (apply build operands))
+              (set-box! given (cons built operands))
+              built)))
+  (define (check-all-dropped exprs)
+    (for ([e (in-list exprs)])
+      (check-exn #rx"^expr-drop: expression has been dropped" (lambda () (expr-drop e)))))
+  (define ints (wrap-series (series-new-i64 "x" '(1 2))))
+
+  (let-values ([(given negate) (noting expr-neg)])
+    (check-equal? (series-ref (series-through-expr '- ints negate) 1) -2)
+    (check-equal? (length (unbox given)) 2)
+    (check-all-dropped (unbox given)))
+
+  (let-values ([(given add) (noting expr-add)])
+    (check-pred polars-null? (series-ref (expression-form-op '+ add ints polars-null) 0))
+    (check-equal? (length (unbox given)) 3)
+    (check-all-dropped (unbox given)))
+
+  (settle!)
+  (let ([before (expr-drop-count)])
+    (expression-form-op '+ expr-add ints polars-null)
+    (check >= (- (expr-drop-count) before) 4)))

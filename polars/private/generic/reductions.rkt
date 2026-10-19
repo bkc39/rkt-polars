@@ -8,7 +8,8 @@
          polars/private/expr
          polars/private/generic/core
          polars/private/generic/dtype
-         (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
+         (only-in polars/private/generic/expr-util ->col-expr col-expr/c)
+         (only-in polars/private/resource with-release))
 
 (provide (contract-out
           [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
@@ -51,9 +52,13 @@
     [(_ _) #f]))
 
 (define (series-agg-via-expr who expr-op s)
-  (define out (dataframe-select-exprs (dataframe-new (list s))
-                                      (list (expr-alias (expr-op (expr-all)) "v"))))
-  (series-value who (dataframe-column out "v") 0))
+  (with-release ([frame (dataframe-new (list s)) dataframe-drop]
+                 [all (expr-all) expr-drop]
+                 [reduced (expr-op all) expr-drop]
+                 [named (expr-alias reduced "v") expr-drop]
+                 [out (dataframe-select-exprs frame (list named)) dataframe-drop]
+                 [column (dataframe-column out "v") series-drop])
+    (series-value who column 0)))
 
 (define (reduce-series op s #:ddof [ddof 1])
   (define dt (series-dtype s))
@@ -61,7 +66,8 @@
   (match (reduction-route op dt)
     ['native (or ((hash-ref (hash-ref native-reducers op) dt) s) polars-null)]
     ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
-    ['float64 (or (series-dispersion (series-cast s 'float64) #:ddof ddof) polars-null)]
+    ['float64 (with-release ([floats (series-cast s 'float64) series-drop])
+                (or (series-dispersion floats #:ddof ddof) polars-null))]
     ['expr (series-agg-via-expr op (lambda (e) (aggregation op e ddof)) s)]
     ['null polars-null]
     [#f (error op "unsupported dtype for reduction: ~v" dt)]))
@@ -129,8 +135,21 @@
            (only-in gregor date datetime)
            (only-in gregor/time time)
            (only-in gregor/period microseconds)
+           (only-in polars/private/expr-core expr-drop-count)
            polars/private/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
+  (define small (series '(1 2 3) #:dtype 'i8))
+  (define flags (series '(#t #f #t)))
+  (settle!)
+  (let ([exprs (expr-drop-count)] [frames (dataframe-drop-count)] [columns (series-drop-count)])
+    (check-equal? (sum small) 6)
+    (check >= (- (expr-drop-count) exprs) 3)
+    (check >= (- (dataframe-drop-count) frames) 2)
+    (check >= (- (series-drop-count) columns) 1))
+  (settle!)
+  (let ([columns (series-drop-count)])
+    (check-= (std flags) (sqrt 1/3) 1e-12)
+    (check >= (- (series-drop-count) columns) 1))
   (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
              (lambda () (max past-chrono-zoned)))
   (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "

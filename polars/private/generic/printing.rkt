@@ -12,8 +12,8 @@
          racket/list
          racket/string
          (only-in polars/private/expr
-                  dataframe-lazy expr-all expr-dt-strftime lazyframe-collect/raw lazyframe-drop
-                  lazyframe-select)
+                  expr-all expr-drop expr-dt-strftime lazyframe-collect/raw lazyframe-select)
+         (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
          polars/private/foreign)
 
@@ -116,10 +116,11 @@
   (define collected
     (with-release ([rows (series-slice s start count) series-drop]
                    [frame (dataframe-new (list rows)) dataframe-drop]
-                   [plan (lazyframe-select (dataframe-lazy frame)
-                                           (list (expr-dt-strftime (expr-all) "%Z")))
-                         lazyframe-drop])
-      (lazyframe-collect/raw plan)))
+                   [all (expr-all) expr-drop]
+                   [zone (expr-dt-strftime all "%Z") expr-drop])
+      (call-with-plan frame
+                      (lambda (source) (lazyframe-select source (list zone)))
+                      lazyframe-collect/raw)))
   (cond
     [collected
      (with-release ([out collected dataframe-drop]
@@ -158,9 +159,11 @@
   ;; series->string operates on the raw FFI series, so build them directly here
   ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
+           (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/foreign
                     series-cast series-new-i32 series-new-i64 series-new-null series-new-str
-                    polars-null))
+                    polars-null)
+           (only-in polars/private/test-helpers settle!))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
   (check-equal? (series->string (series-new-null "nothing" 3))
                 "shape: (3,)\nSeries: 'nothing' [null]\n[\n\tnull\n\tnull\n\tnull\n]")
@@ -204,6 +207,10 @@
                 (string-append "shape: (4,)\nSeries: 't' [datetime[ms, Europe/Brussels]]\n[\n"
                                "\t2021-03-27 12:00:00.500 CET\n\tnull\n\t2021-07-01 00:00:00 CEST\n"
                                "\t1970-01-01 00:59:59.999 CET\n]"))
+  (settle!)
+  (let ([before (expr-drop-count)])
+    (series->string zoned)
+    (check >= (- (expr-drop-count) before) 2))
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
                                     '(datetime microseconds "Asia/Kathmandu")))
                 '("2021-03-27 16:45:00 +0545" "]"))
