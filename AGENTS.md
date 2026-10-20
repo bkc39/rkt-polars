@@ -309,7 +309,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   installs those committed binaries (it has no Rust toolchain) and
   `define-compat` resolves every symbol at module load, so a stale candidate
   breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
-  jobs go red on it. Refresh with `scripts/refresh-candidates.sh <PR>` on the
+  jobs go red on it, except below a stack's top, which refreshes once for
+  the stack and where they only warn. Refresh with `scripts/refresh-candidates.sh <PR>` on the
   branch; any other Rust change also reaches catalog users only through a
   refresh. See `polars/native-libs/BUILDING.md`.
 
