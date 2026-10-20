@@ -60,7 +60,11 @@ bytes.
   checks both committed files with `scripts/verify-candidates.py`. It is red on
   a PR that adds an export, or whose tests need its new Rust behaviour, without
   refreshing the candidates, and its error says what to run. It cannot see a
-  Rust change that no test exercises.
+  Rust change that no test exercises. A stack refreshes the candidates once,
+  on its top PR, so on a PR that another open PR is stacked on (one whose
+  base is its branch) a failed install or test is a warning naming the PR
+  above, and Catalog install still tests that PR's own build. The top and
+  `master` stay strict, and the stack lands in one merge on the top.
 
 ## Refreshing the candidates from CI
 

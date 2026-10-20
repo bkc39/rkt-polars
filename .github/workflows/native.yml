@@ -175,8 +175,22 @@ jobs:
           version: "9.3"
           architecture: ${{ matrix.arch }}
 
+      # A stack refreshes the candidates once, on its top PR, so below the top
+      # a stale candidate is a warning (polars/native-libs/BUILDING.md).
+      - name: Find the PRs stacked on this branch
+        id: stack
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          above=$(gh pr list -R "$GITHUB_REPOSITORY" --base "$HEAD_REF" \
+            --state open --json number -q 'map("#\(.number)") | join(" ")')
+          echo "above=$above" >> "$GITHUB_OUTPUT"
+
       - name: Install from the committed candidate and test
         id: committed-test
+        continue-on-error: ${{ steps.stack.outputs.above != '' }}
         run: scripts/test-local.sh
 
       # What loading cannot show: the glibc floor, and that the two binaries
@@ -204,6 +218,19 @@ jobs:
             "install jobs pass, the committed candidates are stale: run" \
             "scripts/refresh-candidates.sh $arg on this branch, then commit" \
             "and push (polars/native-libs/BUILDING.md)."
+
+      - name: Say where a stack refreshes the candidates
+        if: >-
+          ${{ !cancelled() && steps.stack.outputs.above != ''
+          && steps.committed-test.outcome == 'failure' }}
+        env:
+          ABOVE: ${{ steps.stack.outputs.above }}
+        run: |
+          echo "::warning title=Committed libcompat candidates::Stale on this" \
+            "branch, which $ABOVE is stacked on: the stack's top PR refreshes" \
+            "them, and its Committed candidate jobs hold it to that. Catalog" \
+            "install tests this branch's own build" \
+            "(polars/native-libs/BUILDING.md)."
 
   # Faithful reproduction of the deploy floor: actually load the linux
   # candidate under glibc 2.17 (manylinux2014), which is older than
