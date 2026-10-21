@@ -156,8 +156,8 @@
   #:c-id expr_str_slice
   #:wrap (allocator expr-drop))
 
-(define (expr-str-slice e offset length)
-  (expr-str-slice/raw e (->expr offset) (->expr length)))
+(define (expr-str-slice e offset [length #f])
+  (expr-str-slice/raw e (->expr offset) (if length (->expr length) (expr-lit-null))))
 
 (define-compat expr-str-head/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)

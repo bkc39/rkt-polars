@@ -1561,6 +1561,27 @@ stations
   @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
   @racketid[dt-truncate].}
 
+@defproc[(str-slice [x (or/c Expr-ptr? string?)]
+                    [offset (or/c Expr-ptr? (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))]
+                    [length (or/c #f Expr-ptr? (integer-in 0 (sub1 (expt 2 63)))) #f])
+         Expr-ptr?]{
+  The @racket[length] characters of each string from @racket[offset]
+  (@tt{.str.slice}). A negative @racket[offset] counts from the end, and an
+  @racket[offset] past the end gives an empty string. A @racket[length] of
+  @racket[#f], the default, is Python's @tt{length=None}: the slice runs to
+  the end of the string, as it does on a row whose @racket[length]
+  expression is null. A negative @racket[length], which Python refuses when
+  the plan runs, is a contract error.
+
+  @examples[#:eval ev
+(define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
+                               (series (list 1 polars-null 2 0) #:name "n"))))
+(select words
+        (alias (str-slice "s" 1 #f) "rest")
+        (alias (str-slice "s" -2) "last2")
+        (alias (str-slice "s" 0 (col "n")) "by_col"))
+(eval:error (str-slice "s" 0 -1))]}
+
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
                                     [#:group-index group-index exact-nonnegative-integer? 1])
                        Expr-ptr?]
