@@ -155,9 +155,10 @@ candidate and stages it, with its `toolchain` record, in
   pinned rustc and builds with `rustup run <channel> cargo`, whatever `cargo`
   is first on `PATH` (nix's, in the dev shell). Without rustup, the rustc on
   `PATH` must be that release. cargo runs without the nix cc wrapper's
-  `NIX_LDFLAGS` and `NIX_CFLAGS_*`, and the script refuses a dylib that
-  `otool -L` shows linked against `/nix/store`; build outside the dev shell
-  if it does. The `toolchain` record names the dylib's minimum macOS
+  flag variables (every `NIX_LDFLAGS*` and `NIX_CFLAGS*`), and the script
+  refuses a dylib that `otool -L` shows linked against `/nix/store` or
+  `otool -l` shows with an `LC_RPATH` there; build outside the dev shell if
+  it does. The `toolchain` record names the dylib's minimum macOS
   (`minos`), which nothing pins. `scripts/test-build-so.sh` checks all of
   this against fakes (the `build-so-darwin` flake check). The script
   rewrites the install name to

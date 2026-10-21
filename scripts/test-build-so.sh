@@ -6,10 +6,12 @@
 # rust/rust-toolchain.toml names, `rustup run <channel> cargo build ...`,
 # though a nix cargo and rustc that reject `+toolchain` come first on PATH.
 # Without rustup it must build with the cargo on PATH when the rustc there is
-# that release, and refuse otherwise.  Either way cargo runs without the nix
-# cc wrapper's flag variables, a dylib that otool lists as linked against
-# /nix/store is refused and not staged, and the record names its minimum
-# macOS.
+# that release, and refuse otherwise.  Either way cargo runs without any
+# NIX_LDFLAGS* or NIX_CFLAGS* variable, a dylib that otool lists as linked
+# against /nix/store or with an LC_RPATH there is refused and not staged, and
+# the record names its minimum macOS and summarises on one line.
+#
+# The summary is scripts/toolchain-summary.sh's, not the copy's.
 #
 # Usage: scripts/test-build-so.sh [build-so.sh to test]
 set -euo pipefail
@@ -20,9 +22,20 @@ BASH_BIN="$(command -v bash)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# The dev shell's flag variables, which build-so.sh must keep from cargo.
-nix_vars=(NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_CFLAGS_COMPILE
-  NIX_CFLAGS_COMPILE_FOR_BUILD NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD)
+# Flag variables of nix's cc wrapper, the dev shell's and others of the two
+# prefixes, which build-so.sh must keep from cargo: the stubs report every
+# NIX_LDFLAGS* and NIX_CFLAGS* name they are given, not these.
+nix_vars=(NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_LDFLAGS_FOR_TARGET
+  NIX_CFLAGS_COMPILE NIX_CFLAGS_COMPILE_FOR_BUILD NIX_CFLAGS_COMPILE_FOR_TARGET
+  NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD NIX_LDFLAGS_FOO NIX_CFLAGS_BAR)
+
+# A stub's line logging "$1 sees NAME" for each such variable it is given,
+# from builtins alone (nixpkgs' bash has no compgen).
+sees() {
+  # shellcheck disable=SC2016
+  printf 'export -p | while read -r _ _ v; do case "${v%%%%=*}" in NIX_LDFLAGS*|NIX_CFLAGS*) echo "%s sees ${v%%%%=*}" >> %s ;; esac; done\n' \
+    "$1" "$(printf '%q' "$log")"
+}
 
 failures=0
 fail() { echo "FAIL: $*" >&2; failures=$((failures + 1)); }
@@ -58,6 +71,7 @@ setup() {
   cat > "$bin/otool" <<EOF
 #!$BASH_BIN
 echo "otool \$*" >> $q_log
+$(sees otool)
 case "\$1" in
   -L) echo "\$2:"; cat $(printf '%q' "$otool_deps") ;;
   -l) cat $(printf '%q' "$otool_loads") ;;
@@ -68,7 +82,7 @@ EOF
   cat > "$bin/cargo" <<EOF
 #!$BASH_BIN
 echo "PATH cargo \$* RUSTC=\${RUSTC:-unset}" >> $q_log
-for v in ${nix_vars[*]}; do [[ ! -v \$v ]] || echo "cargo sees \$v" >> $q_log; done
+$(sees cargo)
 [[ "\$1" != +* ]] || { echo "error: no such command: \\\`\$1\\\`" >&2; exit 101; }
 mkdir -p $q_repo/rust/target/dist
 : > $q_repo/rust/target/dist/libcompat.dylib
@@ -77,7 +91,7 @@ EOF
 #!$BASH_BIN
 echo "PATH rustc \$*" >> $q_log
 [[ "\$1" != +* ]] || { echo "error: couldn't read \$1: No such file" >&2; exit 1; }
-printf 'rustc %s (nix)\nrelease: %s\n' $path_release $path_release
+printf 'rustc %s (nix)\nrelease: %s\nLLVM version: 19.1.7\n' $path_release $path_release
 EOF
   if [[ "$rustup" == rustup ]]; then
     cat > "$bin/rustup" <<EOF
@@ -94,8 +108,8 @@ case "\$1" in
     t="\$2"; shift 2
     echo "run \$t \$* RUSTC=\${RUSTC:-unset}" >> $q_log
     case "\$1" in
-      rustc) printf 'rustc %s (rustup)\nrelease: %s\n' "\$t" "\$t" ;;
-      cargo) for v in ${nix_vars[*]}; do [[ ! -v \$v ]] || echo "cargo sees \$v" >> $q_log; done
+      rustc) printf 'rustc %s (rustup)\nrelease: %s\nLLVM version: 20.1.8\n' "\$t" "\$t" ;;
+      cargo) $(sees cargo)
              mkdir -p $q_repo/rust/target/dist
              : > $q_repo/rust/target/dist/libcompat.dylib ;;
       *) exit 2 ;;
@@ -112,9 +126,10 @@ EOF
 
 # The fake otool's answers: -L lists $1 and libSystem after the install name,
 # -l prints load command $2 with minimum macOS $3 after a LC_SOURCE_VERSION,
-# whose own `version` line must not be read.
+# whose own `version` line must not be read, then an LC_RPATH of $4 and $5
+# more load commands (none by default).
 fake_otool() {
-  local dep="$1" cmd="$2" min="$3"
+  local dep="$1" cmd="$2" min="$3" rpath="${4:-@loader_path/../lib}" more="${5:-0}"
   printf '\t%s (compatibility version 0.0.0, current version 0.0.0)\n' \
     "$repo/rust/target/dist/libcompat.dylib" "$dep" /usr/lib/libSystem.B.dylib > "$otool_deps"
   {
@@ -127,6 +142,11 @@ fake_otool() {
         printf 'Load command 1\n      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n'
         printf '  version %s\n      sdk 10.15\n' "$min" ;;
     esac
+    printf 'Load command 2\n          cmd LC_RPATH\n      cmdsize 32\n         path %s (offset 12)\n' "$rpath"
+    awk -v n="$more" 'BEGIN {
+      for (i = 3; i < n + 3; i++)
+        printf "Load command %d\n          cmd LC_LOAD_DYLIB\n      cmdsize 56\n         name /usr/lib/libz.1.dylib (offset 24)\n", i
+    }'
   } > "$otool_loads"
 }
 
@@ -136,8 +156,9 @@ run_script() {
   env "${nix_env[@]}" PATH="$bin" "$BASH_BIN" "$repo/scripts/build-so.sh" darwin > "$out" 2>&1
 }
 
+# $3 is the rustc that ran: rustup's, or nix's on PATH.
 expect_built() {
-  local what="$1" channel="$2" minos="${3:-11.0}"
+  local what="$1" channel="$2" rustc="$3" minos="${4:-11.0}" v llvm summary
   local record="$repo/polars/native-libs/candidates/darwin/toolchain"
   [[ -f "$repo/polars/native-libs/candidates/darwin/libcompat.dylib" ]] \
     || fail "$what: no staged libcompat.dylib"
@@ -145,9 +166,25 @@ expect_built() {
     || fail "$what: the toolchain record does not name release $channel"
   grep -qxF "minos: $minos" "$record" \
     || { fail "$what: the toolchain record does not name minos $minos:"; show "$record"; }
+  for v in "${nix_vars[@]}"; do
+    grep -qxF "otool sees $v" "$log" || fail "$what: build-so.sh was not given $v"
+  done
   if grep -q '^cargo sees ' "$log"; then
     fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ')"
   fi
+  case "$rustc" in rustup) llvm=20.1.8 ;; *) llvm=19.1.7 ;; esac
+  summary="$("$BASH_BIN" "$ROOT/scripts/toolchain-summary.sh" "$record")"
+  expect_summary "$what" "$summary" \
+    "rustc $channel ($rustc), LLVM $llvm, ld @(#)PROGRAM:ld fake, minos $minos"
+}
+
+# scripts/refresh-candidates.sh's one-line summary of a toolchain record.
+expect_summary() {
+  local what="$1" summary="$2" want="$3"
+  [[ "$summary" == "$want" ]] || {
+    fail "$what: the record's summary is not '$want' on one line:"
+    printf '%s\n' "$summary" | sed 's/^/  | /' >&2
+  }
 }
 
 expect_refused() {
@@ -179,7 +216,7 @@ for channel in "$pinned" 1.2.3; do
   if grep -q '^PATH ' "$log"; then
     fail "$what: the cargo or rustc on PATH ran: $(grep '^PATH ' "$log")"
   fi
-  expect_built "$what" "$channel"
+  expect_built "$what" "$channel" rustup
 done
 
 # Without rustup, the rustc on PATH is checked, and its cargo builds.
@@ -188,7 +225,7 @@ setup "$pinned" no-rustup "$pinned"
 if run_script; then
   want="PATH cargo build --profile dist --locked --manifest-path $repo/rust/Cargo.toml RUSTC=unset"
   grep -qxF "$want" "$log" || { fail "$what: no line '$want' in the log:"; show "$log"; }
-  expect_built "$what" "$pinned"
+  expect_built "$what" "$pinned" nix
 else
   fail "$what: build-so.sh darwin exited non-zero"
   show "$out"
@@ -205,29 +242,56 @@ if grep -q ' cargo build ' "$log"; then
   fail "$what: cargo build ran"
 fi
 
-# A dylib linked against the nix store, and one with only the older load
-# command, through rustup and without it.
+# A dylib linked against the nix store or searching it, one with only the
+# older load command, and one whose load commands go on long after the
+# minimum macOS, through rustup and without it.
+store_dir=/nix/store/0123456789abcdfghijklmnpqrsvwxyz-libiconv-109/lib
 for mode in rustup no-rustup; do
+  case "$mode" in rustup) rustc=rustup ;; *) rustc=nix ;; esac
   what="$mode, a /nix/store dependency"
   setup "$pinned" "$mode" "$pinned"
-  store_lib=/nix/store/0123456789abcdfghijklmnpqrsvwxyz-libiconv-109/lib/libiconv.2.dylib
-  fake_otool "$store_lib" LC_BUILD_VERSION 11.0
-  expect_refused "$what" "links against the nix store"
-  grep -qF "$store_lib (compatibility version" "$out" \
+  fake_otool "$store_dir/libiconv.2.dylib" LC_BUILD_VERSION 11.0
+  expect_refused "$what" "links against or searches the nix store"
+  grep -qF "$store_dir/libiconv.2.dylib (compatibility version" "$out" \
     || { fail "$what: the refusal does not name the dependency:"; show "$out"; }
-  grep -qF "build outside the nix dev shell" "$out" \
+  advice="$(grep -F "build outside the nix dev shell" "$out")" \
     || { fail "$what: the refusal does not say how to build:"; show "$out"; }
+  [[ "$advice" != *NIX_* ]] \
+    || fail "$what: the refusal asks for a variable build-so.sh unsets: $advice"
+
+  what="$mode, a /nix/store LC_RPATH"
+  setup "$pinned" "$mode" "$pinned"
+  fake_otool /usr/lib/libiconv.2.dylib LC_BUILD_VERSION 11.0 "$store_dir"
+  expect_refused "$what" "links against or searches the nix store"
+  grep -qxF "$(printf '\tLC_RPATH %s' "$store_dir")" "$out" \
+    || { fail "$what: the refusal does not name the LC_RPATH:"; show "$out"; }
 
   what="$mode, LC_VERSION_MIN_MACOSX"
   setup "$pinned" "$mode" "$pinned"
   fake_otool /usr/lib/libiconv.2.dylib LC_VERSION_MIN_MACOSX 10.12
   if run_script; then
-    expect_built "$what" "$pinned" 10.12
+    expect_built "$what" "$pinned" "$rustc" 10.12
+  else
+    fail "$what: build-so.sh darwin exited non-zero"
+    show "$out"
+  fi
+
+  what="$mode, 40000 load commands after the minimum macOS"
+  setup "$pinned" "$mode" "$pinned"
+  fake_otool /usr/lib/libiconv.2.dylib LC_BUILD_VERSION 11.0 "" 40000
+  if run_script; then
+    expect_built "$what" "$pinned" "$rustc"
   else
     fail "$what: build-so.sh darwin exited non-zero"
     show "$out"
   fi
 done
+
+what="a Linux record"
+printf '%s\n' "rustc 1.2.3 (abcdef012 2026-01-01)" "binary: rustc" "release: 1.2.3" \
+  "LLVM version: 20.1.8" "image: quay.io/pypa/manylinux2014_x86_64:tag@sha256:00" > "$tmp/linux-record"
+expect_summary "$what" "$("$BASH_BIN" "$ROOT/scripts/toolchain-summary.sh" "$tmp/linux-record")" \
+  "rustc 1.2.3 (abcdef012 2026-01-01), LLVM 20.1.8, in quay.io/pypa/manylinux2014_x86_64:tag@sha256:00"
 
 what="no load command naming a minimum macOS"
 setup "$pinned" rustup "$pinned"

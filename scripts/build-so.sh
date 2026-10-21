@@ -106,11 +106,14 @@ else
   fi
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the
-  # search paths these name, and a library found there (libiconv) would be
-  # linked by its /nix/store path.
+  # search paths its NIX_LDFLAGS* and NIX_CFLAGS* variables name (each in a
+  # _FOR_BUILD and a _FOR_TARGET form too), and a library found there
+  # (libiconv) would be linked by its /nix/store path.
   (
-    unset NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_CFLAGS_COMPILE \
-      NIX_CFLAGS_COMPILE_FOR_BUILD NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD
+    # Unquoted: the expansions are variable names, which never split or glob,
+    # and an empty one is then no word at all in any bash (3.2 on macOS).
+    # shellcheck disable=SC2086
+    unset -v ${!NIX_LDFLAGS@} ${!NIX_CFLAGS@}
     "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
   )
 
@@ -120,12 +123,15 @@ else
     exit 1
   fi
   store_deps="$(otool -L "$built" | awk 'NR > 1 && /\/nix\/store\//')"
-  if [[ -n "$store_deps" ]]; then
+  store_rpaths="$(otool -l "$built" | awk '
+    $1 == "cmd" { rpath = ($2 == "LC_RPATH"); next }
+    rpath && $1 == "path" && $2 ~ /^\/nix\/store\// { print "\tLC_RPATH " $2 }')"
+  if [[ -n "$store_deps$store_rpaths" ]]; then
     {
-      echo "error: $built links against the nix store, which catalog users lack:"
-      echo "$store_deps"
-      echo "build outside the nix dev shell, or with NIX_LDFLAGS, NIX_CFLAGS_COMPILE," \
-        "SDKROOT and MACOSX_DEPLOYMENT_TARGET unset"
+      echo "error: $built links against or searches the nix store, which catalog users lack:"
+      [[ -z "$store_deps" ]] || echo "$store_deps"
+      [[ -z "$store_rpaths" ]] || echo "$store_rpaths"
+      echo "build outside the nix dev shell, or with SDKROOT and MACOSX_DEPLOYMENT_TARGET unset"
     } >&2
     exit 1
   fi
@@ -133,7 +139,8 @@ else
     $1 == "cmd" && $2 == "LC_BUILD_VERSION" { field = "minos"; next }
     $1 == "cmd" && $2 == "LC_VERSION_MIN_MACOSX" { field = "version"; next }
     $1 == "cmd" { field = ""; next }
-    field != "" && $1 == field { print $2; exit }')"
+    field != "" && $1 == field && minos == "" { minos = $2 }
+    END { print minos }')"
   if [[ -z "$minos" ]]; then
     echo "error: $built has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX" >&2
     exit 1

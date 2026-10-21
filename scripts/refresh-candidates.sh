@@ -126,8 +126,7 @@ for platform in linux darwin; do
              "of a commit that names it (merge the base branch first if it moved" \
              "the image)"
   fi
-  built="$(head -1 "$record"), LLVM $(sed -n 's/^LLVM version: //p' "$record")"
-  built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p; s/^minos: /, minos /p' "$record")"
+  built="$(scripts/toolchain-summary.sh "$record")"
   echo ">> libcompat-$platform built by: $built"
   toolchains+=("- $platform: $built")
 done
