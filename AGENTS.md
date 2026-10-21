@@ -716,10 +716,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
-  `release-toolchain`, the rustc pin).
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
+  `rustls-only`, `release-toolchain`, the rustc pin, and `build-so-darwin`,
+  `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix

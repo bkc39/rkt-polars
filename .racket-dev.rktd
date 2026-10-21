@@ -34,6 +34,8 @@
   ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
+  ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
+  (build-so      ("bash scripts/test-build-so.sh" #:shell ""))
   ;; The project's Resyntax suite (lint/) over the same trees, red on any
   ;; suggestion; `scripts/resyntax-lint.sh fix` applies them.  It takes
   ;; minutes, so it is not a push gate; CI runs it.

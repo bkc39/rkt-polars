@@ -152,8 +152,11 @@ candidate and stages it, with its `toolchain` record, in
   against glibc 2.17. Do not post-process a `.so` built against a newer glibc
   with `polyfill-glibc`: that corrupts the ELF and segfaults on newer glibc.
 - **darwin** needs a Mac with rustup, from which the script installs the
-  pinned rustc, or with that rustc on `PATH`. The script rewrites the install
-  name to `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
+  pinned rustc and builds with `rustup run <channel> cargo`, whatever `cargo`
+  is first on `PATH` (nix's, in the dev shell), or with that rustc on `PATH`;
+  `scripts/test-build-so.sh` checks both against fakes (the `build-so-darwin`
+  flake check). The script rewrites the install name to
+  `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
   invalidates the linker's signature, and Apple Silicon kills an unsigned
   dylib (`Killed: 9`) the moment Racket `dlopen()`s it.
 

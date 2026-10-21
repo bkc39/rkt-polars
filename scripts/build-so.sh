@@ -10,8 +10,10 @@
 # including pkg-build.racket-lang.org's test host (glibc < 2.27).  Building
 # natively against an old glibc avoids any ELF post-processing.
 #
-# Darwin: built natively with cargo, on the pinned rustc: rustup's (installed
-# when missing) or, without rustup, the one on PATH if it is that release.
+# Darwin: built natively with cargo, on the pinned rustc: with rustup, its
+# toolchain (installed when missing) through `rustup run`, whatever cargo is
+# first on PATH (nix's dev shell puts nixpkgs' there, which rejects
+# `+toolchain`, #161); without rustup, the one on PATH if it is that release.
 #
 # Beside the library it writes `toolchain`: the `rustc -vV` that built it, and
 # the image (Linux) or the linker (darwin).  CI uploads it with the candidate.
@@ -85,8 +87,12 @@ else
   rustc=(rustc)
   if command -v rustup >/dev/null 2>&1; then
     rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
-    cargo+=("+$RUST_TOOLCHAIN")
-    rustc+=("+$RUST_TOOLCHAIN")
+    cargo=(rustup run "$RUST_TOOLCHAIN" cargo)
+    rustc=(rustup run "$RUST_TOOLCHAIN" rustc)
+    # cargo would otherwise take the rustc first on PATH, which rustup run
+    # need not have put ahead of nix's.
+    RUSTC="$(rustup which --toolchain "$RUST_TOOLCHAIN" rustc)"
+    export RUSTC
   fi
   release="$("${rustc[@]}" -vV | sed -n 's/^release: //p')" || true
   if [[ "$release" != "$RUST_TOOLCHAIN" ]]; then
