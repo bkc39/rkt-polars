@@ -4,7 +4,7 @@
                   _byte _gcpointer _pointer ctype-sizeof define-fun-syntax free malloc memcpy
                   ptr-add ptr-set!)
          (only-in ffi/unsafe/alloc allocator deallocator)
-         (only-in racket/contract/base or/c)
+         (only-in racket/contract/base and/c flat-named-contract or/c)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -36,8 +36,6 @@
 (define-syntax-parse-rule (with-raw-buffer ([name:id count:expr ctype:expr] ...+) body:expr ...+)
   (with-release ([name (alloc-buffer count ctype) free-buffer] ...) body ...))
 
-(define string-list-element/c (or/c string? bytes? path?))
-
 (define (c-string-bytes v)
   (cond
     [(string? v) (string->bytes/utf-8 v)]
@@ -45,8 +43,14 @@
     [(path? v) (path->bytes v)]
     [else (raise-argument-error '_string-list "(or/c string? bytes? path?)" v)]))
 
+(define (utf-8-encoded? v)
+  (and (bytes-utf-8-length (c-string-bytes v) #f) #t))
+
+(define string-list-element/c
+  (or/c string? (and/c (or/c bytes? path?) (flat-named-contract 'utf-8? utf-8-encoded?))))
+
 (define (string-list-element->string v)
-  (if (string? v) v (bytes->string/utf-8 (c-string-bytes v) #\uFFFD)))
+  (if (string? v) v (bytes->string/utf-8 (c-string-bytes v))))
 
 ;; The table's addresses point into its own block, which the collector never
 ;; moves (#143).

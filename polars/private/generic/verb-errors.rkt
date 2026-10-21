@@ -210,6 +210,14 @@
     (check-equal? (columns-of (unpivot by-quarter #:on (list (name "q1") (name "q2"))
                                        #:index (list (name "store"))))
                   (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))))
+  (define not-utf-8 "contract violation\n  expected: [^\n]*utf-8[?][^\n]*\n  given: [^\n]*#\"\\\\377\"")
+  (for ([who '(drop drop pivot unpivot)]
+        [call (list (lambda () (drop pair (bytes 255)))
+                    (lambda () (drop pair (list "a" (bytes 255))))
+                    (lambda () (pivot sales #:on (list (bytes 255)) #:index '("store")
+                                      #:values '("sales")))
+                    (lambda () (unpivot by-quarter #:on '("q1") #:index (list (bytes 255)))))])
+    (check-raises 'contract (pregexp (format "^~a: ~a" who not-utf-8)) call))
   (check-raises 'contract #rx"^drop: contract violation\n" (lambda () (drop pair '(a))))
   (check-raises 'contract #rx"^pivot: contract violation\n"
                 (lambda () (pivot sales #:on '(quarter) #:index '("store") #:values '("sales"))))

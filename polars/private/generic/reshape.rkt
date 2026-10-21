@@ -61,7 +61,6 @@
   (values start (min limit (max 0 (- length (- start offset))))))
 
 (define column-name-list/c (listof string-list-element/c))
-
 (define column-names/c (or/c string-list-element/c column-name-list/c))
 
 (define (column-height-problem d s)

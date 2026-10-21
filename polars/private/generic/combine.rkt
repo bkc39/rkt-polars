@@ -140,6 +140,11 @@
                 (list 10 polars-null polars-null))
 
   (define (polars-failure? e) (and (exn:fail? e) (not (exn:fail:contract? e))))
+  (define (refused who expected given)
+    (pregexp (format "^~a: contract violation\n  expected: ~a\n  given: ~a" who expected given)))
+  (define name/c-text "\\(or/c string\\? \\(and/c \\(or/c bytes\\? path\\?\\) utf-8\\?\\)\\)")
+  (define not-utf-8 "[^\n]*utf-8\\?[^\n]*")
+  (define byte-255 "[^\n]*#\"\\\\377\"")
   (define ints-x (dataframe (list (series '(1) #:name "x"))))
   (define strs-x (dataframe (list (series '("s") #:name "x"))))
   (define pair-xy (dataframe (list (series '(1) #:name "x") (series '(2) #:name "y"))))
@@ -203,7 +208,7 @@
      (list (lambda () (contracted:join 5 ints-x #:on '("x"))) exn:fail:contract?
            #rx"^join: contract violation\n  expected: \\(or/c dataframe\\? lazyframe\\?\\)\n  given: 5\n")
      (list (lambda () (contracted:join ints-x ints-x #:on "x")) exn:fail:contract?
-           #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof \\(or/c string\\? bytes\\? path\\?\\)[^\n]*\n  given: \"x\"\n")
+           (refused 'join (format "[^\n]*non-empty-listof ~a[^\n]*" name/c-text) "\"x\"\n"))
      (list (lambda () (contracted:join ints-x ints-x #:on '(x))) exn:fail:contract?
            #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(x\\)\n")
      (list (lambda () (contracted:join ints-x ints-x #:left-on '(5) #:right-on '("x")))
@@ -212,6 +217,14 @@
            exn:fail:contract? #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(x\\)\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '(y))) exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: [^\n]*\n  given: '\\(y\\)\n")
+     (list (lambda () (contracted:join ints-x ints-x #:on (list (bytes 255)))) exn:fail:contract?
+           (refused 'join not-utf-8 byte-255))
+     (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on (list (bytes 255))))
+           exn:fail:contract? (refused 'join not-utf-8 byte-255))
+     (list (lambda () (contracted:join-asof ints-x ints-x #:on (bytes 255))) exn:fail:contract?
+           (refused 'join-asof not-utf-8 byte-255))
+     (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by (list (bytes 255))))
+           exn:fail:contract? (refused 'join-asof not-utf-8 byte-255))
      (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on '())) exn:fail:contract?
            #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof[^\n]*\n  given: '\\(\\)\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "nope")) polars-failure?
@@ -220,13 +233,13 @@
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: [^\n]*backward[^\n]*\n  given: 'sideways\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on '("x"))) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(or/c string\\? bytes\\? path\\?\\)\\)\n  given: '\\(\"x\"\\)\n")
+           (refused 'join-asof (format "\\(or/c #f ~a\\)" name/c-text) "'\\(\"x\"\\)\n"))
      (list (lambda () (contracted:join-asof ints-x 5 #:on "x")) exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: dataframe\\?\n  given: 5\n")
      (list (lambda () (contracted:join-asof ints-x ints-x)) exn:fail:contract?
            #rx"^join-asof: contract violation\n  must supply #:on, or #:left-on and #:right-on\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by "y")) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(listof \\(or/c string\\? bytes\\? path\\?\\)\\)\\)\n  given: \"y\"\n")
+           (refused 'join-asof (format "\\(or/c #f \\(listof ~a\\)\\)" name/c-text) "\"y\"\n"))
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '("y") #:left-by '("y")))
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  supply either #:by or #:left-by and #:right-by, not both\n")

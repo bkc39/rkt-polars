@@ -617,9 +617,9 @@ far-zoned
 @defproc[(drop [d dataframe?]
                [names (or/c string? bytes? path? (listof (or/c string? bytes? path?)))])
          dataframe?]{
-  Removes the named column(s) (@tt{df.drop}); each name is a string, or a byte
-  string or path read as UTF-8. A name @racket[d] lacks, or one given twice,
-  raises. Applied to a list it falls back to
+  Removes the named column(s) (@tt{df.drop}); each name is a string, or a UTF-8
+  byte string or path. A name @racket[d] lacks, or one given twice, raises.
+  Applied to a list it falls back to
   @racketmodname[racket/list]'s @racketid[drop].
 
   @examples[#:eval ev
@@ -639,7 +639,7 @@ far-zoned
   @racket[on] and @racket[values]), and one column per distinct value of
   @racket[on], sorted by value as Python's @tt{sort_columns=True}, holding the
   @racket[values] of that cell under @racket[agg]. Each name is a string, or a
-  byte string or path read as UTF-8. As in Python, a
+  UTF-8 byte string or path. As in Python, a
   @racket['sum] of an empty cell is 0 and @racket['count] is @tt{len};
   @racket[#f] and @racket['none] raise when a cell holds more than one value.
   A column @racket[d] lacks raises with Polars' reason.
@@ -662,9 +662,8 @@ by-quarter
   Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
   rows of a @racket["variable"] and a @racket["value"] column beside the
   @racket[index] columns; @racket[#:on '()] takes every column outside
-  @racket[index], as Python's @tt{on=None}. Each name is a string, or a byte
-  string or path read as UTF-8. A column @racket[d] lacks raises with Polars'
-  reason.
+  @racket[index], as Python's @tt{on=None}. Each name is a string, or a UTF-8
+  byte string or path. A column @racket[d] lacks raises with Polars' reason.
 
   @examples[#:eval ev
 (unpivot by-quarter #:on '("q1" "q2") #:index '("store"))
@@ -680,11 +679,12 @@ by-quarter
   Joins @racket[right], of the same kind as @racket[left], onto it on the
   shared key columns @racket[#:on], or on @racket[#:left-on] /
   @racket[#:right-on] (@tt{left.join(right, ...)}); each key is a string, or a
-  byte string or path read as UTF-8. A @racket['cross] join takes no keys, and @racket['full] is @racket['outer]. Eager on a
-  @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
-  a @racket['cross] join promises a row order; sort the result when order
-  matters. Keys whose dtypes differ, a key a frame lacks, or key lists of
-  different lengths raise with Polars' reason.
+  UTF-8 byte string or path. A @racket['cross] join takes no keys, and
+  @racket['full] is @racket['outer]. Eager on a @tech{dataframe}, deferred on
+  a @tech{lazyframe}. As in Python Polars, only a @racket['cross] join
+  promises a row order; sort the result when order matters. Keys whose dtypes
+  differ, a key a frame lacks, or key lists of different lengths raise with
+  Polars' reason.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
@@ -717,8 +717,8 @@ by-quarter
   before it for @racket['backward], the first at or after it for
   @racket['forward]. @racket[#:by], or equally long @racket[#:left-by] and
   @racket[#:right-by], match within equal groups only, and a key further than
-  @racket[#:tolerance] away matches nothing. Each name is a string, or a byte
-  string or path read as UTF-8.
+  @racket[#:tolerance] away matches nothing. Each name is a string, or a UTF-8
+  byte string or path.
 
   @examples[#:eval ev
 (define readings (dataframe (list (series '(1 3 5) #:name "t")
@@ -2726,10 +2726,10 @@ query
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],
   when they have the same names on both sides, or as parallel
-  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
-  join kind; @racket['outer] and @racket['full] are synonyms, and a
-  @racket['cross] join takes no keys. Omitting the keys for any other kind is
-  an error. Collect the result with @racket[lazyframe-collect]:
+  @racket[#:left-on] and @racket[#:right-on] lists; each key is a string, or a
+  UTF-8 byte string or path. @racket[#:how] selects the join kind;
+  @racket['outer] and @racket['full] are synonyms, and a @racket['cross] join
+  takes no keys. Omitting the keys for any other kind is an error. Collect the result with @racket[lazyframe-collect]:
 
   @racketblock[
   (lazyframe-collect
