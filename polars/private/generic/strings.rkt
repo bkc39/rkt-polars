@@ -11,6 +11,7 @@
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/expr-str parse-datetime)
+         (only-in polars/private/io-contracts int64/c nonnegative-int64/c)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
@@ -21,9 +22,8 @@
          str-find str-find-literal str-count-matches
          str->date str->time
          (contract-out
-          [str-slice (->* (col-expr/c (or/c Expr-ptr? (integer-in (- (expt 2 63))
-                                                                  (sub1 (expt 2 63)))))
-                          ((or/c #f Expr-ptr? (integer-in 0 (sub1 (expt 2 63)))))
+          [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
+                          ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
                           Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
                               (#:format (or/c #f string?)
@@ -107,6 +107,7 @@
   (require rackunit (only-in threading ~>)
            (only-in gregor date datetime)
            polars/private/generic/core
+           (only-in polars/private/bulk series->list)
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape)     ; lazy / with-columns / collect
   (define df (dataframe (list (series '("Ab" "cD" "ef") #:name "s"))))
@@ -176,15 +177,16 @@
                      (series (list 1 polars-null 2 0) #:name "n"))))
   (define (sliced . exprs)
     (define d (apply select words exprs))
-    (for/list ([name (in-list (column-names d))])
-      (for/list ([x (ref d name)]) x)))
+    (map (lambda (name) (series->list (ref d name))) (column-names d)))
   (check-equal? (sliced (alias (str-slice "s" 1 #f) "rest")
                         (alias (str-slice "s" 1) "omitted")
+                        (alias (str-slice "s" 1 polars-null) "null")
                         (alias (str-slice "s" -2) "last2")
                         (alias (str-slice "s" -4 2) "mid")
                         (alias (str-slice "s" 10) "past")
                         (alias (str-slice "s" 0 (col "n")) "by_col"))
                 (list (list "ello" "éllo" polars-null "b")
+                      (list "ello" "éllo" polars-null "b")
                       (list "ello" "éllo" polars-null "b")
                       (list "lo" "lo" polars-null "ab")
                       (list "el" "él" polars-null "")
@@ -214,10 +216,14 @@
   (require (only-in gregor moment resolve-offset/post resolve-offset/pre)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
+  (define slice-length-refused
+    (regexp (string-append "^str-slice: contract violation\n  expected: "
+                           (regexp-quote "(or/c #f polars-null? Expr-ptr? nonnegative-int64/c)"))))
   (for ([bad (list -1 "n" #t 1.5 (expt 2 63))])
-    (check-exn #rx"^str-slice: contract violation\n  expected: [(]or/c #f Expr-ptr[?] [(]integer-in 0 "
-               (lambda () (contracted:str-slice "s" 0 bad))))
-  (check-exn #rx"^str-slice: contract violation\n  expected: [(]or/c Expr-ptr[?] [(]integer-in "
+    (check-exn slice-length-refused (lambda () (contracted:str-slice "s" 0 bad))))
+  (check-equal? (sliced (contracted:str-slice "s" 1 polars-null))
+                (sliced (contracted:str-slice "s" 1 #f)))
+  (check-exn #rx"^str-slice: contract violation\n  expected: [(]or/c Expr-ptr[?] int64/c[)]"
              (lambda () (contracted:str-slice "s" #\a 2)))
   (define stamps
     (dataframe (list (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock")

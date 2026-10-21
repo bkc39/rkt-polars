@@ -1562,16 +1562,14 @@ stations
   @racketid[dt-truncate].}
 
 @defproc[(str-slice [x (or/c Expr-ptr? string?)]
-                    [offset (or/c Expr-ptr? (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))]
-                    [length (or/c #f Expr-ptr? (integer-in 0 (sub1 (expt 2 63)))) #f])
+                    [offset (or/c Expr-ptr? int64/c)]
+                    [length (or/c #f polars-null? Expr-ptr? nonnegative-int64/c) #f])
          Expr-ptr?]{
-  The @racket[length] characters of each string from @racket[offset]
-  (@tt{.str.slice}). A negative @racket[offset] counts from the end, and an
-  @racket[offset] past the end gives an empty string. A @racket[length] of
-  @racket[#f], the default, is Python's @tt{length=None}: the slice runs to
-  the end of the string, as it does on a row whose @racket[length]
-  expression is null. A negative @racket[length], which Python refuses when
-  the plan runs, is a contract error.
+  Substring of @racket[length] characters from @racket[offset]
+  (@tt{.str.slice}); a negative @racket[offset] counts from the end;
+  @racket[#f] (or @racket[polars-null], or a null row of a @racket[length]
+  expression) runs to the end. An @racket[int64/c] is a signed 64-bit
+  integer, a @racket[nonnegative-int64/c] one from @racket[0].
 
   @examples[#:eval ev
 (define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
