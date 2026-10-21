@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::{clear_last_error, guard_panic};
+use crate::{clear_last_error, guard_panic, slice_or_empty};
 
 pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
     if p.is_null() {
@@ -13,10 +13,11 @@ pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
 /// Row `i` is `buf[offsets[i]..offsets[i + 1]]`, null where `valid` (NULL
 /// when no row is null) holds 0; a NULL or non-UTF-8 `name` is empty.
 ///
+/// Zero rows (`offsets_len == 1`) is an empty String series.
+///
 /// Returns NULL, recording no reason, when:
-/// - there are zero rows (`offsets_len < 2`), which keeps an empty list an
-///   error in Racket (#98);
-/// - `offsets` is NULL, or `buf` is NULL with `buf_len > 0`;
+/// - `offsets` is NULL or `offsets_len` is 0;
+/// - `buf` is NULL with `buf_len > 0`;
 /// - `valid` is not NULL and holds fewer than `offsets_len - 1` bytes;
 /// - `buf` is not UTF-8;
 /// - an offset is negative, below the one before it, past `buf_len`, or
@@ -35,24 +36,26 @@ pub extern "C" fn series_new_str_packed(
 ) -> *mut Series {
     clear_last_error();
     let rows = offsets_len.saturating_sub(1);
-    if rows == 0
-        || offsets.is_null()
-        || (buf.is_null() && buf_len > 0)
-        || !(valid.is_null() || rows <= valid_len)
-    {
+    if offsets_len == 0 || !(valid.is_null() || rows <= valid_len) {
         return ptr::null_mut();
     }
-    let bytes = if buf_len == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(buf, buf_len) }
+    let Some(bytes) = (unsafe { slice_or_empty(buf, buf_len) }) else {
+        return ptr::null_mut();
+    };
+    let Some(offsets) = (unsafe { slice_or_empty(offsets, offsets_len) })
+    else {
+        return ptr::null_mut();
     };
     let Ok(text) = std::str::from_utf8(bytes) else {
         return ptr::null_mut();
     };
-    let offsets = unsafe { std::slice::from_raw_parts(offsets, offsets_len) };
-    let valid = (!valid.is_null())
-        .then(|| unsafe { std::slice::from_raw_parts(valid, rows) });
+    let Ok(start) = usize::try_from(offsets[0]) else {
+        return ptr::null_mut();
+    };
+    if !text.is_char_boundary(start) {
+        return ptr::null_mut();
+    }
+    let valid = unsafe { slice_or_empty(valid, rows) };
     guard_panic(|| {
         let mut builder = StringChunkedBuilder::new(name_from_ptr(name), rows);
         for (row, bounds) in offsets.windows(2).enumerate() {

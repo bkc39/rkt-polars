@@ -62,6 +62,7 @@
 
 (define series? series-rec?)
 (define (wrap-series ptr) (series-rec ptr))
+(define (null-series? v) (and (series? v) (eq? (series-dtype v) 'null)))
 
 ;; ---------------------------------------------------------------------------
 ;; the dataframe wrapper
@@ -368,3 +369,47 @@
              (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
   (check-exn #rx"^series: value out of range for this dtype"
              (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f)))))
+
+(module+ test
+  (require (only-in polars/private/bulk series->list)
+           (only-in racket/match match match-define))
+  (define (empty-series-summary s)
+    (list (series-name s) (series-dtype s) (series-len s) (series->list s)))
+
+  (check-equal? (empty-series-summary (series '())) '("" null 0 ()))
+  (check-equal? (empty-series-summary (series (vector) #:name "v")) '("v" null 0 ()))
+  (check-equal? (empty-series-summary (series '() #:name "empty" #:dtype 'f64))
+                '("empty" float64 0 ()))
+  (check-equal? (empty-series-summary (series (list polars-null) #:name "n"))
+                (list "n" 'null 1 (list polars-null)))
+  (check-equal? (empty-series-summary (series (vector polars-null polars-null)))
+                (list "" 'null 2 (list polars-null polars-null)))
+  (for ([case (list (list (list polars-null 1) 'int64) (list (vector 2.5 polars-null) 'float64)
+                    (list (list polars-null "a") 'string) (list (list polars-null 'a) 'categorical))])
+    (match-define (list elements expected) case)
+    (check-equal? (series-dtype (series elements)) expected))
+  (check-equal? (series-dtype (series '() #:dtype (series-dtype (series '())))) 'null)
+  (check-equal? (empty-series-summary (series (list polars-null polars-null) #:dtype 'null))
+                (list "" 'null 2 (list polars-null polars-null)))
+  (check-equal? (series-len (series (vector polars-null) #:dtype 'null)) 1)
+  (check-exn #rx"^series: a 'null series holds only polars-null"
+             (lambda () (series '(1) #:dtype 'null)))
+  (check-exn #rx"^series: a 'null series holds only polars-null"
+             (lambda () (series (vector polars-null 2) #:dtype 'null)))
+  (for* ([row (in-list '((i8 int8) (i16 int16) (i32 int32) (i64 int64)
+                         (u8 uint8) (u16 uint16) (u32 uint32) (u64 uint64)
+                         (f32 float32) (f64 float64) (bool boolean) (str string)
+                         (date) (time) (datetime (datetime microseconds #f))
+                         ((datetime milliseconds) (datetime milliseconds #f))
+                         ((datetime nanoseconds #f))
+                         ((datetime microseconds "Europe/Paris"))
+                         ((duration microseconds)) ((duration nanoseconds))
+                         (categorical) ((enum a b)) ((enum)) (null)))]
+         [elements (in-list (list '() (vector)))])
+    (define-values (spec expected)
+      (match row
+        [(list spec) (values spec spec)]
+        [(list spec expected) (values spec expected)]))
+    (check-equal? (empty-series-summary (series elements #:name "e" #:dtype spec))
+                  (list "e" expected 0 '())
+                  (format "~s ~s" spec elements))))

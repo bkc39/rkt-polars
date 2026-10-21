@@ -1,9 +1,11 @@
 mod boolean;
+mod null;
 mod primitive;
 mod string;
 mod temporal;
 
 pub use self::boolean::*;
+pub use self::null::*;
 pub use self::primitive::*;
 pub(crate) use self::string::name_from_ptr;
 pub use self::string::*;

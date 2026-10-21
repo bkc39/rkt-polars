@@ -14,8 +14,9 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories define-owned-cpointer-type enum-dtype? sort-flags-mismatch
-                  sort-flags/c time-unit-symbol->code write-owned zoned-datetime-dtype?)
+                  check-enum-categories define-owned-cpointer-type enum-dtype? polars-null?
+                  sort-flags-mismatch sort-flags/c time-unit-symbol->code write-owned
+                  zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
@@ -29,7 +30,7 @@
          expr-drop-count expr-dropped lazyframe-dropped
          sort-by/c
          explain/c lazyframe-explainer
-         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
+         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
          expr-alias
          lit ->expr
          dtype-spec?
@@ -114,6 +115,10 @@
   (_fun _string -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
+(define-compat expr-lit-null
+  (_fun -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
 (define-compat expr-alias
   (_fun _Expr-ptr _string -> _Expr-ptr)
   #:wrap (allocator expr-drop))
@@ -147,6 +152,7 @@
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
+    [(polars-null? v) (expr-lit-null)]
     [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit v dtype))]
     [else (error 'lit "no Expr literal for ~v" v)]))
 
@@ -278,7 +284,7 @@
              (lambda () (contracted:expr-dtype-col nul-enum))))
 
 (module+ test
-  (require rackunit)
+  (require rackunit (only-in polars/private/foreign polars-null))
   (define-compat expr-add
     (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
     #:wrap (allocator expr-drop))
@@ -296,6 +302,7 @@
   (check-equal? (expr->string (expr-mul (col "v") (lit 10))) "[(col(\"v\")) * (dyn int: 10)]")
   (check-equal? (expr->string (lit "hi")) "\"hi\"")
   (check-equal? (expr->string (lit #t)) "true")
+  (check-equal? (expr->string (lit polars-null)) "null")
   (check-pred Expr-ptr? print-col)
   (check-true (cpointer? print-col))
   (check-pred Expr-ptr? (expr-alias print-col "y"))

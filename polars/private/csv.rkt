@@ -56,7 +56,7 @@
      (and (dtype-spec? v)
           (not (zoned-datetime-dtype? v))
           (match v
-            [(cons (or 'duration 'enum) _) #f]
+            [(or 'null (cons (or 'duration 'enum) _)) #f]
             [_ #t])))))
 
 (define (char->byte c)

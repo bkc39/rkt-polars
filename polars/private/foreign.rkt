@@ -863,7 +863,7 @@
   (check-exn
    #rx"^series-new-i32: operation failed$"
    (lambda ()
-     (series-new-i32 "example" '())))
+     (series-new-i32 #f '(1))))
 
   (check-pred Series-ptr? (series-new-i32/vec "" (vector 1 2 3)))
   (check-equal?
@@ -902,7 +902,7 @@
   (check-exn
    #rx"^series-new-f64: operation failed$"
    (lambda ()
-     (series-new-f64 "example" '())))
+     (series-new-f64 #f '(1.0))))
   (check-exn
    #rx"given value does not fit primitive C type"
    (λ ()
@@ -1001,7 +1001,18 @@
                                           ([b (in-vector bools)])
                                 (bool->u8 b)))]))
 
+(define-compat series-new-null
+  (_fun _string _size -> _Series-ptr/null)
+  #:c-id series_new_null
+  #:wrap (allocator/or-fail series-drop 'series-new-null))
+
 (module+ test
+  (for ([n (in-list '(0 3))])
+    (define nulls (series-new-null "nothing" n))
+    (check-equal? (list (series-name nulls) (series-len nulls) (series-dtype nulls)
+                        (series-null-count nulls))
+                  (list "nothing" n 'null n)))
+  (check-exn #rx"^series-new-null: operation failed$" (lambda () (series-new-null #f 0)))
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
   (check-equal? (series-len (series-new-bool "x" '(#t #f))) 2)
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
@@ -1050,10 +1061,6 @@
   (check-equal?
    (series-len (series-new-str "str" '("" "")))
    2)
-  (check-exn
-   #rx"^series-new-str: operation failed$"
-   (lambda ()
-     (series-new-str "example" '())))
   (check-exn
    #rx"contract violation"
    (λ ()
@@ -1299,7 +1306,28 @@
    3)
   (check-equal?
    (series-dtype (series-new-ymdhms "name" ex1))
-   '(datetime milliseconds #f)))
+   '(datetime milliseconds #f))
+
+  (for ([ctor+dtype
+         (in-list (list (list series-new-i8 series-new-i8/vec 'int8)
+                        (list series-new-i16 series-new-i16/vec 'int16)
+                        (list series-new-i32 series-new-i32/vec 'int32)
+                        (list series-new-i64 series-new-i64/vec 'int64)
+                        (list series-new-u8 series-new-u8/vec 'uint8)
+                        (list series-new-u16 series-new-u16/vec 'uint16)
+                        (list series-new-u32 series-new-u32/vec 'uint32)
+                        (list series-new-u64 series-new-u64/vec 'uint64)
+                        (list series-new-f32 series-new-f32/vec 'float32)
+                        (list series-new-f64 series-new-f64/vec 'float64)
+                        (list series-new-bool series-new-bool/vec 'boolean)
+                        (list series-new-str series-new-str/vec 'string)
+                        (list series-new-ymdhms series-new-ymdhms/vec
+                              '(datetime milliseconds #f))))])
+    (match-define (list new-list new-vector dtype) ctor+dtype)
+    (for ([empty (in-list (list (new-list "e" '()) (new-vector "e" (vector))))])
+      (check-equal? (list (series-name empty) (series-len empty) (series-dtype empty))
+                    (list "e" 0 dtype)
+                    (format "~s" dtype)))))
 
 (module+ test
   (define ref-i32 (series-new-i32 "x" (list 10 polars-null -3)))
@@ -1453,10 +1481,7 @@
        (with-release ([strings (series-cast/c s (->compat-dtype 'string)) series-drop]
                       [present (series-drop-nulls strings) series-drop])
          (series-rename present "value")
-         (with-release ([known (match categories
-                                 ['() (series-head present 0)]
-                                 [_ (strings->series who "value" categories)])
-                               series-drop]
+         (with-release ([known (strings->series who "value" categories) series-drop]
                         [left (dataframe-new (list present)) dataframe-drop]
                         [right (dataframe-new (list known)) dataframe-drop]
                         [missed (dataframe-join left right #:on '("value") #:how 'anti)
@@ -2754,7 +2779,8 @@
                 (lambda () (series-dt-replace-time-zone 'test owned-zoned #f 'raise 'raise)))
           (list 'series-new-bool (lambda () (series-new-bool "b" '(#t #f))))
           (list 'series-new-bool/opt (lambda () (series-new-bool "b" (list #t polars-null))))
-          (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))))
+          (list 'series-new-bool/vec (lambda () (series-new-bool/vec "b" (vector #t #f))))
+          (list 'series-new-null (lambda () (series-new-null "n" 2)))))
 
   (define series-op-cases
     (for/list ([op (in-list (list series-eq series-ne series-gt series-ge series-lt series-le
@@ -2873,7 +2899,7 @@
   (check-exn #rx"^series-eq-str: operation failed$" (lambda () (series-eq-str owned-i32 "a")))
   (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
   (check-exn #rx"^series-new-i32/vec: operation failed$"
-             (lambda () (series-new-i32/vec "c" (vector))))
+             (lambda () (series-new-i32/vec #f (vector 1))))
   (check-exn #rx"^dataframe-new: operation failed$"
              (lambda () (dataframe-new (list owned-i32 (series-head owned-i32 2)))))
   (check-exn #rx"^dataframe-drop-columns: operation failed$"

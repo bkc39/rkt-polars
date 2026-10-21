@@ -27,7 +27,8 @@
   (require rackunit (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
-           polars/private/generic/reshape)     ; with-columns
+           polars/private/generic/reshape      ; with-columns
+           (only-in polars/private/bulk series->list))
   (define df (dataframe (list (series '(1 2 2 3 5 5 8) #:name "x" #:dtype 'i64))))
   (define out
     (~> df (with-columns
@@ -58,4 +59,27 @@
                                   (with-columns (alias (is-in "carrier" '(AA B6)) "in"))
                                   (ref "in"))])
                   x)
-                '(#f #t #f #t)))
+                '(#f #t #f #t))
+  (define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
+  (define (membership rhs)
+    (~> gappy (select (is-in "x" rhs)) (ref "x") series->list))
+  (check-equal? (membership (list polars-null)) (list #f polars-null #f))
+  (check-equal? (membership (list 1 polars-null)) (list #t polars-null #f))
+  (check-equal? (membership (list 1.0 polars-null 3)) (list #t polars-null #t))
+  (check-equal? (membership '()) (list #f polars-null #f))
+  (for ([column (list (series (list "a" polars-null) #:name "x")
+                      (series (list #t polars-null) #:name "x")
+                      (series (list polars-null polars-null) #:name "x"))]
+        [expected (list (list #f polars-null) (list #f polars-null)
+                        (list polars-null polars-null))])
+    (check-equal? (~> (dataframe (list column)) (select (is-in "x" '())) (ref "x") series->list)
+                  expected))
+  (for ([lower (list polars-null 1 polars-null)]
+        [upper (list 5 polars-null polars-null)])
+    (check-equal? (~> gappy (select (is-between "x" lower upper)) (ref "x") series->list)
+                  (list polars-null polars-null polars-null)))
+  (check-equal? (~> gappy (select (is-between "x" 2 5)) (ref "x") series->list)
+                (list #f polars-null #t))
+  (check-equal? (~> carriers (select (is-in "carrier" (list polars-null 'UA))) (ref "carrier")
+                    series->list)
+                '(#t #f #t #f)))

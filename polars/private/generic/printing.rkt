@@ -128,27 +128,34 @@
   (define lines
     (for/list ([i (in-list (row-indices len))]
                [abbreviation (in-list (shown-abbreviations s dt len))])
-      (if (eq? i 'ellipsis)
-          "\t…"
-          (string-append "\t" (value->cell (series-ref s i) dt abbreviation)))))
+      (string-append "\t"
+                     (if (eq? i 'ellipsis) "…" (value->cell (series-ref s i) dt abbreviation))
+                     "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
    (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label dt))
    "[\n"
-   (string-join lines "\n")
-   "\n]"))
+   (string-append* lines)
+   "]"))
 
 (module+ test
   ;; series->string operates on the raw FFI series, so build them directly here
   ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
            (only-in polars/private/foreign
-                    series-cast series-new-i32 series-new-i64 series-new-str polars-null))
+                    series-cast series-new-i32 series-new-i64 series-new-null series-new-str
+                    polars-null))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
+  (check-equal? (series->string (series-new-null "nothing" 3))
+                "shape: (3,)\nSeries: 'nothing' [null]\n[\n\tnull\n\tnull\n\tnull\n]")
+  (check-equal? (series->string (series-new-i32 "e" '())) "shape: (0,)\nSeries: 'e' [i32]\n[\n]")
+  (check-equal? (series->string (series-new-i32 "one" '(7)))
+                "shape: (1,)\nSeries: 'one' [i32]\n[\n\t7\n]")
   (check-true (regexp-match? #rx"shape: \\(4,\\)" (series->string ints)))
   (check-true (regexp-match? #rx"Series: 'ints' \\[i32\\]" (series->string ints)))
   (define big (series-new-i64 "big" (range 100)))
-  (check-true (regexp-match? #rx"…" (series->string big)))
+  (check-true (regexp-match? #rx"\n\t4\n\t…\n\t95\n" (series->string big)))
+  (check-true (regexp-match? #rx"\n\t99\n]$" (series->string big)))
   (define withnull (series-new-i32 "withnull" (list 10 polars-null 30)))
   (check-true (regexp-match? #rx"null" (series->string withnull)))
   (define bears (series-new-str "bears" '("Polar" "Brown")))

@@ -165,6 +165,9 @@
                         "a")
                 (list polars-null -1))
 
+  (check-equal? (dtypes-of (read-json (scratch-file scratch "nulls.json" "[{\"a\":1,\"b\":null}]")
+                                     #:schema '(("a" . i64) ("b" . null))))
+                '(("a" int64) ("b" null)))
   (check-equal? (shape (read-json (scratch-file scratch "empty.json" "[]"))) '(0 0))
   (check-equal? (dtypes-of (read-json (build-path scratch "empty.json") #:schema '(("a" . i64))))
                 '(("a" int64)))
@@ -244,6 +247,22 @@
   (check-equal? (car (column nd-ms "day")) (datetime 2024 1 1))
   (check-equal? (dtypes-of (read-ndjson stations-nd #:schema '(("day" . datetime))))
                 '(("day" (datetime microseconds #f))))
+  (define (nd-columns d)
+    (for/list ([name (in-list (column-names d))])
+      (list name (dtype (ref d name)) (column d name))))
+  (check-equal? (~> (read-ndjson stations-nd #:schema '(("station" . str) ("extra" . null)))
+                    nd-columns)
+                (list (list "station" 'string '("north" "south" "north" "south"))
+                      (list "extra" 'null (make-list 4 polars-null))))
+  (check-equal? (~> (scan-ndjson stations-nd #:schema '(("reading" . f64) ("extra" . null)))
+                    collect
+                    nd-columns)
+                (list (list "reading" 'float64 '(3.0 4.5 2.0 5.25))
+                      (list "extra" 'null (make-list 4 polars-null))))
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*late$"
+             (lambda () (read-ndjson stations-nd #:schema '(("station" . str) ("note" . null)))))
+  (check-exn #rx"^read-ndjson: .*stations[.]ndjson: .*ok$"
+             (lambda () (read-ndjson stations-nd #:schema-overrides '(("flag" . null)))))
   (check-equal? (dtypes-of (~> (read-ndjson stations-nd #:schema-overrides '(("day" . date)))
                                (select "day" "reading")))
                 '(("day" date) ("reading" float64)))

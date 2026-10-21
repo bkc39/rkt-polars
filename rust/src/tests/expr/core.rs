@@ -60,3 +60,56 @@ fn drop_count_increments_per_drop() {
     expr_drop(ptr::null_mut());
     assert!(expr_drop_count() >= before + 2);
 }
+
+fn null_literal() -> Expr {
+    let e = expr_lit_null();
+    assert!(!e.is_null());
+    let out = unsafe { (*e).clone() };
+    expr_drop(e);
+    out
+}
+
+#[test]
+fn null_literal_is_a_null_of_dtype_null() {
+    let out = DataFrame::empty()
+        .lazy()
+        .select([null_literal()])
+        .collect()
+        .unwrap();
+    let v = out.column("literal").unwrap();
+    assert_eq!(v.dtype(), &DataType::Null);
+    assert_eq!((v.len(), v.null_count()), (1, 1));
+}
+
+#[test]
+fn null_literal_broadcasts_and_compares_to_null() {
+    let x = Column::new("x".into(), [Some(1i64), None, Some(3)]);
+    let out = DataFrame::new_infer_height(vec![x])
+        .unwrap()
+        .lazy()
+        .select([
+            null_literal().alias("n"),
+            col("x").eq(null_literal()).alias("eq"),
+            col("x").eq_missing(null_literal()).alias("eq_missing"),
+            (col("x") + null_literal()).alias("plus"),
+        ])
+        .collect()
+        .unwrap();
+    let n = out.column("n").unwrap();
+    assert_eq!(
+        (n.dtype(), n.len(), n.null_count()),
+        (&DataType::Null, 3, 3)
+    );
+    let eq = out.column("eq").unwrap();
+    assert_eq!((eq.dtype(), eq.null_count()), (&DataType::Boolean, 3));
+    let missing: Vec<Option<bool>> = out
+        .column("eq_missing")
+        .unwrap()
+        .bool()
+        .unwrap()
+        .iter()
+        .collect();
+    assert_eq!(missing, vec![Some(false), Some(true), Some(false)]);
+    let plus = out.column("plus").unwrap();
+    assert_eq!((plus.dtype(), plus.null_count()), (&DataType::Int64, 3));
+}

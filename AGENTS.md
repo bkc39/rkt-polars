@@ -386,7 +386,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   fails with "directory contained paths with different file extensions",
   in Python too). Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
   Duration and Enum: 0.55's NDJSON buffer panics on the first six, which
-  Python passes through. `#:batch-size` and `#:low-memory` reach
+  Python passes through. Null is allowed, as in `read-json`: a column the
+  file lacks reads as nulls, and a value for a Null column is an error, as
+  in Python. `#:batch-size` and `#:low-memory` reach
   `LazyJsonLineReader` as in Python, and 0.55 reads neither.
   `#:row-index-name` and `#:include-file-paths` must differ (polars panics
   otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
@@ -467,6 +469,48 @@ it. Racket side: `define-compat` with `#:c-id`.
   and the name, pattern or path the error carries, not the crate's phrasing.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
+- An empty list or vector is an empty series of `#:dtype`, or `'null` without
+  one, as Python's `pl.Series([])` (#98); every constructor, native ones
+  included, takes zero rows. A list or vector of `polars-null` alone infers
+  `'null` too, as `pl.Series([None])` does, and a null among other values
+  takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
+  elements only. `is-in` reads a list the same way, so `(list polars-null)`
+  is a Null literal, and an empty list is a member of nothing (`#f`, null for
+  a null), as Python's `is_in([])` is. `(lit polars-null)` is
+  `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
+  comparison with it is null on every row and arithmetic keeps a numeric
+  operand's dtype; with a temporal operand (date, datetime, zoned, time,
+  duration) arithmetic raises, as Python's expression form does. A series
+  operator given a `polars-null`, or a `'null` series and a plain value,
+  runs the operator's expression form with the value as a `lit`, so the two
+  agree; Python's eager `s - None` on a date series gives null durations
+  where its expression raises, and ours raises like the expression. `and`
+  and `or` with `polars-null` on the left and an expression or series after
+  it combine as Python's `pl.lit(None) & e` does, not as Racket's
+  short-circuit (so an `or` evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  and `var` give `polars-null` and `n-unique` gives 1, through the
+  expression engine (the typed `series_sum_*` have no Null case). A `'null`
+  column does not vstack or join with a typed one, and `and`, `or`, `xor`
+  and `not` refuse a `'null` series, as in Python.
+- Eager reductions on a series return what Python 1.42.1's do (owner's
+  decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
+  where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
+  empty or all-null series, `std` / `var` below `ddof + 1` values, `mean`
+  of a string or categorical series), `sum` 0 for an empty or all-null
+  numeric, boolean or duration series, a boolean `sum` the count of `#t`,
+  and an error under the verb's name for a `sum` of a string, temporal or
+  categorical series and a `std` / `var` of a string, temporal (but a
+  duration's `std`) or categorical one. An Int8, Int16, UInt8 or UInt16
+  `sum` is an Int64 total, a Float32 `std` / `var` the Float32 value and a
+  Decimal reduces as Python's does, all through the expression engine. The
+  expectations are `polars/scribblings/data/reductions-expected.rktd`,
+  written by `scripts/reductions-expected.py` from Python on empty,
+  all-null and partly null series of each dtype; `generic/reductions.rkt`'s
+  tests read it. The typed low-level `series-sum-i32` and kin still return
+  `#f`.
+  A constructor reads its arrays through `slice_or_empty`
+  (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
+  is refused.
 - `series` infers int64 / float64 / string / bool, `'categorical` from a list
   of symbols, and the temporal dtypes from gregor values (#63): `'date`,
   `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from

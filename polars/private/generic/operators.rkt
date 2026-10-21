@@ -36,15 +36,45 @@
 ;; keeps the dtype `lit` gives it, as the expression path does.
 (define (cmp-other who s other)
   (define o
-    (if (series? other)
-        other
-        (const-series (or (temporal-value-dtype other) (series-dtype s)) (series-len s) other)))
+    (cond
+      [(series? other) other]
+      [(temporal-value-dtype other) => (lambda (dt) (const-series dt (series-len s) other))]
+      [else (const-series (series-dtype s) (series-len s) other)]))
   (match* ((series-dtype s) (series-dtype o))
     [((list 'datetime _ zone) (list 'datetime _ other-zone))
      #:when (not (equal? zone other-zone))
      (raise-arguments-error who "datetimes in different time zones"
                             "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
     [(_ _) o]))
+
+(define (failure-cause e)
+  (define message (exn-message e))
+  (match (regexp-match #rx"^[^:]*: (?:failed to collect the query: )?(.*?)(?:\n\nResolved plan.*)?$"
+                       message)
+    [(list _ cause) cause]
+    [#f message]))
+
+(define (raise-cause who e #:contract? [contract? (exn:fail:contract? e)])
+  (define make-exn (if contract? exn:fail:contract exn:fail))
+  (raise (make-exn (format "~a: ~a" who (failure-cause e)) (exn-continuation-marks e))))
+
+(define (expression-form-op who expr-op a b)
+  (define (literal v)
+    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e #:contract? #t))])
+      (lit v)))
+  (define (run s build)
+    (with-handlers ([exn:fail? (lambda (e) (raise-cause who e))])
+      (series-through-expr s build)))
+  (define (expression-form? s v)
+    (and (series? s) (or (polars-null? v) (and (null-series? s) (not (series? v))))))
+  (cond
+    [(expression-form? a b)
+     (define v (literal b))
+     (run a (lambda (e) (expr-op e v)))]
+    [(expression-form? b a)
+     (define v (literal a))
+     (run b (lambda (e) (expr-op v e)))]
+    [else #f]))
 
 ;; --- comparison operators ---------------------------------------------------
 (define-syntax-parse-rule (define-cmp name:id expr-op:expr series-op:expr
@@ -56,6 +86,7 @@
        (let ([a (base:car args)] [b (base:cadr args)])
          (cond
            [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+           [(expression-form-op 'name expr-op a b) => values]
            [(series? a) (wrap-series (series-op a (cmp-other 'name a b)))]
            [(series? b) (wrap-series (series-op-reflected b (cmp-other 'name b a)))]
            [else (apply base-op args)]))]
@@ -74,6 +105,7 @@
 ;; --- arithmetic operators ---------------------------------------------------
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+        [(expression-form-op who expr-op a b) => values]
         [(series? a) (wrap-series (series-op a (cmp-other who a b)))]
         [(series? b) (wrap-series (series-op (cmp-other who b a) b))]
         [else (base-op a b)]))
@@ -143,31 +175,37 @@
 (define-arith mod mod expr-mod series-mod base:mod #:binary-only)
 
 ;; --- boolean / logical operators --------------------------------------------
-;; and / or stay short-circuit macros; only an Expr/series operand routes into
-;; the eager combiners.  not / xor are strict, so plain functions.
 
-(define (combine-and a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-and a b) (wrap-series (series-and a b))))
-(define (combine-or a b)
-  (if (or (Expr-ptr? a) (Expr-ptr? b)) (expr-or a b)  (wrap-series (series-or a b))))
+(define (eager-logical who expr-op series-op a b)
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op a b)]
+        [(expression-form-op who expr-op a b) => values]
+        [else (wrap-series (series-op a b))]))
+(define (combine-and a b) (eager-logical 'and expr-and series-and a b))
+(define (combine-or a b) (eager-logical 'or expr-or series-or a b))
+
+(define (operand? v) (or (Expr-ptr? v) (series? v)))
+(define (null-and v w) (if (operand? w) (combine-and v w) w))
+(define (null-or v w) (if (operand? w) (combine-or v w) v))
 
 (define-syntax-parser p-and
   [(_) #'#t]
   [(_ e:expr) #'e]
   [(_ e0:expr e:expr ...+)
    #'(let ([v e0])
-       (if (or (Expr-ptr? v) (series? v))
-           (combine-and v (p-and e ...))   ; predicate build (eager)
-           (if v (p-and e ...) v)))])      ; booleans: racket `and`
+       (cond [(operand? v) (combine-and v (p-and e ...))]
+             [(polars-null? v) (null-and v (p-and e ...))]
+             [v (p-and e ...)]
+             [else v]))])
 
 (define-syntax-parser p-or
   [(_) #'#f]
   [(_ e:expr) #'e]
   [(_ e0:expr e:expr ...+)
    #'(let ([v e0])
-       (if (or (Expr-ptr? v) (series? v))
-           (combine-or v (p-or e ...))
-           (if v v (p-or e ...))))])       ; booleans: racket `or`
+       (cond [(operand? v) (combine-or v (p-or e ...))]
+             [(polars-null? v) (null-or v (p-or e ...))]
+             [v v]
+             [else (p-or e ...)]))])
 
 (define (p-not x)
   (cond [(Expr-ptr? x) (expr-not x)]
@@ -175,9 +213,8 @@
         [else          (base:not x)]))
 
 (define (p-xor a b)
-  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-xor a b)]
-        [(or (series? a) (series? b))     (wrap-series (series-xor a b))]
-        [else (and (or a b) (not (and a b)))]))   ; boolean xor
+  (cond [(or (operand? a) (operand? b)) (eager-logical 'xor expr-xor series-xor a b)]
+        [else (and (or a b) (not (and a b)))]))
 
 ;; --- when / then / else-when / otherwise ------------------------------------
 ;; Data-first builder that threads, mirroring Polars'
@@ -219,7 +256,9 @@
   ;; operators<->reshape test cycle.
   (require rackunit
            (only-in ffi/unsafe/atomic call-as-atomic)
+           (only-in gregor date)
            (only-in gregor/period hours minutes)
+           (only-in gregor/time time)
            (only-in polars/private/bulk series->list)
            polars/private/generic/core
            polars/private/generic/test-fixtures
@@ -384,6 +423,99 @@
   (for ([op (list p- p/)])
     (define result (op nulls))
     (check-equal? (list (dtype result) (len result) (series-name result)) '(null 2 "n")))
+  (for ([case (list (list (p+ nulls 1) 'int32) (list (p- 1 nulls) 'int32) (list (p/ nulls 2) 'int32)
+                    (list (p* 2.5 nulls) 'float64) (list (p+ nulls 2.5) 'float64)
+                    (list (p+ nulls "a") 'string) (list (p+ nulls 'a) 'string)
+                    (list (= nulls 'a) 'boolean) (list (= nulls "a") 'boolean)
+                    (list (= nulls 1) 'boolean) (list (> 1 nulls) 'boolean)
+                    (list (p+ nulls polars-null) 'null))])
+    (match-define (list result expected) case)
+    (check-equal? (list (dtype result) (series-name result) (series->list result))
+                  (list expected "n" (list polars-null polars-null))))
+  (define (outcome thunk)
+    (with-handlers ([exn:fail? (lambda (e) (list 'raised (failure-cause e)))])
+      (series-shape (thunk))))
+  (define (selected e [s nulls])
+    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe (list s))
+                                                           (list (expr-alias e "n")))
+                                   "n")))
+  (for* ([op (list p+ p- p* p/ mod = != > < >= <=)]
+         [value (list 1 2.5 "a" 'a #t (datetime 2024 1 1) (date 2024 1 1) #\a (expt 2 63))])
+    (check-equal? (outcome (lambda () (op nulls value)))
+                  (outcome (lambda () (selected (op (col "n") value))))
+                  (format "~a ~v" (object-name op) value))
+    (check-equal? (outcome (lambda () (op value nulls)))
+                  (outcome (lambda () (selected (op value (col "n")))))
+                  (format "~v ~a" value (object-name op))))
+  (define typed-series
+    (cons nulls (for/list ([value (list 1 1.5 "a" #t (date 2024 1 1))])
+                  (series (list value polars-null) #:name "n"))))
+  (define (check-expression-form s op a b e)
+    (check-equal? (outcome (lambda () (op a b)))
+                  (outcome (lambda () (selected e s)))
+                  (format "~a ~a ~v ~v" (dtype s) (object-name op) a b)))
+  (define (and-op a b) (p-and a b))
+  (define (or-op a b) (p-or a b))
+  (for* ([s (in-list typed-series)]
+         [op (list p+ p- p* p/ mod = != > < >= <= p-xor and-op or-op)])
+    (check-expression-form s op s polars-null (op (col "n") polars-null))
+    (check-expression-form s op polars-null s (op polars-null (col "n"))))
+  (for ([result (list (= (series '(1 2)) polars-null) (p+ (series '(1.5 2.5)) polars-null)
+                      (p-and (series (list #t #f)) polars-null)
+                      (p-or (series (list #t #f)) polars-null)
+                      (p-and polars-null (series (list #t #f)))
+                      (p-or polars-null (series (list #t #f)))
+                      (p-xor polars-null (series (list #t #f))))]
+        [expected (list (list 'boolean (list polars-null polars-null))
+                        (list 'float64 (list polars-null polars-null))
+                        (list 'boolean (list polars-null #f))
+                        (list 'boolean (list #t polars-null))
+                        (list 'boolean (list polars-null #f))
+                        (list 'boolean (list #t polars-null))
+                        (list 'boolean (list polars-null polars-null)))])
+    (check-equal? (series-shape result) expected))
+  (define gappy (series (list 1 polars-null 3) #:name "n"))
+  (check-equal? (series-shape (selected (lit polars-null) gappy)) (list 'null (list polars-null)))
+  (for ([e (list (~> (p-when (> (col "n") 1)) (then polars-null) (otherwise (col "n")))
+                 (~> (p-when (> (col "n") 1)) (then (col "n")) (otherwise polars-null))
+                 (~> (p-when (> (col "n") 1)) (then polars-null) (otherwise polars-null))
+                 (p-and polars-null (> (col "n") 1))
+                 (p-or polars-null (> (col "n") 1))
+                 (p-xor polars-null (> (col "n") 1)))]
+        [expected (list (list 'int64 (list 1 polars-null polars-null))
+                        (list 'int64 (list polars-null polars-null 3))
+                        (list 'null (list polars-null polars-null polars-null))
+                        (list 'boolean (list #f polars-null polars-null))
+                        (list 'boolean (list polars-null polars-null #t))
+                        (list 'boolean (list polars-null polars-null polars-null)))])
+    (check-equal? (series-shape (selected e gappy)) expected))
+  (check-equal? (p-and polars-null #t) #t)
+  (check-equal? (p-or polars-null #f) polars-null)
+  (check-equal? (p-and #f polars-null) #f)
+  (for ([operand (list (date 2024 1 1) (hours 1) (datetime 2024 1 1) (time 1))]
+        [rx (list #rx"^-: [^\n]*date and null$" #rx"^-: [^\n]*duration[[]μs[]] and null$"
+                  #rx"^-: [^\n]*datetime[[]μs[]] and null$" #rx"^-: [^\n]*time and null$")])
+    (check-exn rx (lambda () (p- (series (list operand)) polars-null))))
+  (check-not-equal? (outcome (lambda () (p+ nulls #\a)))
+                    (outcome (lambda () (p+ nulls (date 2024 1 1)))))
+  (define (polars-failure? e) (and (exn:fail? e) (not (exn:fail:contract? e))))
+  (for ([case (list (list (lambda () (p+ nulls (date 2024 1 1))) polars-failure?
+                          #rx"^[+]: [^\n]*date$")
+                    (list (lambda () (p- nulls "a")) polars-failure? #rx"^-: [^\n]*str`$")
+                    (list (lambda () (p- "a" nulls)) polars-failure? #rx"^-: [^\n]*str`$")
+                    (list (lambda () (p+ nulls #\a)) exn:fail:contract? #rx"^[+]: [^\n]*#\\\\a$")
+                    (list (lambda () (= nulls #\a)) exn:fail:contract? #rx"^=: [^\n]*#\\\\a$")
+                    (list (lambda () (p+ nulls (expt 2 63))) exn:fail:contract?
+                          #rx"^[+]: .*_int64.*9223372036854775808$")
+                    (list (lambda () (> (expt 2 63) nulls)) exn:fail:contract?
+                          #rx"^>: .*_int64.*9223372036854775808$"))])
+    (match-define (list thunk kind rx) case)
+    (check-exn kind thunk)
+    (define message (with-handlers ([exn:fail? exn-message]) (thunk) #f))
+    (check-regexp-match rx message)
+    (check-false (regexp-match? #rx"Resolved plan|lazyframe-collect|lit:|expr_lit" message)))
+  (check-equal? (series->list (= (series (list (date 2024 1 1))) (datetime 2024 1 1))) '(#t))
+  (check-equal? (series->list (= (series (list (date 2024 1 1))) (datetime 2024 1 1 0 0 1))) '(#f))
   (check-eq? (p+ ints) ints)
   (check-eq? (p* ints) ints)
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'uint8"
