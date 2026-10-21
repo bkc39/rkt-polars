@@ -60,6 +60,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     (agg (alias (sum (col "value")) "sum_value")))
 ]
 
+A @racket[utf-8-name/c] in a signature below is a column name: a string, or a
+byte string or path whose bytes are UTF-8. Any other byte string or path is a
+contract error. A @racket[utf-8-names/c] is a list of them.
+
 @defproc[(Expr-ptr? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
@@ -614,7 +618,7 @@ far-zoned
 (drop-nulls dups)
 (eval:error (unique '(1 1 2)))]}
 
-@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
+@defproc[(drop [d dataframe?] [names (or/c utf-8-name/c utf-8-names/c)]) dataframe?]{
   Removes the named column(s) (@tt{df.drop}). A name @racket[d] lacks, or one
   given twice, raises. Applied to a list it falls back to
   @racketmodname[racket/list]'s @racketid[drop].
@@ -626,9 +630,9 @@ far-zoned
 (drop '(1 2 3) 1)]}
 
 @defproc[(pivot [d dataframe?]
-                [#:on on (listof string?)]
-                [#:index index (listof string?)]
-                [#:values values (listof string?)]
+                [#:on on utf-8-names/c]
+                [#:index index utf-8-names/c]
+                [#:values values utf-8-names/c]
                 [#:agg agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count) 'first])
          dataframe?]{
   Spreads @racket[d] wide (@tt{df.pivot}): one row per distinct key of the
@@ -651,7 +655,9 @@ far-zoned
 by-quarter
 (eval:error (pivot sales #:on '("nope") #:index '("store") #:values '("sales")))]}
 
-@defproc[(unpivot [d dataframe?] [#:on on (listof string?)] [#:index index (listof string?)])
+@defproc[(unpivot [d dataframe?]
+                  [#:on on utf-8-names/c]
+                  [#:index index utf-8-names/c])
          dataframe?]{
   Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
   rows of a @racket["variable"] and a @racket["value"] column beside the
@@ -665,14 +671,14 @@ by-quarter
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c #f (non-empty-listof string?)) #f]
-               [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-               [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+               [#:on on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+               [#:left-on left-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+               [#:right-on right-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
                [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          (or/c dataframe? lazyframe?)]{
   Joins @racket[right], of the same kind as @racket[left], onto it on the
   shared key columns @racket[#:on], or on @racket[#:left-on] /
-  @racket[#:right-on] (@tt{left.join(right, ...)}); a @racket['cross] join
+  @racket[#:right-on] (@tt{left.join(right, ...)}). A @racket['cross] join
   takes no keys, and @racket['full] is @racket['outer]. Eager on a
   @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
   a @racket['cross] join promises a row order; sort the result when order
@@ -686,17 +692,18 @@ by-quarter
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)
+(join left right #:on '(#"k") #:how 'inner)
 (eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
 (eval:error (join left right))]}
 
 @defproc[(join-asof [left dataframe?]
                     [right dataframe?]
-                    [#:on on (or/c #f string?) #f]
-                    [#:left-on left-on (or/c #f string?) #f]
-                    [#:right-on right-on (or/c #f string?) #f]
-                    [#:by by (or/c #f (listof string?)) #f]
-                    [#:left-by left-by (or/c #f (listof string?)) #f]
-                    [#:right-by right-by (or/c #f (listof string?)) #f]
+                    [#:on on (or/c #f utf-8-name/c) #f]
+                    [#:left-on left-on (or/c #f utf-8-name/c) #f]
+                    [#:right-on right-on (or/c #f utf-8-name/c) #f]
+                    [#:by by (or/c #f utf-8-names/c) #f]
+                    [#:left-by left-by (or/c #f utf-8-names/c) #f]
+                    [#:right-by right-by (or/c #f utf-8-names/c) #f]
                     [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
                     [#:tolerance tolerance
                                  (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
@@ -1561,6 +1568,25 @@ stations
   @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
   @racketid[dt-truncate].}
 
+@defproc[(str-slice [x (or/c Expr-ptr? string?)]
+                    [offset (or/c Expr-ptr? int64/c)]
+                    [length (or/c #f polars-null? Expr-ptr? nonnegative-int64/c) #f])
+         Expr-ptr?]{
+  Substring of @racket[length] characters from @racket[offset]
+  (@tt{.str.slice}); a negative @racket[offset] counts from the end;
+  @racket[#f] (or @racket[polars-null], or a null row of a @racket[length]
+  expression) runs to the end. An @racket[int64/c] is a signed 64-bit
+  integer, a @racket[nonnegative-int64/c] one from @racket[0].
+
+  @examples[#:eval ev
+(define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
+                               (series (list 1 polars-null 2 0) #:name "n"))))
+(select words
+        (alias (str-slice "s" 1 #f) "rest")
+        (alias (str-slice "s" -2) "last2")
+        (alias (str-slice "s" 0 (col "n")) "by_col"))
+(eval:error (str-slice "s" 0 -1))]}
+
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
                                     [#:group-index group-index exact-nonnegative-integer? 1])
                        Expr-ptr?]
@@ -1778,9 +1804,10 @@ an implementation detail and not part of the public series API.)
   @examples[#:eval ev #:label #f
 (series-name (series '(1 2) #:name "ints"))]}
 
-@deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
+@deftogether[(@defproc[(rename [s series?] [new-name utf-8-name/c]) series?]
               @defproc[#:link-target? #f
-                       (rename [d dataframe?] [old string?] [new string?]) dataframe?]
+                       (rename [d dataframe?] [old utf-8-name/c] [new utf-8-name/c])
+                       dataframe?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
               @defproc[(series-clone [s series?]) series?])]{
@@ -2717,17 +2744,18 @@ query
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
                          [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (non-empty-listof string?)) #f]
-                         [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-                         [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:on on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+                         [#:left-on left-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+                         [#:right-on right-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
                          [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],
   when they have the same names on both sides, or as parallel
-  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
-  join kind; @racket['outer] and @racket['full] are synonyms, and a
-  @racket['cross] join takes no keys. Omitting the keys for any other kind is
-  an error. Collect the result with @racket[lazyframe-collect]:
+  @racket[#:left-on] and @racket[#:right-on] lists of @racket[utf-8-name/c]
+  names. @racket[#:how] selects the join kind; @racket['outer] and
+  @racket['full] are synonyms, and a @racket['cross] join takes no keys.
+  Omitting the keys for any other kind is an error. Collect the result with
+  @racket[lazyframe-collect]:
 
   @racketblock[
   (lazyframe-collect
