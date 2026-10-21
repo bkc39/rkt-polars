@@ -11,7 +11,7 @@
          polars/private/foreign
          polars/private/expr
          (only-in (submod polars/private/expr internal) collect-plan/who lazyframe-collect/who)
-         (only-in polars/private/resource string-list-element/c with-release)
+         (only-in polars/private/resource utf-8-name->string utf-8-name/c utf-8-names/c with-release)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
          (only-in polars/private/io-contracts size-max)
@@ -26,18 +26,17 @@
           [tail (-> rows-source/c count/c any/c)]
           [slice (-> rows-source/c offset/c count/c any/c)]
           [drop (->i ([x (or/c dataframe? list?)]
-                      [arg (x) (if (dataframe? x) column-names/c any/c)])
+                      [arg (x) (if (dataframe? x) (or/c utf-8-name/c utf-8-names/c) any/c)])
                      [result any/c])]
-          [pivot (->* (dataframe? #:on column-name-list/c #:index column-name-list/c
-                                  #:values column-name-list/c)
+          [pivot (->* (dataframe? #:on utf-8-names/c #:index utf-8-names/c #:values utf-8-names/c)
                       (#:agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count))
                       dataframe?)]
-          [unpivot (-> dataframe? #:on column-name-list/c #:index column-name-list/c dataframe?)]
+          [unpivot (-> dataframe? #:on utf-8-names/c #:index utf-8-names/c dataframe?)]
           [with-column (-> dataframe? series? dataframe?)]
           [group-by (-> (or/c dataframe? lazyframe?) col-expr/c col-expr/c ... grouped?)]
           [agg (-> grouped? Expr-ptr? ... (or/c dataframe? lazyframe?))]
-          (rename rename rename (->i ([x (or/c series? dataframe?)] [a string?])
-                                     ([b string?])
+          (rename rename rename (->i ([x (or/c series? dataframe?)] [a utf-8-name/c])
+                                     ([b utf-8-name/c])
                                      #:pre/desc (x b)
                                      (or (series? x) (not (unsupplied-arg? b))
                                          "renaming a dataframe column needs old and new names")
@@ -59,9 +58,6 @@
 (define (clamped-window offset length limit)
   (define start (max offset (- limit)))
   (values start (min limit (max 0 (- length (- start offset))))))
-
-(define column-name-list/c (listof string-list-element/c))
-(define column-names/c (or/c string-list-element/c column-name-list/c))
 
 (define (column-height-problem d s)
   (define height (dataframe-height d))
@@ -169,7 +165,7 @@
 (define (drop x arg)
   (cond
     [(dataframe? x)
-     (define names (if (list? arg) arg (list arg)))
+     (define names (map utf-8-name->string (if (list? arg) arg (list arg))))
      (wrap-dataframe
       (or (dataframe-drop-columns/c x names)
           (refuse 'drop (column-problem (dataframe-column-names x) names)
@@ -235,15 +231,17 @@
     [else (error 'rename! "expected a series, got ~v" x)]))
 
 (define (rename x a [b unset])
+  (define name (utf-8-name->string a))
   (cond
     [(series? x)
      (define c (series-clone x))
-     (series-rename c a)
+     (series-rename c name)
      c]
     [else
+     (define new (utf-8-name->string b))
      (wrap-dataframe
-      (or (dataframe-rename/raw x a b)
-          (refuse 'rename (rename-problem x a b) "cannot rename the column")))]))
+      (or (dataframe-rename/raw x name new)
+          (refuse 'rename (rename-problem x name new) "cannot rename the column")))]))
 
 (module+ test
   (require rackunit (only-in threading ~>)

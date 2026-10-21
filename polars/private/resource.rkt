@@ -4,13 +4,14 @@
                   _byte _gcpointer _pointer ctype-sizeof define-fun-syntax free malloc memcpy
                   ptr-add ptr-set!)
          (only-in ffi/unsafe/alloc allocator deallocator)
-         (only-in racket/contract/base and/c flat-named-contract or/c)
+         (only-in racket/contract/base and/c flat-named-contract listof or/c)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
 (provide _string-list
-         string-list-element->string
-         string-list-element/c
+         utf-8-name->string
+         utf-8-name/c
+         utf-8-names/c
          with-raw-buffer
          with-release)
 
@@ -43,14 +44,17 @@
     [(path? v) (path->bytes v)]
     [else (raise-argument-error '_string-list "(or/c string? bytes? path?)" v)]))
 
-(define (utf-8-encoded? v)
-  (and (bytes-utf-8-length (c-string-bytes v) #f) #t))
+(define (utf-8-name->string v)
+  (cond
+    [(string? v) v]
+    [else
+     (define encoded (c-string-bytes v))
+     (and (bytes-utf-8-length encoded #f) (bytes->string/utf-8 encoded))]))
 
-(define string-list-element/c
-  (or/c string? (and/c (or/c bytes? path?) (flat-named-contract 'utf-8? utf-8-encoded?))))
+(define utf-8-name/c
+  (or/c string? (and/c (or/c bytes? path?) (flat-named-contract 'utf-8? utf-8-name->string))))
 
-(define (string-list-element->string v)
-  (if (string? v) v (bytes->string/utf-8 (c-string-bytes v))))
+(define utf-8-names/c (listof utf-8-name/c))
 
 ;; The table's addresses point into its own block, which the collector never
 ;; moves (#143).

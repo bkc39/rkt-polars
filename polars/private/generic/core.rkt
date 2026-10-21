@@ -9,7 +9,6 @@
          (only-in ffi/unsafe prop:cpointer)
          (only-in polars/private/bulk in-series)
          (only-in polars/private/expr-core lazyframe-dropped)
-         (only-in polars/private/resource string-list-element->string)
          polars/private/foreign
          polars/private/generic/dtype
          polars/private/generic/printing)
@@ -97,8 +96,7 @@
              name)]
     [(#f #f) #f]))
 
-(define (column-problem present given)
-  (define names (map string-list-element->string given))
+(define (column-problem present names)
   (cond
     [(for/first ([name (in-list names)] #:unless (member name present)) name)
      => (lambda (name) (format "~s not found" name))]
