@@ -716,19 +716,31 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (nine checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
+  `rustls-only`, `install-native-libs`, `devshell-home` and
   `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
-- Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
+- Each worktree gets its own `PLTUSERHOME`, keyed on its root as
+  `git rev-parse --show-toplevel` gives it (`scripts/devshell-home.sh`, which
+  the dev shell's hook sources), so a trailing slash, a symlink or a
+  subdirectory reaches the same home (#158), inside a git hook too, whose
+  `GIT_DIR` it ignores. Outside git the key is the
+  directory's real path, so a subdirectory has its own. With no home to key
+  (`HOME` unset, say) the hook says so in one line and skips the setup. The
+  `devshell-home` gate and flake check hold it there. In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
   undefined tag and `threading-doc` looks unused.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
-  against the stale library.
+  against the stale library. It and the dev shell's hook copy through
+  `scripts/install-native-libs.sh`, which leaves an identical library alone
+  and replaces a differing one by a rename, never in place, so a racket in
+  another shell that has the old one mapped keeps running (#265); the
+  `install-native-libs` gate and flake check hold it there.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
