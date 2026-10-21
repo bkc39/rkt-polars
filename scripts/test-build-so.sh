@@ -86,8 +86,8 @@ setup() {
   for tool in install_name_tool codesign; do
     printf '#!%s\necho "%s $*" >> %s\n' "$BASH_BIN" "$tool" "$q_log" > "$bin/$tool"
   done
-  otool_deps="$tmp/case/otool-L"
-  otool_loads="$tmp/case/otool-l"
+  otool_deps="$tmp/case/otool-deps"
+  otool_loads="$tmp/case/otool-loads"
   fake_otool /usr/lib/libiconv.2.dylib LC_BUILD_VERSION 11.0
   cat > "$bin/otool" <<EOF
 #!$BASH_BIN
@@ -143,6 +143,19 @@ EOF
   for tool in "$bin"/*; do
     [[ -L "$tool" ]] || chmod +x "$tool"
   done
+  distinct_ignoring_case "$tmp/case" "$log" "$out" "$cargo_fails" \
+    "$otool_deps" "$otool_loads"
+}
+
+# Exits unless the paths named, and every path under $1, differ beyond case:
+# APFS folds case, so two such names there are one file.
+distinct_ignoring_case() {
+  local clash
+  clash="$({ find "$1"; printf '%s\n' "${@:2}"; } | sort -u | tr '[:upper:]' '[:lower:]' | sort | uniq -d)"
+  [[ -z "$clash" ]] || {
+    echo "test-build-so: paths that differ only in case: $clash" >&2
+    exit 1
+  }
 }
 
 # The fake otool's answers: -L lists $1 and libSystem after the install name,
