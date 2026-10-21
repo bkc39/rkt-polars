@@ -19,7 +19,8 @@
            polars/private/generic/predicates
            polars/private/generic/reductions
            polars/private/generic/reshape
-           polars/private/generic/strings)
+           polars/private/generic/strings
+           (only-in polars/private/test-helpers not-utf-8-expected not-utf-8-names refused))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -195,8 +196,47 @@
                   ("value" 10 30 20 0)))
   (check-raises 'polars #rx"^unpivot: cannot unpivot the dataframe: [^\n]*\"nope\" not found$"
                 (lambda () (unpivot by-quarter #:on '("nope") #:index '("store"))))
-  (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
+  (for ([name (list string->bytes/utf-8 string->path)])
+    (check-equal? (column-names (drop pair (name "a"))) '("b"))
+    (check-equal? (column-names (drop pair (list (name "a")))) '("b"))
+    (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop pair (name "nope"))))
+    (check-raises 'contract #rx"^drop: \"a\" named more than once$"
+                  (lambda () (drop pair (list "a" (name "a")))))
+    (check-equal? (columns-of (sort (pivot sales #:on (list (name "quarter"))
+                                           #:index (list (name "store"))
+                                           #:values (list (name "sales"))
+                                           #:agg 'sum)
+                                    "store"))
+                  (columns-of by-quarter))
+    (check-equal? (columns-of (unpivot by-quarter #:on (list (name "q1") (name "q2"))
+                                       #:index (list (name "store"))))
+                  (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))))
   (define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (for ([name (list string->bytes/utf-8 string->path)])
+    (check-equal? (series-name (rename (series '(1) #:name "a") (name "b"))) "b")
+    (check-equal? (column-names (rename named (name "a") (name "z"))) '("z" "b"))
+    (check-raises 'contract #rx"^rename: \"nope\" not found$"
+                  (lambda () (rename named (name "nope") "z")))
+    (check-raises 'contract #rx"^rename: column 'b' is duplicate$"
+                  (lambda () (rename named "a" (name "b")))))
+  (for* ([bad (in-list not-utf-8-names)]
+         [entry (in-list
+                (list (list 'drop bad (lambda () (drop pair bad)))
+                      (list 'drop (list "a" bad) (lambda () (drop pair (list "a" bad))))
+                      (list 'pivot bad (lambda () (pivot sales #:on (list bad) #:index '("store")
+                                                         #:values '("sales"))))
+                      (list 'unpivot bad
+                            (lambda () (unpivot by-quarter #:on '("q1") #:index (list bad))))
+                      (list 'rename bad (lambda () (rename named bad "z")))
+                      (list 'rename bad (lambda () (rename (series '(1) #:name "a") bad)))))])
+    (match-define (list who given thunk) entry)
+    (check-raises 'contract (refused who given #:expected not-utf-8-expected) thunk))
+  (check-raises 'contract #rx"^drop: contract violation\n" (lambda () (drop pair '(a))))
+  (check-raises 'contract #rx"^pivot: contract violation\n"
+                (lambda () (pivot sales #:on '(quarter) #:index '("store") #:values '("sales"))))
+  (check-raises 'contract #rx"^unpivot: contract violation\n"
+                (lambda () (unpivot by-quarter #:on '("q1") #:index '(store))))
+  (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
   (check-equal? (column-names (rename named "a" "z")) '("z" "b"))
   (check-raises 'contract #rx"^rename: column 'b' is duplicate$" (lambda () (rename named "a" "b")))
   (check-raises 'contract #rx"^dataframe: [^\n]*column with name 'k' has more than one occurrence$"
