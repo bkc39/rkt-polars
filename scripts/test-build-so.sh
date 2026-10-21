@@ -11,7 +11,8 @@
 # against /nix/store or with an LC_RPATH there is refused and not staged, and
 # the record names its minimum macOS and summarises on one line.  A failed
 # cargo build stages nothing and writes no record, though an earlier build's
-# dylib is still in the target directory.
+# dylib is still in the target directory, and a missing otool or ld stops it
+# before the build.
 #
 # The summary is scripts/toolchain-summary.sh's, not the copy's.  Both run
 # under $BASH_UNDER_TEST (default: the bash on PATH), so that macOS's bash 3.2
@@ -40,10 +41,11 @@ nix_vars=(NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_LDFLAGS_FOR_TARGET
   NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD NIX_LDFLAGS_FOO NIX_CFLAGS_BAR)
 
 # A stub's line logging "$1 sees NAME" for each such variable it is given,
-# from builtins alone (nixpkgs' bash has no compgen).
+# from builtins alone (nixpkgs' bash has no compgen).  A name that is not an
+# identifier, which a bash 3.2 stub lists, is not one nix's cc wrapper reads.
 sees() {
   # shellcheck disable=SC2016
-  printf 'export -p | while read -r _ _ v; do case "${v%%%%=*}" in NIX_LDFLAGS*|NIX_CFLAGS*) echo "%s sees ${v%%%%=*}" >> %s ;; esac; done\n' \
+  printf 'export -p | while read -r _ _ v; do case "${v%%%%=*}" in *[!A-Za-z0-9_]*) ;; NIX_LDFLAGS*|NIX_CFLAGS*) echo "%s sees ${v%%%%=*}" >> %s ;; esac; done\n' \
     "$1" "$(printf '%q' "$log")"
 }
 
@@ -191,7 +193,7 @@ expect_built() {
     grep -qxF "otool sees $v" "$log" || fail "$what: build-so.sh was not given $v"
   done
   if grep -q '^cargo sees ' "$log"; then
-    fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ')"
+    fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ' -)"
   fi
   case "$rustc" in rustup) llvm=20.1.8 ;; *) llvm=19.1.7 ;; esac
   summary="$("$SHELL_UNDER_TEST" "$ROOT/scripts/toolchain-summary.sh" "$record")"
@@ -319,13 +321,17 @@ setup "$pinned" rustup "$pinned"
 fake_otool /usr/lib/libiconv.2.dylib none ""
 expect_refused "$what" "has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX"
 
-what="no otool"
-setup "$pinned" rustup "$pinned"
-rm "$bin/otool"
-expect_refused "$what" "error: otool not found"
-if grep -q ' cargo build ' "$log"; then
-  fail "$what: cargo build ran"
-fi
+for tool in otool ld; do
+  what="no $tool"
+  setup "$pinned" rustup "$pinned"
+  rm "$bin/$tool"
+  expect_refused "$what" "error: $tool not found"
+  if grep -q ' cargo build ' "$log"; then
+    fail "$what: cargo build ran"
+  fi
+  [[ ! -e "$repo/polars/native-libs/candidates/darwin/toolchain" ]] \
+    || fail "$what: a toolchain record was written"
+done
 
 # A failed build beside an earlier build's dylib, which bash 3.2 would stage
 # if the build's subshell were not checked.
@@ -341,12 +347,17 @@ for mode in rustup no-rustup; do
 done
 
 # Environment names that are not identifiers, which bash 3.2 imports as
-# variables: build-so.sh must leave X alone and not fail on the `*`.
+# variables: build-so.sh must leave X alone, not fail on the `*`, and not
+# hand such a name to unset, which refuses it and goes on.
 for odd in 'NIX_CFLAGS X=1' 'NIX_CFLAGS*=1'; do
   what="the environment name '${odd%%=*}'"
   setup "$pinned" rustup "$pinned"
   if run_script "$odd" X=kept; then
     grep -qxF "cargo X=kept" "$log" || { fail "$what: cargo was not given X=kept:"; show "$log"; }
+    if grep -qF "not a valid identifier" "$out"; then
+      fail "$what: build-so.sh unset a name that is not an identifier:"
+      show "$out"
+    fi
     expect_built "$what" "$pinned" rustup
   else
     fail "$what: build-so.sh darwin exited non-zero"

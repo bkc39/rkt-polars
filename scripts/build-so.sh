@@ -104,6 +104,10 @@ else
     echo "error: otool not found; it checks the dylib's dependencies and minimum macOS" >&2
     exit 1
   fi
+  if ! command -v ld >/dev/null 2>&1; then
+    echo "error: ld not found; its version goes in the toolchain record" >&2
+    exit 1
+  fi
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the
   # search paths its NIX_LDFLAGS* and NIX_CFLAGS* variables name (each in a
