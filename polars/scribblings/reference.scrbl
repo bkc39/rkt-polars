@@ -614,9 +614,12 @@ far-zoned
 (drop-nulls dups)
 (eval:error (unique '(1 1 2)))]}
 
-@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
-  Removes the named column(s) (@tt{df.drop}). A name @racket[d] lacks, or one
-  given twice, raises. Applied to a list it falls back to
+@defproc[(drop [d dataframe?]
+               [names (or/c string? bytes? path? (listof (or/c string? bytes? path?)))])
+         dataframe?]{
+  Removes the named column(s) (@tt{df.drop}); each name is a string, or a byte
+  string or path read as UTF-8. A name @racket[d] lacks, or one given twice,
+  raises. Applied to a list it falls back to
   @racketmodname[racket/list]'s @racketid[drop].
 
   @examples[#:eval ev
@@ -626,16 +629,17 @@ far-zoned
 (drop '(1 2 3) 1)]}
 
 @defproc[(pivot [d dataframe?]
-                [#:on on (listof string?)]
-                [#:index index (listof string?)]
-                [#:values values (listof string?)]
+                [#:on on (listof (or/c string? bytes? path?))]
+                [#:index index (listof (or/c string? bytes? path?))]
+                [#:values values (listof (or/c string? bytes? path?))]
                 [#:agg agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count) 'first])
          dataframe?]{
   Spreads @racket[d] wide (@tt{df.pivot}): one row per distinct key of the
   @racket[index] columns (@racket['()] takes every column outside
   @racket[on] and @racket[values]), and one column per distinct value of
   @racket[on], sorted by value as Python's @tt{sort_columns=True}, holding the
-  @racket[values] of that cell under @racket[agg]. As in Python, a
+  @racket[values] of that cell under @racket[agg]. Each name is a string, or a
+  byte string or path read as UTF-8. As in Python, a
   @racket['sum] of an empty cell is 0 and @racket['count] is @tt{len};
   @racket[#f] and @racket['none] raise when a cell holds more than one value.
   A column @racket[d] lacks raises with Polars' reason.
@@ -651,13 +655,16 @@ far-zoned
 by-quarter
 (eval:error (pivot sales #:on '("nope") #:index '("store") #:values '("sales")))]}
 
-@defproc[(unpivot [d dataframe?] [#:on on (listof string?)] [#:index index (listof string?)])
+@defproc[(unpivot [d dataframe?]
+                  [#:on on (listof (or/c string? bytes? path?))]
+                  [#:index index (listof (or/c string? bytes? path?))])
          dataframe?]{
   Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
   rows of a @racket["variable"] and a @racket["value"] column beside the
   @racket[index] columns; @racket[#:on '()] takes every column outside
-  @racket[index], as Python's @tt{on=None}. A column @racket[d] lacks raises
-  with Polars' reason.
+  @racket[index], as Python's @tt{on=None}. Each name is a string, or a byte
+  string or path read as UTF-8. A column @racket[d] lacks raises with Polars'
+  reason.
 
   @examples[#:eval ev
 (unpivot by-quarter #:on '("q1" "q2") #:index '("store"))
@@ -665,15 +672,15 @@ by-quarter
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c #f (non-empty-listof string?)) #f]
-               [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-               [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+               [#:on on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
+               [#:left-on left-on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
+               [#:right-on right-on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
                [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          (or/c dataframe? lazyframe?)]{
   Joins @racket[right], of the same kind as @racket[left], onto it on the
   shared key columns @racket[#:on], or on @racket[#:left-on] /
-  @racket[#:right-on] (@tt{left.join(right, ...)}); a @racket['cross] join
-  takes no keys, and @racket['full] is @racket['outer]. Eager on a
+  @racket[#:right-on] (@tt{left.join(right, ...)}); each key is a string, or a
+  byte string or path read as UTF-8. A @racket['cross] join takes no keys, and @racket['full] is @racket['outer]. Eager on a
   @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
   a @racket['cross] join promises a row order; sort the result when order
   matters. Keys whose dtypes differ, a key a frame lacks, or key lists of
@@ -686,17 +693,18 @@ by-quarter
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)
+(join left right #:on '(#"k") #:how 'inner)
 (eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
 (eval:error (join left right))]}
 
 @defproc[(join-asof [left dataframe?]
                     [right dataframe?]
-                    [#:on on (or/c #f string?) #f]
-                    [#:left-on left-on (or/c #f string?) #f]
-                    [#:right-on right-on (or/c #f string?) #f]
-                    [#:by by (or/c #f (listof string?)) #f]
-                    [#:left-by left-by (or/c #f (listof string?)) #f]
-                    [#:right-by right-by (or/c #f (listof string?)) #f]
+                    [#:on on (or/c #f string? bytes? path?) #f]
+                    [#:left-on left-on (or/c #f string? bytes? path?) #f]
+                    [#:right-on right-on (or/c #f string? bytes? path?) #f]
+                    [#:by by (or/c #f (listof (or/c string? bytes? path?))) #f]
+                    [#:left-by left-by (or/c #f (listof (or/c string? bytes? path?))) #f]
+                    [#:right-by right-by (or/c #f (listof (or/c string? bytes? path?))) #f]
                     [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
                     [#:tolerance tolerance
                                  (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
@@ -709,7 +717,8 @@ by-quarter
   before it for @racket['backward], the first at or after it for
   @racket['forward]. @racket[#:by], or equally long @racket[#:left-by] and
   @racket[#:right-by], match within equal groups only, and a key further than
-  @racket[#:tolerance] away matches nothing.
+  @racket[#:tolerance] away matches nothing. Each name is a string, or a byte
+  string or path read as UTF-8.
 
   @examples[#:eval ev
 (define readings (dataframe (list (series '(1 3 5) #:name "t")
@@ -2710,9 +2719,9 @@ query
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
                          [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (non-empty-listof string?)) #f]
-                         [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-                         [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:on on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
+                         [#:left-on left-on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
+                         [#:right-on right-on (or/c #f (non-empty-listof (or/c string? bytes? path?))) #f]
                          [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],

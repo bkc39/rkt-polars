@@ -3,7 +3,8 @@
 (require (only-in racket/contract/base
                   ->i and/c integer-in listof non-empty-listof not/c or/c rename-contract
                   unsupplied-arg?)
-         racket/match)
+         racket/match
+         (only-in polars/private/resource string-list-element/c))
 
 (provide asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
          frame-join/c join-keys join-symbol->code)
@@ -31,7 +32,7 @@
       (and (supplied left-on) (supplied right-on) #t)
       "must supply #:on, or #:left-on and #:right-on"))
 
-(define join-keys/c (or/c #f (non-empty-listof string?)))
+(define join-keys/c (or/c #f (non-empty-listof string-list-element/c)))
 
 (define (frame-join/c left/c right/c-of result/c-of name)
   (rename-contract
@@ -80,14 +81,16 @@
       (and (supplied left-on) (supplied right-on) #t)
       "must supply #:on, or #:left-on and #:right-on"))
 
-(define asof-by/c (or/c #f (listof string?)))
+(define asof-on/c (or/c #f string-list-element/c))
+
+(define asof-by/c (or/c #f (listof string-list-element/c)))
 
 (define (frame-join-asof/c frame/c name)
   (rename-contract
    (->i ([left frame/c] [right frame/c])
-        (#:on [on (or/c #f string?)]
-         #:left-on [left-on (or/c #f string?)]
-         #:right-on [right-on (or/c #f string?)]
+        (#:on [on asof-on/c]
+         #:left-on [left-on asof-on/c]
+         #:right-on [right-on asof-on/c]
          #:by [by asof-by/c]
          #:left-by [left-by asof-by/c]
          #:right-by [right-by asof-by/c]

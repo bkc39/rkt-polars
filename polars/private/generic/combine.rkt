@@ -46,8 +46,9 @@
 (module+ test
   (require rackunit
            (only-in threading ~>)
-           (only-in polars/private/foreign polars-null)
+           (only-in polars/private/foreign dataframe-join polars-null)
            polars/private/generic/core
+           (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/reshape collect head lazy)
            (only-in polars/private/generic/test-fixtures column)
            (prefix-in contracted: (submod "..")))
@@ -69,6 +70,38 @@
                        #:how 'cross)])
     (check-equal? (map list (column crossed "l") (column crossed "r"))
                   '(("a" 1) ("a" 2) ("b" 1) ("b" 2))))
+
+  (define (keyed-rows d)
+    (define sorted (sort d '("uid" "amount")))
+    (for/list ([name (in-list (column-names sorted))])
+      (cons name (column sorted name))))
+  (define joined-by-string (keyed-rows (contracted:join usr ord #:on '("uid") #:how 'left)))
+  (for ([key (list #"uid" (string->path "uid"))])
+    (check-equal? (keyed-rows (contracted:join usr ord #:on (list key) #:how 'left))
+                  joined-by-string)
+    (check-equal? (keyed-rows (contracted:join usr ord #:left-on (list key) #:right-on '("uid")
+                                               #:how 'left))
+                  joined-by-string)
+    (check-equal? (keyed-rows (collect (contracted:join (lazy usr) (lazy ord) #:on (list key)
+                                                        #:how 'left)))
+                  joined-by-string)
+    (check-equal? (keyed-rows (wrap-dataframe (dataframe-join usr ord #:on (list key) #:how 'left)))
+                  joined-by-string))
+  (let ([ticks (dataframe (list (series '(1 3 5) #:name "t") (series '("a" "a" "b") #:name "g")))]
+        [marks (dataframe (list (series '(1 2 4) #:name "t") (series '("a" "b" "b") #:name "g")
+                                (series '(10 20 40) #:name "o")))])
+    (check-equal? (column (contracted:join-asof ticks marks #:on "t" #:by '("g")) "o") '(10 10 40))
+    (for ([key (list #"t" (string->path "t"))])
+      (check-equal? (column (contracted:join-asof ticks marks #:on key) "o") '(10 20 40))
+      (check-equal? (column (contracted:join-asof ticks marks #:left-on key #:right-on "t") "o")
+                    '(10 20 40)))
+    (for ([key (list #"g" (string->path "g"))])
+      (check-equal? (column (contracted:join-asof ticks marks #:on "t" #:by (list key)) "o")
+                    '(10 10 40))
+      (check-equal? (column (contracted:join-asof ticks marks #:on "t"
+                                                  #:left-by (list key) #:right-by '("g"))
+                            "o")
+                    '(10 10 40))))
 
   (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
                                 (series '("eve" "frank") #:name "name"))))
@@ -95,6 +128,9 @@
   (define keyed-right (dataframe (list (series '("a" "c") #:name "k")
                                        (series '(10 30) #:name "w"))))
   (check-equal? (column (join keyed-left keyed-right #:on '("k") #:how 'inner) "w") '(10))
+  (let ([by-bytes (contracted:join keyed-left keyed-right #:on '(#"k") #:how 'inner)])
+    (check-equal? (map (lambda (name) (cons name (column by-bytes name))) (column-names by-bytes))
+                  '(("k" "a") ("v" 1) ("w" 10))))
   (define readings (dataframe (list (series '(1 3 5) #:name "t")
                                     (series '(100 300 500) #:name "v"))))
   (define offsets (dataframe (list (series '(1 2 4) #:name "t")
@@ -167,9 +203,15 @@
      (list (lambda () (contracted:join 5 ints-x #:on '("x"))) exn:fail:contract?
            #rx"^join: contract violation\n  expected: \\(or/c dataframe\\? lazyframe\\?\\)\n  given: 5\n")
      (list (lambda () (contracted:join ints-x ints-x #:on "x")) exn:fail:contract?
-           #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof string\\?[^\n]*\n  given: \"x\"\n")
+           #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof \\(or/c string\\? bytes\\? path\\?\\)[^\n]*\n  given: \"x\"\n")
      (list (lambda () (contracted:join ints-x ints-x #:on '(x))) exn:fail:contract?
            #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(x\\)\n")
+     (list (lambda () (contracted:join ints-x ints-x #:left-on '(5) #:right-on '("x")))
+           exn:fail:contract? #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(5\\)\n")
+     (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on (list 'x)))
+           exn:fail:contract? #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(x\\)\n")
+     (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '(y))) exn:fail:contract?
+           #rx"^join-asof: contract violation\n  expected: [^\n]*\n  given: '\\(y\\)\n")
      (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on '())) exn:fail:contract?
            #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof[^\n]*\n  given: '\\(\\)\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "nope")) polars-failure?
@@ -178,13 +220,13 @@
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: [^\n]*backward[^\n]*\n  given: 'sideways\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on '("x"))) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f string\\?\\)\n  given: '\\(\"x\"\\)\n")
+           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(or/c string\\? bytes\\? path\\?\\)\\)\n  given: '\\(\"x\"\\)\n")
      (list (lambda () (contracted:join-asof ints-x 5 #:on "x")) exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: dataframe\\?\n  given: 5\n")
      (list (lambda () (contracted:join-asof ints-x ints-x)) exn:fail:contract?
            #rx"^join-asof: contract violation\n  must supply #:on, or #:left-on and #:right-on\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by "y")) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(listof string\\?\\)\\)\n  given: \"y\"\n")
+           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(listof \\(or/c string\\? bytes\\? path\\?\\)\\)\\)\n  given: \"y\"\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '("y") #:left-by '("y")))
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  supply either #:by or #:left-by and #:right-by, not both\n")

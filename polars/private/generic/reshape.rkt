@@ -11,7 +11,7 @@
          polars/private/foreign
          polars/private/expr
          (only-in (submod polars/private/expr internal) collect-plan/who lazyframe-collect/who)
-         (only-in polars/private/resource with-release)
+         (only-in polars/private/resource string-list-element/c with-release)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
          (only-in polars/private/io-contracts size-max)
@@ -28,11 +28,11 @@
           [drop (->i ([x (or/c dataframe? list?)]
                       [arg (x) (if (dataframe? x) column-names/c any/c)])
                      [result any/c])]
-          [pivot (->* (dataframe? #:on (listof string?) #:index (listof string?)
-                                  #:values (listof string?))
+          [pivot (->* (dataframe? #:on column-name-list/c #:index column-name-list/c
+                                  #:values column-name-list/c)
                       (#:agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count))
                       dataframe?)]
-          [unpivot (-> dataframe? #:on (listof string?) #:index (listof string?) dataframe?)]
+          [unpivot (-> dataframe? #:on column-name-list/c #:index column-name-list/c dataframe?)]
           [with-column (-> dataframe? series? dataframe?)]
           [group-by (-> (or/c dataframe? lazyframe?) col-expr/c col-expr/c ... grouped?)]
           [agg (-> grouped? Expr-ptr? ... (or/c dataframe? lazyframe?))]
@@ -60,7 +60,9 @@
   (define start (max offset (- limit)))
   (values start (min limit (max 0 (- length (- start offset))))))
 
-(define column-names/c (or/c string? (listof string?)))
+(define column-name-list/c (listof string-list-element/c))
+
+(define column-names/c (or/c string-list-element/c column-name-list/c))
 
 (define (column-height-problem d s)
   (define height (dataframe-height d))

@@ -195,6 +195,26 @@
                   ("value" 10 30 20 0)))
   (check-raises 'polars #rx"^unpivot: cannot unpivot the dataframe: [^\n]*\"nope\" not found$"
                 (lambda () (unpivot by-quarter #:on '("nope") #:index '("store"))))
+  (for ([name (list string->bytes/utf-8 string->path)])
+    (check-equal? (column-names (drop pair (name "a"))) '("b"))
+    (check-equal? (column-names (drop pair (list (name "a")))) '("b"))
+    (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop pair (name "nope"))))
+    (check-raises 'contract #rx"^drop: \"a\" named more than once$"
+                  (lambda () (drop pair (list "a" (name "a")))))
+    (check-equal? (columns-of (sort (pivot sales #:on (list (name "quarter"))
+                                           #:index (list (name "store"))
+                                           #:values (list (name "sales"))
+                                           #:agg 'sum)
+                                    "store"))
+                  (columns-of by-quarter))
+    (check-equal? (columns-of (unpivot by-quarter #:on (list (name "q1") (name "q2"))
+                                       #:index (list (name "store"))))
+                  (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))))
+  (check-raises 'contract #rx"^drop: contract violation\n" (lambda () (drop pair '(a))))
+  (check-raises 'contract #rx"^pivot: contract violation\n"
+                (lambda () (pivot sales #:on '(quarter) #:index '("store") #:values '("sales"))))
+  (check-raises 'contract #rx"^unpivot: contract violation\n"
+                (lambda () (unpivot by-quarter #:on '("q1") #:index '(store))))
   (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
   (define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
   (check-equal? (column-names (rename named "a" "z")) '("z" "b"))
