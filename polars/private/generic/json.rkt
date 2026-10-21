@@ -112,6 +112,8 @@
   (check-false (regexp-match? #rx"infer_schema_length" ragged-message))
   (check-equal? (shape (read-json stations #:infer-schema-length #f)) '(4 5))
   (check-equal? (shape (read-json stations #:infer-schema-length 4)) '(4 5))
+  (check-reads-like-every "read-json" (read-json stations #:infer-schema-length #f)
+                          (lambda (n) (read-json stations #:infer-schema-length n)))
 
   (define mixed (scratch-file scratch "mixed.json" "[{\"a\":1},{\"a\":2},{\"a\":\"x\"}]"))
   (check-equal? (column (read-json mixed) "a") '("1" "2" "x"))
@@ -235,6 +237,10 @@
   (check-true (frame=? stations-frame readings))
   (check-pred lazyframe? (scan-ndjson stations-nd))
   (check-true (frame=? (collect (scan-ndjson stations-nd)) stations-frame))
+  (check-reads-like-every "read-ndjson" stations-frame
+                          (lambda (n) (read-ndjson stations-nd #:infer-schema-length n)))
+  (check-reads-like-every "scan-ndjson" stations-frame
+                          (lambda (n) (collect (scan-ndjson stations-nd #:infer-schema-length n))))
   (check-equal? (~> (scan-ndjson stations-nd) (filter (> (col "reading") 3)) collect
                     (column "station"))
                 '("south" "south"))
