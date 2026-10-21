@@ -128,6 +128,8 @@ pub extern "C" fn expr_alias(e: *const Expr, name: *const c_char) -> *mut Expr {
     Box::into_raw(Box::new(inner.alias(n)))
 }
 
+expr_unop!(expr_name_keep, |e| e.name().keep());
+
 /// Build a literal Expr from a Series (consumes nothing — clones the
 /// Series). Useful as the right-hand side of `is_in`.
 #[no_mangle]

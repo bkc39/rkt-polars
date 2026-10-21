@@ -5,10 +5,12 @@
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
-(require polars/private/generic/core
+(require racket/runtime-path
+         polars/private/generic/core
          polars/private/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
-         (only-in polars/private/foreign polars-null polars-null?)
+         (only-in polars/private/foreign dataframe-column polars-null polars-null?)
+         (only-in polars/private/parquet dataframe-read-parquet)
          (only-in gregor datetime))
 
 (provide (all-defined-out)
@@ -30,6 +32,11 @@
                    (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
+
+(define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
+
+(define prices
+  (wrap-series (dataframe-column (dataframe-read-parquet produce-parquet) "price")))
 
 (define (series-cells s)
   (for/list ([i (in-range (len s))]) (ref s i)))

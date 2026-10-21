@@ -241,8 +241,7 @@
   (check-pred polars-null? (ref (ref fr-desc #:columns "user") 2)) ; mean -> null
   (check-equal? (ref (ref fr-desc #:columns "score") 4) 10.0)     ; numeric min
 
-  (require racket/runtime-path
-           (only-in gregor moment)
+  (require (only-in gregor moment)
            (only-in racket/list make-list)
            (only-in racket/math nan?)
            (only-in polars/private/generic/parquet read-parquet)
@@ -411,7 +410,6 @@
   (check-equal? (~> mixed (ref "none") describe (column "statistic"))
                 '("count" "null_count" "mean" "std" "min" "25%" "50%" "75%" "max"))
 
-  (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
   (define produce-desc (describe (read-parquet produce-parquet)))
   (check-column produce-desc "item" (list* "4" "0" (nulls 7)))
   (check-column produce-desc "grade" (list* "3" "1" (nulls 7)))
