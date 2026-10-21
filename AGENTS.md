@@ -734,12 +734,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   It sees the warnings only on a run that renders the manual, so that run
   records them in `polars/doc/polars.docs-check-warnings` (the dev shell's
   setup on entry too, through `--record`, which writes no GitHub Actions
-  annotations) and a run that does not reads them back. With no record, or
-  one older than the rendered `index.html` (which every render rewrites), it
-  deletes Scribble's build stamp `stamp.sxref` and renders the manual again.
-  Each run holds `polars/doc/polars.docs-check-lock` (a `mkdir` lock, since
+  annotations) and a run that does not reads them back. The record starts
+  with a copy of Scribble's build stamp, `stamp.sxref`, which names the
+  render's inputs, since a render within the record's second has its mtime.
+  With no record, or one whose stamp is not the manual's, it deletes
+  `stamp.sxref` and renders the manual again. Each run holds
+  `polars/doc/polars.docs-check-lock` (a `mkdir` lock holding its pid, since
   macOS has no `flock`) while it renders and records, waiting up to
-  `DOCS_CHECK_LOCK_TIMEOUT` seconds. `--scan LOG DOC-DIR`
+  `DOCS_CHECK_LOCK_TIMEOUT` seconds for a holder that is running; it removes
+  a lock whose pid is not running, or that names no pid for 5 s, which a
+  `SIGKILL` leaves behind. `--scan LOG DOC-DIR`
   checks a saved log, and `scripts/docs-check-test.sh` (the `docs-check-test`
   gate, a push gate and a flake check) runs it on the fixtures in
   `scripts/docs-check-fixtures/`.
