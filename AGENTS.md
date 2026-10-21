@@ -322,13 +322,15 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
-    glob pattern by scan and collect, and a single file with 0.55's eager
-    `CsvReader`, about three times faster on nycflights. Both are built
+    glob pattern, or any path given `#:n-rows`, by scan and collect, and
+    any other single file with 0.55's eager `CsvReader`, about three times
+    faster on nycflights. Given `n_rows`, the eager reader stops spawning
+    chunks once the chunks already parsed hold more rows, so whether it
+    reaches a later chunk that fails (a late `NA` in an inferred integer
+    column) depends on thread timing (#147). Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    listed exceptions (a malformed-quote error's chunk locator; an
-    `#:n-rows 0` read of a line that does not parse, invalid UTF-8 or a
-    ragged line, fails eagerly).
+    one listed exception, a malformed-quote error's chunk locator.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,
