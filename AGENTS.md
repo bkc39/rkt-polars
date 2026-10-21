@@ -725,9 +725,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME`, keyed on its root as
-  `git rev-parse --show-toplevel` gives it (`scripts/devshell-home.sh`), so a
-  trailing slash, a symlink or a subdirectory reaches the same home (#158);
-  the `devshell-home` gate and flake check hold it there. In a fresh
+  `git rev-parse --show-toplevel` gives it (`scripts/devshell-home.sh`, which
+  the dev shell's hook sources), so a trailing slash, a symlink or a
+  subdirectory reaches the same home (#158). Outside git the key is the
+  directory's real path, so a subdirectory has its own. With no home to key
+  (`HOME` unset, say) the hook says so in one line and skips the setup. The
+  `devshell-home` gate and flake check hold it there. In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
   undefined tag and `threading-doc` looks unused.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run

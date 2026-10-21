@@ -26,38 +26,39 @@
       python = pkgs: pkgs.python3.withPackages (ps: [ ps.polars ps.numpy ]);
 
       # The dev shell's setup, shared with `nix run .#bench` so that both run
-      # the working tree through the same PLTUSERHOME.
-      devSetup = pkgs: rust: ''
+      # the working tree through the same PLTUSERHOME; `rest` runs last, and
+      # only once PLTUSERHOME is set.
+      devSetup = pkgs: rust: rest: ''
         export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
 
         # PLTUSERHOME must live outside the checkout: raco pkg install --link
         # rejects a link target that overlaps with a collects dir, and
-        # PLTUSERHOME contains a collects dir.  It is keyed on the checkout's
-        # canonical root, so multiple checkouts don't collide and one
-        # checkout entered by any path shares one (#158).
-        devshell_home=$(PATH="${pkgs.coreutils}/bin:${pkgs.git}/bin:$PATH" \
-          ${pkgs.bash}/bin/bash ${./scripts/devshell-home.sh})
-        project_root=''${devshell_home%%$'\n'*}
-        export PLTUSERHOME=''${devshell_home#*$'\n'}
-        mkdir -p "$PLTUSERHOME"
+        # PLTUSERHOME contains a collects dir.  The script keys it on the
+        # checkout's canonical root (#158), or says why it cannot, and then
+        # the rest of the setup is skipped.
+        # shellcheck source=/dev/null disable=SC2154
+        if . ${./scripts/devshell-home.sh} "${pkgs.coreutils}/bin:${pkgs.git}/bin"; then
+          mkdir -p "$PLTUSERHOME"
 
-        mkdir -p "$project_root/polars/native-libs"
-        cp -f ${rust}/lib/libcompat.* "$project_root/polars/native-libs/"
+          mkdir -p "$project_root/polars/native-libs"
+          cp -f ${rust}/lib/libcompat.* "$project_root/polars/native-libs/"
 
-        # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
-        info_hash=$(${pkgs.coreutils}/bin/sha256sum "$project_root/info.rkt" | cut -c1-16)
-        deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
-        if [ ! -f "$deps_stamp" ]; then
-          echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
-          rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
-          if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
-               --name rkt-polars "$project_root" \
-            && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
-            touch "$deps_stamp"
-            echo "Done. Run 'raco test -x --timeout 600 -c polars' to test."
-          else
-            echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
+          # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
+          info_hash=$(${pkgs.coreutils}/bin/sha256sum "$project_root/info.rkt" | cut -c1-16)
+          deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
+          if [ ! -f "$deps_stamp" ]; then
+            echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
+            rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
+            if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
+                 --name rkt-polars "$project_root" \
+              && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
+              touch "$deps_stamp"
+              echo "Done. Run 'raco test -x --timeout 600 -c polars' to test."
+            else
+              echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
+            fi
           fi
+          ${rest}
         fi
       '';
 
@@ -280,8 +281,10 @@
                 echo "bench: run from the root of an rkt-polars checkout" >&2
                 exit 1
               fi
-            '' + devSetup pkgs rust + ''
+            '' + devSetup pkgs rust ''
               exec ${pkgs.bash}/bin/bash bench/run.sh "$@"
+            '' + ''
+              exit 1
             '';
           };
         in
@@ -422,7 +425,7 @@
 
             RUSTC_BOOTSTRAP = "1";
 
-            shellHook = devSetup pkgs rust + lintSetup pkgs;
+            shellHook = devSetup pkgs rust (lintSetup pkgs);
           };
         });
     };
