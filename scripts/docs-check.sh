@@ -6,11 +6,12 @@
 # them only on a run that runs or renders the manual.  So a run that renders
 # it records the warnings in DOC-DIR.docs-check-warnings, under a copy of
 # DOC-DIR/stamp.sxref, Scribble's build stamp, and a run that does not reads
-# them back, unless the stamp has changed since (a render by a plain raco
-# setup); the rendered HTML is also searched for Scribble's badlink, which a
-# run with nothing to rebuild leaves in place.  A run that holds no current
-# record deletes the stamp, so that raco setup renders the manual again.
-# Each run holds DOC-DIR.docs-check-lock while it renders and records.
+# them back, unless the manual has been rendered since (by a plain raco
+# setup): its stamp differs, or its index.html is newer than the record.
+# The rendered HTML is also searched for Scribble's badlink, which a run with
+# nothing to rebuild leaves in place.  A run that holds no current record
+# deletes the stamp, so that raco setup renders the manual again.  Each run
+# holds DOC-DIR.docs-check-lock while it renders and records.
 #
 # Usage:
 #   scripts/docs-check.sh [DOC-DIR]      raco setup over the package, then check
@@ -62,7 +63,9 @@ stamp() {
 # scan LOG DOC-DIR: 0 when clean, 1 when not, 2 when LOG shows no render and
 # no render's warnings are recorded, or the manual was rendered after they
 # were (by a run that did not record them).  The record's first line is the
-# stamp of the render it records; its warnings follow.
+# stamp of the render it records; its warnings follow.  A render that leaves
+# the stamp as it was (one after a dependency's manual changes or appears)
+# still rewrites index.html.
 scan() {
   local log=$1 doc_dir=${2%/}
   local record="$doc_dir.docs-check-warnings"
@@ -84,6 +87,9 @@ scan() {
     fi
   elif [ -f "$record" ] && [ "$(head -n 1 < "$record")" != "$current" ]; then
     report "raco setup did not render the manual, and it was rendered after its warnings were recorded in $record (its stamp.sxref differs)"
+    status=2
+  elif [ -f "$record" ] && [ "$doc_dir/index.html" -nt "$record" ]; then
+    report "raco setup did not render the manual, and it was rendered after its warnings were recorded in $record (its index.html is newer)"
     status=2
   elif [ -f "$record" ]; then
     recorded=$(tail -n +2 < "$record")
@@ -148,22 +154,26 @@ default_doc_dir() {
 
 held_lock=""
 log=""
+
+# release LINK: removes LINK if it names this run.
+release() {
+  if [ "$(readlink -- "$1" 2> /dev/null)" = "$$" ]; then
+    rm -f -- "$1"
+  fi
+}
+
 # shellcheck disable=SC2329 # called by the EXIT trap
 cleanup() {
   if [ -n "$log" ]; then
     rm -f -- "$log"
   fi
-  if [ -n "$held_lock" ] && [ "$(cat -- "$held_lock/pid" 2> /dev/null)" = "$$" ]; then
-    rm -rf -- "$held_lock"
+  if [ -n "$held_lock" ]; then
+    release "$held_lock"
   fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-
-# The polls a lock may name no pid for before it counts as left by a run
-# killed between its mkdir and its pid file.
-unnamed_polls=5
 
 # gone PID: PID names no running process other than this one.
 gone() {
@@ -172,28 +182,32 @@ gone() {
   ! kill -0 "$1" 2> /dev/null && ! ps -p "$1" > /dev/null 2>&1
 }
 
-# reap LOCK HOLDER: removes LOCK if it still names HOLDER (empty: no pid),
-# holding LOCK.reap meanwhile, so that no waiter removes a lock another has
-# just taken in its place; 1 when it removes nothing.
+# reap LINK HOLDER: removes LINK if it still names HOLDER and HOLDER is not
+# running, holding LINK.reap meanwhile, so that no waiter removes a lock
+# another has just taken in its place.  A LINK.reap whose holder is not
+# running is reaped first, the same way.  1 when it removes nothing.
 reap() {
-  local lock=$1 holder=$2 status=1
-  mkdir -- "$lock.reap" 2> /dev/null || return 1
-  if [ -d "$lock" ] && [ "$(cat -- "$lock/pid" 2> /dev/null)" = "$holder" ] \
-       && rm -rf -- "$lock"; then
+  local link=$1 holder=$2 marker="$1.reap" reaper status=1
+  if ! ln -sn -- "$$" "$marker" 2> /dev/null; then
+    reaper=$(readlink -- "$marker" 2> /dev/null) || return 1
+    gone "$reaper" && reap "$marker" "$reaper" && reap "$link" "$holder"
+    return
+  fi
+  if [ "$(readlink -- "$link" 2> /dev/null)" = "$holder" ] && gone "$holder" \
+       && rm -f -- "$link"; then
     status=0
   fi
-  rmdir -- "$lock.reap" 2> /dev/null || true
+  release "$marker"
   return "$status"
 }
 
-# lock DOC-DIR: takes DOC-DIR.docs-check-lock, a directory holding its
-# holder's pid, since mkdir is atomic everywhere and flock is not on macOS;
-# the EXIT trap releases it.  A lock whose holder is not running, or that has
-# named no pid for unnamed_polls polls, is removed (as is a LOCK.reap held
-# that long).
+# lock DOC-DIR: takes DOC-DIR.docs-check-lock, a symbolic link naming its
+# holder's pid, since ln -s creates it with its pid atomically everywhere and
+# flock is not on macOS; the EXIT trap releases it.  A lock whose holder is
+# not running is removed.
 lock() {
-  local lock="${1%/}.docs-check-lock" waited=0 absent=0 unnamed=0 reaping=0
-  local limit=${DOCS_CHECK_LOCK_TIMEOUT:-1800} holder said=""
+  local lock="${1%/}.docs-check-lock" waited=0 absent=0
+  local limit=${DOCS_CHECK_LOCK_TIMEOUT:-1800} holder="" said=""
   if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
     report "DOCS_CHECK_LOCK_TIMEOUT is $limit, not a number of seconds"
     return 1
@@ -202,8 +216,12 @@ lock() {
     report "could not create the directory of the lock $lock"
     return 1
   fi
-  while ! mkdir -- "$lock" 2> /dev/null; do
-    if [ ! -d "$lock" ]; then
+  if [ -e "$lock" ] && [ ! -L "$lock" ]; then
+    report "$lock is not a docs-check lock (a symbolic link naming a pid); if no docs-check is running, remove it"
+    return 1
+  fi
+  while ! ln -sn -- "$$" "$lock" 2> /dev/null; do
+    if ! holder=$(readlink -- "$lock" 2> /dev/null); then
       absent=$((absent + 1))
       if [ "$absent" -gt 1 ]; then
         report "could not create the lock $lock"
@@ -212,48 +230,22 @@ lock() {
       continue
     fi
     absent=0
-    holder=$(cat -- "$lock/pid" 2> /dev/null || true)
-    if [ -n "$holder" ]; then
-      unnamed=0
-    else
-      unnamed=$((unnamed + 1))
-    fi
-    if { [ -n "$holder" ] && gone "$holder"; } || [ "$unnamed" -gt "$unnamed_polls" ]; then
-      if reap "$lock" "$holder"; then
-        if [ -n "$holder" ]; then
-          echo "docs-check: removed $lock, left by pid $holder, which is not running" >&2
-        else
-          echo "docs-check: removed $lock, which named no pid for ${unnamed_polls}s" >&2
-        fi
-        unnamed=0
-        continue
-      fi
-      if [ -d "$lock.reap" ]; then
-        reaping=$((reaping + 1))
-      fi
-      if [ "$reaping" -gt "$unnamed_polls" ]; then
-        rmdir -- "$lock.reap" 2> /dev/null || true
-        reaping=0
-      fi
+    if gone "$holder" && reap "$lock" "$holder"; then
+      echo "docs-check: removed $lock, left by pid $holder, which is not running" >&2
+      continue
     fi
     if [ "$waited" -ge "$limit" ]; then
-      report "another docs-check has held $lock for over ${limit}s (pid ${holder:-unknown}); if none is running, remove it"
+      report "another docs-check has held $lock for over ${limit}s (pid $holder); if none is running, remove it"
       return 1
     fi
     if [ -z "$said" ]; then
-      echo "docs-check: waiting for $lock (pid ${holder:-unknown})" >&2
+      echo "docs-check: waiting for $lock (pid $holder)" >&2
       said=yes
     fi
     sleep 1
     waited=$((waited + 1))
   done
   held_lock=$lock
-  if ! { printf '%s\n' "$$" > "$lock/pid.new" && mv -f -- "$lock/pid.new" "$lock/pid"; }; then
-    rm -rf -- "$lock"
-    held_lock=""
-    report "could not write this run's pid into the lock $lock"
-    return 1
-  fi
 }
 
 if [ "${1:-}" = "--scan" ]; then

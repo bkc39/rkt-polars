@@ -57,12 +57,12 @@ lacks() {
 }
 
 scan() {
-  bash "$script" --scan "$@"
+  "$BASH" "$script" --scan "$@"
 }
 
 # shellcheck disable=SC2329 # called through expect
 run() {
-  PATH="$fixtures/bin:$PATH" bash "$script" "$@"
+  PATH="$fixtures/bin:$PATH" "$BASH" "$script" "$@"
 }
 
 # within SECONDS COMMAND...: runs COMMAND, killing it with status 124 once it
@@ -208,8 +208,23 @@ fi
 dir=$(manual older-record)
 scan "$fixtures/clean-render.log" "$dir" > /dev/null 2>&1 || true
 touch -t 200001010000 "$dir.docs-check-warnings"
-expect "a record older than the HTML, of the same stamp" 0 \
-  scan "$fixtures/no-render.log" "$dir" || true
+if expect "a record older than the HTML, of the same stamp" 1 \
+     scan "$fixtures/no-render.log" "$dir"; then
+  has "a record older than the HTML, of the same stamp" "it was rendered after its warnings were recorded in $dir.docs-check-warnings (its index.html is newer)"
+fi
+
+# A fresh worktree records the ~> undefined tags; installing threading-doc
+# and a plain raco setup then render the manual cleanly, leaving its stamp.
+dir=$(manual threading-doc)
+scan "$fixtures/undefined-tag.log" "$dir" > /dev/null 2>&1 || true
+touch -t 200001010000 "$dir.docs-check-warnings"
+printf 'rendered with threading-doc\n' >> "$dir/index.html"
+if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
+     expect "threading-doc installed after a record: renders again" 0 run "$dir"; then
+  has "threading-doc installed after a record: renders again" 'rendering the manual again'
+  [ -z "$(recorded "$dir")" ] \
+    || fail "threading-doc installed after a record: the undefined tags are still recorded"
+fi
 
 # A plain raco setup renders the manual again within the second its record
 # was written, so only the stamp tells the two renders apart.
@@ -242,15 +257,15 @@ fi
 dir=$(manual held)
 sleep 60 &
 holder=$!
-mkdir "$dir.docs-check-lock"
-printf '%s\n' "$holder" > "$dir.docs-check-lock/pid"
+ln -s "$holder" "$dir.docs-check-lock"
 if DOCS_CHECK_LOCK_TIMEOUT=2 expect "a held lock times out" 1 \
      within 20 scan "$fixtures/clean-render.log" "$dir"; then
   has "a held lock times out" "another docs-check has held $dir.docs-check-lock for over 2s (pid $holder)"
   has "a held lock times out" "docs-check: waiting for $dir.docs-check-lock (pid $holder)"
   [ "$(grep -c 'waiting for' <<< "$out")" -eq 1 ] \
     || fail "a held lock times out: it did not say exactly once that it was waiting:"$'\n'"$out"
-  [ -d "$dir.docs-check-lock" ] || fail "a held lock times out: it removed the other run's lock"
+  [ "$(readlink "$dir.docs-check-lock")" = "$holder" ] \
+    || fail "a held lock times out: it removed the other run's lock"
   [ ! -f "$dir.docs-check-warnings" ] || fail "a held lock times out: it recorded without the lock"
 fi
 kill "$holder" 2> /dev/null || true
@@ -264,30 +279,77 @@ fi
 # removed at once, with the default timeout, rather than waited out.
 dir=$(manual dead-holder)
 dead=$(exited)
-mkdir "$dir.docs-check-lock"
-printf '%s\n' "$dead" > "$dir.docs-check-lock/pid"
+ln -s "$dead" "$dir.docs-check-lock"
 if expect "a lock whose holder exited" 0 within 10 scan "$fixtures/clean-render.log" "$dir"; then
   has "a lock whose holder exited" "removed $dir.docs-check-lock, left by pid $dead, which is not running"
-  [ ! -e "$dir.docs-check-lock" ] || fail "a lock whose holder exited: the lock was not released"
+  [ ! -L "$dir.docs-check-lock" ] || fail "a lock whose holder exited: the lock was not released"
 fi
 
-# Killed between its mkdir and its pid file.
-dir=$(manual unnamed)
+# ln -s onto a directory would make the link inside it, and hold nothing.
+dir=$(manual directory-lock)
 mkdir "$dir.docs-check-lock"
-if expect "a lock that names no pid" 0 within 20 scan "$fixtures/clean-render.log" "$dir"; then
-  has "a lock that names no pid" "removed $dir.docs-check-lock, which named no pid for 5s"
+if expect "a directory where the lock goes" 1 within 10 scan "$fixtures/clean-render.log" "$dir"; then
+  has "a directory where the lock goes" "$dir.docs-check-lock is not a docs-check lock"
+  [ -z "$(ls -A "$dir.docs-check-lock")" ] \
+    || fail "a directory where the lock goes: it wrote into the directory"
+  [ ! -f "$dir.docs-check-warnings" ] \
+    || fail "a directory where the lock goes: it recorded without the lock"
 fi
 
 # Killed while it removed a dead holder's lock.
 dir=$(manual dead-reaper)
 dead=$(exited)
-mkdir "$dir.docs-check-lock" "$dir.docs-check-lock.reap"
-printf '%s\n' "$dead" > "$dir.docs-check-lock/pid"
-if expect "a dead holder's lock, with a reaper's left" 0 within 20 \
+ln -s "$dead" "$dir.docs-check-lock"
+ln -s "$(exited)" "$dir.docs-check-lock.reap"
+if expect "a dead holder's lock, with a dead reaper's marker" 0 within 10 \
      scan "$fixtures/clean-render.log" "$dir"; then
-  [ ! -e "$dir.docs-check-lock.reap" ] \
-    || fail "a dead holder's lock, with a reaper's left: the reaper's lock is still there"
+  has "a dead holder's lock, with a dead reaper's marker" "removed $dir.docs-check-lock, left by pid $dead"
+  [ ! -L "$dir.docs-check-lock.reap" ] && [ ! -L "$dir.docs-check-lock.reap.reap" ] \
+    || fail "a dead holder's lock, with a dead reaper's marker: a reaper's marker is still there"
 fi
+
+# A live reaper's marker is not removed: the waiter waits for it.
+dir=$(manual live-reaper)
+sleep 60 &
+reaper=$!
+ln -s "$(exited)" "$dir.docs-check-lock"
+ln -s "$reaper" "$dir.docs-check-lock.reap"
+if DOCS_CHECK_LOCK_TIMEOUT=2 expect "a dead holder's lock, with a live reaper's marker" 1 \
+     within 20 scan "$fixtures/clean-render.log" "$dir"; then
+  [ "$(readlink "$dir.docs-check-lock.reap")" = "$reaper" ] \
+    || fail "a dead holder's lock, with a live reaper's marker: it removed the marker"
+  [ -L "$dir.docs-check-lock" ] \
+    || fail "a dead holder's lock, with a live reaper's marker: it removed the lock under the reaper"
+fi
+kill "$reaper" 2> /dev/null || true
+wait "$reaper" 2> /dev/null || true
+
+# A run whose lock was replaced (removed by a waiter that took this run for
+# dead) leaves the replacement, which names another run.
+dir=$(manual replaced)
+sleep 60 &
+other=$!
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=replaced \
+  STUB_RENDER_SLEEP=2 run --record > "$work/replaced.out" 2>&1 &
+pid=$!
+polls=0
+while [ ! -L "$dir.docs-check-lock" ] && [ "$polls" -lt 100 ]; do
+  sleep 0.1
+  polls=$((polls + 1))
+done
+rm -rf "$dir.docs-check-lock"
+ln -s "$other" "$dir.docs-check-lock"
+replaced=0
+wait "$pid" || replaced=$?
+if [ "$replaced" -ne 0 ]; then
+  fail "a replaced lock: exit $replaced:"$'\n'"$(cat "$work/replaced.out")"
+elif [ "$(readlink "$dir.docs-check-lock")" != "$other" ]; then
+  fail "a replaced lock: the run released the lock that names pid $other"
+else
+  echo "ok: a replaced lock"
+fi
+kill "$other" 2> /dev/null || true
+wait "$other" 2> /dev/null || true
 
 # Two runs render the same manual, the first slowly: without the lock the
 # second's render and record land inside the first's, which then records its
