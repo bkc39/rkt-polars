@@ -151,11 +151,83 @@ if STUB_LOG="$fixtures/clean-render.log" expect "collection lookup fails" 1 run;
 fi
 
 dir=$(manual stale)
+touch "$dir/kept"
 if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
      expect "nothing recorded: renders again" 0 run "$dir"; then
   has "nothing recorded: renders again" 'rendering the manual again'
   [ -f "$dir.docs-check-warnings" ] \
     || fail "nothing recorded: renders again: no record at $dir.docs-check-warnings"
+  [ -f "$dir/kept" ] \
+    || fail "nothing recorded: renders again: it deleted the manual's directory"
+fi
+
+dir=$(manual timestamps)
+if expect "a render logged with --timestamp" 0 scan "$fixtures/clean-render-timestamps.log" "$dir"; then
+  [ -f "$dir.docs-check-warnings" ] \
+    || fail "a render logged with --timestamp: no record at $dir.docs-check-warnings"
+fi
+
+dir=$(manual outdated)
+scan "$fixtures/clean-render.log" "$dir" > /dev/null 2>&1 || true
+touch -t 200001010000 "$dir.docs-check-warnings"
+if expect "rendered after the record" 1 scan "$fixtures/no-render.log" "$dir"; then
+  has "rendered after the record" "it was rendered after its warnings were recorded in $dir.docs-check-warnings"
+fi
+if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
+     STUB_RENDER_LOG="$fixtures/multiple-times.log" \
+     expect "rendered after the record: renders again" 1 run "$dir"; then
+  has "rendered after the record: renders again" 'rendering the manual again'
+  has "rendered after the record: renders again" 'collected information for key multiple times'
+fi
+
+dir=$(manual annotations)
+if GITHUB_ACTIONS=true expect "annotations on a check" 1 scan "$fixtures/multiple-times.log" "$dir"; then
+  has "annotations on a check" '::error::docs-check: raco setup warned'
+fi
+dir=$(manual record-annotations)
+if GITHUB_ACTIONS=true STUB_LOG="$fixtures/multiple-times.log" STUB_DOC_DIR="$dir" \
+     expect "--record writes no annotations" 0 run --record; then
+  has "--record writes no annotations" 'collected information for key multiple times'
+  lacks "--record writes no annotations" '::error::'
+fi
+
+dir=$(manual held)
+mkdir "$dir.docs-check-lock"
+printf '12345\n' > "$dir.docs-check-lock/pid"
+if DOCS_CHECK_LOCK_TIMEOUT=1 expect "a held lock times out" 1 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a held lock times out" "another docs-check has held $dir.docs-check-lock for over 1s (pid 12345)"
+  [ -d "$dir.docs-check-lock" ] || fail "a held lock times out: it removed the other run's lock"
+  [ ! -f "$dir.docs-check-warnings" ] || fail "a held lock times out: it recorded without the lock"
+fi
+if DOCS_CHECK_LOCK_TIMEOUT=soon expect "a lock timeout that is not a number" 1 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a lock timeout that is not a number" 'DOCS_CHECK_LOCK_TIMEOUT is soon, not a number of seconds'
+fi
+
+# Two runs render the same manual, the first slowly: without the lock the
+# second's render and record land inside the first's, which then records its
+# warnings beside the second's HTML.
+dir=$(manual concurrent)
+first=0 second=0
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=first \
+  STUB_RENDER_SLEEP=2 STUB_RENDER_LOG="$fixtures/multiple-times.log" \
+  run --record > "$work/first.out" 2>&1 &
+pid=$!
+sleep 0.5
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=second \
+  run --record > "$work/second.out" 2>&1 || second=$?
+wait "$pid" || first=$?
+if [ "$first" -ne 0 ] || [ "$second" -ne 0 ]; then
+  fail "concurrent records: exits $first and $second:"$'\n'"$(cat "$work/first.out" "$work/second.out")"
+elif grep -qx second "$dir/index.html" && [ -s "$dir.docs-check-warnings" ]; then
+  fail "concurrent records: the first render's warnings are recorded beside the second's HTML"
+elif grep -qx first "$dir/index.html" && [ ! -s "$dir.docs-check-warnings" ]; then
+  fail "concurrent records: the second render's record is beside the first's HTML"
+elif [ -e "$dir.docs-check-lock" ]; then
+  fail "concurrent records: the lock was not released"
+else
+  echo "ok: concurrent records"
 fi
 
 exit $status

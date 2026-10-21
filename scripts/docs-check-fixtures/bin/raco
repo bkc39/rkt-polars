@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# raco setup for scripts/docs-check-test.sh: prints STUB_LOG and exits
-# STUB_RACO_STATUS, or, when STUB_RENDER_INTO has no index.html, renders the
-# clean manual there and prints a clean render.
+# raco setup for scripts/docs-check-test.sh.  When STUB_RENDER_INTO has no
+# stamp.sxref, or always when STUB_RENDER_MARK is set, it renders: it writes
+# the clean manual's index.html there, followed by STUB_RENDER_MARK, and a
+# stamp.sxref, waits STUB_RENDER_SLEEP seconds, and prints STUB_RENDER_LOG
+# (default: a clean render).  Otherwise it prints STUB_LOG.  It exits
+# STUB_RACO_STATUS.
 set -euo pipefail
 fixtures=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-if [ -n "${STUB_RENDER_INTO:-}" ] && [ ! -f "$STUB_RENDER_INTO/index.html" ]; then
-  mkdir -p "$STUB_RENDER_INTO"
-  cp "$fixtures/manual/index.html" "$STUB_RENDER_INTO/"
-  cat "$fixtures/clean-render.log"
+into=${STUB_RENDER_INTO:-}
+if [ -n "$into" ] && { [ -n "${STUB_RENDER_MARK:-}" ] || [ ! -f "$into/stamp.sxref" ]; }; then
+  mkdir -p "$into"
+  { cat "$fixtures/manual/index.html"; printf '%s\n' "${STUB_RENDER_MARK:-}"; } > "$into/index.html"
+  cp "$fixtures/manual/stamp.sxref" "$into/"
+  sleep "${STUB_RENDER_SLEEP:-0}"
+  cat "${STUB_RENDER_LOG:-$fixtures/clean-render.log}"
 else
   cat "$STUB_LOG"
 fi

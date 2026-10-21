@@ -733,8 +733,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   manual: `raco setup` and `raco scribble` only warn about these and exit 0.
   It sees the warnings only on a run that renders the manual, so that run
   records them in `polars/doc/polars.docs-check-warnings` (the dev shell's
-  setup on entry too, through `--record`) and a run that does not reads them
-  back; with no record it renders the manual again. `--scan LOG DOC-DIR`
+  setup on entry too, through `--record`, which writes no GitHub Actions
+  annotations) and a run that does not reads them back. With no record, or
+  one older than the rendered `index.html` (which every render rewrites), it
+  deletes Scribble's build stamp `stamp.sxref` and renders the manual again.
+  Each run holds `polars/doc/polars.docs-check-lock` (a `mkdir` lock, since
+  macOS has no `flock`) while it renders and records, waiting up to
+  `DOCS_CHECK_LOCK_TIMEOUT` seconds. `--scan LOG DOC-DIR`
   checks a saved log, and `scripts/docs-check-test.sh` (the `docs-check-test`
   gate, a push gate and a flake check) runs it on the fixtures in
   `scripts/docs-check-fixtures/`.

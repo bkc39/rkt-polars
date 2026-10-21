@@ -5,22 +5,28 @@
 # defproc).  raco setup reports both as warnings and exits 0, and it reports
 # them only on a run that runs or renders the manual.  So a run that renders
 # it records the warnings in DOC-DIR.docs-check-warnings, and a run that does
-# not reads them back; the rendered HTML is also searched for Scribble's
-# badlink, which a run with nothing to rebuild leaves in place.
+# not reads them back, unless the manual was rendered after they were
+# recorded; the rendered HTML is also searched for Scribble's badlink, which
+# a run with nothing to rebuild leaves in place.  A run that holds no current
+# record deletes DOC-DIR/stamp.sxref, Scribble's build stamp, so that raco
+# setup renders the manual again.  Each run holds DOC-DIR.docs-check-lock
+# while it renders and records.
 #
 # Usage:
 #   scripts/docs-check.sh [DOC-DIR]      raco setup over the package, then check
 #   scripts/docs-check.sh --record       raco setup over the package, recording
 #                                        and printing its warnings, failing
 #                                        only when raco setup fails (the dev
-#                                        shell's setup on entry)
+#                                        shell's setup on entry); it writes no
+#                                        GitHub Actions annotations
 #   scripts/docs-check.sh --scan LOG DOC-DIR
 #                                        check a raco setup log and DOC-DIR
 #
 #   DOC-DIR is the rendered manual (default: doc/polars under the installed
 #   polars collection).  The package is DOCS_CHECK_PKG (default rkt-polars;
 #   scripts/test-local.sh installs it as polars).  Extra raco setup flags go
-#   in DOCS_CHECK_SETUP_FLAGS, e.g. "-j 4".
+#   in DOCS_CHECK_SETUP_FLAGS, e.g. "-j 4".  A run waits up to
+#   DOCS_CHECK_LOCK_TIMEOUT seconds (default 1800) for another run's lock.
 set -euo pipefail
 
 report() {
@@ -33,7 +39,7 @@ report() {
 
 # Whether LOG shows raco setup running or rendering the manual.
 rendered() {
-  grep -qE '^raco setup: ([0-9]+ )?(re-)?(running|rendering): .*/polars/scribblings/polars\.scrbl$' "$1"
+  grep -qE '^raco setup: ([0-9]+ )?(re-)?(running|rendering): .*/polars/scribblings/polars\.scrbl( @ [0-9]+)?$' "$1"
 }
 
 # The warnings in LOG; each undefined tag follows its warning on a line of
@@ -45,7 +51,8 @@ log_warnings() {
 }
 
 # scan LOG DOC-DIR: 0 when clean, 1 when not, 2 when LOG shows no render and
-# no render's warnings are recorded.
+# no render's warnings are recorded, or the manual was rendered after they
+# were (by a run that did not record them).
 scan() {
   local log=$1 doc_dir=${2%/}
   local record="$doc_dir.docs-check-warnings"
@@ -64,6 +71,9 @@ scan() {
       report "could not record the render's warnings in $record"
       status=1
     fi
+  elif [ -f "$record" ] && [ "$doc_dir/index.html" -nt "$record" ]; then
+    report "raco setup did not render the manual, and it was rendered after its warnings were recorded in $record"
+    status=2
   elif [ -f "$record" ]; then
     recorded=$(cat "$record")
   elif [ "$status" -eq 0 ]; then
@@ -125,45 +135,99 @@ default_doc_dir() {
   fi
 }
 
+held_lock=""
+log=""
+# shellcheck disable=SC2329 # called by the EXIT trap
+cleanup() {
+  if [ -n "$log" ]; then
+    rm -f -- "$log"
+  fi
+  if [ -n "$held_lock" ]; then
+    rm -rf -- "$held_lock"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# lock DOC-DIR: takes DOC-DIR.docs-check-lock, a directory, since mkdir is
+# atomic everywhere and flock is not on macOS; the EXIT trap releases it.
+lock() {
+  local lock="${1%/}.docs-check-lock" waited=0 absent=0
+  local limit=${DOCS_CHECK_LOCK_TIMEOUT:-1800}
+  if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+    report "DOCS_CHECK_LOCK_TIMEOUT is $limit, not a number of seconds"
+    return 1
+  fi
+  if ! mkdir -p -- "$(dirname -- "$lock")"; then
+    report "could not create the directory of the lock $lock"
+    return 1
+  fi
+  while ! mkdir -- "$lock" 2> /dev/null; do
+    if [ ! -d "$lock" ]; then
+      absent=$((absent + 1))
+      if [ "$absent" -gt 1 ]; then
+        report "could not create the lock $lock"
+        return 1
+      fi
+      continue
+    fi
+    absent=0
+    if [ "$waited" -ge "$limit" ]; then
+      report "another docs-check has held $lock for over ${limit}s (pid $(cat -- "$lock/pid" 2> /dev/null || echo unknown)); if none is running, remove it"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  held_lock=$lock
+  printf '%s\n' "$$" > "$lock/pid" || true
+}
+
 if [ "${1:-}" = "--scan" ]; then
   if [ "$#" -ne 3 ]; then
     echo "usage: $0 --scan LOG DOC-DIR" >&2
     exit 64
   fi
+  lock "$3" || exit 1
   scan "$2" "$3" || exit 1
   exit 0
 fi
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+if [ "${1:-}" = "--record" ]; then
+  unset GITHUB_ACTIONS
+  doc_dir=$(default_doc_dir) || exit 1
+elif [ -n "${1:-}" ]; then
+  doc_dir=$1
+else
+  doc_dir=$(default_doc_dir) || exit 1
+fi
+doc_dir=${doc_dir%/}
+lock "$doc_dir" || exit 1
+
 if ! log=$(mktemp "${TMPDIR:-/tmp}/docs-check.XXXXXX"); then
   report "could not create a log file in ${TMPDIR:-/tmp}"
   exit 1
 fi
-trap 'rm -f "$log"' EXIT
 
 if [ "${1:-}" = "--record" ]; then
   setup "$log" || exit 1
-  doc_dir=$(default_doc_dir) || exit 1
   scan "$log" "$doc_dir" || true
   exit 0
 fi
 
 status=0
 setup "$log" || status=1
-if [ -n "${1:-}" ]; then
-  doc_dir=$1
-else
-  doc_dir=$(default_doc_dir) || exit 1
-fi
-
 scan "$log" "$doc_dir" || scanned=$?
 case "${scanned:-0}" in
   0) ;;
   2)
-    # Nothing recorded the warnings of the render that left DOC-DIR, so drop
-    # it and render again.
-    rm -rf -- "$doc_dir"
+    if ! rm -f -- "$doc_dir/stamp.sxref"; then
+      report "could not remove $doc_dir/stamp.sxref to render the manual again"
+      exit 1
+    fi
     echo "docs-check: rendering the manual again to record its warnings" >&2
     setup "$log" || status=1
     scan "$log" "$doc_dir" || status=1
