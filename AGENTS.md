@@ -726,7 +726,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
-  undefined tag and `threading-doc` looks unused.
+  undefined tag, which fails the `docs` gate, and `threading-doc` looks unused.
+- `scripts/docs-check.sh` (the `docs` gate, and the flake's Racket build) runs
+  `raco setup` over `rkt-polars` and fails on an `undefined tag` or a key
+  collected `multiple times` in its log, or a `badlink` in the rendered
+  manual: `raco setup` and `raco scribble` only warn about these and exit 0.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
   against the stale library.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per

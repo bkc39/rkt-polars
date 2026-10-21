@@ -227,7 +227,9 @@
               raco pkg install --batch --no-setup --copy --scope user \
                 --name rkt-polars "$PWD"
 
-              raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
+              # raco setup over rkt-polars, failing on the undefined tags and
+              # duplicate keys it only warns about.
+              bash scripts/docs-check.sh
 
               runHook postBuild
             '';
