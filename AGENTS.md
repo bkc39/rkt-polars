@@ -61,7 +61,9 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `foreign.rkt`, where `series-ref` reads through them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
-   wrapped by a checking function of the plain name.
+   wrapped by a checking function of the plain name, except the
+   `series-ref-<type>/raw` readers, which carry an index contract and which
+   `series-ref` reads through unchecked.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -161,12 +163,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
-  `call-as-atomic`: the slot is per OS thread and every Racket thread in a
+  `call-as-atomic` (given no format, the reason alone follows the verb;
+  `call/polars-reason` is that call, and `define-reasoned` binds a
+  keyword-free public name with a `name/who` variant taking the verb, as for
+  the series operators): the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
+  `dataframe_to_string`, `expr_to_string`, `series_cast`,
+  `dataframe_pivot`, `dataframe_unpivot`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
-  `series_new_str_packed`, the three Enum entry points (`series_cast_enum`,
+  `series_new_str_packed`, the series-by-series operators (`series_add`,
+  `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
+  `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
+  `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
+  `dataframe_hstack`, `dataframe_join`, `dataframe_join_asof`,
+  `dataframe_join_asof_options`, the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
@@ -194,16 +206,39 @@ it. Racket side: `define-compat` with `#:c-id`.
   call the crate directly).
   An entry point that runs polars on caller data wraps that work in
   `guard_panic` (`rust/src/ffi/errors.rs`), which records
-  `polars panicked: <cause>` as the reason and returns NULL. Today
-  `lazyframe_collect`, `lazyframe_explain`, `dataframe_sort_with_options`,
-  `series_sort_with_options`, `series_cast_enum`, `series_new_str_packed`,
-  the three series time-zone entry points (`series_cast_datetime_tz`,
-  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`), the IO
-  helpers (`read_frame`, `read_path`, `write_frame`, `scan`) and the JSON entry points
-  (`dataframe_read_json_with_options`, `lazyframe_scan_ndjson_with_options`,
-  `dataframe_write_ndjson_with_options`) do: 0.41.3 aborted Racket on a
-  Parquet Categorical or Decimal column (#93), and a `scan-csv` that reads
-  the header (`#:schema-overrides`) aborted it on a compressed file (#177).
+  `polars panicked: <cause>` as the reason and returns NULL. The panic hook
+  stays quiet for a panic on a thread inside a guard, or on a polars worker
+  (a rayon thread, polars' async executor or a tokio thread) while any
+  guard runs, so a caught panic prints nothing to stderr; every other panic
+  reaches the previous hook. The worker test is process-wide, which assumes
+  one place calls polars: while a guard runs in one place, a panic on a
+  worker from an unguarded entry point in another prints nothing and then
+  aborts, a case guarding the `todo-129` entry points (#129) removes. A
+  streaming task that panics after an earlier error cancelled it is dropped
+  with its payload, so the reason is that error's and the panic prints
+  nothing. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
+  (#93), a `scan-csv` that reads the header (`#:schema-overrides`) aborted it
+  on a compressed file (#177), and printing, a `cast` to a string, `pivot` and
+  `unpivot` did on a date or datetime outside chrono's range (#141). Which
+  entry points are guarded is the audit's to say, not this file's:
+  `rust/src/tests/guard_audit.rs` parses every file under `rust/src` with
+  `syn`, expands the crate's own `macro_rules!` invocations (nested ones
+  too; a repetition, an unknown macro wrapping an export, or a recursion
+  past depth 32 is a failure), and takes every function with `no_mangle` or
+  `export_name` (bare or under `unsafe(...)`) and a non-Rust ABI as an entry
+  point. One is guarded when the value its body returns flows from a call to
+  `guard_panic` or to a guarding helper: the body's tail is such a call, a
+  method call on one, a call or method call taking one (or a closure whose
+  body is one) as an argument, a `match` on one, or a local bound to one by
+  `let`; a helper is guarding when every function of its name is guarded in
+  that sense. It does not check what runs before the guard or in an adapter
+  after it. Every other entry point is listed in `rust/src/tests/unguarded.txt`,
+  one `name class` per line: `drop` and `count` (which must be the `_drop`
+  and `_drop_count` names), `accessor`, `builder`, `constructor`, `error`,
+  and `todo-129`, the eager compute entry points that run polars on caller
+  data unguarded until #129 (L7 of #223) guards them with a reason reported
+  to Racket. The audit fails on a stale or misclassified line, so guarding an
+  entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
   native releases; the reclamation tests assert on them because Racket cannot
   otherwise observe a native free (`foreign.rkt` has a case for each Series-
@@ -393,8 +428,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:row-index-name` and `#:include-file-paths` must differ (polars panics
   otherwise). With `#:schema`, `#:schema-overrides` is applied to it in
   Rust, as for `read-json`: Python's `read_ndjson` ignores the overrides
-  once a schema is given. The eager NDJSON verbs strip the "Resolved plan
-  until failure" dump polars appends to a planning error (`without_plan`).
+  once a schema is given. The eager NDJSON verbs and `lazyframe_collect`
+  strip the "Resolved plan until failure" dump polars appends to a planning
+  error (`without_plan`). A fluent verb that builds a plan and collects it
+  (`select`, `with-columns`, `filter`, `agg`) reports the cause under its own
+  name, through `lazyframe-collect/who` (the `internal` submodule of
+  `expr.rkt`), and `collect` under `collect`.
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, through `write_frame` like the
   other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
@@ -480,18 +519,36 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
   comparison with it is null on every row and arithmetic keeps a numeric
   operand's dtype; with a temporal operand (date, datetime, zoned, time,
-  duration) arithmetic raises, as Python's expression form does. A series
-  operator given a `polars-null`, or a `'null` series and a plain value,
-  runs the operator's expression form with the value as a `lit`, so the two
-  agree; Python's eager `s - None` on a date series gives null durations
-  where its expression raises, and ours raises like the expression. `and`
-  and `or` with `polars-null` on the left and an expression or series after
-  it combine as Python's `pl.lit(None) & e` does, not as Racket's
-  short-circuit (so an `or` evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
+  duration) arithmetic raises, as Python's expression form does. An
+  arithmetic or comparison operator given a `polars-null`, or a `'null`
+  series and a plain value, runs its expression form (see the operand fact
+  below); Python's eager `s - None` on a date series gives null durations
+  where its expression raises, and ours raises like the expression. `and`,
+  `or` and `xor` lift `polars-null` beside a series to a Boolean null, which
+  gives the expression form's Kleene result; with `polars-null` on the left
+  and an expression or series after it, `and` and `or` combine as Python's
+  `pl.lit(None) & e` does, not as Racket's short-circuit (so an `or`
+  evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
   and `var` give `polars-null` and `n-unique` gives 1, through the
   expression engine (the typed `series_sum_*` have no Null case). A `'null`
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
-  and `not` refuse a `'null` series, as in Python.
+  and `not` refuse a `'null` series, as Python's eager operators do, and any
+  other non-Boolean series, where Python's `& | ^` are bitwise on integers.
+- A plain value beside a typed series in an operator is a constant of the
+  series' dtype when it fits (a gregor value keeps its own dtype; a
+  non-integer real beside an integer series is Float64). Otherwise the
+  operator runs its expression form, `(op (col name) (lit v))` on a
+  one-column frame (`series-through-expr`), with that form's dtypes, as
+  Python's expressions give them: beside an Enum series a string or symbol
+  (`=` with a value outside the categories is `#f`, null on a null, and `<`
+  raises polars' reason, as in Python), beside a Decimal series a real, and
+  beside an integer series an Int64 integer past the dtype's range (`(+ u8
+  300)` is UInt16). A negative integer beside an unsigned series, an
+  integer past Int64 (but one in range beside a UInt64 series), which our
+  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
+  series' dtype, as Python's eager `OverflowError` is. Every (operator,
+  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
+  `generic/operand-audit.rkt` holds the operators to.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
@@ -523,7 +580,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
   part as a polars cast does: a datetime floors, a duration truncates toward
   zero. A date or datetime outside chrono's years (-262143 to 262142) is
-  refused, since polars panics printing one. `lit`, and so every comparison,
+  refused, since polars panics printing one. A `cast` still makes one (#141):
+  `ref`, the conversions and the series printer read it as gregor's value
+  (`ref` reads a date through the bulk copy, as `series->list` does, so the
+  two agree; a zoned series prints without its zone abbreviations when
+  polars cannot format them). In a zone other than UTC polars cannot give
+  its local clock: `ref` and the conversions raise under their own names
+  with polars' reason, and the series printer shows that cell as
+  `#<cannot print: ...>`. A frame or an expression that holds one
+  prints as `#<dataframe: cannot print: polars panicked: ...>` (or
+  `#<expr: ...>`): a custom-write never raises, since an error message that
+  shows the value would hide its own error. `display-dataframe`,
+  `dataframe->string`, `expr->string`, a `cast` to a string, `pivot` and
+  `unpivot` raise under their own names with polars' panic as the reason. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
   dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
 - A zoned datetime (#140, polars' `timezones` feature) is the datum
@@ -639,7 +708,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -c polars` (Racket), `raco test -y user-guide` (the guide's
+- `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`

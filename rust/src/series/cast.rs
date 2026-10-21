@@ -6,18 +6,16 @@ pub extern "C" fn series_cast(
     s_ptr: *mut Series,
     target: CompatDType,
 ) -> *mut Series {
-    if s_ptr.is_null() {
+    clear_last_error();
+    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
         return ptr::null_mut();
-    }
-    let dt = match polars_dtype_from_compat(&target) {
-        Some(d) => d,
-        None => return ptr::null_mut(),
     };
-    let s = unsafe { &*s_ptr };
-    match s.cast(&dt) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    let Some(dt) = polars_dtype_from_compat(&target) else {
+        set_last_error("unsupported cast target");
+        return ptr::null_mut();
+    };
+    guard_panic(|| record(s.cast(&dt)))
+        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }
 
 #[no_mangle]

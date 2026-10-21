@@ -64,7 +64,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? exact-integer? real? string? symbol?
+              @defproc[(lit [v (or/c boolean?
+                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                     (and/c real? (not/c exact-integer?)) string? symbol?
                                      polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
@@ -112,8 +114,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
-  exact integers (32-bit when they fit, 64-bit otherwise), other reals (as
-  @racket['float64]) and strings. A symbol is the string of its name, so a
+  exact integers (32-bit when they fit, 64-bit otherwise; one outside 64
+  bits is a contract error), other reals (as @racket['float64]) and
+  strings. A symbol is the string of its name, so a
   categorical column compares with the symbols it reads back as. A
   @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
   @tt{moment} or @tt{period}, and becomes a literal of the dtype
@@ -150,7 +153,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
         (+ (col "weight") polars-null))
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
-                       (column-names people)))]}
+                       (column-names people)))
+(eval:error (lit (expt 2 63)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -189,7 +193,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   @tt{.alias("n")} and @tt{.sum()} as method suffixes. This is also what an
   expression prints as at the REPL and throughout this manual, so an
   expression is a value you can read, not an opaque pointer. A regexp
-  @racket[col] prints as the Polars pattern it is translated to.
+  @racket[col] prints as the Polars pattern it is translated to. When
+  Polars cannot print the plan, as for a literal date outside chrono's
+  years, @racket[expr->string] raises with Polars' reason and the
+  expression prints as a placeholder.
 
   @examples[#:eval ev
 (col "weight")
@@ -198,7 +205,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (~> (col "v") sum (over "k"))
 (exclude (all) "id")
 (col 'float64)
-(col #rx"^he")]}
+(col #rx"^he")
+(define far-date (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+(is-in "d" far-date)
+(eval:error (expr->string (is-in "d" far-date)))]}
 
 @defproc[(expr-drop [e Expr-ptr?]) void?]{
   Releases the native expression @racket[e] holds now, as
@@ -266,16 +276,15 @@ total
   is a mask. Otherwise they fall back to the numeric @racketmodname[racket/base]
   operator and stay variadic, so @racket[(> 3 2)] and @racket[(< 1 2 3)] still
   work. @racket[!=] has no @racketmodname[racket/base] spelling; on numbers it is
-  @racket[(not (= _a _b))]. A plain value compared with a series is a
-  constant of the series' dtype (a gregor value keeps the dtype @racket[lit]
-  gives it); with a @racket['null] series it is a
-  @racket[lit], as in the expression form, and the result is null, where
-  Python's eager comparisons on a Null series raise
-  @tt{NotImplementedError}. These shadow the @racketmodname[racket/base]
+  @racket[(not (= _a _b))]. A plain operand beside a series follows
+  @secref["promotion"], and dtypes Polars cannot compare raise with its reason
+  under the operator's name. These shadow the @racketmodname[racket/base]
   comparisons; see @secref["fluent-shadowing"].
 
   @examples[#:eval ev #:label #f
-(= (series (list polars-null polars-null)) 1)]}
+(= (series (list polars-null polars-null)) 1)
+(> (series '(1 2)) 1.5)
+(eval:error (> (series '(1 2)) "a"))]}
 
 @deftogether[(@defform[(and expr ...)]
               @defform[(or expr ...)]
@@ -286,7 +295,11 @@ total
   @racket[expr-not], @racket[expr-xor]), so
   @racket[(and (> (col "value") 15) (< (col "cost") 3.0))] is a predicate for
   @racket[filter]. When an operand is a series they compute an eager boolean
-  mask. Otherwise they behave as the @racketmodname[racket/base] forms:
+  mask, beside another boolean series or a boolean or @racket[polars-null];
+  a series of another dtype, @racket['null] included, raises with Polars'
+  reason under the connective's name, where Python's @tt{& | ^} are bitwise
+  on integers and raise on a Null series.
+  Otherwise they behave as the @racketmodname[racket/base] forms:
   @racket[and] and @racket[or] short-circuit and return the deciding value, and
   @racket[not] negates. Note that once @racket[and] or @racket[or] meets an
   expression or series operand it evaluates its remaining operands eagerly to
@@ -297,7 +310,9 @@ total
 
   @examples[#:eval ev #:label #f
 (and polars-null (series (list #t #f)))
-(or polars-null (series (list #t #f)))]}
+(or polars-null (series (list #t #f)))
+(xor (series '(#t #f)) #t)
+(eval:error (not (series '(1 2))))]}
 
 @deftogether[(@defproc[(+ [v any/c] ...) any/c]
               @defproc[(- [v any/c] ...) any/c]
@@ -311,9 +326,9 @@ total
   expression (via @racket[expr-add], @racket[expr-sub], @racket[expr-mul],
   @racket[expr-div], @racket[expr-mod]), so @racket[(* (col "value") 2)] reads
   like @tt{col("value") * 2}, and a series operand yields an eagerly computed
-  series. With a @racket['null] series a plain operand is a @racket[lit], so
-  the result has the expression form's dtype; Python's eager @tt{+ - * %}
-  raise for an integer or boolean operand. These shadow the @racketmodname[racket/base] bindings; see
+  series. A plain operand beside a series follows @secref["promotion"], and
+  dtypes Polars cannot combine raise with its reason under the operator's
+  name. These shadow the @racketmodname[racket/base] bindings; see
   @secref["fluent-shadowing"].
 
   With one argument, @racket[-] negates (@racket[expr-neg]) and @racket[/] is
@@ -340,6 +355,9 @@ total
 (/ (series '(-7 7 1)) (series '(2 2 0)))
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
+(+ (series '(1 2)) 2.5)
+(eval:error (+ (series '(1 2)) "a"))
+(eval:error (+ (series '(1 2)) (date 2024 1 1)))
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
@@ -497,6 +515,16 @@ total
   clock instead. A zone polars does not know raises, with the nearest name
   it does.
 
+  A cast can make a date or datetime outside the years -262143 to 262142,
+  which @racket[series] and @racket[lit] refuse. @racket[ref], the
+  conversions and a series' printing read it as the gregor value, but for a
+  datetime in a zone other than UTC, whose local clock Polars cannot give:
+  @racket[ref] and the conversions raise with Polars' reason, and the series
+  prints that value as a placeholder. Polars cannot print one: a dataframe
+  or expression holding one prints as a placeholder with Polars' reason, and
+  @racket[display-dataframe], @racket[expr->string] and a cast to
+  @racket['string] raise it.
+
   @examples[#:eval ev
 (~> (dataframe (list (series '(1 2 3) #:name "v")))
     (with-columns (cast "v" 'float64)))
@@ -506,32 +534,66 @@ total
 (eval:error (cast (series '("UA" "B6")) carriers))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
-                  '(datetime microseconds "Europe/Brusels")))]}
+                  '(datetime microseconds "Europe/Brusels")))
+(define far (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
+(ref far 0)
+(dataframe (list far))
+(eval:error (display-dataframe (dataframe (list far))))
+(define far-zoned (cast (series '(9000000000000000000) #:dtype 'i64 #:name "k")
+                        '(datetime microseconds "Europe/Brussels")))
+far-zoned
+(eval:error (ref far-zoned 0))]}
 
 @defproc[(vstack [top dataframe?] [bottom dataframe?]) dataframe?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
-  have the same columns in the same order (Polars' @tt{vstack}).
+  have the same columns in the same order and dtypes (Polars' @tt{vstack});
+  otherwise it raises with Polars' reason.
 
   @examples[#:eval ev
 (define top (dataframe (list (series '(1 2) #:name "v"))))
-(vstack top (dataframe (list (series '(3) #:name "v"))))]}
+(vstack top (dataframe (list (series '(3) #:name "v"))))
+(eval:error (vstack top (dataframe (list (series '("3") #:name "v")))))]}
+
+@defproc[(hstack [d dataframe?] [column series?] ...) dataframe?]{
+  Appends each @racket[column] to @racket[d] (Polars' @tt{hstack}). A
+  column must have @racket[d]'s height and a name @racket[d] lacks.
+
+  @examples[#:eval ev
+(hstack top (series '(10 20) #:name "w"))
+(eval:error (hstack top (series '(10) #:name "w")))]}
+
+@defproc[(with-column [d dataframe?] [column series?]) dataframe?]{
+  Adds @racket[column] to @racket[d], or replaces the column of its name
+  (@tt{df.with_columns(s)}). A one-row @racket[column] is repeated to
+  @racket[d]'s height; any other length must equal it (a frame with no
+  columns takes any length).
+
+  @examples[#:eval ev
+(with-column top (series '(10 20) #:name "w"))
+(with-column top (series '(0) #:name "v"))
+(shape (with-column (dataframe '()) (series '(1 2) #:name "w")))
+(eval:error (with-column top (series '(1 2 3) #:name "w")))]}
 
 @deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
+                             [n (integer-in 0 18446744073709551615)]) any/c]
               @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n exact-nonnegative-integer?]) any/c]
+                             [n (integer-in 0 18446744073709551615)]) any/c]
               @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                              [offset exact-integer?]
-                              [length exact-nonnegative-integer?]) any/c])]{
+                              [offset (integer-in -9223372036854775808 9223372036854775807)]
+                              [length (integer-in 0 18446744073709551615)]) any/c])]{
   The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
   starting at @racket[offset], of the same kind as @racket[x] (Polars'
-  @tt{head}, @tt{tail}, @tt{slice}). On an expression they change the length
-  and belong inside @racket[select].
+  @tt{head}, @tt{tail}, @tt{slice}); a negative @racket[offset] counts from
+  the end. On an expression they change the length and belong inside
+  @racket[select]. The counts are unsigned and the offset signed 64-bit
+  integers, as Polars takes them; a count past the end takes every row.
 
   @examples[#:eval ev
 (define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
 (head nums 2)
-(tail nums 2)]}
+(tail nums 2)
+(slice nums -2 (expt 2 40))
+(eval:error (head nums -1))]}
 
 @deftogether[(@defproc[(unique [x (or/c series? dataframe?)]) (or/c series? dataframe?)]
               @defproc[(drop-nulls [x (or/c series? dataframe? Expr-ptr?)]) any/c])]{
@@ -553,21 +615,69 @@ total
 (eval:error (unique '(1 1 2)))]}
 
 @defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
-  Removes the named column(s) (@tt{df.drop}). Applied to a list it falls back
-  to @racketmodname[racket/list]'s @racketid[drop].}
+  Removes the named column(s) (@tt{df.drop}). A name @racket[d] lacks, or one
+  given twice, raises. Applied to a list it falls back to
+  @racketmodname[racket/list]'s @racketid[drop].
+
+  @examples[#:eval ev
+(define pair (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(drop pair "a")
+(eval:error (drop pair '("a" "nope")))
+(drop '(1 2 3) 1)]}
+
+@defproc[(pivot [d dataframe?]
+                [#:on on (listof string?)]
+                [#:index index (listof string?)]
+                [#:values values (listof string?)]
+                [#:agg agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count) 'first])
+         dataframe?]{
+  Spreads @racket[d] wide (@tt{df.pivot}): one row per distinct key of the
+  @racket[index] columns (@racket['()] takes every column outside
+  @racket[on] and @racket[values]), and one column per distinct value of
+  @racket[on], sorted by value as Python's @tt{sort_columns=True}, holding the
+  @racket[values] of that cell under @racket[agg]. As in Python, a
+  @racket['sum] of an empty cell is 0 and @racket['count] is @tt{len};
+  @racket[#f] and @racket['none] raise when a cell holds more than one value.
+  A column @racket[d] lacks raises with Polars' reason.
+
+  @examples[#:eval ev
+(define sales
+  (dataframe (list (series '("a" "a" "b") #:name "store")
+                   (series '("q1" "q2" "q1") #:name "quarter")
+                   (series '(10 20 30) #:name "sales"))))
+(define by-quarter
+  (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
+        "store"))
+by-quarter
+(eval:error (pivot sales #:on '("nope") #:index '("store") #:values '("sales")))]}
+
+@defproc[(unpivot [d dataframe?] [#:on on (listof string?)] [#:index index (listof string?)])
+         dataframe?]{
+  Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
+  rows of a @racket["variable"] and a @racket["value"] column beside the
+  @racket[index] columns; @racket[#:on '()] takes every column outside
+  @racket[index], as Python's @tt{on=None}. A column @racket[d] lacks raises
+  with Polars' reason.
+
+  @examples[#:eval ev
+(unpivot by-quarter #:on '("q1" "q2") #:index '("store"))
+(eval:error (unpivot by-quarter #:on '("nope") #:index '("store")))]}
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c (listof string?) #f) #f]
-               [#:left-on left-on (or/c (listof string?) #f) #f]
-               [#:right-on right-on (or/c (listof string?) #f) #f]
-               [#:how how (or/c 'inner 'left 'outer 'cross 'semi 'anti) 'inner])
+               [#:on on (or/c #f (non-empty-listof string?)) #f]
+               [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
+               [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+               [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          (or/c dataframe? lazyframe?)]{
-  Joins @racket[right] onto @racket[left] on the shared key columns
-  @racket[#:on], or on @racket[#:left-on] / @racket[#:right-on]
-  (@tt{left.join(right, ...)}). Eager on a @tech{dataframe}, deferred on a
-  @tech{lazyframe}. As in Python Polars, only a @racket['cross] join promises
-  a row order; sort the result when order matters.
+  Joins @racket[right], of the same kind as @racket[left], onto it on the
+  shared key columns @racket[#:on], or on @racket[#:left-on] /
+  @racket[#:right-on] (@tt{left.join(right, ...)}); a @racket['cross] join
+  takes no keys, and @racket['full] is @racket['outer]. Eager on a
+  @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
+  a @racket['cross] join promises a row order; sort the result when order
+  matters. Keys whose dtypes differ, a key a frame lacks, or key lists of
+  different lengths raise with Polars' reason.
 
   @examples[#:eval ev
 (define left (dataframe (list (series '("a" "b") #:name "k")
@@ -575,7 +685,40 @@ total
 (define right (dataframe (list (series '("a" "c") #:name "k")
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
-(join left right #:on '("k") #:how 'inner)]}
+(join left right #:on '("k") #:how 'inner)
+(eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
+(eval:error (join left right))]}
+
+@defproc[(join-asof [left dataframe?]
+                    [right dataframe?]
+                    [#:on on (or/c #f string?) #f]
+                    [#:left-on left-on (or/c #f string?) #f]
+                    [#:right-on right-on (or/c #f string?) #f]
+                    [#:by by (or/c #f (listof string?)) #f]
+                    [#:left-by left-by (or/c #f (listof string?)) #f]
+                    [#:right-by right-by (or/c #f (listof string?)) #f]
+                    [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
+                    [#:tolerance tolerance
+                                 (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                       (and/c real? (not/c exact-integer?)))
+                                 #f])
+         dataframe?]{
+  Matches each row of @racket[left] to the nearest row of @racket[right] by
+  the sorted key column @racket[#:on], or @racket[#:left-on] /
+  @racket[#:right-on] (@tt{left.join_asof(right, ...)}): the last one at or
+  before it for @racket['backward], the first at or after it for
+  @racket['forward]. @racket[#:by], or equally long @racket[#:left-by] and
+  @racket[#:right-by], match within equal groups only, and a key further than
+  @racket[#:tolerance] away matches nothing.
+
+  @examples[#:eval ev
+(define readings (dataframe (list (series '(1 3 5) #:name "t")
+                                  (series '(100 300 500) #:name "v"))))
+(define offsets (dataframe (list (series '(1 2 4) #:name "t")
+                                 (series '(10 20 40) #:name "o"))))
+(join-asof readings offsets #:on "t")
+(join-asof readings offsets #:on "t" #:tolerance 0)
+(eval:error (join-asof readings offsets #:on "t" #:left-by '("v")))]}
 
 @defproc/arguments[csv-read-arguments (read-csv [path path-string?] dataframe?)]{
   Reads CSV into a @tech{dataframe} (@tt{pl.read_csv}). @racket[path] may be
@@ -1199,8 +1342,9 @@ stations
 (eval:error (explain (select (lazy produce) "colour")))
 (eval:error (explain late #:format 'dot))]}
 
-@deftogether[(@defproc[(group-by [d dataframe?] [key (or/c string? any/c)] ...) grouped?]
-              @defproc[(agg [g grouped?] [agg-expr any/c] ...) dataframe?]
+@deftogether[(@defproc[(group-by [d (or/c dataframe? lazyframe?)] [key (or/c string? Expr-ptr?)] ...+)
+                       grouped?]
+              @defproc[(agg [g grouped?] [agg-expr Expr-ptr?] ...) (or/c dataframe? lazyframe?)]
               @defproc[(grouped? [v any/c]) boolean?])]{
   @racket[group-by] captures @racket[d] and one or more group keys in a deferred
   @racket[grouped] handle — no work happens yet — so it threads cleanly.
@@ -1310,7 +1454,7 @@ stations
                             [#:ddof ddof (integer-in 0 255) 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
                             [#:ddof ddof (integer-in 0 255) 1]) any/c]
-              @defproc[(alias [e any/c] [name string?]) any/c])]{
+              @defproc[(alias [e (or/c Expr-ptr? string?)] [name string?]) Expr-ptr?])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
   Each accepts an expression or a bare column-name string (lifted with
@@ -1620,13 +1764,24 @@ an implementation detail and not part of the public series API.)
 (series-name (series '(1 2) #:name "ints"))]}
 
 @deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
+              @defproc[#:link-target? #f
+                       (rename [d dataframe?] [old string?] [new string?]) dataframe?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
               @defproc[(series-clone [s series?]) series?])]{
   @racket[rename!] renames a series in place (matching Polars), returning
   @racket[void] as is conventional for @litchar{!} mutators; @racket[rename]
-  returns a renamed copy and leaves the original untouched. @racket[clone] (and
-  its series-specific alias @racket[series-clone]) returns an independent copy.}
+  returns a renamed copy and leaves the original untouched. On a dataframe,
+  @racket[rename] returns a copy whose column @racket[old] is named
+  @racket[new] (@tt{df.rename}); @racket[old] must be a column, and
+  @racket[new] must not name another. @racket[clone] (and its series-specific
+  alias @racket[series-clone]) returns an independent copy.
+
+  @examples[#:eval ev
+(series-name (rename (series '(1) #:name "a") "b"))
+(define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(rename named "a" "z")
+(eval:error (rename named "a" "b"))]}
 
 @subsection[#:tag "ref-series-convert"]{Converting to Racket values}
 
@@ -1918,6 +2073,25 @@ wide, is
 @racket[mean] promotes to @racket['float64]. Use @racket[series-cast] to change
 a series' dtype explicitly.
 
+A plain value beside a series in an operator is a constant of the series'
+dtype when it fits; a gregor value keeps its own dtype, and a non-integer real
+beside an integer series is @racket['float64]. Otherwise the operator runs
+its expression form, @racket[(_op (col _name) _value)], with that form's
+dtypes and values: beside a @racket['null] series (where Python's eager
+operators raise) or with @racket[polars-null], beside an Enum
+series a string or symbol, beside a Decimal series a real, and beside an
+integer series an integer past the dtype's range. Any other value raises
+@racket[exn:fail:contract] naming it and the series' dtype: a string, symbol or
+boolean beside a numeric series, a number beside a string series, a negative
+integer beside an unsigned series (as in Python's eager operators), or a value
+no literal takes.
+
+@examples[#:eval ev #:label #f
+(+ (series '(1 2) #:dtype 'u8) 300)
+(= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
+(eval:error (+ (series '(1 2) #:dtype 'u8) -1))
+(eval:error (= (series '("x")) 1))]
+
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 
 The generic layer is built on monomorphic, dtype-suffixed bindings that operate
@@ -2052,11 +2226,12 @@ renders it with no separate display call.
 @defproc[(dataframe [columns (listof series?)]) dataframe?]{
   Builds a dataframe from a list of equal-length series. The columns may be
   series wrappers built with @racket[series]; their names become the column
-  names.
+  names, and must differ.
 
   @examples[#:eval ev
 (dataframe (list (series '("a" "b") #:name "k")
-                 (series '(1 2) #:name "v")))]}
+                 (series '(1 2) #:name "v")))
+(eval:error (dataframe (list (series '(1) #:name "k") (series '(2) #:name "k"))))]}
 
 @deftogether[(@defproc[(shape [x has-shape?]) (listof exact-nonnegative-integer?)]
               @defproc[(shape/values [x has-shape?]) (values exact-nonnegative-integer? ...)]
@@ -2087,10 +2262,17 @@ renders it with no separate display call.
   the element at index @racket[i]. On a dataframe, a single selector — given
   positionally or as @racket[#:columns] — returns that column (by name or index)
   as a series, and a @emph{list} of selectors returns a column-projected
-  dataframe. It is data-first, so it threads. @racket[#:rows] is reserved for
+  dataframe. It is data-first, so it threads. A name in the list is taken
+  literally, never as a pattern; a name the frame lacks, or a column selected
+  twice, raises. @racket[#:rows] is reserved for
   row slicing and currently raises an error. Provided by the @racket[gen:has-ref]
   interface. For a whole column, @racket[series->list] and its siblings convert
-  in one pass where a @racket[ref] loop makes one foreign call per element.}
+  in one pass where a @racket[ref] loop makes one foreign call per element.
+
+  @examples[#:eval ev
+(define starred (dataframe (list (series '(1) #:name "*") (series '(2) #:name "b"))))
+(ref starred '("*"))
+(eval:error (ref starred '("b" 1)))]}
 
 @defproc[(describe [x (or/c series? dataframe?)]) dataframe?]{
   Mirrors Polars' @tt{.describe()}: returns a summary-statistics @tech{dataframe}
@@ -2334,12 +2516,16 @@ generic operations are simply the preferred surface.
   @racket[column-names]. @racket[display-dataframe] prints the Polars table to
   @racket[out]; since a @racket[dataframe] now prints itself, prefer plain
   @racket[display]. @racket[dataframe-column] raises an error naming the
-  column when @racket[d] has none.
+  column when @racket[d] has none. @racket[display-dataframe] raises with
+  Polars' reason when Polars cannot print the table, where the dataframe
+  itself prints as a placeholder.
 
   @examples[#:eval ev
 (define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
 (series-sum-i32 (dataframe-column scores "score"))
-(eval:error (dataframe-column scores "points"))]}
+(eval:error (dataframe-column scores "points"))
+(dataframe (list far-date))
+(eval:error (display-dataframe (dataframe (list far-date))))]}
 
 @defproc[(DataFrame-ptr? [v any/c]) boolean?]{
   Recognises a foreign dataframe pointer. Both raw pointers returned by the
@@ -2516,10 +2702,10 @@ query
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
                          [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (listof string?)) #f]
-                         [#:left-on left-on (or/c #f (listof string?)) #f]
-                         [#:right-on right-on (or/c #f (listof string?)) #f]
-                         [#:how how (or/c 'inner 'left 'outer 'full 'cross) 'inner])
+                         [#:on on (or/c #f (non-empty-listof string?)) #f]
+                         [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],
   when they have the same names on both sides, or as parallel

@@ -7,16 +7,16 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          (only-in racket/contract
-                  [-> ->/c] ->* ->i any/c contract-out flat-named-contract non-empty-listof
-                  or/c rename-contract)
+                  [-> ->/c] ->* ->i and/c any/c contract-name contract-out flat-named-contract
+                  integer-in non-empty-listof not/c or/c rename-contract)
          racket/match
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
                   check-enum-categories define-owned-cpointer-type enum-dtype? polars-null?
-                  sort-flags-mismatch sort-flags/c time-unit-symbol->code write-owned
-                  zoned-datetime-dtype?)
+                  printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
+                  write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
@@ -32,9 +32,10 @@
          explain/c lazyframe-explainer
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
          expr-alias
-         lit ->expr
+         ->expr ->expr/who lit/who
          dtype-spec?
          (contract-out
+          [lit (->/c lit-value/c Expr-ptr?)]
           [col (->/c col-spec/c Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
           [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
@@ -55,7 +56,9 @@
 
 (struct expr (ptr)
   #:property prop:cpointer 0
-  #:property prop:custom-write (write-owned 'expr expr-dropped (lambda (e) (expr->string e))))
+  #:property prop:custom-write
+  (write-owned 'expr expr-dropped
+               (lambda (e) (printed-or-placeholder 'expr (lambda () (expr->string/raw e))))))
 
 (define-owned-cpointer-type _LazyFrame-ptr lazyframe
   (define-compat lazyframe-drop/raw
@@ -66,9 +69,12 @@
 (define-compat expr-drop-count
   (_fun -> _size))
 
-(define-compat expr->string
+(define-compat expr->string/raw
   (_fun _Expr-ptr -> _rsstring)
   #:c-id expr_to_string)
+
+(define (expr->string e)
+  (call/foreign-error 'expr->string (lambda () (expr->string/raw e)) "cannot print the expression"))
 
 (define-compat lazyframe-explain/raw
   (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstring)
@@ -132,29 +138,44 @@
   #:c-id expr_lit_datetime_tz
   #:wrap (allocator expr-drop))
 
-(define (temporal-lit v dtype)
-  (define value ((temporal-encoder 'lit dtype) v))
+(define (temporal-lit who v dtype)
+  (define value ((temporal-encoder who dtype) v))
   (match dtype
     [(list 'datetime unit (? string? zone))
      (define code (time-unit-symbol->code unit))
-     (call/foreign-error 'lit
+     (call/foreign-error who
                          (lambda () (expr-lit-datetime-tz/raw value code zone))
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
 
-(define (lit v)
+(define lit-integer/c (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
+
+(define (lit-value? v)
+  (or (boolean? v) (string? v) (symbol? v) (polars-null? v)
+      (and (real? v) (or (not (exact-integer? v)) (lit-integer/c v)))
+      (and (temporal-value-dtype v) #t)))
+
+(define lit-value/c
+  (flat-named-contract
+   '(or/c boolean? (integer-in -9223372036854775808 9223372036854775807)
+          (and/c real? (not/c exact-integer?)) string? symbol? polars-null? gregor-value)
+   lit-value?))
+
+(define (lit/who who v)
   (cond
     [(boolean? v) (expr-lit-bool v)]
-    [(exact-integer? v)
-     (if (<= -2147483648 v 2147483647)
-         (expr-lit-i32 v)
-         (expr-lit-i64 v))]
+    [(and (exact-integer? v) (<= -2147483648 v 2147483647)) (expr-lit-i32 v)]
+    [(and (exact-integer? v) (lit-integer/c v)) (expr-lit-i64 v)]
+    [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name lit-integer/c)) v)]
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
     [(polars-null? v) (expr-lit-null)]
-    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit v dtype))]
-    [else (error 'lit "no Expr literal for ~v" v)]))
+    [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit who v dtype))]
+    [else (raise-argument-error who (format "~s" (contract-name lit-value/c)) v)]))
+
+(define (lit v)
+  (lit/who 'lit v))
 
 (define-compat expr-all
   (_fun -> _Expr-ptr)
@@ -223,8 +244,11 @@
   (column-spec-contract '(or/c string? regexp? dtype-spec?)
                         (lambda (v) (or (string? v) (regexp? v) (dtype-spec? v)))))
 
+(define (->expr/who who v)
+  (if (Expr-ptr? v) v (lit/who who v)))
+
 (define (->expr v)
-  (if (Expr-ptr? v) v (lit v)))
+  (->expr/who 'lit v))
 
 (define sort-by-keys/c
   (flat-named-contract 'sort-by-keys/c
@@ -266,6 +290,18 @@
   (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
              (lambda () (contracted:col 42)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
+  (for ([v (list (- (expt 2 63)) (sub1 (expt 2 63)) 1/2 +inf.0 "s" 's #t polars-null)])
+    (check-pred Expr-ptr? (contracted:lit v)))
+  (for ([v (list (expt 2 63) (sub1 (- (expt 2 63))) #\a '(1) (vector))])
+    (check-exn (regexp (format "^lit: contract violation\n  expected: [^\n]*\n  given: ~a\n"
+                               (regexp-quote (format "~e" v))))
+               (lambda () (contracted:lit v))))
+  (check-exn (regexp (string-append "^expr-add: contract violation\n  expected: \\(integer-in "
+                                    "-9223372036854775808 9223372036854775807\\)\n"
+                                    "  given: 9223372036854775808$"))
+             (lambda () (->expr/who 'expr-add (expt 2 63))))
+  (check-exn #rx"^\\+: contract violation\n  expected: \\(or/c boolean\\? [^\n]*\n  given: #\\\\a$"
+             (lambda () (->expr/who '+ #\a)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col '(datetime weeks))))
   (check-pred Expr-ptr? (contracted:col '(datetime microseconds "UTC")))

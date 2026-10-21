@@ -1,4 +1,5 @@
 use crate::prelude::*;
+use crate::{clear_last_error, guard_panic, record, set_last_error};
 
 macro_rules! cmp_scalar {
     ($name:ident, $op:ident, $downcast:ident, $rhs_ty:ty) => {
@@ -97,15 +98,16 @@ pub(crate) fn series_cmp_result<F>(
 where
     F: FnOnce(&Series, &Series) -> PolarsResult<BooleanChunked>,
 {
-    if left_ptr.is_null() || right_ptr.is_null() {
+    clear_last_error();
+    let (Some(left), Some(right)) =
+        (unsafe { left_ptr.as_ref() }, unsafe { right_ptr.as_ref() })
+    else {
+        set_last_error("series is null");
         return ptr::null_mut();
-    }
-    let left = unsafe { &*left_ptr };
-    let right = unsafe { &*right_ptr };
-    match f(left, right) {
-        Ok(out) => Box::into_raw(Box::new(out.into_series())),
-        Err(_) => ptr::null_mut(),
-    }
+    };
+    guard_panic(|| record(f(left, right))).map_or(ptr::null_mut(), |out| {
+        Box::into_raw(Box::new(out.into_series()))
+    })
 }
 
 #[no_mangle]

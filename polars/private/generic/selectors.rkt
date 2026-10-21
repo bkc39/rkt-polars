@@ -103,7 +103,7 @@
   (let ([out (select people (p* (col 'float64) 1.1))])
     (check-equal? (column-names out) '("weight" "height"))
     (check-= (ref (ref out "weight") 0) (* 57.9 1.1) 1e-9))
-  (check-exn #rx"^lazyframe-collect: .*duplicate.*'x'"
+  (check-exn #rx"^select: .*duplicate.*'x'"
              (lambda () (select people (~> (col 'float64) (p* 2) (alias "x")))))
   (check-exn #rx"^col: contract violation;\n Polars' regex engine has no lookahead; .*column-names.*\n  given: #px\"\\^\\(\\?!id\\)\""
              (lambda () (col #px"^(?!id)")))

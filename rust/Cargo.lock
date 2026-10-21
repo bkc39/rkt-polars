@@ -399,7 +399,13 @@ dependencies = [
  "blake3",
  "chrono",
  "polars",
+ "polars-async",
+ "polars-core",
+ "proc-macro2",
+ "rayon",
+ "syn 2.0.72",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

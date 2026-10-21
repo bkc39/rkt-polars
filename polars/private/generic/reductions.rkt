@@ -14,8 +14,9 @@
 (provide (contract-out
           [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
           [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
-          [n-unique (-> (or/c series? col-expr/c) any/c)])
-         sum mean min max count median first last alias)
+          [n-unique (-> (or/c series? col-expr/c) any/c)]
+          [alias (-> col-expr/c string? Expr-ptr?)])
+         sum mean min max count median first last)
 
 (define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
   (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
@@ -50,14 +51,14 @@
     [((or 'mean 'min 'max) _) 'expr]
     [(_ _) #f]))
 
-(define (series-agg-via-expr expr-op s)
-  (with-release ([all (expr-all) expr-drop]
+(define (series-agg-via-expr who expr-op s)
+  (with-release ([frame (dataframe-new (list s)) dataframe-drop]
+                 [all (expr-all) expr-drop]
                  [reduced (expr-op all) expr-drop]
                  [named (expr-alias reduced "v") expr-drop]
-                 [frame (dataframe-new (list s)) dataframe-drop]
                  [out (dataframe-select-exprs frame (list named)) dataframe-drop]
                  [column (dataframe-column out "v") series-drop])
-    (series-ref column 0)))
+    (series-value who column 0)))
 
 (define (reduce-series op s #:ddof [ddof 1])
   (define dt (series-dtype s))
@@ -67,7 +68,7 @@
     ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
     ['float64 (with-release ([floats (series-cast s 'float64) series-drop])
                 (or (series-dispersion floats #:ddof ddof) polars-null))]
-    ['expr (series-agg-via-expr (lambda (e) (aggregation op e ddof)) s)]
+    ['expr (series-agg-via-expr op (lambda (e) (aggregation op e ddof)) s)]
     ['null polars-null]
     [#f (error op "unsupported dtype for reduction: ~v" dt)]))
 
@@ -124,7 +125,7 @@
     [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
     [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
 
-(define (alias e name) (expr-alias e name))
+(define (alias e name) (expr-alias (->col-expr 'alias e) name))
 
 (module+ test
   (require rackunit
@@ -135,9 +136,24 @@
            (only-in gregor/time time)
            (only-in gregor/period microseconds)
            (only-in polars/private/expr-core expr-drop-count)
-           (only-in polars/private/test-helpers settle!)
            polars/private/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
+  (define small (series '(1 2 3) #:dtype 'i8))
+  (define flags (series '(#t #f #t)))
+  (settle!)
+  (let ([exprs (expr-drop-count)] [frames (dataframe-drop-count)] [columns (series-drop-count)])
+    (check-equal? (sum small) 6)
+    (check >= (- (expr-drop-count) exprs) 3)
+    (check >= (- (dataframe-drop-count) frames) 2)
+    (check >= (- (series-drop-count) columns) 1))
+  (settle!)
+  (let ([columns (series-drop-count)])
+    (check-= (std flags) (sqrt 1/3) 1e-12)
+    (check >= (- (series-drop-count) columns) 1))
+  (check-exn #rx"^max: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (max past-chrono-zoned)))
+  (check-exn #rx"^min: cannot read a datetime in \"Europe/Brussels\": polars panicked: "
+             (lambda () (min past-chrono-zoned)))
   ;; reductions dispatch on dtype (numeric series)
   (check-equal? (sum ints) 10)
   (check-equal? (max floats) 8.0)

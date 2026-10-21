@@ -23,8 +23,10 @@
 ;; fill-null / fill-nan replace missing / NaN with a value (auto-lifted to a
 ;; literal); forward/backward-fill carry the last/next valid value forward or
 ;; back (#:limit caps how far a single run is carried).
-(define (fill-null x value) (expr-fill-null (->col-expr 'fill-null x) value))
-(define (fill-nan x value)  (expr-fill-nan  (->col-expr 'fill-nan x) value))
+(define (fill-null x value)
+  (expr-fill-null (->col-expr 'fill-null x) (->expr/who 'fill-null value)))
+(define (fill-nan x value)
+  (expr-fill-nan (->col-expr 'fill-nan x) (->expr/who 'fill-nan value)))
 (define (forward-fill x #:limit [limit #f])
   (expr-forward-fill (->col-expr 'forward-fill x) #:limit limit))
 (define (backward-fill x #:limit [limit #f])

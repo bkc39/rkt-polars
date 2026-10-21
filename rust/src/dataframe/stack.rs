@@ -1,5 +1,7 @@
 use crate::prelude::*;
-use crate::slice_or_empty;
+use crate::{
+    clear_last_error, guard_panic, record, set_last_error, slice_or_empty,
+};
 
 #[no_mangle]
 pub extern "C" fn dataframe_hstack(
@@ -7,29 +9,31 @@ pub extern "C" fn dataframe_hstack(
     series_ptrs: *const *const Series,
     length: usize,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
+    clear_last_error();
+    let Some(df) = (unsafe { df_ptr.as_ref() }) else {
+        set_last_error("dataframe is null");
         return ptr::null_mut();
-    }
+    };
     let Some(slice) = (unsafe { slice_or_empty(series_ptrs, length) }) else {
+        set_last_error("series list is null");
         return ptr::null_mut();
     };
     if slice.iter().any(|p| p.is_null()) {
+        set_last_error("series is null");
         return ptr::null_mut();
     }
-    let columns: Vec<Column> = slice
-        .iter()
-        .map(|&p| unsafe { (*p).clone() }.into_column())
-        .collect();
-    let df = unsafe { &*df_ptr };
-    let out = if df.width() == 0 {
-        DataFrame::new_infer_height(columns)
-    } else {
-        df.hstack(&columns)
-    };
-    match out {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    guard_panic(|| {
+        let columns: Vec<Column> = slice
+            .iter()
+            .map(|&p| unsafe { (*p).clone() }.into_column())
+            .collect();
+        record(if df.width() == 0 {
+            DataFrame::new_infer_height(columns)
+        } else {
+            df.hstack(&columns)
+        })
+    })
+    .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }
 
 #[no_mangle]
@@ -37,13 +41,13 @@ pub extern "C" fn dataframe_vstack(
     a_ptr: *mut DataFrame,
     b_ptr: *mut DataFrame,
 ) -> *mut DataFrame {
-    if a_ptr.is_null() || b_ptr.is_null() {
+    clear_last_error();
+    let (Some(a), Some(b)) =
+        (unsafe { a_ptr.as_ref() }, unsafe { b_ptr.as_ref() })
+    else {
+        set_last_error("dataframe is null");
         return ptr::null_mut();
-    }
-    let a = unsafe { &*a_ptr };
-    let b = unsafe { &*b_ptr };
-    match a.vstack(b) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    };
+    guard_panic(|| record(a.vstack(b)))
+        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }

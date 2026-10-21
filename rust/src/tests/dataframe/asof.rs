@@ -72,6 +72,21 @@ fn asof_invalid_strategy_returns_null() {
     let rk = cstr("ts");
     let out = dataframe_join_asof(left, right, lk.as_ptr(), rk.as_ptr(), 999);
     assert!(out.is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("unknown asof strategy 999")
+    );
+    let missing = cstr("nope");
+    let out = dataframe_join_asof(
+        left,
+        right,
+        missing.as_ptr(),
+        rk.as_ptr(),
+        CompatAsofStrategy::Backward as i32,
+    );
+    assert!(out.is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("\"nope\""), "{}", reason);
     cleanup(left, right, series);
 }
 
