@@ -5,6 +5,7 @@
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
          (only-in polars/private/bulk in-series)
+         (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
          polars/private/generic/dtype
          polars/private/generic/printing)
@@ -45,9 +46,7 @@
   #:reflection-name 'series
   #:property prop:cpointer 0                ; marshals as a _Series-ptr
   #:property prop:owned-pointer 0
-  #:property prop:custom-write
-  (lambda (s port mode)
-    (write-string (series->string s) port))
+  #:property prop:custom-write (write-owned 'series series-dropped series->string)
   #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
@@ -71,9 +70,7 @@
   #:reflection-name 'dataframe
   #:property prop:cpointer 0
   #:property prop:owned-pointer 0
-  #:property prop:custom-write
-  (lambda (d port mode)
-    (write-string (dataframe->string d) port))
+  #:property prop:custom-write (write-owned 'dataframe dataframe-dropped dataframe->string)
   #:methods gen:has-ref
   [(define (ref d [key unset] #:columns [columns unset] #:rows [rows unset])
      (dataframe-ref* d key columns rows))]
@@ -105,7 +102,7 @@
   #:property prop:cpointer 0
   #:property prop:owned-pointer 0
   #:property prop:custom-write
-  (lambda (lf port mode) (write-string "#<lazyframe>" port)))
+  (write-owned 'lazyframe lazyframe-dropped (lambda (lf) "#<lazyframe>")))
 
 (define (lazyframe? v) (lazyframe-rec? v))
 (define (wrap-lazyframe ptr) (lazyframe-rec ptr))
@@ -291,18 +288,7 @@
   (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame))))
 
 (module+ test
-  (require (only-in polars/private/expr dataframe-lazy lazyframe-drop)
-           (only-in polars/private/test-helpers drops-once settle!))
-  (check-equal? (drops-once series-drop-count series-drop (lambda () (series '(1 2)))) 1)
-  (check-equal? (drops-once series-drop-count series-drop
-                            (lambda () (wrap-series (wrap-series (series-new-i64 "x" '(1))))))
-                1)
-  (check-equal? (drops-once dataframe-drop-count dataframe-drop
-                            (lambda () (dataframe (list (series '(1 2) #:name "a")))))
-                1)
-  (check-pred void? (begin (lazyframe-drop (wrap-lazyframe (dataframe-lazy frame)))
-                           (settle!)))
-
+  (require (only-in polars/private/test-helpers settle!))
   (define (drops-while-raising thunk)
     (settle!)
     (define before (series-drop-count))

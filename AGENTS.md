@@ -128,8 +128,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   non-null `_X-ptr` type itself raises a useless `argument is not non-null`
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
-  `deallocator`-wrapped `<type>-drop`, so an explicit drop frees twice
-  (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
+  `deallocator`-wrapped `<type>-drop/raw`, which `<type>-drop` wraps,
+  refusing a dropped value, so an explicit drop frees twice (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
   <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
   `who: operation failed` itself, so no wrapper is needed. A test in
   `foreign.rkt` reads every `define-compat` under `polars/private` and fails
@@ -139,6 +139,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
   around an allocated pointer needs the property too.
+- `define-owned-cpointer-type` defines each of the four pointer types
+  (`_Series-ptr`, `_DataFrame-ptr`, `_Expr-ptr`, `_LazyFrame-ptr`), its
+  predicate and its drop around the `-drop/raw` `define-compat` it is given,
+  which stays a subform so the ownership audit reads it. A drop retags the
+  pointer, which the raw value and every wrapper of it share. The predicate
+  still accepts a retagged pointer, as `port?` accepts a closed port, so every
+  contract and dispatch passes it on to the conversion into Polars, which
+  refuses it on its failure path: the live path costs nothing, a later use
+  raises `series: series has been dropped` (`expr: expression has been
+  dropped`; the kind is the `who`, since no verb is known there), a second
+  drop raises under the drop's own name, and the native release still runs
+  once (#131). The check is made as a call converts its arguments, outside
+  any atomic region, so a drop must not run while another thread uses the
+  same value: a drop between the conversion and the native call frees memory
+  the call then reads.
 - Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
   `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
 - **Failure reasons travel out of band** (#45): an entry point that can fail

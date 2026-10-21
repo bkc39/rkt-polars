@@ -193,6 +193,23 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (col 'float64)
 (col #rx"^he")]}
 
+@defproc[(expr-drop [e Expr-ptr?]) void?]{
+  Releases the native expression @racket[e] holds now, as
+  @racket[series-drop] releases a series. A dropped expression still
+  answers to @racket[Expr-ptr?] and prints as
+  @racketresultfont{#<expr: dropped>}, and any later use raises
+  @racket[exn:fail:contract]: dropping it again names @racket[expr-drop],
+  and any other use names the expression, as
+  @racketerror{expr: expression has been dropped}. As for a series, a drop
+  must not run while another thread uses the same expression.
+
+  @examples[#:eval ev
+(define threshold (> (col "v") 2))
+(expr-drop threshold)
+threshold
+(eval:error (filter (dataframe (list (series '(1 3) #:name "v"))) threshold))
+(eval:error (expr-drop threshold))]}
+
 @deftogether[(@defproc[(meta-output-name [e (or/c Expr-ptr? string?)]) string?]
               @defproc[(meta-root-names [e (or/c Expr-ptr? string?)]) (listof string?)]
               @defproc[(meta-eq? [a (or/c Expr-ptr? string?)] [b (or/c Expr-ptr? string?)]) boolean?])]{
@@ -1839,6 +1856,33 @@ dtype or a specific typed result.
   Recognises a foreign series pointer. Both raw pointers returned by the
   low-level constructors and @racket[series] wrappers satisfy it.}
 
+@defproc[(series-drop [s Series-ptr?]) void?]{
+  Releases the native series @racket[s] holds now, instead of when the
+  collector finds @racket[s] unreachable. @racket[s] is a @racket[series]
+  wrapper or a raw pointer, and the drop reaches every wrapper of the same
+  pointer. A dropped series still answers to @racket[series?] and
+  @racket[Series-ptr?], as a closed port is still a port, and prints as
+  @racketresultfont{#<series: dropped>}; any later use raises
+  @racket[exn:fail:contract]. Dropping it again names @racket[series-drop];
+  any other use names the series, as
+  @racketerror{series: series has been dropped}, since the check is made where
+  the pointer crosses into Polars, not by each verb.
+
+  A drop must not run while another thread uses the same series: the check
+  is made as the call converts its arguments, so a drop between that and the
+  native call frees memory the call goes on to read, which can crash Racket
+  or return wrong values. Nothing guards against it; a program that shares a
+  value between threads synchronises the drop with them, or leaves the
+  release to the collector, which never runs it while a thread can still
+  reach the value.
+
+  @examples[#:eval ev
+(define temps (series '(21.5 23.0 19.8) #:name "temp"))
+(series-drop temps)
+temps
+(eval:error (len temps))
+(eval:error (series-drop temps))]}
+
 @deftogether[(@defproc[(series-new-i8   [name string?] [values list?]) Series-ptr?]
               @defproc[(series-new-i16  [name string?] [values list?]) Series-ptr?]
               @defproc[(series-new-i32  [name string?] [values list?]) Series-ptr?]
@@ -2210,6 +2254,23 @@ generic operations are simply the preferred surface.
   Recognises a foreign dataframe pointer. Both raw pointers returned by the
   low-level operations and @racket[dataframe] wrappers satisfy it.}
 
+@defproc[(dataframe-drop [d DataFrame-ptr?]) void?]{
+  Releases the native frame @racket[d] holds now, as @racket[series-drop]
+  releases a series. A dropped frame still answers to @racket[dataframe?]
+  and @racket[DataFrame-ptr?] and prints as
+  @racketresultfont{#<dataframe: dropped>}, and any later use raises
+  @racket[exn:fail:contract]: dropping it again names
+  @racket[dataframe-drop], and any other use names the frame, as
+  @racketerror{dataframe: dataframe has been dropped}. As for a series, a
+  drop must not run while another thread uses the same frame.
+
+  @examples[#:eval ev
+(define readings (dataframe (list (series '(3 1 2) #:name "v"))))
+(dataframe-drop readings)
+readings
+(eval:error (height readings))
+(eval:error (dataframe-drop readings))]}
+
 @defproc[(dataframe-vstack [top DataFrame-ptr?] [bottom DataFrame-ptr?]) DataFrame-ptr?]{
   Stacks the rows of @racket[bottom] beneath those of @racket[top], which must
   have the same columns in the same order, and returns the combined frame
@@ -2306,6 +2367,23 @@ are the wrapper-returning equivalents.
   @racket[LazyFrame-ptr?] recognises a foreign lazyframe pointer, raw or
   wrapped. @racket[lazyframe?] recognises only the wrapper produced by the
   fluent @racket[lazy].}
+
+@defproc[(lazyframe-drop [lf LazyFrame-ptr?]) void?]{
+  Releases the native plan @racket[lf] holds now, as @racket[series-drop]
+  releases a series. A dropped plan still answers to @racket[lazyframe?]
+  and @racket[LazyFrame-ptr?] and prints as
+  @racketresultfont{#<lazyframe: dropped>}, and any later use raises
+  @racket[exn:fail:contract]: dropping it again names
+  @racket[lazyframe-drop], and any other use names the plan, as
+  @racketerror{lazyframe: lazyframe has been dropped}. As for a series, a
+  drop must not run while another thread uses the same plan.
+
+  @examples[#:eval ev
+(define query (lazy (dataframe (list (series '(3 1 2) #:name "v")))))
+(lazyframe-drop query)
+query
+(eval:error (collect query))
+(eval:error (lazyframe-drop query))]}
 
 @deftogether[(@defproc[(dataframe-lazy [df DataFrame-ptr?]) LazyFrame-ptr?]
               @defproc[(lazyframe-collect [lf LazyFrame-ptr?]) DataFrame-ptr?])]{
