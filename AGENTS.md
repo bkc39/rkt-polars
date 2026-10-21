@@ -327,8 +327,10 @@ it. Racket side: `define-compat` with `#:c-id`.
     faster on nycflights. Given `n_rows`, the eager reader stops spawning
     chunks once the chunks already parsed hold more rows, so whether it
     reaches a later chunk that fails (a late `NA` in an inferred integer
-    column) depends on thread timing (#147). The scan parses line batches
-    in order, the first 32 KiB and each later one larger, and stops at the
+    column) depends on thread timing (#147). The scan cuts line batches in
+    order (the first is what schema inference read, at least 32 KiB or the
+    whole file with `#:infer-schema-length #f`, plus 32 KiB; each later one
+    larger, up to 512 KiB), decodes them in parallel, and stops at the
     first batch past the slice, so a bad value beyond it is not reported:
     deterministic, but dependent on the file's size. Given
     `#:comment-prefix` too, polars-stream does not push the slice into the
