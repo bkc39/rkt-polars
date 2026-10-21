@@ -2649,6 +2649,17 @@
     (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)
                     #:how 'cross))
   (check-equal? (dataframe-height crossed) 4) ;; 2 * 2
+  (for ([->name (list string->bytes/utf-8 string->path)])
+    (check-equal? (dataframe-height
+                   (dataframe-join users-df orders-df #:on (list (->name "uid")) #:how 'inner))
+                  3)
+    (check-equal? (series-sum-i32
+                   (dataframe-column (dataframe-join-asof grouped-observations-df
+                                                          grouped-calibration-df
+                                                          #:on (->name "time")
+                                                          #:by (list (->name "sensor")))
+                                     "offset"))
+                  550))
 
   ;; vstack — append rows from a compatible dataframe
   (define more-users
