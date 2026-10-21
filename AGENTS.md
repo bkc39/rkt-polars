@@ -327,7 +327,14 @@ it. Racket side: `define-compat` with `#:c-id`.
     faster on nycflights. Given `n_rows`, the eager reader stops spawning
     chunks once the chunks already parsed hold more rows, so whether it
     reaches a later chunk that fails (a late `NA` in an inferred integer
-    column) depends on thread timing (#147). Both are built
+    column) depends on thread timing (#147). The scan parses line batches
+    in order, the first 32 KiB and each later one larger, and stops at the
+    first batch past the slice, so a bad value beyond it is not reported:
+    deterministic, but dependent on the file's size. Given
+    `#:comment-prefix` too, polars-stream does not push the slice into the
+    CSV source, so the scan parses the whole file: a bad value anywhere in
+    it fails the read, and `#:n-rows 5` of a 100 MB file takes about
+    105 ms, against 15 ms for the eager reader. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
     one listed exception, a malformed-quote error's chunk locator.

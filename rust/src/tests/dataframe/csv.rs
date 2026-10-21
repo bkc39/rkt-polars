@@ -122,11 +122,15 @@ fn write(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 }
 
 fn int_column_with_late_na() -> String {
+    int_column_with_na_after(150)
+}
+
+fn int_column_with_na_after(rows: usize) -> String {
     let mut text = String::from("id,delay\n");
-    for i in 0..150 {
+    for i in 0..rows {
         text.push_str(&format!("{},{}\n", i, i % 7));
     }
-    text.push_str("150,NA\n");
+    text.push_str(&format!("{},NA\n", rows));
     text
 }
 
@@ -689,7 +693,8 @@ fn skip_rows_and_n_rows_apply_to_a_read() {
 #[test]
 fn an_n_rows_read_gives_the_scan_outcome_every_time() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let late_na = int_column_with_late_na();
+    let late_na = int_column_with_na_after(4500);
+    assert!((16 * 1024..32 * 1024).contains(&late_na.len()));
     let path = write(dir.path(), "late-na.csv", late_na.as_bytes());
     let mut csv = Csv::default();
     csv.options.has_n_rows = true;
