@@ -308,7 +308,7 @@
     (check-raises 'contract #rx"^>: contract violation\n  expected: [(]or/c boolean?" thunk))
   (for ([thunk (list (lambda () (p+ (col "v") (expt 2 63))) (lambda () (p+ (expt 2 63) (col "v"))))])
     (check-raises 'contract
-                  #rx"^[+]: contract violation\n  expected: [(]integer-in -9223372036854775808" thunk))
+                  #rx"^[+]: contract violation\n  expected: int64/c\n" thunk))
   (for ([thunk (list (lambda () (> (col "d") far-date)) (lambda () (> far-date (col "d"))))])
     (check-raises 'contract #rx"^>: value out of range for this dtype\n" thunk))
   (check-raises 'contract #rx"^and: contract violation\n" (lambda () (p-and (col "v") #\a)))

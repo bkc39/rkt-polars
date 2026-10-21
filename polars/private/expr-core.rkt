@@ -11,7 +11,7 @@
                   non-empty-listof not/c or/c rename-contract)
          racket/match
          racket/runtime-path
-         (only-in polars/private/c-integer c-int32/c c-int64/c)
+         (only-in polars/private/c-integer int32/c int64/c)
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
@@ -36,8 +36,8 @@
          ->expr ->expr/who lit/who
          dtype-spec?
          (contract-out
-          [expr-lit-i32 (->/c c-int32/c Expr-ptr?)]
-          [expr-lit-i64 (->/c c-int64/c Expr-ptr?)]
+          [expr-lit-i32 (->/c int32/c Expr-ptr?)]
+          [expr-lit-i64 (->/c int64/c Expr-ptr?)]
           [lit (->/c lit-value/c Expr-ptr?)]
           [col (->/c col-spec/c Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
@@ -151,30 +151,30 @@
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
 
-
 (define (lit-value? v)
   (or (boolean? v) (string? v) (symbol? v) (polars-null? v)
-      (and (real? v) (or (not (exact-integer? v)) (c-int64/c v)))
+      (and (real? v) (or (not (exact-integer? v)) (int64/c v)))
       (and (temporal-value-dtype v) #t)))
 
 (define lit-value/c
   (flat-named-contract
-   '(or/c boolean? (integer-in -9223372036854775808 9223372036854775807)
-          (and/c real? (not/c exact-integer?)) string? symbol? polars-null? gregor-value)
+   `(or/c boolean? ,(contract-name int64/c) (and/c real? (not/c exact-integer?)) string? symbol?
+          polars-null? gregor-value)
    lit-value?))
 
 (define (lit/who who v)
   (cond
     [(boolean? v) (expr-lit-bool v)]
-    [(and (exact-integer? v) (<= -2147483648 v 2147483647)) (expr-lit-i32 v)]
-    [(and (exact-integer? v) (c-int64/c v)) (expr-lit-i64 v)]
-    [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name c-int64/c)) v)]
-    [(real? v) (expr-lit-f64 (exact->inexact v))]
+    [(int32/c v) (expr-lit-i32 v)]
+    [(int64/c v) (expr-lit-i64 v)]
+    [(and (real? v) (not (exact-integer? v))) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
     [(polars-null? v) (expr-lit-null)]
     [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit who v dtype))]
-    [else (raise-argument-error who (format "~s" (contract-name lit-value/c)) v)]))
+    [else
+     (define expected (if (exact-integer? v) int64/c lit-value/c))
+     (raise-argument-error who (format "~s" (contract-name expected)) v)]))
 
 (define (lit v)
   (lit/who 'lit v))
@@ -298,9 +298,7 @@
     (check-exn (regexp (format "^lit: contract violation\n  expected: [^\n]*\n  given: ~a\n"
                                (regexp-quote (format "~e" v))))
                (lambda () (contracted:lit v))))
-  (check-exn (regexp (string-append "^expr-add: contract violation\n  expected: \\(integer-in "
-                                    "-9223372036854775808 9223372036854775807\\)\n"
-                                    "  given: 9223372036854775808$"))
+  (check-exn #rx"^expr-add: contract violation\n  expected: int64/c\n  given: 9223372036854775808$"
              (lambda () (->expr/who 'expr-add (expt 2 63))))
   (check-exn #rx"^\\+: contract violation\n  expected: \\(or/c boolean\\? [^\n]*\n  given: #\\\\a$"
              (lambda () (->expr/who '+ #\a)))

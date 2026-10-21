@@ -1,29 +1,16 @@
 #lang racket/base
 
-(require (only-in racket/contract/base
-                  and/c flat-named-contract integer-in not/c unsupplied-arg?)
-         (only-in racket/list check-duplicates))
+(require (only-in racket/contract/base and/c flat-named-contract not/c unsupplied-arg?)
+         (only-in racket/list check-duplicates)
+         (only-in polars/private/c-integer
+                  int64/c positive-size/c size-max size/c uint32/c))
 
-(provide c-string/c column-index/c column-name/c distinct-names? distinct? given int64/c
-         nonnegative-int64/c positive-size/c row-index/c size-max size/c)
+(provide c-string/c column-index/c column-name/c distinct-names? distinct? given positive-size/c
+         row-index/c size-max size/c)
 
-(define size-max (sub1 (expt 2 64)))
+(define row-index/c (flat-named-contract 'row-index/c uint32/c))
 
-(define size/c (flat-named-contract 'size/c (integer-in 0 size-max)))
-
-(define positive-size/c (flat-named-contract 'positive-size/c (integer-in 1 size-max)))
-
-(define row-index/c (flat-named-contract 'row-index/c (integer-in 0 (sub1 (expt 2 32)))))
-
-(define int64-min (- (expt 2 63)))
-
-(define int64-max (sub1 (expt 2 63)))
-
-(define int64/c (flat-named-contract 'int64/c (integer-in int64-min int64-max)))
-
-(define nonnegative-int64/c (flat-named-contract 'nonnegative-int64/c (integer-in 0 int64-max)))
-
-(define column-index/c (flat-named-contract 'column-index/c (integer-in int64-min int64-max)))
+(define column-index/c (flat-named-contract 'column-index/c int64/c))
 
 (define nul-free? (and/c string? (not/c #rx"\0")))
 
@@ -44,21 +31,8 @@
   (require rackunit
            (only-in racket/contract/base contract-name))
 
-  (check-true (size/c 0))
-  (check-true (size/c size-max))
-  (check-false (size/c (add1 size-max)))
-  (check-false (size/c -1))
-  (check-false (positive-size/c 0))
-  (check-true (positive-size/c size-max))
-  (check-false (positive-size/c (add1 size-max)))
   (check-true (row-index/c 0))
   (check-true (row-index/c (sub1 (expt 2 32))))
-  (check-true (int64/c (- (expt 2 63))))
-  (check-false (int64/c (expt 2 63)))
-  (check-true (nonnegative-int64/c 0))
-  (check-true (nonnegative-int64/c (sub1 (expt 2 63))))
-  (check-false (nonnegative-int64/c -1))
-  (check-false (nonnegative-int64/c (expt 2 63)))
   (check-false (row-index/c (expt 2 32)))
   (check-false (row-index/c -1))
   (check-true (column-index/c (- (expt 2 63))))
@@ -78,6 +52,5 @@
   (check-equal? (given #f 0) #f)
   (check-equal? (map contract-name
                      (list size/c positive-size/c row-index/c column-index/c column-name/c
-                           c-string/c int64/c nonnegative-int64/c))
-                '(size/c positive-size/c row-index/c column-index/c column-name/c c-string/c
-                         int64/c nonnegative-int64/c)))
+                           c-string/c))
+                '(size/c positive-size/c row-index/c column-index/c column-name/c c-string/c)))

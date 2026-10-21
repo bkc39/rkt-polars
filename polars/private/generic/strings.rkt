@@ -10,9 +10,8 @@
          (only-in racket/string non-empty-string?)
          polars/private/foreign
          polars/private/expr
-         (only-in polars/private/c-integer c-size/c)
+         (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
          (only-in polars/private/expr-str parse-datetime)
-         (only-in polars/private/io-contracts int64/c nonnegative-int64/c)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
@@ -23,7 +22,7 @@
          str-find str-find-literal str-count-matches
          str->date str->time
          (contract-out
-          [str-extract (->* (col-expr/c any/c) (#:group-index c-size/c) Expr-ptr?)]
+          [str-extract (->* (col-expr/c any/c) (#:group-index size/c) Expr-ptr?)]
           [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
                           ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
                           Expr-ptr?)]

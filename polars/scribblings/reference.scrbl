@@ -39,6 +39,17 @@ Underneath sits a monomorphic, dtype-suffixed layer (@racket[series-new-i32],
 for completeness --- see @secref["ref-expressions"] and the low-level
 subsections --- but the generic spelling is the preferred one throughout.
 
+A count, position or option that Polars holds in a fixed-width integer is
+contracted by its @deftech{integer range}, which the signatures name:
+@racket[uint8/c], @racket[uint16/c], @racket[uint32/c] and @racket[uint64/c]
+are the unsigned 8-, 16-, 32- and 64-bit integers, @racket[int32/c] and
+@racket[int64/c] the signed 32- and 64-bit ones, @racket[nonnegative-int64/c]
+an @racket[int64/c] from @racket[0], @racket[size/c] a native size (an
+unsigned 64-bit integer) and @racket[positive-size/c] one from @racket[1].
+@racket[row-index/c] is a @racket[uint32/c] and @racket[column-index/c] an
+@racket[int64/c]. A value outside its range is a contract error that names
+the range.
+
 @section[#:tag "ref-fluent"]{Operators and pipelines}
 
 This is the surface to write @racketmodname[polars] in. An
@@ -64,10 +75,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean?
-                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
-                                     (and/c real? (not/c exact-integer?)) string? symbol?
-                                     polars-null? #,(tt "gregor-value"))])
+              @defproc[(lit [v (or/c boolean? int64/c (and/c real? (not/c exact-integer?))
+                                     string? symbol? polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
@@ -574,13 +583,13 @@ far-zoned
 (shape (with-column (dataframe '()) (series '(1 2) #:name "w")))
 (eval:error (with-column top (series '(1 2 3) #:name "w")))]}
 
-@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n (integer-in 0 18446744073709551615)]) any/c]
-              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n (integer-in 0 18446744073709551615)]) any/c]
+@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)] [n size/c])
+                       any/c]
+              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)] [n size/c])
+                       any/c]
               @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                              [offset (integer-in -9223372036854775808 9223372036854775807)]
-                              [length (integer-in 0 18446744073709551615)]) any/c])]{
+                              [offset int64/c]
+                              [length size/c]) any/c])]{
   The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
   starting at @racket[offset], of the same kind as @racket[x] (Polars'
   @tt{head}, @tt{tail}, @tt{slice}); a negative @racket[offset] counts from
@@ -699,8 +708,7 @@ by-quarter
                     [#:right-by right-by (or/c #f (listof string?)) #f]
                     [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
                     [#:tolerance tolerance
-                                 (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
-                                       (and/c real? (not/c exact-integer?)))
+                                 (or/c #f int64/c (and/c real? (not/c exact-integer?)))
                                  #f])
          dataframe?]{
   Matches each row of @racket[left] to the nearest row of @racket[right] by
@@ -733,9 +741,7 @@ by-quarter
   by a bare @litchar{dir/*}.
 
   A @racket[csv-char/c] is one ASCII character other than newline or
-  return. A @racket[size/c] is a count or position Polars takes as a native
-  size, an unsigned 64-bit integer, a @racket[positive-size/c] one from
-  @racket[1], and a @racket[row-index/c] an unsigned 32-bit integer. A
+  return; the integer contracts are @tech{integer ranges}. A
   @racket[c-string/c] is a string without a NUL, and so is a
   @racket[column-name/c].
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
@@ -1069,8 +1075,7 @@ stations
   by a bare @litchar{dir/*}, and makes a read of the directory fail.
 
   @racket[columns] picks columns by name, or by position from 0 (negative
-  counts from the end, a @racket[column-index/c] being a signed 64-bit
-  integer), in the order given; a name the file lacks, a position out of
+  counts from the end), in the order given; a name the file lacks, a position out of
   range or a column picked twice is an error. A name is matched literally.
   @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
   column numbering the rows from @racket[row-index-offset]; a row number
@@ -1395,7 +1400,7 @@ stations
 @deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
-                             [#:seed seed (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])
+                             [#:seed seed (or/c uint64/c #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series? (listof exact-integer?))])
@@ -1416,6 +1421,47 @@ stations
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
 (~> scores (select (gather "name" '(3 0))))
 (eval:error (rank "score" #:method 'first))]}
+
+@deftogether[(@defproc[(shift [x (or/c Expr-ptr? string?)]
+                              [#:n n int64/c 1]
+                              [#:fill-value fill-value any/c #f])
+                       Expr-ptr?]
+              @defproc[(diff [x (or/c Expr-ptr? string?)]
+                             [#:n n int64/c 1]
+                             [#:null-behavior null-behavior (or/c 'ignore 'drop) 'ignore])
+                       Expr-ptr?])]{
+  @racket[shift] moves each value @racket[n] rows down, or up for a negative
+  @racket[n], and fills the rows it vacates with null, or with
+  @racket[fill-value] lifted by @racket[lit] (@tt{.shift}). @racket[diff] is
+  each value less the one @racket[n] rows before it (@tt{.diff});
+  @racket['drop] removes the leading nulls that leaves.
+
+  @examples[#:eval ev
+(define steps (dataframe (list (series '(1 3 6 10) #:name "v"))))
+(select steps
+        (alias (shift "v") "down")
+        (alias (shift "v" #:n -1 #:fill-value 0) "up")
+        (alias (diff "v") "change"))
+(select steps (diff "v" #:null-behavior 'drop))
+(eval:error (shift "v" #:n (expt 2 63)))]}
+
+@deftogether[(@defproc[(forward-fill [x (or/c Expr-ptr? string?)]
+                                     [#:limit limit (or/c uint32/c #f) #f])
+                       Expr-ptr?]
+              @defproc[(backward-fill [x (or/c Expr-ptr? string?)]
+                                      [#:limit limit (or/c uint32/c #f) #f])
+                       Expr-ptr?])]{
+  Each null takes the nearest non-null value before it (@tt{.forward_fill})
+  or after it (@tt{.backward_fill}); @racket[#:limit] caps how many nulls in
+  a row one value fills.
+
+  @examples[#:eval ev
+(define gaps (dataframe (list (series (list 1 polars-null polars-null 4) #:name "v"))))
+(select gaps
+        (alias (forward-fill "v") "forward")
+        (alias (forward-fill "v" #:limit 1) "forward_1")
+        (alias (backward-fill "v") "backward"))
+(eval:error (forward-fill "v" #:limit -1))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...+) any/c]
@@ -1459,9 +1505,9 @@ stations
               @defproc[(n-unique [x (or/c series? string? Expr-ptr?)]) any/c]
               @defproc[(median   [x any/c]) any/c]
               @defproc[(std [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
+                            [#:ddof ddof uint8/c 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
+                            [#:ddof ddof uint8/c 1]) any/c]
               @defproc[(alias [e (or/c Expr-ptr? string?)] [name string?]) Expr-ptr?])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
@@ -1500,17 +1546,20 @@ stations
 
 @deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
               @defproc[(round [x (or/c Expr-ptr? string? number?)]
-                              [#:decimals decimals exact-nonnegative-integer? 0]) any/c])]{
+                              [#:decimals decimals uint32/c 0]) any/c])]{
   Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
   (@tt{.round}). Each takes an expression or a bare column-name string (lifted
   with @racket[col]); @racket[round] on a plain number falls back to numeric
-  rounding. Ties round to even in both cases, as in Python Polars and
-  @racketmodname[racket/base]. See @secref["fluent-shadowing"].
+  rounding, where @racket[decimals] may be any number. Ties round to even in
+  both cases, as in Python Polars and @racketmodname[racket/base]. See
+  @secref["fluent-shadowing"].
 
   @examples[#:eval ev
 (~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
     (select (round "x")))
-(round 2.5)]}
+(round 2.5)
+(round 1234 #:decimals -2)
+(eval:error (round "x" #:decimals -1))]}
 
 @defproc[(sign [x (or/c Expr-ptr? string?)]) Expr-ptr?]{
   The sign of each element (@tt{.sign}): @racket[-1], @racket[0] or
@@ -1568,8 +1617,7 @@ stations
   Substring of @racket[length] characters from @racket[offset]
   (@tt{.str.slice}); a negative @racket[offset] counts from the end;
   @racket[#f] (or @racket[polars-null], or a null row of a @racket[length]
-  expression) runs to the end. An @racket[int64/c] is a signed 64-bit
-  integer, a @racket[nonnegative-int64/c] one from @racket[0].
+  expression) runs to the end.
 
   @examples[#:eval ev
 (define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
@@ -1581,7 +1629,7 @@ stations
 (eval:error (str-slice "s" 0 -1))]}
 
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
-                                    [#:group-index group-index (integer-in 0 18446744073709551615) 1])
+                                    [#:group-index group-index size/c 1])
                        Expr-ptr?]
               @defproc[(str->date [x (or/c Expr-ptr? string?)]
                                   [#:format format (or/c string? #f) #f]
@@ -2182,7 +2230,7 @@ temps
   (@racketid[series-new-i32/vec], @racketid[series-new-f64/vec], …) that takes a
   vector instead of a list.}
 
-@defproc[(series-new-null [name string?] [length exact-nonnegative-integer?]) Series-ptr?]{
+@defproc[(series-new-null [name string?] [length size/c]) Series-ptr?]{
   Builds a series of @racket[length] nulls of dtype @racket['null]. It is
   what @racket[(series '())] and @racket[series] with @racket[#:dtype 'null]
   build on.
@@ -2859,8 +2907,8 @@ built.
               @defproc[(expr-n-unique [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-first    [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-last     [e Expr-ptr?]) Expr-ptr?]
-              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof (integer-in 0 255) 1]) Expr-ptr?]
-              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof (integer-in 0 255) 1]) Expr-ptr?])]{
+              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof uint8/c 1]) Expr-ptr?]
+              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof uint8/c 1]) Expr-ptr?])]{
   Aggregations. Each reduces the column @racket[e] evaluates to — over the
   whole frame in a @emph{select}, or per group inside @emph{group_by/agg}.
   @racket[expr-count] counts the non-null entries, as Polars' @tt{.count()}

@@ -5,16 +5,16 @@
 ;; (#:n, #:null-behavior).  Each takes an Expr or a bare column-name string
 ;; (auto-lifted via col).
 
-(require (only-in racket/contract/base ->* any/c contract-out or/c)
-         (only-in polars/private/c-integer c-int64/c)
+(require (only-in racket/contract/base ->* any/c contract-out)
+         (only-in polars/private/c-integer int64/c)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
 (provide cum-sum cum-prod cum-min cum-max cum-count
          (contract-out
-          [shift (->* (col-expr/c) (#:n c-int64/c #:fill-value any/c) Expr-ptr?)]
-          [diff (->* (col-expr/c) (#:n c-int64/c #:null-behavior (or/c 'ignore 'drop))
+          [shift (->* (col-expr/c) (#:n int64/c #:fill-value any/c) Expr-ptr?)]
+          [diff (->* (col-expr/c) (#:n int64/c #:null-behavior null-behavior/c)
                      Expr-ptr?)]))
 
 (define (cum-sum x #:reverse [reverse #f])
@@ -39,6 +39,7 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in polars/private/bulk series->list)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape)     ; with-columns
@@ -68,4 +69,18 @@
   (check-equal? (c "sm1" 4) polars-null)  ; shifted up -> trailing null
   (check-equal? (c "s1f" 0) 0)            ; vacated slot filled with 0
   (check-equal? (c "d1" 0) polars-null)
-  (check-equal? (c "d1" 1) 1))            ; 2-1
+  (check-equal? (c "d1" 1) 1)             ; 2-1
+  (define (columns d)
+    (map (lambda (name) (series->list (ref d name))) (column-names d)))
+  (define steps (dataframe (list (series '(1 3 6 10) #:name "v"))))
+  (check-equal? (columns (select steps
+                                 (alias (shift "v") "down")
+                                 (alias (shift "v" #:n -1 #:fill-value 0) "up")
+                                 (alias (diff "v") "change")))
+                (list (list polars-null 1 3 6) '(3 6 10 0) (list polars-null 2 3 4)))
+  (check-equal? (columns (select steps (diff "v" #:null-behavior 'drop))) '((2 3 4))))
+
+(module+ test
+  (require (only-in polars/private/test-helpers contract-violation-of)
+           (prefix-in contracted: (submod "..")))
+  (check-exn (contract-violation-of 'shift) (lambda () (contracted:shift "v" #:n (expt 2 63)))))

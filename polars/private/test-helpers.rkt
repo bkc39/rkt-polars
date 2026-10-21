@@ -4,13 +4,15 @@
 ;; can use these without a module cycle.
 
 (require (only-in file/gzip gzip-through-ports)
-         (only-in racket/contract exn:fail:contract:blame?)
+         (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file display-to-file file->bytes)
+         (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
-         (only-in racket/string string-contains?))
+         (only-in racket/string string-contains? string-prefix?)
+         syntax/parse/define)
 
 (provide apply-keywords contains-all? contract-violation-of drops-once gzip-file
-         keyword-rejected? message-of scratch-file settle! staging-files)
+         keyword-rejected? message-of refusal refusal-misses scratch-file settle! staging-files)
 
 (define (scratch-file dir name text)
   (define path (build-path dir name))
@@ -57,3 +59,18 @@
   (drop (make))
   (settle!)
   (- (count) before))
+
+(define-syntax-parse-rule (refusal who:expr contract:expr given:expr call:expr)
+  (list who contract given (lambda () call)))
+
+(define (refusal-miss row)
+  (match-define (list who contract given thunk) row)
+  (define expected
+    (format "~a: contract violation\n  expected: ~s\n  given: ~e\n"
+            who (contract-name contract) given))
+  (define message (with-handlers ([exn:fail:contract:blame? exn-message]) (thunk) #f))
+  (and (not (and message (string-prefix? message expected)))
+       (list who given message)))
+
+(define (refusal-misses rows)
+  (filter values (map refusal-miss rows)))

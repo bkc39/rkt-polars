@@ -2,7 +2,7 @@
 
 (require racket/match
          (only-in racket/contract/base
-                  -> ->* ->i any/c contract-out flat-contract-predicate integer-in listof or/c
+                  -> ->* ->i any/c contract-out flat-contract-predicate listof or/c
                   unsupplied-arg?)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
@@ -14,7 +14,7 @@
          (only-in polars/private/resource with-release)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
-         (only-in polars/private/io-contracts size-max)
+         (only-in polars/private/c-integer int64-max int64/c size/c uint32-max)
          (only-in polars/private/generic/dtype dtype-spec?)
          (only-in polars/private/generic/expr-util col-expr/c))
 
@@ -22,9 +22,9 @@
                      group-by agg rename with-column)
          (contract-out
           [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
-          [head (-> rows-source/c count/c any/c)]
-          [tail (-> rows-source/c count/c any/c)]
-          [slice (-> rows-source/c offset/c count/c any/c)]
+          [head (-> rows-source/c size/c any/c)]
+          [tail (-> rows-source/c size/c any/c)]
+          [slice (-> rows-source/c int64/c size/c any/c)]
           [drop (->i ([x (or/c dataframe? list?)]
                       [arg (x) (if (dataframe? x) column-names/c any/c)])
                      [result any/c])]
@@ -48,13 +48,9 @@
 
 (define rows-source/c (or/c series? dataframe? lazyframe? Expr-ptr?))
 
-(define offset/c (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
+(define lazy-rows-max uint32-max)
 
-(define count/c (integer-in 0 size-max))
-
-(define lazy-rows-max (sub1 (expt 2 32)))
-
-(define expr-rows-max (sub1 (expt 2 63)))
+(define expr-rows-max int64-max)
 
 (define (clamped-window offset length limit)
   (define start (max offset (- limit)))

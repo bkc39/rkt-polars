@@ -8,8 +8,8 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          (only-in racket/contract/base [-> ->/c] ->* any/c contract-out or/c)
-         (only-in racket/list filter-not)
-         (only-in polars/private/c-integer c-int64/c c-size/c c-uint8/c c-uint32/c c-uint64/c)
+         (only-in racket/list filter-not index-of)
+         (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
@@ -27,7 +27,7 @@
                   series-new-i64 series-new-f64 series-new-str series-new-bool
                   series-new-null
                   dataframe-drop
-                  frame-sort/c sort-flags
+                  frame-sort/c provide-row-windows sort-flags
                   _CompatDType ->compat-dtype check-enum-categories enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
@@ -107,28 +107,26 @@
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-over
          expr-when
+         null-behavior/c rank-method/c
          dataframe-lazy
          lazyframe-with-columns lazyframe-collect lazyframe-collect/raw
          lazyframe-filter lazyframe-select
          lazyframe-group-by-agg
          lazyframe-unique lazyframe-drop-nulls
          (contract-out
-          [expr-forward-fill (->* (Expr-ptr?) (#:limit (or/c #f c-uint32/c)) Expr-ptr?)]
-          [expr-backward-fill (->* (Expr-ptr?) (#:limit (or/c #f c-uint32/c)) Expr-ptr?)]
-          [expr-round (->* (Expr-ptr?) (#:decimals c-uint32/c) Expr-ptr?)]
-          [expr-shift (->* (Expr-ptr?) (#:n c-int64/c #:fill-value any/c) Expr-ptr?)]
-          [expr-diff (->* (Expr-ptr?) (#:n c-int64/c #:null-behavior any/c) Expr-ptr?)]
+          [expr-forward-fill (->* (Expr-ptr?) (#:limit (or/c #f uint32/c)) Expr-ptr?)]
+          [expr-backward-fill (->* (Expr-ptr?) (#:limit (or/c #f uint32/c)) Expr-ptr?)]
+          [expr-round (->* (Expr-ptr?) (#:decimals uint32/c) Expr-ptr?)]
+          [expr-shift (->* (Expr-ptr?) (#:n int64/c #:fill-value any/c) Expr-ptr?)]
+          [expr-diff (->* (Expr-ptr?) (#:n int64/c #:null-behavior null-behavior/c) Expr-ptr?)]
           [expr-rank (->* (Expr-ptr?)
-                          (#:method any/c #:descending any/c #:seed (or/c #f c-uint64/c))
+                          (#:method rank-method/c #:descending boolean? #:seed (or/c #f uint64/c))
                           Expr-ptr?)]
-          [expr-head (->* (Expr-ptr?) (#:n (or/c #f c-size/c)) Expr-ptr?)]
-          [expr-tail (->* (Expr-ptr?) (#:n (or/c #f c-size/c)) Expr-ptr?)]
-          [expr-slice (->/c Expr-ptr? c-int64/c c-int64/c Expr-ptr?)]
-          [expr-std (->* (Expr-ptr?) (#:ddof c-uint8/c) Expr-ptr?)]
-          [expr-var (->* (Expr-ptr?) (#:ddof c-uint8/c) Expr-ptr?)]
-          [lazyframe-head (->/c LazyFrame-ptr? c-size/c LazyFrame-ptr?)]
-          [lazyframe-tail (->/c LazyFrame-ptr? c-size/c LazyFrame-ptr?)]
-          [lazyframe-slice (->/c LazyFrame-ptr? c-int64/c c-size/c LazyFrame-ptr?)]
+          [expr-head (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
+          [expr-tail (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
+          [expr-slice (->/c Expr-ptr? int64/c int64/c Expr-ptr?)]
+          [expr-std (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
+          [expr-var (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [lazyframe-explain (explain/c LazyFrame-ptr?)]
           [lazyframe-join (frame-join/c LazyFrame-ptr? (lambda (_) LazyFrame-ptr?)
                                         (lambda (_) LazyFrame-ptr?) 'lazyframe-join/c)])
@@ -206,7 +204,7 @@
   (call-with-plan df extend (lambda (plan) (lazyframe-collect/who who plan))))
 
 (module+ internal
-  (provide call-with-plan collect-plan/who lazyframe-collect/who))
+  (provide call-with-plan collect-plan/who expr-std expr-var lazyframe-collect/who))
 
 ;; --- Phase A2: Expr operations ---
 
@@ -463,13 +461,10 @@
   #:c-id expr_diff
   #:wrap (allocator expr-drop))
 
-(define (null-behavior->byte who nb)
-  (case nb
-    [(ignore) 0] [(drop) 1]
-    [else (error who "null-behavior must be 'ignore or 'drop, got ~v" nb)]))
+(define null-behavior/c (or/c 'ignore 'drop))
 
 (define (expr-diff e #:n [n 1] #:null-behavior [null-behavior 'ignore])
-  (expr-diff/raw e n (null-behavior->byte 'expr-diff null-behavior)))
+  (expr-diff/raw e n (if (eq? null-behavior 'drop) 1 0)))
 
 ;; --- Sorting / selection helpers ---
 
@@ -519,14 +514,13 @@
   #:c-id expr_rank
   #:wrap (allocator expr-drop))
 
-(define (rank-method->byte who method)
-  (case method
-    [(average) 0] [(min) 1] [(max) 2] [(dense) 3] [(ordinal) 4]
-    [else (error who "method must be one of 'average 'min 'max 'dense 'ordinal, got ~v" method)]))
+(define rank-methods '(average min max dense ordinal))
+
+(define rank-method/c (apply or/c rank-methods))
 
 (define (expr-rank e #:method [method 'average] #:descending [descending #f] #:seed [seed #f])
   (expr-rank/raw e
-                 (rank-method->byte 'expr-rank method)
+                 (index-of rank-methods method)
                  (if descending 1 0)
                  (if seed 1 0)
                  (or seed 0)))
@@ -763,6 +757,8 @@
 (define-compat lazyframe-slice
   (_fun _LazyFrame-ptr _int64 _size -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
+
+(provide-row-windows LazyFrame-ptr? lazyframe-head lazyframe-tail lazyframe-slice)
 
 ;; --- Phase A8: lazy join ---
 
@@ -1677,8 +1673,10 @@
   (check-equal? (c5 "s1")   (list polars-null 1 2 3 4))
   (check-equal? (c5 "s1f")  '(0 1 2 3 4))
   (check-equal? (c5 "d1")   (list polars-null 1 1 1 1))
-  (check-exn exn:fail? (lambda () (expr-diff (col "x") #:null-behavior 'wat)))
-  (check-exn exn:fail? (lambda () (expr-shift (col "x") #:n 1.5)))
+  (check-exn #rx"^expr-diff: contract violation"
+             (lambda () (contracted:expr-diff (col "x") #:null-behavior 'wat)))
+  (check-exn #rx"^expr-shift: contract violation"
+             (lambda () (contracted:expr-shift (col "x") #:n 1.5)))
 
   ;; --- sorting / selection helpers ---
   (define df-s
@@ -1766,7 +1764,7 @@
              (lambda () (lazyframe-collect bad-glob)))
   (for ([op (list expr-add expr-sub expr-mul expr-div expr-mod expr-gt expr-lt expr-ge expr-le
                   expr-eq expr-ne expr-and expr-or expr-xor)])
-    (check-exn (regexp (format "^~a: contract violation\n  expected: \\(integer-in " (object-name op)))
+    (check-exn (regexp (format "^~a: contract violation\n  expected: int64/c\n" (object-name op)))
                (lambda () (op (col "x") (expt 2 63))))
     (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
                (lambda () (op #\a (col "x"))))))
@@ -1807,56 +1805,55 @@
   (check >= (- (expr-drop-count) sort-drops-before) 150))
 
 (module+ test
-  (require (only-in racket/match match-define))
-  (define u8-range "(integer-in 0 255)")
-  (define u32-range "(integer-in 0 4294967295)")
-  (define u64-range "(integer-in 0 18446744073709551615)")
-  (define i32-range "(integer-in -2147483648 2147483647)")
-  (define i64-range "(integer-in -9223372036854775808 9223372036854775807)")
-  (define (optional range) (format "(or/c #f ~a)" range))
+  (require (only-in polars/private/test-helpers refusal refusal-misses))
   (define range-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1 2 3))))))
-  (for ([case (in-list
-               (list (list 'expr-std u8-range 256 (lambda () (contracted:expr-std (col "v") #:ddof 256)))
-                     (list 'expr-std u8-range -1 (lambda () (contracted:expr-std (col "v") #:ddof -1)))
-                     (list 'expr-var u8-range 256 (lambda () (contracted:expr-var (col "v") #:ddof 256)))
-                     (list 'expr-round u32-range (expt 2 32)
-                           (lambda () (contracted:expr-round (col "v") #:decimals (expt 2 32))))
-                     (list 'expr-forward-fill (optional u32-range) (expt 2 32)
-                           (lambda () (contracted:expr-forward-fill (col "v") #:limit (expt 2 32))))
-                     (list 'expr-backward-fill (optional u32-range) -1
-                           (lambda () (contracted:expr-backward-fill (col "v") #:limit -1)))
-                     (list 'expr-rank (optional u64-range) (expt 2 64)
-                           (lambda () (contracted:expr-rank (col "v") #:seed (expt 2 64))))
-                     (list 'expr-head (optional u64-range) (expt 2 64)
-                           (lambda () (contracted:expr-head (col "v") #:n (expt 2 64))))
-                     (list 'expr-tail (optional u64-range) -1
-                           (lambda () (contracted:expr-tail (col "v") #:n -1)))
-                     (list 'expr-shift i64-range (expt 2 63)
-                           (lambda () (contracted:expr-shift (col "v") #:n (expt 2 63))))
-                     (list 'expr-diff i64-range (expt 2 63)
-                           (lambda () (contracted:expr-diff (col "v") #:n (expt 2 63))))
-                     (list 'expr-slice i64-range (expt 2 63)
-                           (lambda () (contracted:expr-slice (col "v") 0 (expt 2 63))))
-                     (list 'expr-str-extract u64-range (expt 2 64)
-                           (lambda ()
-                             (contracted:expr-str-extract (col "v") "(a)" #:group-index (expt 2 64))))
-                     (list 'expr-lit-i32 i32-range (expt 2 31)
-                           (lambda () (contracted:expr-lit-i32 (expt 2 31))))
-                     (list 'expr-lit-i64 i64-range (expt 2 63)
-                           (lambda () (contracted:expr-lit-i64 (expt 2 63))))
-                     (list 'lazyframe-head u64-range (expt 2 64)
-                           (lambda () (contracted:lazyframe-head range-lf (expt 2 64))))
-                     (list 'lazyframe-tail u64-range -1
-                           (lambda () (contracted:lazyframe-tail range-lf -1)))
-                     (list 'lazyframe-slice i64-range (expt 2 63)
-                           (lambda () (contracted:lazyframe-slice range-lf (expt 2 63) 1)))))])
-    (match-define (list who range given thunk) case)
-    (check-exn (regexp (format "^~a: contract violation\n  expected: ~a\n  given: ~a\n"
-                               who (regexp-quote range) given))
-               thunk
-               (format "~a refuses ~a" who given)))
+  (define v (col "v"))
+  (check-equal?
+   (refusal-misses
+    (list (refusal 'expr-std uint8/c 256 (contracted:expr-std v #:ddof 256))
+          (refusal 'expr-std uint8/c -1 (contracted:expr-std v #:ddof -1))
+          (refusal 'expr-var uint8/c 256 (contracted:expr-var v #:ddof 256))
+          (refusal 'expr-round uint32/c (expt 2 32) (contracted:expr-round v #:decimals (expt 2 32)))
+          (refusal 'expr-forward-fill (or/c #f uint32/c) (expt 2 32)
+                   (contracted:expr-forward-fill v #:limit (expt 2 32)))
+          (refusal 'expr-backward-fill (or/c #f uint32/c) -1
+                   (contracted:expr-backward-fill v #:limit -1))
+          (refusal 'expr-rank (or/c #f uint64/c) (expt 2 64)
+                   (contracted:expr-rank v #:seed (expt 2 64)))
+          (refusal 'expr-rank rank-method/c 'first (contracted:expr-rank v #:method 'first))
+          (refusal 'expr-rank boolean? 1 (contracted:expr-rank v #:descending 1))
+          (refusal 'expr-head (or/c #f size/c) (expt 2 64) (contracted:expr-head v #:n (expt 2 64)))
+          (refusal 'expr-tail (or/c #f size/c) -1 (contracted:expr-tail v #:n -1))
+          (refusal 'expr-shift int64/c (expt 2 63) (contracted:expr-shift v #:n (expt 2 63)))
+          (refusal 'expr-diff int64/c (expt 2 63) (contracted:expr-diff v #:n (expt 2 63)))
+          (refusal 'expr-diff null-behavior/c 'keep (contracted:expr-diff v #:null-behavior 'keep))
+          (refusal 'expr-slice int64/c (expt 2 63) (contracted:expr-slice v 0 (expt 2 63)))
+          (refusal 'expr-str-extract size/c (expt 2 64)
+                   (contracted:expr-str-extract v "(a)" #:group-index (expt 2 64)))
+          (refusal 'expr-lit-i32 int32/c (expt 2 31) (contracted:expr-lit-i32 (expt 2 31)))
+          (refusal 'expr-lit-i64 int64/c (expt 2 63) (contracted:expr-lit-i64 (expt 2 63)))
+          (refusal 'lazyframe-head size/c (expt 2 64)
+                   (contracted:lazyframe-head range-lf (expt 2 64)))
+          (refusal 'lazyframe-tail size/c -1 (contracted:lazyframe-tail range-lf -1))
+          (refusal 'lazyframe-slice int64/c (expt 2 63)
+                   (contracted:lazyframe-slice range-lf (expt 2 63) 1))))
+   '())
+  (define rank-input (dataframe-new (list (series-new-i64 "v" '(3 1 3)))))
+  (check-equal? (for/list ([method (in-list rank-methods)])
+                  (define ranks
+                    (dataframe-column
+                     (dataframe-select-exprs
+                      rank-input (list (contracted:expr-rank v #:method method #:descending #t)))
+                     "v"))
+                  (for/list ([i (in-range 3)]) (series-ref ranks i)))
+                '((1.5 3.0 1.5) (1 3 1) (2 3 2) (1 2 1) (1 3 2)))
   (define widest
     (dataframe-select-exprs
      (dataframe-new (list (series-new-f64 "v" '(1.0 2.0))))
      (list (expr-alias (contracted:expr-std (col "v") #:ddof 255) "s"))))
-  (check-equal? (dataframe-height widest) 1))
+  (check-equal? (dataframe-height widest) 1)
+  (define population
+    (dataframe-select-exprs
+     (dataframe-new (list (series-new-f64 "v" '(2.0 4.0 4.0 6.0))))
+     (list (expr-alias (contracted:expr-std (col "v") #:ddof 0) "s"))))
+  (check-= (series-ref (dataframe-column population "s") 0) (sqrt 2) 1e-12))

@@ -1,23 +1,30 @@
 #lang racket/base
 
 ;; Element-wise math, completing the racket/base-shadowing operator family
-;; (alongside + - * / mod in operators.rkt).  abs / round / floor / sqrt / exp
-;; / log shadow racket/base and so are defined under p-* spellings here and
-;; renamed on the way out by the aggregator (with main.rkt re-importing them,
-;; like the arithmetic operators).  sign / ceil / log1p / pow / clip do not
-;; collide and are provided directly.
+;; (alongside + - * / mod in operators.rkt).  abs / floor / sqrt / exp / log
+;; shadow racket/base and so are defined under p-* spellings here and renamed
+;; on the way out by the aggregator (with main.rkt re-importing them, like the
+;; arithmetic operators); round is defined under its own name so its contract
+;; reports it, and the aggregator imports it as p-round.  sign / ceil / log1p /
+;; pow / clip do not collide and are provided directly.
 ;;
 ;; Each op takes an Expr or a bare column-name string (auto-lifted via col).
 ;; The racket/base-shadowing ones also accept a plain number and fall back to
 ;; racket/base, so ordinary numeric code keeps working.
 
 (require (prefix-in base: racket/base)
+         (only-in racket/contract/base ->i any/c contract-out or/c)
+         (only-in polars/private/c-integer uint32/c)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
-(provide p-abs p-round p-floor p-sqrt p-exp p-log
-         sign ceil log1p pow clip)
+(provide p-abs p-floor p-sqrt p-exp p-log
+         sign ceil log1p pow clip
+         (contract-out
+          [round (->i ([x (or/c number? col-expr/c)])
+                      (#:decimals [decimals (x) (if (number? x) number? uint32/c)])
+                      [result any/c])]))
 
 (define-math-unop p-abs   'abs   expr-abs   base:abs)
 (define-math-unop p-floor 'floor expr-floor base:floor)
@@ -28,8 +35,7 @@
 (define-expr-unop ceil  'ceil  expr-ceil)
 (define-expr-unop log1p 'log1p expr-log1p)
 
-;; round to #:decimals places (default 0); numbers round with the same rule.
-(define (p-round x #:decimals [decimals 0])
+(define (round x #:decimals [decimals 0])
   (cond [(number? x)
          (define f (base:expt 10 decimals))
          (base:/ (base:round (base:* x f)) f)]
@@ -60,7 +66,7 @@
   ;; numeric fall-through keeps racket/base behaviour for the shadowing ops
   (check-equal? (p-abs -3) 3)
   (check-equal? (p-floor 2.7) 2.0)
-  (check-equal? (p-round 2.345 #:decimals 1) 2.3)
+  (check-equal? (round 2.345 #:decimals 1) 2.3)
   (check-= (p-sqrt 9) 3.0 1e-9)
   (check-= (p-log 8 #:base 2) 3.0 1e-9)
   ;; Expr math through with-columns -> evaluated values
@@ -69,7 +75,7 @@
     (~> df (with-columns
              (alias (p-abs "x") "abs")
              (alias (sign "x") "sign")
-             (alias (p-round "x" #:decimals 0) "r")
+             (alias (round "x" #:decimals 0) "r")
              (alias (p-floor "x") "fl")
              (alias (ceil "x") "ce")
              (alias (clip "x" #:lower -1.0 #:upper 2.0) "cl")
@@ -88,8 +94,8 @@
   (check-= (c "p2" 0) 6.25 1e-9)
 
   (define ties (dataframe (list (series '(-2.5 -1.5 -0.5 0.5 1.5 2.5 0.125 2.345) #:name "x"))))
-  (check-equal? (column (select ties (p-round "x")) "x")
+  (check-equal? (column (select ties (round "x")) "x")
                 '(-2.0 -2.0 -0.0 0.0 2.0 2.0 0.0 2.0))
   (for ([decimals (in-list '(1 2))])
-    (check-equal? (column (select ties (p-round "x" #:decimals decimals)) "x")
-                  (map (lambda (x) (p-round x #:decimals decimals)) (column ties "x")))))
+    (check-equal? (column (select ties (round "x" #:decimals decimals)) "x")
+                  (map (lambda (x) (round x #:decimals decimals)) (column ties "x")))))

@@ -4,7 +4,7 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in polars/private/c-integer c-size/c)
+         (only-in polars/private/c-integer size/c)
          (only-in racket/contract/base ->* any/c contract-out)
          polars/private/expr-core
          (only-in polars/private/foreign call/foreign-error polars-null))
@@ -20,7 +20,7 @@
          expr-str->date expr-str->datetime expr-str->time
          parse-datetime
          (contract-out
-          [expr-str-extract (->* (Expr-ptr? any/c) (#:group-index c-size/c) Expr-ptr?)]))
+          [expr-str-extract (->* (Expr-ptr? any/c) (#:group-index size/c) Expr-ptr?)]))
 
 (define-compat expr-str-contains/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
