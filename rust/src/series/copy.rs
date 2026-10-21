@@ -150,8 +150,14 @@ fn byte_rows<T: PolarsDataType>(
     typed(&rows).cloned().map_err(|_| COPY_WRONG_DTYPE)
 }
 
-fn byte_len<'a>(values: impl Iterator<Item = Option<&'a [u8]>>) -> i64 {
-    values.flatten().map(<[u8]>::len).sum::<usize>() as i64
+fn byte_len<'a>(
+    values: impl Iterator<Item = Option<&'a [u8]>>,
+    limit: usize,
+) -> i64 {
+    values
+        .flatten()
+        .map(|bytes| bytes.len().min(limit))
+        .sum::<usize>() as i64
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -159,18 +165,22 @@ fn copy_bytes<'a, I: Iterator<Item = Option<&'a [u8]>>>(
     values: impl Fn() -> I,
     count: usize,
     null_count: usize,
+    limit: usize,
     buf: *mut u8,
     buf_len: usize,
     offsets: *mut i64,
     offsets_len: usize,
+    lens: *mut i64,
+    lens_len: usize,
     valid: *mut u8,
     valid_len: usize,
 ) -> i64 {
-    let total = byte_len(values()) as usize;
+    let total = byte_len(values(), limit) as usize;
     if offsets.is_null()
         || offsets_len <= count
         || total > buf_len
         || (buf.is_null() && total > 0)
+        || !(lens.is_null() || count <= lens_len)
         || !(valid.is_null() || count <= valid_len)
     {
         return COPY_BAD_ARGUMENTS;
@@ -180,14 +190,14 @@ fn copy_bytes<'a, I: Iterator<Item = Option<&'a [u8]>>>(
     offsets[0] = 0;
     for (row, value) in values().enumerate() {
         if let Some(bytes) = value.filter(|bytes| !bytes.is_empty()) {
+            let shown = bytes.len().min(limit);
             unsafe {
-                ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    buf.add(end),
-                    bytes.len(),
-                );
+                ptr::copy_nonoverlapping(bytes.as_ptr(), buf.add(end), shown);
             }
-            end += bytes.len();
+            end += shown;
+        }
+        if !lens.is_null() {
+            unsafe { *lens.add(row) = value.map_or(0, <[u8]>::len) as i64 };
         }
         if !valid.is_null() {
             unsafe { *valid.add(row) = value.is_some() as u8 };
@@ -204,7 +214,7 @@ pub extern "C" fn series_str_byte_len(
     count: usize,
 ) -> i64 {
     match byte_rows(s_ptr, start, count, Series::str) {
-        Ok(ca) => byte_len(ca.iter().map(|v| v.map(str::as_bytes))),
+        Ok(ca) => byte_len(ca.iter().map(|v| v.map(str::as_bytes)), usize::MAX),
         Err(code) => code,
     }
 }
@@ -226,10 +236,13 @@ pub extern "C" fn series_copy_str(
             || ca.iter().map(|v| v.map(str::as_bytes)),
             count,
             ca.null_count(),
+            usize::MAX,
             buf,
             buf_len,
             offsets,
             offsets_len,
+            ptr::null_mut(),
+            0,
             valid,
             valid_len,
         ),
@@ -242,9 +255,10 @@ pub extern "C" fn series_binary_byte_len(
     s_ptr: *const Series,
     start: usize,
     count: usize,
+    max_value_len: usize,
 ) -> i64 {
     match byte_rows(s_ptr, start, count, Series::binary) {
-        Ok(ca) => byte_len(ca.iter()),
+        Ok(ca) => byte_len(ca.iter(), max_value_len),
         Err(code) => code,
     }
 }
@@ -254,10 +268,13 @@ pub extern "C" fn series_copy_binary(
     s_ptr: *const Series,
     start: usize,
     count: usize,
+    max_value_len: usize,
     buf: *mut u8,
     buf_len: usize,
     offsets: *mut i64,
     offsets_len: usize,
+    lens: *mut i64,
+    lens_len: usize,
     valid: *mut u8,
     valid_len: usize,
 ) -> i64 {
@@ -266,10 +283,13 @@ pub extern "C" fn series_copy_binary(
             || ca.iter(),
             count,
             ca.null_count(),
+            max_value_len,
             buf,
             buf_len,
             offsets,
             offsets_len,
+            lens,
+            lens_len,
             valid,
             valid_len,
         ),

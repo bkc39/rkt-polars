@@ -163,7 +163,8 @@
    (lambda ()
      (cond
        [(eq? i 'ellipsis) "…"]
-       [(eq? dt 'binary) (value->cell (series-ref-bytes 'series->string s i) dt)]
+       [(eq? dt 'binary)
+        (value->cell (series-ref-bytes 'series->string s i (add1 binary-shown-bytes)) dt)]
        [else (value->cell (series-value 'series->string s i #:unreadable unreadable)
                           dt abbreviation)]))))
 
@@ -192,7 +193,7 @@
            (only-in polars/private/expr-core col expr-drop-count)
            (only-in polars/private/foreign
                     series-cast series-new-i32 series-new-i64 series-new-null series-new-str
-                    polars-null)
+                    series-slice polars-null)
            (only-in polars/private/test-helpers settle!)
            (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
@@ -309,15 +310,39 @@
   (check-equal? (binary-cells (map number->string (range 12)))
                 '("b\"0\"" "b\"1\"" "b\"2\"" "b\"3\"" "b\"4\"" "…"
                   "b\"7\"" "b\"8\"" "b\"9\"" "b\"10\"" "b\"11\"" "]"))
-  (define table-width (getenv "POLARS_TABLE_WIDTH"))
-  (dynamic-wind
-   (lambda () (putenv "POLARS_TABLE_WIDTH" "8"))
-   (lambda ()
-     (check-equal? (binary-cells (list (xs 61) polars-null))
-                   (list (string-append "b\"" (xs 60) "\"…") "null" "]")))
-   (lambda ()
-     (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
-                                 (and table-width (string->bytes/utf-8 table-width)))))
+  (test-case "a binary cell does not follow POLARS_TABLE_WIDTH, as round 1's renderer did"
+    (define table-width (getenv "POLARS_TABLE_WIDTH"))
+    (dynamic-wind
+     (lambda () (putenv "POLARS_TABLE_WIDTH" "8"))
+     (lambda ()
+       (check-equal? (binary-cells (list (xs 61) polars-null))
+                     (list (string-append "b\"" (xs 60) "\"…") "null" "]")))
+     (lambda ()
+       (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
+                                   (and table-width (string->bytes/utf-8 table-width))))))
+  (define twelve-blobs
+    (~> (series-new-str "b" (for/list ([i (in-range 12)])
+                              (case i
+                                [(2) "a bé"]
+                                [(5) polars-null]
+                                [(7) (xs 61)]
+                                [else (number->string i)])))
+        (series-cast 'binary)))
+  ;; Python 1.42.1's repr of the same slices
+  (check-equal? (series->string (series-slice twelve-blobs 3 4))
+                "shape: (4,)\nSeries: 'b' [binary]\n[\n\tb\"3\"\n\tb\"4\"\n\tnull\n\tb\"6\"\n]")
+  (check-equal? (series->string (series-slice twelve-blobs 1 11))
+                (string-append
+                 "shape: (11,)\nSeries: 'b' [binary]\n[\n"
+                 "\tb\"1\"\n\tb\"a\\x20b\\xc3\\xa9\"\n\tb\"3\"\n\tb\"4\"\n\tnull\n\t…\n"
+                 "\tb\"" (xs 60) "\"…\n\tb\"8\"\n\tb\"9\"\n\tb\"10\"\n\tb\"11\"\n]"))
+  (define ten-megabytes (xs 10000000))
+  (define large-blobs
+    (~> (series-new-str "b" (list ten-megabytes ten-megabytes ten-megabytes)) (series-cast 'binary)))
+  (collect-garbage)
+  (define allocated-before-print (current-memory-use 'cumulative))
+  (check-equal? (cells large-blobs) (append (make-list 3 (string-append "b\"" (xs 60) "\"…")) '("]")))
+  (check < (- (current-memory-use 'cumulative) allocated-before-print) 1000000)
   (check-equal? (cell ints 'binary 0 #f)
                 "#<cannot print: series->string: cannot read a binary value at index 0>")
   (define nested

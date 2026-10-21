@@ -606,34 +606,62 @@ fn copy_as_f64_finds_a_first_null_in_a_null_only_chunk() {
     series_drop(p);
 }
 
+struct Binaries {
+    values: Vec<Option<Vec<u8>>>,
+    lens: Vec<i64>,
+}
+
 fn read_binaries(
     p: *mut Series,
     start: usize,
     count: usize,
-) -> Vec<Option<Vec<u8>>> {
-    let size = series_binary_byte_len(p, start, count) as usize;
+    limit: usize,
+) -> Binaries {
+    let size = series_binary_byte_len(p, start, count, limit) as usize;
     let mut buf = vec![0u8; size];
     let mut offsets = vec![-1i64; count + 1];
+    let mut lens = vec![-1i64; count];
     let mut valid = vec![9u8; count];
     let nulls = series_copy_binary(
         p,
         start,
         count,
+        limit,
         buf.as_mut_ptr(),
         size,
         offsets.as_mut_ptr(),
         count + 1,
+        lens.as_mut_ptr(),
+        count,
         valid.as_mut_ptr(),
         count,
     );
-    let out: Vec<Option<Vec<u8>>> = (0..count)
+    assert_eq!(offsets[count] as usize, size);
+    let values: Vec<Option<Vec<u8>>> = (0..count)
         .map(|k| {
             let bytes = &buf[offsets[k] as usize..offsets[k + 1] as usize];
             (valid[k] == 1).then(|| bytes.to_vec())
         })
         .collect();
-    assert_eq!(nulls, out.iter().filter(|v| v.is_none()).count() as i64);
-    out
+    assert_eq!(nulls, values.iter().filter(|v| v.is_none()).count() as i64);
+    Binaries { values, lens }
+}
+
+fn expected_binaries(
+    ca: &BinaryChunked,
+    start: usize,
+    count: usize,
+    limit: usize,
+) -> (Vec<Option<Vec<u8>>>, Vec<i64>) {
+    (0..count)
+        .map(|k| {
+            let value = ca.get(start + k);
+            (
+                value.map(|v| v[..v.len().min(limit)].to_vec()),
+                value.map_or(0, <[u8]>::len) as i64,
+            )
+        })
+        .unzip()
 }
 
 #[test]
@@ -646,43 +674,123 @@ fn binary_copy_matches_get_over_chunks_and_slices() {
         let ca = s.binary().unwrap();
         let p = boxed(s.clone());
         for (start, count) in ranges(s.len()) {
-            let expected: Vec<Option<Vec<u8>>> = (0..count)
-                .map(|k| ca.get(start + k).map(<[u8]>::to_vec))
-                .collect();
-            assert_eq!(read_binaries(p, start, count), expected);
+            for limit in [0, 3, 4, 5, 8, usize::MAX] {
+                let read = read_binaries(p, start, count, limit);
+                let (values, lens) = expected_binaries(ca, start, count, limit);
+                assert_eq!((read.values, read.lens), (values, lens));
+            }
         }
         series_drop(p);
     }
 }
 
 #[test]
+fn binary_copy_cuts_each_value_at_the_limit() {
+    let values: [Option<&[u8]>; 6] = [
+        Some(b"abc"),
+        Some(b"abcd"),
+        Some(b"abcde"),
+        Some(b""),
+        None,
+        Some(b"\0\xff\0\xff\0"),
+    ];
+    let s = two_chunks(Series::new("b".into(), values));
+    let p = boxed(s);
+    assert_eq!(series_binary_byte_len(p, 0, 6, 4), 3 + 4 + 4 + 4);
+    let read = read_binaries(p, 0, 6, 4);
+    assert_eq!(
+        read.values,
+        [
+            Some(b"abc".to_vec()),
+            Some(b"abcd".to_vec()),
+            Some(b"abcd".to_vec()),
+            Some(vec![]),
+            None,
+            Some(b"\0\xff\0\xff".to_vec()),
+        ]
+    );
+    assert_eq!(read.lens, [3, 4, 5, 0, 0, 5]);
+    let tail = read_binaries(p, 2, 4, 4);
+    assert_eq!(tail.values[0], Some(b"abcd".to_vec()));
+    assert_eq!(tail.lens, [5, 0, 0, 5]);
+    let none = read_binaries(p, 0, 6, 0);
+    assert_eq!(
+        none.values,
+        [
+            Some(vec![]),
+            Some(vec![]),
+            Some(vec![]),
+            Some(vec![]),
+            None,
+            Some(vec![])
+        ]
+    );
+    assert_eq!(none.lens, [3, 4, 5, 0, 0, 5]);
+    let mut buf = [0u8; 2];
+    let mut offsets = [-1i64; 2];
+    assert_eq!(
+        series_copy_binary(
+            p,
+            2,
+            1,
+            2,
+            buf.as_mut_ptr(),
+            2,
+            offsets.as_mut_ptr(),
+            2,
+            ptr::null_mut(),
+            0,
+            ptr::null_mut(),
+            0
+        ),
+        0
+    );
+    assert_eq!((buf, offsets), (*b"ab", [0, 2]));
+    series_drop(p);
+}
+
+#[test]
 fn binary_refusals_write_nothing() {
     let s = boxed(Series::new("b".into(), &[&b"a\0c"[..], &b"de"[..]]));
-    assert_eq!(series_binary_byte_len(s, 0, 2), 5);
+    assert_eq!(series_binary_byte_len(s, 0, 2, usize::MAX), 5);
     let mut buf = [0u8; 5];
     let mut offsets = [-1i64; 3];
+    let mut lens = [-1i64; 2];
     let mut valid = [9u8; 2];
     let b = buf.as_mut_ptr();
     let o = offsets.as_mut_ptr();
+    let l = lens.as_mut_ptr();
     let v = valid.as_mut_ptr();
+    let m = usize::MAX;
     let refusals = [
-        series_copy_binary(s, 0, 2, b, 4, o, 3, v, 2),
-        series_copy_binary(s, 0, 2, b, 5, o, 2, v, 2),
-        series_copy_binary(s, 0, 2, b, 5, o, 3, v, 1),
-        series_copy_binary(s, 0, 2, b, 5, ptr::null_mut(), 3, v, 2),
-        series_copy_binary(s, 1, 2, b, 5, o, 3, v, 2),
-        series_copy_binary(ptr::null(), 0, 2, b, 5, o, 3, v, 2),
+        series_copy_binary(s, 0, 2, m, b, 4, o, 3, l, 2, v, 2),
+        series_copy_binary(s, 0, 2, m, b, 5, o, 2, l, 2, v, 2),
+        series_copy_binary(s, 0, 2, m, b, 5, o, 3, l, 2, v, 1),
+        series_copy_binary(s, 0, 2, m, b, 5, o, 3, l, 1, v, 2),
+        series_copy_binary(s, 0, 2, 2, b, 3, o, 3, l, 2, v, 2),
+        series_copy_binary(s, 0, 2, m, b, 5, ptr::null_mut(), 3, l, 2, v, 2),
+        series_copy_binary(s, 1, 2, m, b, 5, o, 3, l, 2, v, 2),
+        series_copy_binary(ptr::null(), 0, 2, m, b, 5, o, 3, l, 2, v, 2),
     ];
-    assert_eq!(refusals, [COPY_BAD_ARGUMENTS; 6]);
-    assert_eq!((buf, offsets, valid), ([0; 5], [-1; 3], [9; 2]));
-    let text = boxed(Series::new("s".into(), &["abc"]));
-    assert_eq!(series_binary_byte_len(text, 0, 1), COPY_WRONG_DTYPE);
+    assert_eq!(refusals, [COPY_BAD_ARGUMENTS; 8]);
     assert_eq!(
-        series_copy_binary(text, 0, 1, b, 5, o, 3, v, 2),
+        (buf, offsets, lens, valid),
+        ([0; 5], [-1; 3], [-1; 2], [9; 2])
+    );
+    let text = boxed(Series::new("s".into(), &["abc"]));
+    assert_eq!(
+        series_binary_byte_len(text, 0, 1, usize::MAX),
+        COPY_WRONG_DTYPE
+    );
+    assert_eq!(
+        series_copy_binary(text, 0, 1, m, b, 5, o, 3, l, 2, v, 2),
         COPY_WRONG_DTYPE
     );
     assert_eq!(series_str_byte_len(s, 0, 1), COPY_WRONG_DTYPE);
-    assert_eq!(series_binary_byte_len(s, 1, 2), COPY_BAD_ARGUMENTS);
+    assert_eq!(
+        series_binary_byte_len(s, 1, 2, usize::MAX),
+        COPY_BAD_ARGUMENTS
+    );
     let mut whole = [0u8; 5];
     let mut ends = [-1i64; 3];
     let mut flags = [9u8; 2];
@@ -691,10 +799,13 @@ fn binary_refusals_write_nothing() {
             s,
             0,
             2,
+            usize::MAX,
             whole.as_mut_ptr(),
             5,
             ends.as_mut_ptr(),
             3,
+            ptr::null_mut(),
+            0,
             flags.as_mut_ptr(),
             2
         ),
