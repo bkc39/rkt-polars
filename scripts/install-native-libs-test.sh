@@ -4,7 +4,8 @@
 # the target a new inode, and a descriptor opened on the old file still reads
 # the old bytes; an identical library keeps its inode and mtime; a failing
 # cp, mv or read-only directory leaves no temporary file and the target as it
-# was. Every libcompat.* the glob matches is handled on its own. The first
+# was; a read-only source installs as 0755. Every libcompat.* the glob matches
+# is handled on its own, and .gitignore covers the temporary file. The first
 # check is also run against `cp -f`, which it must catch.
 #
 # Usage: scripts/install-native-libs-test.sh
@@ -24,6 +25,7 @@ fail() {
 
 inode() { stat -c %i "$1"; }
 mtime() { stat -c %Y "$1"; }
+mode() { stat -c %a "$1"; }
 
 cat > "$work/cp-f.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -102,6 +104,28 @@ else
 fi
 
 fresh
+printf 'store bytes\n' > "$work/src/libcompat.so"
+chmod 0555 "$work/src/libcompat.so"
+if ! bash "$script" "$work/src" "$work/dest"; then
+  fail "read-only source: status $?"
+elif [ "$(mode "$work/dest/libcompat.so")" != 755 ]; then
+  fail "read-only source: the target is $(mode "$work/dest/libcompat.so"), not 755"
+else
+  chmod u+w "$work/src/libcompat.so"
+  printf 'next store bytes\n' > "$work/src/libcompat.so"
+  chmod 0555 "$work/src/libcompat.so"
+  if ! bash "$script" "$work/src" "$work/dest"; then
+    fail "read-only source, second install: status $?"
+  elif [ "$(cat "$work/dest/libcompat.so")" != "next store bytes" ] \
+    || [ "$(mode "$work/dest/libcompat.so")" != 755 ]; then
+    fail "read-only source, second install: the target is not the new 0755 copy"
+  else
+    echo "ok: a 0555 source installs as 0755 and is replaced again"
+  fi
+fi
+chmod -R u+w "$work/src"
+
+fresh
 printf 'new\n' > "$work/src/libcompat.so"
 if ! bash "$script" "$work/src" "$work/dest/missing"; then
   fail "missing destination: status $?"
@@ -152,6 +176,21 @@ refused() {
 
 path_prefix="$work/failing-cp:" refused "a failing cp" true
 path_prefix="$work/failing-mv:" refused "a failing mv" true
-refused "a read-only directory" chmod a-w "$work/dest"
+if [ "$(id -u)" -eq 0 ]; then
+  echo "skip: a read-only directory (running as root, which writes through it)"
+else
+  refused "a read-only directory" chmod a-w "$work/dest"
+fi
+
+repo=$(cd "$here/.." && pwd -P)
+sample=polars/native-libs/.libcompat.so.Ab12Cd
+if ! command -v git > /dev/null \
+  || [ "$(git -C "$repo" rev-parse --show-toplevel 2> /dev/null)" != "$repo" ]; then
+  echo "skip: .gitignore covers $sample (not a git checkout)"
+elif git -C "$repo" check-ignore -q --no-index "$sample"; then
+  echo "ok: .gitignore covers a killed install's temporary file $sample"
+else
+  fail ".gitignore does not cover $sample"
+fi
 
 exit $status

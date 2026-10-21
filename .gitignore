@@ -12,6 +12,8 @@ polars/private/compat/target/
 # Ignore the staged copy of the shared object, but keep the committed
 # per-platform prebuilt candidates that pkgs.rkt-lang.org installs from.
 polars/native-libs/libcompat.*
+# scripts/install-native-libs.sh's temporary copy, left by a killed install.
+polars/native-libs/.libcompat.*
 !polars/native-libs/candidates/
 # CI's record of the rust/ tree a candidate artifact was built from, and
 # scripts/build-so.sh's of the toolchain that built it.
