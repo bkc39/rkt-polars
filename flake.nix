@@ -30,26 +30,28 @@
       devSetup = pkgs: rust: ''
         export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
 
-        # PLTUSERHOME must live outside $PWD: raco pkg install --link
+        # PLTUSERHOME must live outside the checkout: raco pkg install --link
         # rejects a link target that overlaps with a collects dir, and
-        # PLTUSERHOME contains a collects dir.  Key the location on a
-        # hash of the project path so multiple checkouts don't collide.
-        cache_root="''${XDG_CACHE_HOME:-$HOME/.cache}/rkt-polars-devshell"
-        project_id=$(printf '%s' "$PWD" | ${pkgs.coreutils}/bin/sha256sum | cut -c1-12)
-        export PLTUSERHOME="$cache_root/$project_id"
+        # PLTUSERHOME contains a collects dir.  It is keyed on the checkout's
+        # canonical root, so multiple checkouts don't collide and one
+        # checkout entered by any path shares one (#158).
+        devshell_home=$(PATH="${pkgs.coreutils}/bin:${pkgs.git}/bin:$PATH" \
+          ${pkgs.bash}/bin/bash ${./scripts/devshell-home.sh})
+        project_root=''${devshell_home%%$'\n'*}
+        export PLTUSERHOME=''${devshell_home#*$'\n'}
         mkdir -p "$PLTUSERHOME"
 
-        mkdir -p "$PWD/polars/native-libs"
-        cp -f ${rust}/lib/libcompat.* "$PWD/polars/native-libs/"
+        mkdir -p "$project_root/polars/native-libs"
+        cp -f ${rust}/lib/libcompat.* "$project_root/polars/native-libs/"
 
         # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
-        info_hash=$(${pkgs.coreutils}/bin/sha256sum info.rkt | cut -c1-16)
+        info_hash=$(${pkgs.coreutils}/bin/sha256sum "$project_root/info.rkt" | cut -c1-16)
         deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
         if [ ! -f "$deps_stamp" ]; then
           echo "Setting up rkt-polars in $PLTUSERHOME (deps changed or first run)"
           rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
           if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
-               --name rkt-polars "$PWD" \
+               --name rkt-polars "$project_root" \
             && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
             touch "$deps_stamp"
             echo "Done. Run 'raco test -x --timeout 600 -c polars' to test."
@@ -362,6 +364,13 @@
             ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
             touch $out
           '';
+          devshell-home = pkgs.runCommand "rkt-polars-devshell-home" {
+            src = pkgs.lib.cleanSource ./.;
+            nativeBuildInputs = [ pkgs.git ];
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/devshell-home-test.sh
+            touch $out
+          '';
           # scripts/build-so.sh builds the committed candidates with the rustc
           # rust/rust-toolchain.toml pins; this holds it to the release of the
           # rustc the flake's build, tests and dev shell use (rustup's build of
@@ -384,7 +393,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only release-toolchain;
+          inherit rustfmt racket-version no-syntax-rule rustls-only devshell-home release-toolchain;
           inherit (self.packages.${system}) rust racket;
         });
 

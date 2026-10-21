@@ -716,15 +716,18 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (six checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (eight checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
-  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`, and
-  `release-toolchain`, the rustc pin).
+  `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
+  `rustls-only`, `devshell-home` and `release-toolchain`, the rustc pin).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
-- Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
+- Each worktree gets its own `PLTUSERHOME`, keyed on its root as
+  `git rev-parse --show-toplevel` gives it (`scripts/devshell-home.sh`), so a
+  trailing slash, a symlink or a subdirectory reaches the same home (#158);
+  the `devshell-home` gate and flake check hold it there. In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
   undefined tag and `threading-doc` looks unused.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
