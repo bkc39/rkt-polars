@@ -160,7 +160,9 @@ candidate and stages it, with its `toolchain` record, in
   `otool -l` shows with an `LC_RPATH` there; build outside the dev shell if
   it does. The `toolchain` record names the dylib's minimum macOS
   (`minos`), which nothing pins. `scripts/test-build-so.sh` checks all of
-  this against fakes (the `build-so-darwin` flake check). The script
+  this against fakes (the `build-so-darwin` flake check, under nixpkgs'
+  bash); `BASH_UNDER_TEST=/bin/bash` runs it under macOS's bash 3.2,
+  which nixpkgs lacks. The script
   rewrites the install name to
   `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
   invalidates the linker's signature, and Apple Silicon kills an unsigned

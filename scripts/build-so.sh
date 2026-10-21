@@ -108,14 +108,17 @@ else
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the
   # search paths its NIX_LDFLAGS* and NIX_CFLAGS* variables name (each in a
   # _FOR_BUILD and a _FOR_TARGET form too), and a library found there
-  # (libiconv) would be linked by its /nix/store path.
+  # (libiconv) would be linked by its /nix/store path.  bash 3.2, macOS's,
+  # also imports environment names that are not identifiers, which unset
+  # refuses, and ignores a failed subshell under set -e.
   (
-    # Unquoted: the expansions are variable names, which never split or glob,
-    # and an empty one is then no word at all in any bash (3.2 on macOS).
-    # shellcheck disable=SC2086
-    unset -v ${!NIX_LDFLAGS@} ${!NIX_CFLAGS@}
+    for v in "${!NIX_LDFLAGS@}" "${!NIX_CFLAGS@}"; do
+      if [[ "$v" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        unset -v "$v"
+      fi
+    done
     "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
-  )
+  ) || exit $?
 
   built="$ROOT/rust/target/dist/$lib"
   if [[ ! -f "$built" ]]; then

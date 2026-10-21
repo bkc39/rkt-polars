@@ -9,18 +9,28 @@
 # that release, and refuse otherwise.  Either way cargo runs without any
 # NIX_LDFLAGS* or NIX_CFLAGS* variable, a dylib that otool lists as linked
 # against /nix/store or with an LC_RPATH there is refused and not staged, and
-# the record names its minimum macOS and summarises on one line.
+# the record names its minimum macOS and summarises on one line.  A failed
+# cargo build stages nothing and writes no record, though an earlier build's
+# dylib is still in the target directory.
 #
-# The summary is scripts/toolchain-summary.sh's, not the copy's.
+# The summary is scripts/toolchain-summary.sh's, not the copy's.  Both run
+# under $BASH_UNDER_TEST (default: the bash on PATH), so that macOS's bash 3.2
+# can be tested; the stubs run under the bash on PATH.  Each case runs under
+# `env -i`, so nothing the caller exports reaches the script.
 #
-# Usage: scripts/test-build-so.sh [build-so.sh to test]
+# Usage: [BASH_UNDER_TEST=bash] scripts/test-build-so.sh [build-so.sh to test]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$(realpath "${1:-$ROOT/scripts/build-so.sh}")"
 BASH_BIN="$(command -v bash)"
+SHELL_UNDER_TEST="$(command -v "${BASH_UNDER_TEST:-bash}")"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# What a caller's shell may hold, and no case may see.
+export RUSTC=/caller/rustc CARGO=/caller/cargo RUSTUP_TOOLCHAIN=0.0.0 \
+  NIX_LDFLAGS_CALLER=-L/nix/store/caller/lib X=caller
 
 # Flag variables of nix's cc wrapper, the dev shell's and others of the two
 # prefixes, which build-so.sh must keep from cargo: the stubs report every
@@ -35,6 +45,15 @@ sees() {
   # shellcheck disable=SC2016
   printf 'export -p | while read -r _ _ v; do case "${v%%%%=*}" in NIX_LDFLAGS*|NIX_CFLAGS*) echo "%s sees ${v%%%%=*}" >> %s ;; esac; done\n' \
     "$1" "$(printf '%q' "$log")"
+}
+
+# A cargo stub's build: it logs the X it is given, fails as cargo does when
+# the case made $cargo_fails, and otherwise writes an empty dylib.
+build() {
+  # shellcheck disable=SC2016
+  printf 'echo "cargo X=${X-unset}" >> %s\n[[ ! -e %s ]] || { echo "error: could not compile polars" >&2; exit 101; }\nmkdir -p %s\n: > %s/libcompat.dylib\n' \
+    "$(printf '%q' "$log")" "$(printf '%q' "$cargo_fails")" \
+    "$(printf '%q' "$repo/rust/target/dist")" "$(printf '%q' "$repo/rust/target/dist")"
 }
 
 failures=0
@@ -52,13 +71,13 @@ setup() {
   bin="$tmp/case/bin"
   log="$tmp/case/log"
   out="$tmp/case/out"
-  mkdir -p "$repo/scripts" "$repo/rust" "$bin"
+  cargo_fails="$tmp/case/cargo-fails"
+  mkdir -p "$repo/scripts" "$repo/rust" "$bin" "$tmp/case/home"
   cp "$SCRIPT" "$repo/scripts/build-so.sh"
   printf '[toolchain]\nchannel = "%s"\n' "$channel" > "$repo/rust/rust-toolchain.toml"
   : > "$log"
-  local tool q_log q_repo
+  local tool q_log
   q_log="$(printf '%q' "$log")"
-  q_repo="$(printf '%q' "$repo")"
   for tool in awk cat cp dirname head ls mkdir sed; do
     ln -s "$(command -v "$tool")" "$bin/$tool"
   done
@@ -84,8 +103,7 @@ EOF
 echo "PATH cargo \$* RUSTC=\${RUSTC:-unset}" >> $q_log
 $(sees cargo)
 [[ "\$1" != +* ]] || { echo "error: no such command: \\\`\$1\\\`" >&2; exit 101; }
-mkdir -p $q_repo/rust/target/dist
-: > $q_repo/rust/target/dist/libcompat.dylib
+$(build)
 EOF
   cat > "$bin/rustc" <<EOF
 #!$BASH_BIN
@@ -109,9 +127,10 @@ case "\$1" in
     echo "run \$t \$* RUSTC=\${RUSTC:-unset}" >> $q_log
     case "\$1" in
       rustc) printf 'rustc %s (rustup)\nrelease: %s\nLLVM version: 20.1.8\n' "\$t" "\$t" ;;
-      cargo) $(sees cargo)
-             mkdir -p $q_repo/rust/target/dist
-             : > $q_repo/rust/target/dist/libcompat.dylib ;;
+      cargo)
+        $(sees cargo)
+        $(build)
+        ;;
       *) exit 2 ;;
     esac
     ;;
@@ -150,10 +169,12 @@ fake_otool() {
   } > "$otool_loads"
 }
 
+# Arguments are more NAME=value pairs for the script's environment.
 run_script() {
   local v nix_env=()
   for v in "${nix_vars[@]}"; do nix_env+=("$v=-L/nix/store/fake-libiconv/lib"); done
-  env "${nix_env[@]}" PATH="$bin" "$BASH_BIN" "$repo/scripts/build-so.sh" darwin > "$out" 2>&1
+  env -i PATH="$bin" HOME="$tmp/case/home" "${nix_env[@]}" "$@" \
+    "$SHELL_UNDER_TEST" "$repo/scripts/build-so.sh" darwin > "$out" 2>&1
 }
 
 # $3 is the rustc that ran: rustup's, or nix's on PATH.
@@ -173,7 +194,7 @@ expect_built() {
     fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ')"
   fi
   case "$rustc" in rustup) llvm=20.1.8 ;; *) llvm=19.1.7 ;; esac
-  summary="$("$BASH_BIN" "$ROOT/scripts/toolchain-summary.sh" "$record")"
+  summary="$("$SHELL_UNDER_TEST" "$ROOT/scripts/toolchain-summary.sh" "$record")"
   expect_summary "$what" "$summary" \
     "rustc $channel ($rustc), LLVM $llvm, ld @(#)PROGRAM:ld fake, minos $minos"
 }
@@ -290,7 +311,7 @@ done
 what="a Linux record"
 printf '%s\n' "rustc 1.2.3 (abcdef012 2026-01-01)" "binary: rustc" "release: 1.2.3" \
   "LLVM version: 20.1.8" "image: quay.io/pypa/manylinux2014_x86_64:tag@sha256:00" > "$tmp/linux-record"
-expect_summary "$what" "$("$BASH_BIN" "$ROOT/scripts/toolchain-summary.sh" "$tmp/linux-record")" \
+expect_summary "$what" "$("$SHELL_UNDER_TEST" "$ROOT/scripts/toolchain-summary.sh" "$tmp/linux-record")" \
   "rustc 1.2.3 (abcdef012 2026-01-01), LLVM 20.1.8, in quay.io/pypa/manylinux2014_x86_64:tag@sha256:00"
 
 what="no load command naming a minimum macOS"
@@ -305,6 +326,33 @@ expect_refused "$what" "error: otool not found"
 if grep -q ' cargo build ' "$log"; then
   fail "$what: cargo build ran"
 fi
+
+# A failed build beside an earlier build's dylib, which bash 3.2 would stage
+# if the build's subshell were not checked.
+for mode in rustup no-rustup; do
+  what="$mode, cargo fails beside a stale dylib"
+  setup "$pinned" "$mode" "$pinned"
+  mkdir -p "$repo/rust/target/dist"
+  echo stale > "$repo/rust/target/dist/libcompat.dylib"
+  : > "$cargo_fails"
+  expect_refused "$what" "error: could not compile polars"
+  [[ ! -e "$repo/polars/native-libs/candidates/darwin/toolchain" ]] \
+    || fail "$what: a toolchain record was written"
+done
+
+# Environment names that are not identifiers, which bash 3.2 imports as
+# variables: build-so.sh must leave X alone and not fail on the `*`.
+for odd in 'NIX_CFLAGS X=1' 'NIX_CFLAGS*=1'; do
+  what="the environment name '${odd%%=*}'"
+  setup "$pinned" rustup "$pinned"
+  if run_script "$odd" X=kept; then
+    grep -qxF "cargo X=kept" "$log" || { fail "$what: cargo was not given X=kept:"; show "$log"; }
+    expect_built "$what" "$pinned" rustup
+  else
+    fail "$what: build-so.sh darwin exited non-zero"
+    show "$out"
+  fi
+done
 
 if ((failures > 0)); then
   echo "test-build-so: $failures failure(s)" >&2
