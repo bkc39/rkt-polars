@@ -6,7 +6,10 @@
 # rust/rust-toolchain.toml names, `rustup run <channel> cargo build ...`,
 # though a nix cargo and rustc that reject `+toolchain` come first on PATH.
 # Without rustup it must build with the cargo on PATH when the rustc there is
-# that release, and refuse otherwise.
+# that release, and refuse otherwise.  Either way cargo runs without the nix
+# cc wrapper's flag variables, a dylib that otool lists as linked against
+# /nix/store is refused and not staged, and the record names its minimum
+# macOS.
 #
 # Usage: scripts/test-build-so.sh [build-so.sh to test]
 set -euo pipefail
@@ -16,6 +19,10 @@ SCRIPT="$(realpath "${1:-$ROOT/scripts/build-so.sh}")"
 BASH_BIN="$(command -v bash)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# The dev shell's flag variables, which build-so.sh must keep from cargo.
+nix_vars=(NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_CFLAGS_COMPILE
+  NIX_CFLAGS_COMPILE_FOR_BUILD NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD)
 
 failures=0
 fail() { echo "FAIL: $*" >&2; failures=$((failures + 1)); }
@@ -39,16 +46,29 @@ setup() {
   local tool q_log q_repo
   q_log="$(printf '%q' "$log")"
   q_repo="$(printf '%q' "$repo")"
-  for tool in awk cp dirname head ls mkdir sed; do
+  for tool in awk cat cp dirname head ls mkdir sed; do
     ln -s "$(command -v "$tool")" "$bin/$tool"
   done
-  for tool in install_name_tool codesign otool; do
+  for tool in install_name_tool codesign; do
     printf '#!%s\necho "%s $*" >> %s\n' "$BASH_BIN" "$tool" "$q_log" > "$bin/$tool"
   done
+  otool_deps="$tmp/case/otool-L"
+  otool_loads="$tmp/case/otool-l"
+  fake_otool /usr/lib/libiconv.2.dylib LC_BUILD_VERSION 11.0
+  cat > "$bin/otool" <<EOF
+#!$BASH_BIN
+echo "otool \$*" >> $q_log
+case "\$1" in
+  -L) echo "\$2:"; cat $(printf '%q' "$otool_deps") ;;
+  -l) cat $(printf '%q' "$otool_loads") ;;
+  *) exit 2 ;;
+esac
+EOF
   printf '#!%s\necho "@(#)PROGRAM:ld fake"\n' "$BASH_BIN" > "$bin/ld"
   cat > "$bin/cargo" <<EOF
 #!$BASH_BIN
 echo "PATH cargo \$* RUSTC=\${RUSTC:-unset}" >> $q_log
+for v in ${nix_vars[*]}; do [[ ! -v \$v ]] || echo "cargo sees \$v" >> $q_log; done
 [[ "\$1" != +* ]] || { echo "error: no such command: \\\`\$1\\\`" >&2; exit 101; }
 mkdir -p $q_repo/rust/target/dist
 : > $q_repo/rust/target/dist/libcompat.dylib
@@ -75,7 +95,8 @@ case "\$1" in
     echo "run \$t \$* RUSTC=\${RUSTC:-unset}" >> $q_log
     case "\$1" in
       rustc) printf 'rustc %s (rustup)\nrelease: %s\n' "\$t" "\$t" ;;
-      cargo) mkdir -p $q_repo/rust/target/dist
+      cargo) for v in ${nix_vars[*]}; do [[ ! -v \$v ]] || echo "cargo sees \$v" >> $q_log; done
+             mkdir -p $q_repo/rust/target/dist
              : > $q_repo/rust/target/dist/libcompat.dylib ;;
       *) exit 2 ;;
     esac
@@ -89,16 +110,54 @@ EOF
   done
 }
 
+# The fake otool's answers: -L lists $1 and libSystem after the install name,
+# -l prints load command $2 with minimum macOS $3 after a LC_SOURCE_VERSION,
+# whose own `version` line must not be read.
+fake_otool() {
+  local dep="$1" cmd="$2" min="$3"
+  printf '\t%s (compatibility version 0.0.0, current version 0.0.0)\n' \
+    "$repo/rust/target/dist/libcompat.dylib" "$dep" /usr/lib/libSystem.B.dylib > "$otool_deps"
+  {
+    printf 'Load command 0\n      cmd LC_SOURCE_VERSION\n  cmdsize 16\n  version 0.0\n'
+    case "$cmd" in
+      LC_BUILD_VERSION)
+        printf 'Load command 1\n      cmd LC_BUILD_VERSION\n  cmdsize 32\n platform 1\n'
+        printf '    minos %s\n      sdk 15.0\n   ntools 1\n     tool 3\n  version 1115.7\n' "$min" ;;
+      LC_VERSION_MIN_MACOSX)
+        printf 'Load command 1\n      cmd LC_VERSION_MIN_MACOSX\n  cmdsize 16\n'
+        printf '  version %s\n      sdk 10.15\n' "$min" ;;
+    esac
+  } > "$otool_loads"
+}
+
 run_script() {
-  PATH="$bin" "$BASH_BIN" "$repo/scripts/build-so.sh" darwin > "$out" 2>&1
+  local v nix_env=()
+  for v in "${nix_vars[@]}"; do nix_env+=("$v=-L/nix/store/fake-libiconv/lib"); done
+  env "${nix_env[@]}" PATH="$bin" "$BASH_BIN" "$repo/scripts/build-so.sh" darwin > "$out" 2>&1
 }
 
 expect_built() {
-  local what="$1" channel="$2"
+  local what="$1" channel="$2" minos="${3:-11.0}"
+  local record="$repo/polars/native-libs/candidates/darwin/toolchain"
   [[ -f "$repo/polars/native-libs/candidates/darwin/libcompat.dylib" ]] \
     || fail "$what: no staged libcompat.dylib"
-  grep -qxF "release: $channel" "$repo/polars/native-libs/candidates/darwin/toolchain" \
+  grep -qxF "release: $channel" "$record" \
     || fail "$what: the toolchain record does not name release $channel"
+  grep -qxF "minos: $minos" "$record" \
+    || { fail "$what: the toolchain record does not name minos $minos:"; show "$record"; }
+  if grep -q '^cargo sees ' "$log"; then
+    fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ')"
+  fi
+}
+
+expect_refused() {
+  local what="$1" message="$2"
+  if run_script; then
+    fail "$what: build-so.sh darwin succeeded"
+  fi
+  grep -qF "$message" "$out" || { fail "$what: no '$message' in the output:"; show "$out"; }
+  [[ ! -e "$repo/polars/native-libs/candidates/darwin/libcompat.dylib" ]] \
+    || fail "$what: the refused dylib was staged"
 }
 
 # With rustup, for the real pin and another channel, so the script reads the
@@ -142,6 +201,43 @@ if run_script; then
 fi
 grep -qxF "error: rustc is 0.0.0; rust/rust-toolchain.toml pins $pinned" "$out" \
   || { fail "$what: no release error in the output:"; show "$out"; }
+if grep -q ' cargo build ' "$log"; then
+  fail "$what: cargo build ran"
+fi
+
+# A dylib linked against the nix store, and one with only the older load
+# command, through rustup and without it.
+for mode in rustup no-rustup; do
+  what="$mode, a /nix/store dependency"
+  setup "$pinned" "$mode" "$pinned"
+  store_lib=/nix/store/0123456789abcdfghijklmnpqrsvwxyz-libiconv-109/lib/libiconv.2.dylib
+  fake_otool "$store_lib" LC_BUILD_VERSION 11.0
+  expect_refused "$what" "links against the nix store"
+  grep -qF "$store_lib (compatibility version" "$out" \
+    || { fail "$what: the refusal does not name the dependency:"; show "$out"; }
+  grep -qF "build outside the nix dev shell" "$out" \
+    || { fail "$what: the refusal does not say how to build:"; show "$out"; }
+
+  what="$mode, LC_VERSION_MIN_MACOSX"
+  setup "$pinned" "$mode" "$pinned"
+  fake_otool /usr/lib/libiconv.2.dylib LC_VERSION_MIN_MACOSX 10.12
+  if run_script; then
+    expect_built "$what" "$pinned" 10.12
+  else
+    fail "$what: build-so.sh darwin exited non-zero"
+    show "$out"
+  fi
+done
+
+what="no load command naming a minimum macOS"
+setup "$pinned" rustup "$pinned"
+fake_otool /usr/lib/libiconv.2.dylib none ""
+expect_refused "$what" "has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX"
+
+what="no otool"
+setup "$pinned" rustup "$pinned"
+rm "$bin/otool"
+expect_refused "$what" "error: otool not found"
 if grep -q ' cargo build ' "$log"; then
   fail "$what: cargo build ran"
 fi

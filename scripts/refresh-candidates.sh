@@ -127,7 +127,7 @@ for platform in linux darwin; do
              "the image)"
   fi
   built="$(head -1 "$record"), LLVM $(sed -n 's/^LLVM version: //p' "$record")"
-  built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p' "$record")"
+  built+="$(sed -n 's/^image: /, in /p; s/^ld: /, ld /p; s/^minos: /, minos /p' "$record")"
   echo ">> libcompat-$platform built by: $built"
   toolchains+=("- $platform: $built")
 done

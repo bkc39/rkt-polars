@@ -16,7 +16,8 @@
 # `+toolchain`, #161); without rustup, the one on PATH if it is that release.
 #
 # Beside the library it writes `toolchain`: the `rustc -vV` that built it, and
-# the image (Linux) or the linker (darwin).  CI uploads it with the candidate.
+# the image (Linux) or the linker and the minimum macOS (darwin).  CI uploads
+# it with the candidate.
 #
 # Usage:
 #   scripts/build-so.sh [platform]      # platform defaults to current OS
@@ -99,12 +100,42 @@ else
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
     exit 1
   fi
+  if ! command -v otool >/dev/null 2>&1; then
+    echo "error: otool not found; it checks the dylib's dependencies and minimum macOS" >&2
+    exit 1
+  fi
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
-  "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
+  # In the nix dev shell rustc links through nix's cc wrapper, which adds the
+  # search paths these name, and a library found there (libiconv) would be
+  # linked by its /nix/store path.
+  (
+    unset NIX_LDFLAGS NIX_LDFLAGS_FOR_BUILD NIX_CFLAGS_COMPILE \
+      NIX_CFLAGS_COMPILE_FOR_BUILD NIX_CFLAGS_LINK NIX_CFLAGS_LINK_FOR_BUILD
+    "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
+  )
 
   built="$ROOT/rust/target/dist/$lib"
   if [[ ! -f "$built" ]]; then
     echo "error: expected build output not found: $built" >&2
+    exit 1
+  fi
+  store_deps="$(otool -L "$built" | awk 'NR > 1 && /\/nix\/store\//')"
+  if [[ -n "$store_deps" ]]; then
+    {
+      echo "error: $built links against the nix store, which catalog users lack:"
+      echo "$store_deps"
+      echo "build outside the nix dev shell, or with NIX_LDFLAGS, NIX_CFLAGS_COMPILE," \
+        "SDKROOT and MACOSX_DEPLOYMENT_TARGET unset"
+    } >&2
+    exit 1
+  fi
+  minos="$(otool -l "$built" | awk '
+    $1 == "cmd" && $2 == "LC_BUILD_VERSION" { field = "minos"; next }
+    $1 == "cmd" && $2 == "LC_VERSION_MIN_MACOSX" { field = "version"; next }
+    $1 == "cmd" { field = ""; next }
+    field != "" && $1 == field { print $2; exit }')"
+  if [[ -z "$minos" ]]; then
+    echo "error: $built has no LC_BUILD_VERSION or LC_VERSION_MIN_MACOSX" >&2
     exit 1
   fi
   cp -f "$built" "$dest/$lib"
@@ -125,8 +156,14 @@ else
     codesign -f -s - "$dest/$lib"
   fi
 
-  # The system linker comes with the host's Xcode, which nothing here pins.
-  { "${rustc[@]}" -vV; echo "ld: $(ld -v 2>&1 | head -1)"; } > "$dest/toolchain"
+  # The system linker comes with the host's Xcode, which nothing here pins, and
+  # nothing pins the minimum macOS either (MACOSX_DEPLOYMENT_TARGET, else
+  # rustc's default for the target): it is recorded, not checked.
+  {
+    "${rustc[@]}" -vV
+    echo "ld: $(ld -v 2>&1 | head -1)"
+    echo "minos: $minos"
+  } > "$dest/toolchain"
 fi
 echo ">> built by $(head -1 "$dest/toolchain")"
 
