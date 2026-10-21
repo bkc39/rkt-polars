@@ -308,6 +308,28 @@ if expect "a dead holder's lock, with a dead reaper's marker" 0 within 10 \
     || fail "a dead holder's lock, with a dead reaper's marker: a reaper's marker is still there"
 fi
 
+# A directory where the reaper's marker goes (as an older docs-check's mkdir
+# reaper left it) would take the marker inside it and exclude no other
+# reaper: the run reaps nothing and takes no lock.
+dir=$(manual directory-reaper)
+dead=$(exited)
+ln -s "$dead" "$dir.docs-check-lock"
+mkdir "$dir.docs-check-lock.reap"
+if expect "a dead holder's lock, with a directory for a marker" 1 within 10 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a dead holder's lock, with a directory for a marker" \
+    "$dir.docs-check-lock.reap is not a docs-check reaper's marker"
+  [ "$(grep -c 'is not a docs-check' <<< "$out")" -eq 1 ] \
+    || fail "a dead holder's lock, with a directory for a marker: not exactly one refusal:"$'\n'"$out"
+  lacks "a dead holder's lock, with a directory for a marker" "removed $dir.docs-check-lock"
+  [ "$(readlink "$dir.docs-check-lock")" = "$dead" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it reaped or took the lock"
+  [ -z "$(ls -A "$dir.docs-check-lock.reap")" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it wrote into the directory"
+  [ ! -f "$dir.docs-check-warnings" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it recorded without the lock"
+fi
+
 # A live reaper's marker is not removed: the waiter waits for it.
 dir=$(manual live-reaper)
 sleep 60 &

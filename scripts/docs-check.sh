@@ -8,6 +8,8 @@
 # DOC-DIR/stamp.sxref, Scribble's build stamp, and a run that does not reads
 # them back, unless the manual has been rendered since (by a plain raco
 # setup): its stamp differs, or its index.html is newer than the record.
+# Where modification times are whole seconds, a plain raco setup that renders
+# the manual, while a run records, within the record's second is missed.
 # The rendered HTML is also searched for Scribble's badlink, which a run with
 # nothing to rebuild leaves in place.  A run that holds no current record
 # deletes the stamp, so that raco setup renders the manual again.  Each run
@@ -154,6 +156,7 @@ default_doc_dir() {
 
 held_lock=""
 log=""
+refused=""
 
 # release LINK: removes LINK if it names this run.
 release() {
@@ -185,13 +188,24 @@ gone() {
 # reap LINK HOLDER: removes LINK if it still names HOLDER and HOLDER is not
 # running, holding LINK.reap meanwhile, so that no waiter removes a lock
 # another has just taken in its place.  A LINK.reap whose holder is not
-# running is reaped first, the same way.  1 when it removes nothing.
+# running is reaped first, the same way.  1 when it removes nothing; a
+# LINK.reap that is not a symbolic link, where ln -s would make the marker
+# inside it and exclude no other reaper, is refused, and named in $refused.
 reap() {
   local link=$1 holder=$2 marker="$1.reap" reaper status=1
+  if [ -e "$marker" ] && [ ! -L "$marker" ]; then
+    refuse_marker "$marker"
+    return 1
+  fi
   if ! ln -sn -- "$$" "$marker" 2> /dev/null; then
     reaper=$(readlink -- "$marker" 2> /dev/null) || return 1
     gone "$reaper" && reap "$marker" "$reaper" && reap "$link" "$holder"
     return
+  fi
+  if [ "$(readlink -- "$marker" 2> /dev/null)" != "$$" ]; then
+    release "$marker/$$"
+    refuse_marker "$marker"
+    return 1
   fi
   if [ "$(readlink -- "$link" 2> /dev/null)" = "$holder" ] && gone "$holder" \
        && rm -f -- "$link"; then
@@ -199,6 +213,11 @@ reap() {
   fi
   release "$marker"
   return "$status"
+}
+
+refuse_marker() {
+  refused=$1
+  report "$1 is not a docs-check reaper's marker (a symbolic link naming a pid); if no docs-check is running, remove it"
 }
 
 # lock DOC-DIR: takes DOC-DIR.docs-check-lock, a symbolic link naming its
@@ -233,6 +252,9 @@ lock() {
     if gone "$holder" && reap "$lock" "$holder"; then
       echo "docs-check: removed $lock, left by pid $holder, which is not running" >&2
       continue
+    fi
+    if [ -n "$refused" ]; then
+      return 1
     fi
     if [ "$waited" -ge "$limit" ]; then
       report "another docs-check has held $lock for over ${limit}s (pid $holder); if none is running, remove it"
