@@ -196,7 +196,8 @@
 (module+ test
   ;; fixtures are inline here: core can't require test-fixtures (which requires
   ;; core) without a compile-time cycle.
-  (require rackunit (only-in gregor datetime) (only-in racket/sequence sequence->list))
+  (require rackunit (only-in gregor datetime) (only-in racket/sequence sequence->list)
+           (only-in threading ~>))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -206,15 +207,11 @@
                      (series '(1.2 3.5 2.0) #:name "cost"))))
 
   (check-equal? (format "~a" ints) (series->string ints))
-  (define blob (wrap-series (series-cast (series '("a" "z q" "") #:name "blob") 'binary)))
-  (define blob-text
-    "shape: (3,)\nSeries: 'blob' [binary]\n[\n\tb\"a\"\n\tb\"z\\x20q\"\n\tb\"\"\n]")
-  (check-equal? (format "~a" blob) blob-text)
-  (check-equal? (format "~s" blob) blob-text)
-  (check-equal? (let ([out (open-output-string)])
-                  (display blob out)
-                  (get-output-string out))
-                blob-text)
+  (define printed-binary
+    (~> (series '("a" "z q" "") #:name "blob") (series-cast 'binary) wrap-series))
+  (for ([form (in-list '("~a" "~s"))])
+    (check-equal? (format form printed-binary)
+                  "shape: (3,)\nSeries: 'blob' [binary]\n[\n\tb\"a\"\n\tb\"z\\x20q\"\n\tb\"\"\n]"))
   (define past-chrono-zoned
     (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
                               '(datetime microseconds "Europe/Brussels"))))

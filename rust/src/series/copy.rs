@@ -138,8 +138,63 @@ pub extern "C" fn series_copy_bool(
     ca.null_count() as i64
 }
 
-fn str_byte_len(ca: &StringChunked) -> usize {
-    ca.iter().flatten().map(str::len).sum()
+fn byte_rows<T: PolarsDataType>(
+    s_ptr: *const Series,
+    start: usize,
+    count: usize,
+    typed: fn(&Series) -> PolarsResult<&ChunkedArray<T>>,
+) -> Result<ChunkedArray<T>, i64> {
+    let s = unsafe { s_ptr.as_ref() }.ok_or(COPY_BAD_ARGUMENTS)?;
+    typed(s).map_err(|_| COPY_WRONG_DTYPE)?;
+    let rows = row_range(s, start, count).ok_or(COPY_BAD_ARGUMENTS)?;
+    typed(&rows).cloned().map_err(|_| COPY_WRONG_DTYPE)
+}
+
+fn byte_len<'a>(values: impl Iterator<Item = Option<&'a [u8]>>) -> i64 {
+    values.flatten().map(<[u8]>::len).sum::<usize>() as i64
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy_bytes<'a, I: Iterator<Item = Option<&'a [u8]>>>(
+    values: impl Fn() -> I,
+    count: usize,
+    null_count: usize,
+    buf: *mut u8,
+    buf_len: usize,
+    offsets: *mut i64,
+    offsets_len: usize,
+    valid: *mut u8,
+    valid_len: usize,
+) -> i64 {
+    let total = byte_len(values()) as usize;
+    if offsets.is_null()
+        || offsets_len <= count
+        || total > buf_len
+        || (buf.is_null() && total > 0)
+        || !(valid.is_null() || count <= valid_len)
+    {
+        return COPY_BAD_ARGUMENTS;
+    }
+    let offsets = unsafe { std::slice::from_raw_parts_mut(offsets, count + 1) };
+    let mut end = 0;
+    offsets[0] = 0;
+    for (row, value) in values().enumerate() {
+        if let Some(bytes) = value.filter(|bytes| !bytes.is_empty()) {
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    bytes.as_ptr(),
+                    buf.add(end),
+                    bytes.len(),
+                );
+            }
+            end += bytes.len();
+        }
+        if !valid.is_null() {
+            unsafe { *valid.add(row) = value.is_some() as u8 };
+        }
+        offsets[row + 1] = end as i64;
+    }
+    null_count as i64
 }
 
 #[no_mangle]
@@ -148,18 +203,9 @@ pub extern "C" fn series_str_byte_len(
     start: usize,
     count: usize,
 ) -> i64 {
-    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
-        return COPY_BAD_ARGUMENTS;
-    };
-    if s.str().is_err() {
-        return COPY_WRONG_DTYPE;
-    }
-    let Some(rows) = row_range(s, start, count) else {
-        return COPY_BAD_ARGUMENTS;
-    };
-    match rows.str() {
-        Ok(ca) => str_byte_len(ca) as i64,
-        Err(_) => COPY_WRONG_DTYPE,
+    match byte_rows(s_ptr, start, count, Series::str) {
+        Ok(ca) => byte_len(ca.iter().map(|v| v.map(str::as_bytes))),
+        Err(code) => code,
     }
 }
 
@@ -175,47 +221,60 @@ pub extern "C" fn series_copy_str(
     valid: *mut u8,
     valid_len: usize,
 ) -> i64 {
-    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
-        return COPY_BAD_ARGUMENTS;
-    };
-    if s.str().is_err() {
-        return COPY_WRONG_DTYPE;
+    match byte_rows(s_ptr, start, count, Series::str) {
+        Ok(ca) => copy_bytes(
+            || ca.iter().map(|v| v.map(str::as_bytes)),
+            count,
+            ca.null_count(),
+            buf,
+            buf_len,
+            offsets,
+            offsets_len,
+            valid,
+            valid_len,
+        ),
+        Err(code) => code,
     }
-    let Some(rows) = row_range(s, start, count) else {
-        return COPY_BAD_ARGUMENTS;
-    };
-    let Ok(ca) = rows.str() else {
-        return COPY_WRONG_DTYPE;
-    };
-    let total = str_byte_len(ca);
-    if offsets.is_null()
-        || offsets_len <= count
-        || total > buf_len
-        || (buf.is_null() && total > 0)
-        || !(valid.is_null() || count <= valid_len)
-    {
-        return COPY_BAD_ARGUMENTS;
+}
+
+#[no_mangle]
+pub extern "C" fn series_binary_byte_len(
+    s_ptr: *const Series,
+    start: usize,
+    count: usize,
+) -> i64 {
+    match byte_rows(s_ptr, start, count, Series::binary) {
+        Ok(ca) => byte_len(ca.iter()),
+        Err(code) => code,
     }
-    let offsets = unsafe { std::slice::from_raw_parts_mut(offsets, count + 1) };
-    let mut end = 0;
-    offsets[0] = 0;
-    for (row, value) in ca.iter().enumerate() {
-        if let Some(text) = value.filter(|text| !text.is_empty()) {
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    text.as_ptr(),
-                    buf.add(end),
-                    text.len(),
-                );
-            }
-            end += text.len();
-        }
-        if !valid.is_null() {
-            unsafe { *valid.add(row) = value.is_some() as u8 };
-        }
-        offsets[row + 1] = end as i64;
+}
+
+#[no_mangle]
+pub extern "C" fn series_copy_binary(
+    s_ptr: *const Series,
+    start: usize,
+    count: usize,
+    buf: *mut u8,
+    buf_len: usize,
+    offsets: *mut i64,
+    offsets_len: usize,
+    valid: *mut u8,
+    valid_len: usize,
+) -> i64 {
+    match byte_rows(s_ptr, start, count, Series::binary) {
+        Ok(ca) => copy_bytes(
+            || ca.iter(),
+            count,
+            ca.null_count(),
+            buf,
+            buf_len,
+            offsets,
+            offsets_len,
+            valid,
+            valid_len,
+        ),
+        Err(code) => code,
     }
-    ca.null_count() as i64
 }
 
 #[no_mangle]

@@ -1209,6 +1209,36 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
+
+(define-compat series-binary-byte-len
+  (_fun _Series-ptr _size _size -> _int64))
+
+;; The buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-binary
+  (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
+
+(define (series-ref-bytes who s index)
+  (define size (series-binary-byte-len s index 1))
+  (define buf (make-bytes (max size 0)))
+  (define valid (make-bytes 1))
+  (define copied
+    (and (not (negative? size))
+         (with-raw-buffer ([offsets 2 _int64])
+           (series-copy-binary s index 1 buf size offsets 2 valid 1))))
+  (cond
+    [(or (not copied) (negative? copied))
+     (error who "cannot read a binary value at index ~a" index)]
+    [(zero? (bytes-ref valid 0)) polars-null]
+    [else buf]))
+
+(module+ test
+  (let ([bytes-of (series-cast (series-new-str "b" (list "a\u0000é" polars-null "")) 'binary)])
+    (check-equal? (map (lambda (i) (series-ref-bytes 'test bytes-of i)) '(0 1 2))
+                  (list #"a\0\303\251" polars-null #""))
+    (check-exn #rx"^test: cannot read a binary value at index 3$"
+               (lambda () (series-ref-bytes 'test bytes-of 3)))
+    (check-exn #rx"^test: cannot read a binary value at index 0$"
+               (lambda () (series-ref-bytes 'test (series-new-str "s" '("a")) 0)))))
 ;; The validity buffers are GC memory the collector may move: never #:blocking?.
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
