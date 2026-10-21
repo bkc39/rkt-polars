@@ -19,6 +19,7 @@
         (alias (str-len-bytes "text") "bytes")
         (alias (str-len-chars "text") "chars")
         (alias (str-slice "text" 1 3) "slice")
+        (alias (str-slice "text" 2 #f) "from_2")
         (alias (str-head "text" 2) "head")
         (alias (str-tail "text" 2) "tail")
         (alias (str-find "text" "[0-9]+") "find_digits")

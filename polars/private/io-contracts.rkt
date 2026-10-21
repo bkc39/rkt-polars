@@ -4,8 +4,8 @@
                   and/c flat-named-contract integer-in not/c unsupplied-arg?)
          (only-in racket/list check-duplicates))
 
-(provide c-string/c column-index/c column-name/c distinct-names? distinct? given
-         positive-size/c row-index/c size-max size/c)
+(provide c-string/c column-index/c column-name/c distinct-names? distinct? given int64/c
+         nonnegative-int64/c positive-size/c row-index/c size-max size/c)
 
 (define size-max (sub1 (expt 2 64)))
 
@@ -15,8 +15,15 @@
 
 (define row-index/c (flat-named-contract 'row-index/c (integer-in 0 (sub1 (expt 2 32)))))
 
-(define column-index/c
-  (flat-named-contract 'column-index/c (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))))
+(define int64-min (- (expt 2 63)))
+
+(define int64-max (sub1 (expt 2 63)))
+
+(define int64/c (flat-named-contract 'int64/c (integer-in int64-min int64-max)))
+
+(define nonnegative-int64/c (flat-named-contract 'nonnegative-int64/c (integer-in 0 int64-max)))
+
+(define column-index/c (flat-named-contract 'column-index/c (integer-in int64-min int64-max)))
 
 (define nul-free? (and/c string? (not/c #rx"\0")))
 
@@ -46,6 +53,12 @@
   (check-false (positive-size/c (add1 size-max)))
   (check-true (row-index/c 0))
   (check-true (row-index/c (sub1 (expt 2 32))))
+  (check-true (int64/c (- (expt 2 63))))
+  (check-false (int64/c (expt 2 63)))
+  (check-true (nonnegative-int64/c 0))
+  (check-true (nonnegative-int64/c (sub1 (expt 2 63))))
+  (check-false (nonnegative-int64/c -1))
+  (check-false (nonnegative-int64/c (expt 2 63)))
   (check-false (row-index/c (expt 2 32)))
   (check-false (row-index/c -1))
   (check-true (column-index/c (- (expt 2 63))))
@@ -65,5 +78,6 @@
   (check-equal? (given #f 0) #f)
   (check-equal? (map contract-name
                      (list size/c positive-size/c row-index/c column-index/c column-name/c
-                           c-string/c))
-                '(size/c positive-size/c row-index/c column-index/c column-name/c c-string/c)))
+                           c-string/c int64/c nonnegative-int64/c))
+                '(size/c positive-size/c row-index/c column-index/c column-name/c c-string/c
+                         int64/c nonnegative-int64/c)))

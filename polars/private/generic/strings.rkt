@@ -12,17 +12,21 @@
          polars/private/expr
          (only-in polars/private/c-integer c-size/c)
          (only-in polars/private/expr-str parse-datetime)
+         (only-in polars/private/io-contracts int64/c nonnegative-int64/c)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
          str-replace str-replace-all
-         str-len-bytes str-len-chars str-slice str-head str-tail
+         str-len-bytes str-len-chars str-head str-tail
          str-find str-find-literal str-count-matches
          str->date str->time
          (contract-out
           [str-extract (->* (col-expr/c any/c) (#:group-index c-size/c) Expr-ptr?)]
+          [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
+                          ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
+                          Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
                               (#:format (or/c #f string?)
                                #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)
@@ -68,9 +72,8 @@
 ;; These are the .str-namespaced analogues of the row-level slice / head / tail.
 (define-expr-unop str-len-bytes 'str-len-bytes expr-str-len-bytes)
 (define-expr-unop str-len-chars 'str-len-chars expr-str-len-chars)
-(define (str-slice x offset length)
-  (expr-str-slice (->col-expr 'str-slice x) (->expr/who 'str-slice offset)
-                  (->expr/who 'str-slice length)))
+(define (str-slice x offset [length #f])
+  (expr-str-slice (->col-expr 'str-slice x) offset length))
 (define (str-head x n) (expr-str-head (->col-expr 'str-head x) (->expr/who 'str-head n)))
 (define (str-tail x n) (expr-str-tail (->col-expr 'str-tail x) (->expr/who 'str-tail n)))
 
@@ -106,6 +109,7 @@
   (require rackunit (only-in threading ~>)
            (only-in gregor date datetime)
            polars/private/generic/core
+           (only-in polars/private/bulk series->list)
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape)     ; lazy / with-columns / collect
   (define df (dataframe (list (series '("Ab" "cD" "ef") #:name "s"))))
@@ -170,6 +174,26 @@
   (check-equal? (ref (ref out3 #:columns "find_d") 3) 3)
   (check-equal? (ref (ref out3 #:columns "find_na") 2) 2)
   (check-equal? (ref (ref out3 #:columns "count_a") 2) 3)
+  (define words
+    (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
+                     (series (list 1 polars-null 2 0) #:name "n"))))
+  (define (sliced . exprs)
+    (define d (apply select words exprs))
+    (map (lambda (name) (series->list (ref d name))) (column-names d)))
+  (check-equal? (sliced (alias (str-slice "s" 1 #f) "rest")
+                        (alias (str-slice "s" 1) "omitted")
+                        (alias (str-slice "s" 1 polars-null) "null")
+                        (alias (str-slice "s" -2) "last2")
+                        (alias (str-slice "s" -4 2) "mid")
+                        (alias (str-slice "s" 10) "past")
+                        (alias (str-slice "s" 0 (col "n")) "by_col"))
+                (list (list "ello" "éllo" polars-null "b")
+                      (list "ello" "éllo" polars-null "b")
+                      (list "ello" "éllo" polars-null "b")
+                      (list "lo" "lo" polars-null "ab")
+                      (list "el" "él" polars-null "")
+                      (list "" "" polars-null "")
+                      (list "h" "héllo" polars-null "")))
   ;; string-to-temporal: parse Date/Datetime/Time; #:strict #f -> null on failure
   (define p
     (dataframe (list (series '("2024-01-02" "not-a-date" "2024-05-09 extra") #:name "date_s")
@@ -194,6 +218,15 @@
   (require (only-in gregor moment resolve-offset/post resolve-offset/pre)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod "..")))
+  (define slice-length-refused
+    (regexp (string-append "^str-slice: contract violation\n  expected: "
+                           (regexp-quote "(or/c #f polars-null? Expr-ptr? nonnegative-int64/c)"))))
+  (for ([bad (list -1 "n" #t 1.5 (expt 2 63))])
+    (check-exn slice-length-refused (lambda () (contracted:str-slice "s" 0 bad))))
+  (check-equal? (sliced (contracted:str-slice "s" 1 polars-null))
+                (sliced (contracted:str-slice "s" 1 #f)))
+  (check-exn #rx"^str-slice: contract violation\n  expected: [(]or/c Expr-ptr[?] int64/c[)]"
+             (lambda () (contracted:str-slice "s" #\a 2)))
   (define stamps
     (dataframe (list (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock")
                      (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")

@@ -245,7 +245,6 @@
                     (cons 'str-replace (lambda () (str-replace "s" "a" #\b)))
                     (cons 'str-replace-all (lambda () (str-replace-all "s" #\a "b")))
                     (cons 'str-extract (lambda () (str-extract "s" #\a)))
-                    (cons 'str-slice (lambda () (str-slice "s" #\a 2)))
                     (cons 'str-head (lambda () (str-head "s" #\a)))
                     (cons 'str-tail (lambda () (str-tail "s" #\a)))
                     (cons 'str-find (lambda () (str-find "s" #\a)))

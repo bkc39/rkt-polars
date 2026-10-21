@@ -1561,6 +1561,25 @@ stations
   @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
   @racketid[dt-truncate].}
 
+@defproc[(str-slice [x (or/c Expr-ptr? string?)]
+                    [offset (or/c Expr-ptr? int64/c)]
+                    [length (or/c #f polars-null? Expr-ptr? nonnegative-int64/c) #f])
+         Expr-ptr?]{
+  Substring of @racket[length] characters from @racket[offset]
+  (@tt{.str.slice}); a negative @racket[offset] counts from the end;
+  @racket[#f] (or @racket[polars-null], or a null row of a @racket[length]
+  expression) runs to the end. An @racket[int64/c] is a signed 64-bit
+  integer, a @racket[nonnegative-int64/c] one from @racket[0].
+
+  @examples[#:eval ev
+(define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
+                               (series (list 1 polars-null 2 0) #:name "n"))))
+(select words
+        (alias (str-slice "s" 1 #f) "rest")
+        (alias (str-slice "s" -2) "last2")
+        (alias (str-slice "s" 0 (col "n")) "by_col"))
+(eval:error (str-slice "s" 0 -1))]}
+
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
                                     [#:group-index group-index (integer-in 0 18446744073709551615) 1])
                        Expr-ptr?]
