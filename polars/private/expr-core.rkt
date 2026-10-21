@@ -8,9 +8,10 @@
          ffi/unsafe/define/conventions
          (only-in racket/contract
                   [-> ->/c] ->* ->i and/c any/c contract-name contract-out flat-named-contract
-                  integer-in non-empty-listof not/c or/c rename-contract)
+                  non-empty-listof not/c or/c rename-contract)
          racket/match
          racket/runtime-path
+         (only-in polars/private/c-integer c-int32/c c-int64/c)
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
@@ -30,11 +31,13 @@
          expr-drop-count expr-dropped lazyframe-dropped
          sort-by/c
          explain/c lazyframe-explainer
-         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
+         expr-col expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
          expr-alias
          ->expr ->expr/who lit/who
          dtype-spec?
          (contract-out
+          [expr-lit-i32 (->/c c-int32/c Expr-ptr?)]
+          [expr-lit-i64 (->/c c-int64/c Expr-ptr?)]
           [lit (->/c lit-value/c Expr-ptr?)]
           [col (->/c col-spec/c Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
@@ -148,11 +151,10 @@
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
 
-(define lit-integer/c (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
 
 (define (lit-value? v)
   (or (boolean? v) (string? v) (symbol? v) (polars-null? v)
-      (and (real? v) (or (not (exact-integer? v)) (lit-integer/c v)))
+      (and (real? v) (or (not (exact-integer? v)) (c-int64/c v)))
       (and (temporal-value-dtype v) #t)))
 
 (define lit-value/c
@@ -165,8 +167,8 @@
   (cond
     [(boolean? v) (expr-lit-bool v)]
     [(and (exact-integer? v) (<= -2147483648 v 2147483647)) (expr-lit-i32 v)]
-    [(and (exact-integer? v) (lit-integer/c v)) (expr-lit-i64 v)]
-    [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name lit-integer/c)) v)]
+    [(and (exact-integer? v) (c-int64/c v)) (expr-lit-i64 v)]
+    [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name c-int64/c)) v)]
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]

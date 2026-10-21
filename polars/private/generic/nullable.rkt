@@ -6,12 +6,17 @@
 ;; col), mirroring pl.col(x).<op>().  drop-nulls itself lives in reshape, where
 ;; it also covers eager series / dataframe; it accepts an Expr there too.
 
-(require polars/private/foreign
+(require (only-in racket/contract/base ->* contract-out or/c)
+         (only-in polars/private/c-integer c-uint32/c)
+         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
 (provide is-null is-not-null is-nan is-not-nan is-finite is-infinite
-         fill-null fill-nan forward-fill backward-fill drop-nans)
+         fill-null fill-nan drop-nans
+         (contract-out
+          [forward-fill (->* (col-expr/c) (#:limit (or/c #f c-uint32/c)) Expr-ptr?)]
+          [backward-fill (->* (col-expr/c) (#:limit (or/c #f c-uint32/c)) Expr-ptr?)]))
 
 (define-expr-unop is-null     'is-null     expr-is-null)
 (define-expr-unop is-not-null 'is-not-null expr-is-not-null)

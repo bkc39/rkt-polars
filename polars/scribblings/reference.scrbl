@@ -1562,7 +1562,7 @@ stations
   @racketid[dt-truncate].}
 
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
-                                    [#:group-index group-index exact-nonnegative-integer? 1])
+                                    [#:group-index group-index (integer-in 0 18446744073709551615) 1])
                        Expr-ptr?]
               @defproc[(str->date [x (or/c Expr-ptr? string?)]
                                   [#:format format (or/c string? #f) #f]
@@ -2840,16 +2840,22 @@ built.
               @defproc[(expr-n-unique [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-first    [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-last     [e Expr-ptr?]) Expr-ptr?]
-              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?]
-              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?])]{
+              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof (integer-in 0 255) 1]) Expr-ptr?]
+              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof (integer-in 0 255) 1]) Expr-ptr?])]{
   Aggregations. Each reduces the column @racket[e] evaluates to — over the
   whole frame in a @emph{select}, or per group inside @emph{group_by/agg}.
   @racket[expr-count] counts the non-null entries, as Polars' @tt{.count()}
   does. @racket[expr-std] and @racket[expr-var] take a @racket[#:ddof]
-  degrees-of-freedom adjustment, defaulting to 1. The generic @racket[sum],
+  degrees-of-freedom adjustment, defaulting to 1; Polars holds it in a byte,
+  so a value past 255 is a contract error. The generic @racket[sum],
   @racket[mean], @racket[min], @racket[max], @racket[median], @racket[count],
   @racket[n-unique], @racket[first], @racket[last], @racket[std] and
-  @racket[var] dispatch to these when given an expression or a column name.}
+  @racket[var] dispatch to these when given an expression or a column name.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(2.0 4.0 4.0 6.0) #:name "v")))
+    (select (expr-alias (expr-std (col "v") #:ddof 0) "s")))
+(eval:error (expr-std (col "v") #:ddof 256))]}
 
 @deftogether[(@defproc[(expr-sort [e Expr-ptr?]
                                   [#:descending descending boolean? #f]

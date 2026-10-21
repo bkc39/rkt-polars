@@ -4,19 +4,23 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
+         (only-in polars/private/c-integer c-size/c)
+         (only-in racket/contract/base ->* any/c contract-out)
          polars/private/expr-core
          (only-in polars/private/foreign call/foreign-error))
 
 (provide expr-str-contains expr-str-starts-with expr-str-ends-with
          expr-str-to-lowercase expr-str-to-uppercase
-         expr-str-replace expr-str-replace-all expr-str-extract
+         expr-str-replace expr-str-replace-all
          expr-str-strip-chars expr-str-strip-chars-start expr-str-strip-chars-end
          expr-str-strip-prefix expr-str-strip-suffix
          expr-str-len-bytes expr-str-len-chars
          expr-str-slice expr-str-head expr-str-tail
          expr-str-find expr-str-find-literal expr-str-count-matches
          expr-str->date expr-str->datetime expr-str->time
-         parse-datetime)
+         parse-datetime
+         (contract-out
+          [expr-str-extract (->* (Expr-ptr? any/c) (#:group-index c-size/c) Expr-ptr?)]))
 
 (define-compat expr-str-contains/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -74,10 +78,6 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-extract e pat #:group-index [group-index 1])
-  (unless (exact-nonnegative-integer? group-index)
-    (error 'expr-str-extract
-           "group index must be an exact nonnegative integer, got ~v"
-           group-index))
   (expr-str-extract/raw e (->expr pat) group-index))
 
 (define-compat expr-str-strip-chars/raw

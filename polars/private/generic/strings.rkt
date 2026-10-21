@@ -10,17 +10,19 @@
          (only-in racket/string non-empty-string?)
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/c-integer c-size/c)
          (only-in polars/private/expr-str parse-datetime)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
-         str-replace str-replace-all str-extract
+         str-replace str-replace-all
          str-len-bytes str-len-chars str-slice str-head str-tail
          str-find str-find-literal str-count-matches
          str->date str->time
          (contract-out
+          [str-extract (->* (col-expr/c any/c) (#:group-index c-size/c) Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
                               (#:format (or/c #f string?)
                                #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)

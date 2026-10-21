@@ -65,6 +65,19 @@
     (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: ~a\n" who range))
                   thunk))
 
+  (define limit-range "[(]or/c #f [(]integer-in 0 4294967295[)][)]")
+  (for ([call (list (list 'shift offset-range (lambda () (shift "v" #:n (expt 2 63))))
+                    (list 'diff offset-range (lambda () (diff "v" #:n (sub1 (- (expt 2 63))))))
+                    (list 'forward-fill limit-range (lambda () (forward-fill "v" #:limit (expt 2 32))))
+                    (list 'backward-fill limit-range (lambda () (backward-fill "v" #:limit -1)))
+                    (list 'str-extract count-range
+                          (lambda () (str-extract "s" "(a)" #:group-index (expt 2 64)))))])
+    (match-define (list who range thunk) call)
+    (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: ~a\n" who range))
+                  thunk))
+  (check-raises 'contract #rx"^diff: contract violation\n  expected: [(]or/c [^\n]*ignore[^\n]*drop[)]*\n  given: 'keep\n"
+                (lambda () (diff "v" #:null-behavior 'keep)))
+
   (define edge-counts
     (list 0 2 3 4 (sub1 (expt 2 32)) (expt 2 32) (sub1 (expt 2 63)) (expt 2 63)
           (sub1 (expt 2 64))))

@@ -5,11 +5,17 @@
 ;; (#:n, #:null-behavior).  Each takes an Expr or a bare column-name string
 ;; (auto-lifted via col).
 
-(require polars/private/foreign
+(require (only-in racket/contract/base ->* any/c contract-out or/c)
+         (only-in polars/private/c-integer c-int64/c)
+         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
-(provide cum-sum cum-prod cum-min cum-max cum-count shift diff)
+(provide cum-sum cum-prod cum-min cum-max cum-count
+         (contract-out
+          [shift (->* (col-expr/c) (#:n c-int64/c #:fill-value any/c) Expr-ptr?)]
+          [diff (->* (col-expr/c) (#:n c-int64/c #:null-behavior (or/c 'ignore 'drop))
+                     Expr-ptr?)]))
 
 (define (cum-sum x #:reverse [reverse #f])
   (expr-cum-sum (->col-expr 'cum-sum x) #:reverse reverse))
