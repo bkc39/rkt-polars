@@ -10,7 +10,7 @@
            (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
-                    dataframe-with-columns null-behavior/c)
+                    dataframe-with-columns Expr-ptr? null-behavior/c)
            polars/private/generic/core
            polars/private/generic/cumulative
            polars/private/generic/datetime
@@ -78,8 +78,17 @@
            (refusal 'round uint32/c -1 (round "v" #:decimals -1) #:unblamed)
            (refusal 'round uint32/c 1.5 (round "v" #:decimals 1.5) #:unblamed)
            (refusal 'round uint32/c (expt 2 32) (round (col "v") #:decimals (expt 2 32))
-                    #:unblamed))))
+                    #:unblamed)
+           (refusal 'round number? 'x (round 2.5 #:decimals 'x) #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a #:decimals -1)
+                    #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a) #:unblamed))))
    '())
+  (check-raises 'contract
+                (regexp (string-append "^round: contract violation\n"
+                                       "  expected: \\(or/c Expr-ptr\\? string\\? number\\?\\)\n"
+                                       "  given: \n   shape: \\(1,\\)"))
+                (lambda () (round (series '(1.0)))))
   (check-false (has-contract? round))
   (check-equal? (list (round 1234 #:decimals -2) (round 2.5) (round 2.345 #:decimals 1))
                 (list 1200 2.0 2.3))

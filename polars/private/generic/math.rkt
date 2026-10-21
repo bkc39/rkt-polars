@@ -32,9 +32,12 @@
 (define-expr-unop log1p 'log1p expr-log1p)
 
 (define (round x #:decimals [decimals 0])
-  (cond [(number? x)
+  (cond [(and (number? x) (number? decimals))
          (define f (base:expt 10 decimals))
          (base:/ (base:round (base:* x f)) f)]
+        [(number? x) (raise-argument-error 'round "number?" decimals)]
+        [(not (or (Expr-ptr? x) (string? x)))
+         (raise-argument-error 'round "(or/c Expr-ptr? string? number?)" x)]
         [(uint32/c decimals) (expr-round (->col-expr 'round x) #:decimals decimals)]
         [else (raise-argument-error 'round (format "~s" (contract-name uint32/c)) decimals)]))
 
