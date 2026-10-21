@@ -691,7 +691,8 @@ fn csv_read(
     options: &CompatCsvOptions,
     arrays: &CsvArrays,
 ) -> PolarsResult<DataFrame> {
-    if is_pattern(path, options.glob) {
+    // The eager reader's n_rows stop races its chunk workers (#147).
+    if is_pattern(path, options.glob) || options.has_n_rows {
         return csv_scan(path, options, arrays)?.collect();
     }
     eager_read(path, options, &decode(path, options, arrays)?)
