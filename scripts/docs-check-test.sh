@@ -1,0 +1,401 @@
+#!/usr/bin/env bash
+#
+# The docs-check-test gate: scripts/docs-check.sh against fixture raco setup
+# logs and rendered manuals (scripts/docs-check-fixtures/), through --scan,
+# and through its raco setup run with raco, racket and tee stubbed.
+#
+# Usage: scripts/docs-check-test.sh
+set -euo pipefail
+
+scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+script="$scripts/docs-check.sh"
+fixtures="$scripts/docs-check-fixtures"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+export TMPDIR="$work"
+unset GITHUB_ACTIONS DOCS_CHECK_SETUP_FLAGS DOCS_CHECK_PKG
+
+status=0
+fail() {
+  status=1
+  echo "FAIL: $*" >&2
+}
+
+# manual NAME [FIXTURE]: a copy of a fixture manual (default: the clean one)
+# at $work/NAME, so a scan records its warnings beside it, not in the repo.
+manual() {
+  rm -rf "${work:?}/$1" "$work/$1.docs-check-warnings"
+  cp -r "$fixtures/${2:-manual}" "$work/$1"
+  printf '%s' "$work/$1"
+}
+
+# expect LABEL WANT-STATUS COMMAND...: runs COMMAND, holding its exit status
+# to WANT-STATUS; its stdout and stderr are left in $out.
+out=""
+expect() {
+  local label=$1 want=$2 got=0
+  shift 2
+  out=$("$@" 2>&1) || got=$?
+  if [ "$got" -ne "$want" ]; then
+    fail "$label: exit $got, not $want; output:"$'\n'"$out"
+    return 1
+  fi
+  echo "ok: $label"
+}
+
+# has LABEL TEXT: $out holds TEXT.
+has() {
+  if ! grep -qF -- "$2" <<< "$out"; then
+    fail "$1: output lacks [$2]:"$'\n'"$out"
+  fi
+}
+
+lacks() {
+  if grep -qF -- "$2" <<< "$out"; then
+    fail "$1: output has [$2]:"$'\n'"$out"
+  fi
+}
+
+scan() {
+  "$BASH" "$script" --scan "$@"
+}
+
+# shellcheck disable=SC2329 # called through expect
+run() {
+  PATH="$fixtures/bin:$PATH" "$BASH" "$script" "$@"
+}
+
+# within SECONDS COMMAND...: runs COMMAND, killing it with status 124 once it
+# has run SECONDS, so that a case that would wait out the lock fails instead.
+# shellcheck disable=SC2329 # called through expect
+within() {
+  local limit=$(($1 * 10)) polls=0 pid
+  shift
+  "$@" &
+  pid=$!
+  while kill -0 "$pid" 2> /dev/null; do
+    if [ "$polls" -ge "$limit" ]; then
+      kill "$pid" 2> /dev/null || true
+      wait "$pid" 2> /dev/null || true
+      echo "within: still running after $((limit / 10))s" >&2
+      return 124
+    fi
+    sleep 0.1
+    polls=$((polls + 1))
+  done
+  wait "$pid"
+}
+
+# recorded DIR: the warnings recorded for the manual at DIR, without the
+# stamp on the record's first line.
+recorded() {
+  tail -n +2 < "$1.docs-check-warnings"
+}
+
+# exited: the pid of a process that has exited.
+exited() {
+  local pid
+  (exit 0) &
+  pid=$!
+  wait "$pid" || true
+  printf '%s' "$pid"
+}
+
+dir=$(manual undefined)
+if expect "undefined tag" 1 scan "$fixtures/undefined-tag.log" "$dir"; then
+  has "undefined tag" 'WARNING: undefined tag in'
+  has "undefined tag" '((lib "threading/main.rkt") ~>)'
+  has "undefined tag" '((lib "polars/main.rkt") no-such-verb)'
+  has "undefined tag" 'run: raco setup --pkgs threading-doc'
+  lacks "undefined tag" 'rendering:'
+fi
+
+dir=$(manual multiple)
+if expect "key collected multiple times" 1 scan "$fixtures/multiple-times.log" "$dir"; then
+  has "key collected multiple times" 'collected information for key multiple times'
+fi
+
+dir=$(manual badlink badlink-manual)
+if expect "badlink" 1 scan "$fixtures/clean-render.log" "$dir"; then
+  has "badlink" 'undefined links (badlink)'
+  has "badlink" '<font class="badlink">~&gt;'
+  has "badlink" 'run: raco setup --pkgs threading-doc'
+fi
+
+dir=$(manual clean)
+if expect "clean render" 0 scan "$fixtures/clean-render.log" "$dir"; then
+  has "clean render" 'no undefined tags, duplicate keys or badlinks'
+  [ -f "$dir.docs-check-warnings" ] && [ -z "$(recorded "$dir")" ] \
+    || fail "clean render: no record without warnings at $dir.docs-check-warnings"
+  [ "$(head -n 1 < "$dir.docs-check-warnings")" = "$(tr -d '\n' < "$dir/stamp.sxref")" ] \
+    || fail "clean render: the record does not start with the manual's stamp.sxref"
+fi
+
+mkdir -p "$work/empty"
+if expect "no index.html" 1 scan "$fixtures/clean-render.log" "$work/empty"; then
+  has "no index.html" "no rendered manual at $work/empty (no index.html)"
+fi
+
+dir=$(manual recorded)
+cp "$fixtures/duplicate.warnings" "$dir.docs-check-warnings"
+if expect "recorded warning, no render" 1 scan "$fixtures/no-render.log" "$dir"; then
+  has "recorded warning, no render" "the manual's last render warned"
+  has "recorded warning, no render" 'collected information for key multiple times'
+fi
+
+dir=$(manual other-doc)
+cp "$fixtures/duplicate.warnings" "$dir.docs-check-warnings"
+if expect "recorded warning, another document rendered" 1 \
+     scan "$fixtures/other-doc-render.log" "$dir"; then
+  has "recorded warning, another document rendered" "the manual's last render warned"
+fi
+
+dir=$(manual rerendered)
+scan "$fixtures/multiple-times.log" "$dir" > /dev/null 2>&1 || true
+if expect "a clean render clears the record" 0 scan "$fixtures/clean-render.log" "$dir"; then
+  expect "then a run without a render is clean" 0 scan "$fixtures/no-render.log" "$dir" || true
+fi
+
+dir=$(manual unrecorded)
+if expect "no render, nothing recorded" 1 scan "$fixtures/no-render.log" "$dir"; then
+  has "no render, nothing recorded" "no render's warnings are recorded in $dir.docs-check-warnings"
+fi
+
+dir=$(manual record)
+if STUB_LOG="$fixtures/multiple-times.log" STUB_DOC_DIR="$dir" \
+     expect "--record passes on a warning" 0 run --record; then
+  has "--record passes on a warning" 'collected information for key multiple times'
+fi
+if STUB_LOG="$fixtures/no-render.log" STUB_DOC_DIR="$dir" \
+     expect "then a check without a render" 1 run; then
+  has "then a check without a render" "the manual's last render warned"
+fi
+
+dir=$(manual setup-fails)
+if STUB_LOG="$fixtures/clean-render.log" STUB_RACO_STATUS=1 \
+     expect "raco setup fails" 1 run "$dir"; then
+  has "raco setup fails" 'docs-check: raco setup failed'
+fi
+
+dir=$(manual tee-fails)
+if STUB_LOG="$fixtures/clean-render.log" PATH="$fixtures/failing-tee:$PATH" \
+     expect "tee fails" 1 run "$dir"; then
+  has "tee fails" 'docs-check: could not write the raco setup log'
+  lacks "tee fails" 'raco setup failed'
+fi
+
+if STUB_LOG="$fixtures/clean-render.log" expect "collection lookup fails" 1 run; then
+  has "collection lookup fails" "docs-check: could not find the installed polars collection"
+fi
+
+dir=$(manual stale)
+touch "$dir/kept"
+if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
+     expect "nothing recorded: renders again" 0 run "$dir"; then
+  has "nothing recorded: renders again" 'rendering the manual again'
+  [ -f "$dir.docs-check-warnings" ] \
+    || fail "nothing recorded: renders again: no record at $dir.docs-check-warnings"
+  [ -f "$dir/kept" ] \
+    || fail "nothing recorded: renders again: it deleted the manual's directory"
+fi
+
+dir=$(manual timestamps)
+if expect "a render logged with --timestamp" 0 scan "$fixtures/clean-render-timestamps.log" "$dir"; then
+  [ -f "$dir.docs-check-warnings" ] \
+    || fail "a render logged with --timestamp: no record at $dir.docs-check-warnings"
+fi
+
+dir=$(manual older-record)
+scan "$fixtures/clean-render.log" "$dir" > /dev/null 2>&1 || true
+touch -t 200001010000 "$dir.docs-check-warnings"
+if expect "a record older than the HTML, of the same stamp" 1 \
+     scan "$fixtures/no-render.log" "$dir"; then
+  has "a record older than the HTML, of the same stamp" "it was rendered after its warnings were recorded in $dir.docs-check-warnings (its index.html is newer)"
+fi
+
+# A fresh worktree records the ~> undefined tags; installing threading-doc
+# and a plain raco setup then render the manual cleanly, leaving its stamp.
+dir=$(manual threading-doc)
+scan "$fixtures/undefined-tag.log" "$dir" > /dev/null 2>&1 || true
+touch -t 200001010000 "$dir.docs-check-warnings"
+printf 'rendered with threading-doc\n' >> "$dir/index.html"
+if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
+     expect "threading-doc installed after a record: renders again" 0 run "$dir"; then
+  has "threading-doc installed after a record: renders again" 'rendering the manual again'
+  [ -z "$(recorded "$dir")" ] \
+    || fail "threading-doc installed after a record: the undefined tags are still recorded"
+fi
+
+# A plain raco setup renders the manual again within the second its record
+# was written, so only the stamp tells the two renders apart.
+dir=$(manual outdated)
+scan "$fixtures/clean-render.log" "$dir" > /dev/null 2>&1 || true
+printf '("another render")' > "$dir/stamp.sxref"
+printf 'another render\n' >> "$dir/index.html"
+touch -r "$dir.docs-check-warnings" "$dir/index.html" "$dir/stamp.sxref"
+if expect "rendered after the record, in its second" 1 scan "$fixtures/no-render.log" "$dir"; then
+  has "rendered after the record, in its second" "it was rendered after its warnings were recorded in $dir.docs-check-warnings"
+fi
+if STUB_LOG="$fixtures/no-render.log" STUB_RENDER_INTO="$dir" \
+     STUB_RENDER_LOG="$fixtures/multiple-times.log" \
+     expect "rendered after the record: renders again" 1 run "$dir"; then
+  has "rendered after the record: renders again" 'rendering the manual again'
+  has "rendered after the record: renders again" 'collected information for key multiple times'
+fi
+
+dir=$(manual annotations)
+if GITHUB_ACTIONS=true expect "annotations on a check" 1 scan "$fixtures/multiple-times.log" "$dir"; then
+  has "annotations on a check" '::error::docs-check: raco setup warned'
+fi
+dir=$(manual record-annotations)
+if GITHUB_ACTIONS=true STUB_LOG="$fixtures/multiple-times.log" STUB_DOC_DIR="$dir" \
+     expect "--record writes no annotations" 0 run --record; then
+  has "--record writes no annotations" 'collected information for key multiple times'
+  lacks "--record writes no annotations" '::error::'
+fi
+
+dir=$(manual held)
+sleep 60 &
+holder=$!
+ln -s "$holder" "$dir.docs-check-lock"
+if DOCS_CHECK_LOCK_TIMEOUT=2 expect "a held lock times out" 1 \
+     within 20 scan "$fixtures/clean-render.log" "$dir"; then
+  has "a held lock times out" "another docs-check has held $dir.docs-check-lock for over 2s (pid $holder)"
+  has "a held lock times out" "docs-check: waiting for $dir.docs-check-lock (pid $holder)"
+  [ "$(grep -c 'waiting for' <<< "$out")" -eq 1 ] \
+    || fail "a held lock times out: it did not say exactly once that it was waiting:"$'\n'"$out"
+  [ "$(readlink "$dir.docs-check-lock")" = "$holder" ] \
+    || fail "a held lock times out: it removed the other run's lock"
+  [ ! -f "$dir.docs-check-warnings" ] || fail "a held lock times out: it recorded without the lock"
+fi
+kill "$holder" 2> /dev/null || true
+wait "$holder" 2> /dev/null || true
+if DOCS_CHECK_LOCK_TIMEOUT=soon expect "a lock timeout that is not a number" 1 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a lock timeout that is not a number" 'DOCS_CHECK_LOCK_TIMEOUT is soon, not a number of seconds'
+fi
+
+# A lock left by a run that was killed (SIGKILL runs no EXIT trap) is
+# removed at once, with the default timeout, rather than waited out.
+dir=$(manual dead-holder)
+dead=$(exited)
+ln -s "$dead" "$dir.docs-check-lock"
+if expect "a lock whose holder exited" 0 within 10 scan "$fixtures/clean-render.log" "$dir"; then
+  has "a lock whose holder exited" "removed $dir.docs-check-lock, left by pid $dead, which is not running"
+  [ ! -L "$dir.docs-check-lock" ] || fail "a lock whose holder exited: the lock was not released"
+fi
+
+# ln -s onto a directory would make the link inside it, and hold nothing.
+dir=$(manual directory-lock)
+mkdir "$dir.docs-check-lock"
+if expect "a directory where the lock goes" 1 within 10 scan "$fixtures/clean-render.log" "$dir"; then
+  has "a directory where the lock goes" "$dir.docs-check-lock is not a docs-check lock"
+  [ -z "$(ls -A "$dir.docs-check-lock")" ] \
+    || fail "a directory where the lock goes: it wrote into the directory"
+  [ ! -f "$dir.docs-check-warnings" ] \
+    || fail "a directory where the lock goes: it recorded without the lock"
+fi
+
+# Killed while it removed a dead holder's lock.
+dir=$(manual dead-reaper)
+dead=$(exited)
+ln -s "$dead" "$dir.docs-check-lock"
+ln -s "$(exited)" "$dir.docs-check-lock.reap"
+if expect "a dead holder's lock, with a dead reaper's marker" 0 within 10 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a dead holder's lock, with a dead reaper's marker" "removed $dir.docs-check-lock, left by pid $dead"
+  [ ! -L "$dir.docs-check-lock.reap" ] && [ ! -L "$dir.docs-check-lock.reap.reap" ] \
+    || fail "a dead holder's lock, with a dead reaper's marker: a reaper's marker is still there"
+fi
+
+# A directory where the reaper's marker goes (as an older docs-check's mkdir
+# reaper left it) would take the marker inside it and exclude no other
+# reaper: the run reaps nothing and takes no lock.
+dir=$(manual directory-reaper)
+dead=$(exited)
+ln -s "$dead" "$dir.docs-check-lock"
+mkdir "$dir.docs-check-lock.reap"
+if expect "a dead holder's lock, with a directory for a marker" 1 within 10 \
+     scan "$fixtures/clean-render.log" "$dir"; then
+  has "a dead holder's lock, with a directory for a marker" \
+    "$dir.docs-check-lock.reap is not a docs-check reaper's marker"
+  [ "$(grep -c 'is not a docs-check' <<< "$out")" -eq 1 ] \
+    || fail "a dead holder's lock, with a directory for a marker: not exactly one refusal:"$'\n'"$out"
+  lacks "a dead holder's lock, with a directory for a marker" "removed $dir.docs-check-lock"
+  [ "$(readlink "$dir.docs-check-lock")" = "$dead" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it reaped or took the lock"
+  [ -z "$(ls -A "$dir.docs-check-lock.reap")" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it wrote into the directory"
+  [ ! -f "$dir.docs-check-warnings" ] \
+    || fail "a dead holder's lock, with a directory for a marker: it recorded without the lock"
+fi
+
+# A live reaper's marker is not removed: the waiter waits for it.
+dir=$(manual live-reaper)
+sleep 60 &
+reaper=$!
+ln -s "$(exited)" "$dir.docs-check-lock"
+ln -s "$reaper" "$dir.docs-check-lock.reap"
+if DOCS_CHECK_LOCK_TIMEOUT=2 expect "a dead holder's lock, with a live reaper's marker" 1 \
+     within 20 scan "$fixtures/clean-render.log" "$dir"; then
+  [ "$(readlink "$dir.docs-check-lock.reap")" = "$reaper" ] \
+    || fail "a dead holder's lock, with a live reaper's marker: it removed the marker"
+  [ -L "$dir.docs-check-lock" ] \
+    || fail "a dead holder's lock, with a live reaper's marker: it removed the lock under the reaper"
+fi
+kill "$reaper" 2> /dev/null || true
+wait "$reaper" 2> /dev/null || true
+
+# A run whose lock was replaced (removed by a waiter that took this run for
+# dead) leaves the replacement, which names another run.
+dir=$(manual replaced)
+sleep 60 &
+other=$!
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=replaced \
+  STUB_RENDER_SLEEP=2 run --record > "$work/replaced.out" 2>&1 &
+pid=$!
+polls=0
+while [ ! -L "$dir.docs-check-lock" ] && [ "$polls" -lt 100 ]; do
+  sleep 0.1
+  polls=$((polls + 1))
+done
+rm -rf "$dir.docs-check-lock"
+ln -s "$other" "$dir.docs-check-lock"
+replaced=0
+wait "$pid" || replaced=$?
+if [ "$replaced" -ne 0 ]; then
+  fail "a replaced lock: exit $replaced:"$'\n'"$(cat "$work/replaced.out")"
+elif [ "$(readlink "$dir.docs-check-lock")" != "$other" ]; then
+  fail "a replaced lock: the run released the lock that names pid $other"
+else
+  echo "ok: a replaced lock"
+fi
+kill "$other" 2> /dev/null || true
+wait "$other" 2> /dev/null || true
+
+# Two runs render the same manual, the first slowly: without the lock the
+# second's render and record land inside the first's, which then records its
+# warnings beside the second's HTML.
+dir=$(manual concurrent)
+first=0 second=0
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=first \
+  STUB_RENDER_SLEEP=2 STUB_RENDER_LOG="$fixtures/multiple-times.log" \
+  run --record > "$work/first.out" 2>&1 &
+pid=$!
+sleep 0.5
+STUB_DOC_DIR="$dir" STUB_RENDER_INTO="$dir" STUB_RENDER_MARK=second \
+  run --record > "$work/second.out" 2>&1 || second=$?
+wait "$pid" || first=$?
+if [ "$first" -ne 0 ] || [ "$second" -ne 0 ]; then
+  fail "concurrent records: exits $first and $second:"$'\n'"$(cat "$work/first.out" "$work/second.out")"
+elif grep -qx second "$dir/index.html" && [ -n "$(recorded "$dir")" ]; then
+  fail "concurrent records: the first render's warnings are recorded beside the second's HTML"
+elif grep -qx first "$dir/index.html" && [ -z "$(recorded "$dir")" ]; then
+  fail "concurrent records: the second render's record is beside the first's HTML"
+elif [ -e "$dir.docs-check-lock" ]; then
+  fail "concurrent records: the lock was not released"
+else
+  echo "ok: concurrent records"
+fi
+
+exit $status

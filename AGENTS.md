@@ -726,7 +726,30 @@ it. Racket side: `define-compat` with `#:c-id`.
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
-  undefined tag and `threading-doc` looks unused.
+  undefined tag, which fails the `docs` gate, and `threading-doc` looks unused.
+- `scripts/docs-check.sh` (the `docs` gate, and the flake's Racket build) runs
+  `raco setup` over `rkt-polars` and fails on an `undefined tag` or a key
+  collected `multiple times` in its log, or a `badlink` in the rendered
+  manual: `raco setup` and `raco scribble` only warn about these and exit 0.
+  It sees the warnings only on a run that renders the manual, so that run
+  records them in `polars/doc/polars.docs-check-warnings` (the dev shell's
+  setup on entry too, through `--record`, which writes no GitHub Actions
+  annotations) and a run that does not reads them back. The record starts
+  with a copy of Scribble's build stamp, `stamp.sxref`, which names the
+  render's inputs, since a render within the record's second has its mtime.
+  With no record, or one whose stamp is not the manual's or that is older
+  than `index.html` (a render after a dependency's manual changes, such as
+  installing `threading-doc`, keeps the stamp), it deletes `stamp.sxref` and
+  renders the manual again. Each run holds
+  `polars/doc/polars.docs-check-lock` (a symbolic link naming its pid,
+  created by `ln -s`, since macOS has no `flock`) while it renders and
+  records, waiting up to `DOCS_CHECK_LOCK_TIMEOUT` seconds for a holder that
+  is running, and releases it only while it names its own pid; it removes a
+  lock whose pid is not running, which a `SIGKILL` leaves behind, holding
+  the lock's `.reap` link meanwhile. `--scan LOG DOC-DIR`
+  checks a saved log, and `scripts/docs-check-test.sh` (the `docs-check-test`
+  gate, a push gate and a flake check) runs it on the fixtures in
+  `scripts/docs-check-fixtures/`.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
   against the stale library.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per

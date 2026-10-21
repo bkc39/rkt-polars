@@ -1,0 +1,7 @@
+raco setup: version: 9.3
+raco setup: --- building documentation ---
+raco setup: skipping: <pkgs>/racket-index/scribblings/main/user/family.scrbl
+raco setup: using: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl
+raco setup: running: <pkgs>/racket-index/scribblings/main/user/search.scrbl
+raco setup: rendering: <pkgs>/racket-index/scribblings/main/user/search.scrbl
+raco setup: --- installing collections ---

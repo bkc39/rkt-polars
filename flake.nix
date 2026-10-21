@@ -50,7 +50,7 @@
           rm -f "$PLTUSERHOME"/.setup-installed-* 2>/dev/null || true
           if raco pkg install --batch --auto --no-setup --link --scope user --skip-installed \
                --name rkt-polars "$PWD" \
-            && raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars; then
+            && ${pkgs.bash}/bin/bash "$PWD/scripts/docs-check.sh" --record; then
             touch "$deps_stamp"
             echo "Done. Run 'raco test -x --timeout 600 -c polars' to test."
           else
@@ -227,7 +227,9 @@
               raco pkg install --batch --no-setup --copy --scope user \
                 --name rkt-polars "$PWD"
 
-              raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars
+              # raco setup over rkt-polars, failing on the undefined tags and
+              # duplicate keys it only warns about.
+              bash scripts/docs-check.sh
 
               runHook postBuild
             '';
@@ -362,6 +364,15 @@
             ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
             touch $out
           '';
+          docs-check-test = pkgs.runCommand "rkt-polars-docs-check-test" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            cp -r $src/scripts scripts
+            chmod -R u+w scripts
+            patchShebangs scripts
+            ${pkgs.bash}/bin/bash scripts/docs-check-test.sh
+            touch $out
+          '';
           # scripts/build-so.sh builds the committed candidates with the rustc
           # rust/rust-toolchain.toml pins; this holds it to the release of the
           # rustc the flake's build, tests and dev shell use (rustup's build of
@@ -384,7 +395,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only release-toolchain;
+          inherit rustfmt racket-version no-syntax-rule rustls-only docs-check-test release-toolchain;
           inherit (self.packages.${system}) rust racket;
         });
 
