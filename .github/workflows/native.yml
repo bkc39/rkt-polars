@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # build-so.sh's darwin branch against stubs, under the bash 3.2 macOS
+      # ships, which the flake check and the dev shell's gate do not run.
+      - name: Stub test of build-so.sh under /bin/bash (darwin)
+        if: matrix.platform == 'darwin'
+        run: |
+          /bin/bash -c 'echo "/bin/bash is $BASH_VERSION"; ((BASH_VERSINFO[0] == 3))'
+          BASH_UNDER_TEST=/bin/bash bash scripts/test-build-so.sh
+
       # build-so.sh installs the rustc rust/rust-toolchain.toml pins: with the
       # runner's rustup on darwin, inside the manylinux2014 container (glibc
       # 2.17) on linux, where the host only needs docker.

@@ -362,6 +362,12 @@
             ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
             touch $out
           '';
+          build-so-darwin = pkgs.runCommand "rkt-polars-build-so-darwin" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/test-build-so.sh
+            touch $out
+          '';
           # scripts/build-so.sh builds the committed candidates with the rustc
           # rust/rust-toolchain.toml pins; this holds it to the release of the
           # rustc the flake's build, tests and dev shell use (rustup's build of
@@ -384,7 +390,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only release-toolchain;
+          inherit rustfmt racket-version no-syntax-rule rustls-only release-toolchain build-so-darwin;
           inherit (self.packages.${system}) rust racket;
         });
 
