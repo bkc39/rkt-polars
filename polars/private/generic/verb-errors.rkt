@@ -20,7 +20,7 @@
            polars/private/generic/reductions
            polars/private/generic/reshape
            polars/private/generic/strings
-           (only-in polars/private/test-helpers not-utf-8-names refused))
+           (only-in polars/private/test-helpers not-utf-8-expected not-utf-8-names refused))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -230,7 +230,7 @@
                       (list 'rename bad (lambda () (rename named bad "z")))
                       (list 'rename bad (lambda () (rename (series '(1) #:name "a") bad)))))])
     (match-define (list who given thunk) entry)
-    (check-raises 'contract (refused who given) thunk))
+    (check-raises 'contract (refused who given #:expected not-utf-8-expected) thunk))
   (check-raises 'contract #rx"^drop: contract violation\n" (lambda () (drop pair '(a))))
   (check-raises 'contract #rx"^pivot: contract violation\n"
                 (lambda () (pivot sales #:on '(quarter) #:index '("store") #:values '("sales"))))

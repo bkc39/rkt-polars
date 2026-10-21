@@ -50,7 +50,8 @@
            polars/private/generic/core
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/reshape collect head lazy)
-           (only-in polars/private/generic/test-fixtures column not-utf-8-names refused)
+           (only-in polars/private/generic/test-fixtures
+                    column not-utf-8-expected not-utf-8-names refused)
            (prefix-in contracted: (submod "..")))
 
   (define usr (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
@@ -249,7 +250,7 @@
                                    (lambda () (contracted:join-asof ints-x ints-x #:on "x"
                                                                     #:by (list bad))))))])
       (match-define (list who given thunk) entry)
-      (list thunk exn:fail:contract? (refused who given))))
+      (list thunk exn:fail:contract? (refused who given #:expected not-utf-8-expected))))
   (for ([refusal (in-list (append refusals not-utf-8-refusals))])
     (match-define (list thunk kind rx) refusal)
     (check-exn (lambda (e) (and (kind e) (regexp-match? rx (exn-message e)))) thunk

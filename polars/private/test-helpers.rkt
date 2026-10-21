@@ -10,7 +10,8 @@
          (only-in racket/string string-contains?))
 
 (provide apply-keywords contains-all? contract-violation-of drops-once gzip-file
-         keyword-rejected? message-of not-utf-8-names refused scratch-file settle! staging-files)
+         keyword-rejected? message-of not-utf-8-expected not-utf-8-names refused scratch-file
+         settle! staging-files)
 
 (define (scratch-file dir name text)
   (define path (build-path dir name))
@@ -22,11 +23,13 @@
        (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
                       (exn-message e))))
 
-(define (refused who given)
+(define (refused who given #:expected [expected "[^\n]*"])
   (regexp (string-append "^" (regexp-quote (format "~a: contract violation\n  expected: " who))
-                         "[^\n]*\n  given: " (regexp-quote (format "~e" given)) "\n")))
+                         expected "\n  given: " (regexp-quote (format "~e" given)) "\n")))
 
 (define not-utf-8-names (list (bytes 255) (bytes->path (bytes 255))))
+
+(define not-utf-8-expected "[^\n]*utf-8\\?[^\n]*")
 
 (define ((keyword-rejected? kw) e)
   (regexp-match? (regexp (string-append "does not expect an argument with given keyword\n"

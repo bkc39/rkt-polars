@@ -273,8 +273,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `const char **` table and every NUL-terminated string share one
   `'atomic-interior` block, which the collector never moves. Its elements are
   what `_string` took: a string (as UTF-8), a byte string, or a path. A
-  verb's contract on a name is `utf-8-name/c` (`resource.rkt`), which takes
-  the same but refuses a byte string or path that is not UTF-8 (#248).
+  name a verb passes to a `_string-list` has the contract `utf-8-name/c`
+  (`resource.rkt`): the same, but not a byte string or path that is not
+  UTF-8 (#248).
   `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
   retains the values it is given and not what a ctype converts them to: as a
   ctype the block could be freed by a collection during a `#:blocking?` call
