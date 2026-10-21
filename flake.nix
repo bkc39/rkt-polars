@@ -40,8 +40,11 @@
         if . ${./scripts/devshell-home.sh} "${pkgs.coreutils}/bin:${pkgs.git}/bin"; then
           mkdir -p "$PLTUSERHOME"
 
-          mkdir -p "$project_root/polars/native-libs"
-          cp -f ${rust}/lib/libcompat.* "$project_root/polars/native-libs/"
+          # A rename, never a rewrite in place: a racket in another shell may
+          # have the library mapped (#265).
+          PATH="${pkgs.coreutils}/bin:${pkgs.diffutils}/bin:$PATH" \
+            ${pkgs.bash}/bin/bash ${./scripts/install-native-libs.sh} \
+            ${rust}/lib "$project_root/polars/native-libs"
 
           # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
           info_hash=$(${pkgs.coreutils}/bin/sha256sum "$project_root/info.rkt" | cut -c1-16)
@@ -257,10 +260,10 @@
           copy-native-libs = pkgs.writeShellApplication {
             name = "copy-native-libs";
             meta.description = "Copy the Nix-built libcompat shared library into polars/native-libs";
+            runtimeInputs = [ pkgs.coreutils pkgs.diffutils ];
             text = ''
               DEST="$(pwd)/polars/native-libs"
-              mkdir -p "$DEST"
-              cp -vf ${rust}/lib/libcompat.* "$DEST/"
+              ${pkgs.bash}/bin/bash ${./scripts/install-native-libs.sh} ${rust}/lib "$DEST"
               echo "Native libraries copied to $DEST"
               ls -la "$DEST"
             '';
@@ -284,6 +287,7 @@
             '' + devSetup pkgs rust ''
               exec ${pkgs.bash}/bin/bash bench/run.sh "$@"
             '' + ''
+              echo "bench: the dev shell setup was skipped, so the bench did not run" >&2
               exit 1
             '';
           };
@@ -367,6 +371,12 @@
             ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
             touch $out
           '';
+          install-native-libs = pkgs.runCommand "rkt-polars-install-native-libs" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/install-native-libs-test.sh
+            touch $out
+          '';
           devshell-home = pkgs.runCommand "rkt-polars-devshell-home" {
             src = pkgs.lib.cleanSource ./.;
             nativeBuildInputs = [ pkgs.git ];
@@ -396,7 +406,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only devshell-home release-toolchain;
+          inherit rustfmt racket-version no-syntax-rule rustls-only install-native-libs devshell-home release-toolchain;
           inherit (self.packages.${system}) rust racket;
         });
 

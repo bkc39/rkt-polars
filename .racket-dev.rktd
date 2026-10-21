@@ -38,6 +38,9 @@
   ;; subdirectory) keys the dev shell's one PLTUSERHOME.  Plain bash, so no
   ;; shell.
   (devshell-home ("bash scripts/devshell-home-test.sh" #:shell ""))
+  ;; The dev shell and copy-native-libs replace libcompat by a rename, never
+  ;; in place, so a racket that has it mapped keeps running.  Plain bash.
+  (install-native-libs ("bash scripts/install-native-libs-test.sh" #:shell ""))
   ;; The project's Resyntax suite (lint/) over the same trees, red on any
   ;; suggestion; `scripts/resyntax-lint.sh fix` applies them.  It takes
   ;; minutes, so it is not a push gate; CI runs it.
@@ -54,4 +57,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule rustls-only devshell-home compile test examples fmt)))
+ (push-gates (no-syntax-rule rustls-only devshell-home install-native-libs compile test examples fmt)))

@@ -7,7 +7,9 @@
 #
 # The home is keyed on the root as git resolves it (symlinks and a trailing
 # slash gone, a subdirectory lifted to the top), so every way into one
-# worktree shares one home (#158). Outside git, or inside a repository that
+# worktree shares one home (#158). GIT_DIR and GIT_WORK_TREE, which a git hook
+# exports, are ignored: with GIT_DIR alone git takes the working directory for
+# the top. Outside git, or inside a repository that
 # is not an rkt-polars checkout, the root is the physical path of the
 # directory. A checkout whose path has no symlinks keeps the home it had.
 #
@@ -24,7 +26,8 @@ rkt_polars_devshell_home() (
     PATH="$1:$PATH"
   fi
   dir=$(pwd -P) || fail "cannot resolve the working directory"
-  root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || root=
+  root=$(env -u GIT_DIR -u GIT_WORK_TREE \
+    git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || root=
   if [ -z "$root" ] || [ ! -f "$root/polars/info.rkt" ]; then
     root=$dir
   fi
