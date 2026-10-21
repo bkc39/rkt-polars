@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# The collection lookup for scripts/docs-check-test.sh: prints STUB_DOC_DIR,
+# or fails as racket does when the collection is not installed.
+if [ -n "${STUB_DOC_DIR:-}" ]; then
+  printf '%s' "$STUB_DOC_DIR"
+else
+  echo 'collection-path: collection not found' >&2
+  exit 1
+fi

@@ -1,0 +1,6 @@
+raco setup: version: 9.3
+raco setup: --- building documentation ---
+raco setup: running: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl
+WARNING: collected information for key multiple times: '(def ((lib "polars/main.rkt") head)); values: '#(head (def ((lib "polars/main.rkt") head)) 0) '#(head (def ((lib "polars/main.rkt") head)) 0)
+raco setup: rendering: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl
+raco setup: --- installing collections ---

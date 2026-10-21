@@ -1,0 +1,8 @@
+raco setup: version: 9.3
+raco setup: --- building documentation ---
+raco setup: running: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl
+raco setup: WARNING: undefined tag in <pkgs>/rkt-polars/polars/scribblings/polars.scrbl:
+raco setup:  ((lib "threading/main.rkt") ~>)
+raco setup:  ((lib "polars/main.rkt") no-such-verb)
+raco setup: rendering: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl
+raco setup: --- installing collections ---

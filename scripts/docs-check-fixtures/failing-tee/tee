@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# A tee on a full file system, for scripts/docs-check-test.sh.
+cat > /dev/null
+echo 'tee: write error: No space left on device' >&2
+exit 1

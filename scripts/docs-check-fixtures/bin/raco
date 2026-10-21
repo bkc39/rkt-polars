@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# raco setup for scripts/docs-check-test.sh: prints STUB_LOG and exits
+# STUB_RACO_STATUS, or, when STUB_RENDER_INTO has no index.html, renders the
+# clean manual there and prints a clean render.
+set -euo pipefail
+fixtures=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [ -n "${STUB_RENDER_INTO:-}" ] && [ ! -f "$STUB_RENDER_INTO/index.html" ]; then
+  mkdir -p "$STUB_RENDER_INTO"
+  cp "$fixtures/manual/index.html" "$STUB_RENDER_INTO/"
+  cat "$fixtures/clean-render.log"
+else
+  cat "$STUB_LOG"
+fi
+exit "${STUB_RACO_STATUS:-0}"

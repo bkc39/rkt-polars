@@ -731,6 +731,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   `raco setup` over `rkt-polars` and fails on an `undefined tag` or a key
   collected `multiple times` in its log, or a `badlink` in the rendered
   manual: `raco setup` and `raco scribble` only warn about these and exit 0.
+  It sees the warnings only on a run that renders the manual, so that run
+  records them in `polars/doc/polars.docs-check-warnings` (the dev shell's
+  setup on entry too, through `--record`) and a run that does not reads them
+  back; with no record it renders the manual again. `--scan LOG DOC-DIR`
+  checks a saved log, and `scripts/docs-check-test.sh` (the `docs-check-test`
+  gate, a push gate and a flake check) runs it on the fixtures in
+  `scripts/docs-check-fixtures/`.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
   against the stale library.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
