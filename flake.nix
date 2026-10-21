@@ -373,6 +373,7 @@
           '';
           install-native-libs = pkgs.runCommand "rkt-polars-install-native-libs" {
             src = pkgs.lib.cleanSource ./.;
+            nativeBuildInputs = [ pkgs.git ];
           } ''
             ${pkgs.bash}/bin/bash $src/scripts/install-native-libs-test.sh
             touch $out

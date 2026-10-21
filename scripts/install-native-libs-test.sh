@@ -184,13 +184,18 @@ fi
 
 repo=$(cd "$here/.." && pwd -P)
 sample=polars/native-libs/.libcompat.so.Ab12Cd
-if ! command -v git > /dev/null \
-  || [ "$(git -C "$repo" rev-parse --show-toplevel 2> /dev/null)" != "$repo" ]; then
-  echo "skip: .gitignore covers $sample (not a git checkout)"
-elif git -C "$repo" check-ignore -q --no-index "$sample"; then
-  echo "ok: .gitignore covers a killed install's temporary file $sample"
+ignore_repo=$work/ignore-repo
+if ! command -v git > /dev/null; then
+  fail "git is needed to check that .gitignore covers $sample"
 else
-  fail ".gitignore does not cover $sample"
+  git init -q --template= "$ignore_repo"
+  cp "$repo/.gitignore" "$ignore_repo/.gitignore"
+  if git -C "$ignore_repo" -c core.excludesFile=/dev/null \
+    check-ignore -q "$sample"; then
+    echo "ok: .gitignore covers a killed install's temporary file $sample"
+  else
+    fail ".gitignore does not cover $sample"
+  fi
 fi
 
 exit $status
