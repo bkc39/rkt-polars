@@ -272,7 +272,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
   `const char **` table and every NUL-terminated string share one
   `'atomic-interior` block, which the collector never moves. Its elements are
-  what `_string` took: a string (as UTF-8), a byte string, or a path.
+  what `_string` took: a string (as UTF-8), a byte string, or a path. A
+  name a verb passes to a `_string-list` has the contract `utf-8-name/c`
+  (`resource.rkt`): the same, but not a byte string or path that is not
+  UTF-8 (#248).
   `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
   retains the values it is given and not what a ctype converts them to: as a
   ctype the block could be freed by a collection during a `#:blocking?` call
@@ -670,7 +673,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   of that instant, where Python's `to_list` stops at microseconds; `ref` reads
   the physical value through the bulk copy, so the two cannot disagree. The
   conversions raise on an unsupported dtype, `binary` included (#99), even
-  when every entry is null.
+  when every entry is null. The series printer shows a binary value as
+  Python 1.42.1's series repr does, read through `series_copy_binary` for
+  the shown rows only and at most 61 bytes of each value (its
+  `max_value_len`; the copy still reports each value's full length): bytes
+  `!` to `~` as themselves, any other as `\xNN`, cut after 60 bytes with
+  `"…` (Python's `POLARS_FMT_STR_LEN`, doubled, is not read). It is total: a cell that raises prints `#<cannot print:
+  ...>`, and a series whose header raises `#<series: cannot print: ...>`
+  (#250).
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks

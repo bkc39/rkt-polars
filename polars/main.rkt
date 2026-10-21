@@ -39,7 +39,8 @@
   owned-cpointer-types owned-pointer-accessor owned-pointer-arg
   owned-pointer? prop:owned-pointer raise-dropped release-owned
   series-drop-count series-drop/raw series-dropped write-owned
-  dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
+  dataframe-sort/raw frame-sort/c series-binary-byte-len series-copy-binary
+  series-copy-decimal series-copy-str series-ref-bytes
   series-new-str/raw series-sort/raw series-str-byte-len sort-flags
   sort-flags/c sort-flags-mismatch string-has-nul?
   dtype-short-names
@@ -48,7 +49,7 @@
   series-dt-replace-time-zone series-dt-replace-time-zone/raw
   series-time-zone replace-zone-failure zoned-datetime-dtype?
   dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-u8 series-copy-u16
+  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64 series-copy-u8 series-copy-u16
   series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool
   series-add/raw series-sub/raw series-mul/raw series-div/raw series-mod/raw
   series-eq/raw series-ne/raw series-gt/raw series-ge/raw series-lt/raw series-le/raw
@@ -101,7 +102,11 @@
                                       dataframe-rename/raw dataframe-with-column/raw
                                       dataframe-new/raw null-behavior/c rank-method/c
                                       provide-row-windows)))])
-    (check-false (memq internal exported) (format "~a is internal" internal))))
+    (check-false (memq internal exported) (format "~a is internal" internal)))
+  (for ([name (in-list exported)])
+    (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"
+                                (symbol->string name))
+                 (format "~a is internal" name))))
 
 (module+ test
   (require racket/match

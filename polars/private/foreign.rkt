@@ -32,7 +32,7 @@
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-string strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
-                     series-date-ref series-index/c
+                     series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned
                      series-std series-var series-new-null
@@ -53,6 +53,12 @@
                                         (lambda (_) DataFrame-ptr?) 'dataframe-join/c)]
           [dataframe-join-asof (frame-join-asof/c DataFrame-ptr? 'dataframe-join-asof/c)]
           [series-drop (->/c Series-ptr? void?)]
+          [series-ref-bytes
+           (->i ([who symbol?]
+                 [s Series-ptr?]
+                 [index (s) (and/c exact-nonnegative-integer? (</c (series-len s)))]
+                 [limit size/c])
+                any)]
           [dataframe-drop (->/c DataFrame-ptr? void?)]
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
@@ -1230,6 +1236,41 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
+
+(define-compat series-binary-byte-len
+  (_fun _Series-ptr _size _size _size -> _int64))
+
+;; The buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-binary
+  (_fun _Series-ptr _size _size _size _bytes _size _pointer _size _pointer _size _bytes _size
+        -> _int64))
+
+(define (series-ref-bytes who s index limit)
+  (define size (series-binary-byte-len s index 1 limit))
+  (define buf (make-bytes (max size 0)))
+  (define valid (make-bytes 1))
+  (define copied
+    (and (not (negative? size))
+         (with-raw-buffer ([offsets 2 _int64])
+           (series-copy-binary s index 1 limit buf size offsets 2 #f 0 valid 1))))
+  (cond
+    [(or (not copied) (negative? copied))
+     (error who "cannot read a binary value at index ~a" index)]
+    [(zero? (bytes-ref valid 0)) polars-null]
+    [else buf]))
+
+(module+ test
+  (let ([bytes-of (series-cast (series-new-str "b" (list "a\u0000é" polars-null "")) 'binary)])
+    (check-equal? (map (lambda (i) (series-ref-bytes 'test bytes-of i 10)) '(0 1 2))
+                  (list #"a\0\303\251" polars-null #""))
+    (check-equal? (for/list ([limit (in-list '(0 1 3 4 5))])
+                    (series-ref-bytes 'test bytes-of 0 limit))
+                  (list #"" #"a" #"a\0\303" #"a\0\303\251" #"a\0\303\251"))
+    (check-equal? (series-ref-bytes 'test bytes-of 1 0) polars-null)
+    (check-exn #rx"^test: cannot read a binary value at index 3$"
+               (lambda () (series-ref-bytes 'test bytes-of 3 10)))
+    (check-exn #rx"^test: cannot read a binary value at index 0$"
+               (lambda () (series-ref-bytes 'test (series-new-str "s" '("a")) 0 10)))))
 ;; The validity buffers are GC memory the collector may move: never #:blocking?.
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
@@ -1412,6 +1453,19 @@
     (check-exn #rx"^series-ref-i64/raw: contract violation\n.*\n  blaming: client\n"
                (lambda () (client-ref-i64 ref-i64 index))))
   (check-equal? (CompatOptI64-value (client-ref-i64 ref-i64 0)) 1099511627776)
+  (define client-ref-bytes
+    (parameterize ([current-namespace (namespace-anchor->empty-namespace ref-anchor)])
+      (namespace-require 'racket/base)
+      (eval '(module bytes-client racket/base
+               (require (only-in polars/private/foreign series-ref-bytes))
+               (provide client-ref-bytes)
+               (define (client-ref-bytes s index) (series-ref-bytes 'client s index 4))))
+      (dynamic-require ''bytes-client 'client-ref-bytes)))
+  (define ref-binary (series-cast (series-new-str "b" '("abcdef")) 'binary))
+  (for ([index (in-list '(-1 a 1))])
+    (check-exn #rx"^series-ref-bytes: contract violation\n.*\n  blaming: bytes-client\n"
+               (lambda () (client-ref-bytes ref-binary index))))
+  (check-equal? (client-ref-bytes ref-binary 0) #"abcd")
 
   (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
   (check-equal? (series-ref ref-i8 0) -8)
@@ -2675,6 +2729,17 @@
     (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)
                     #:how 'cross))
   (check-equal? (dataframe-height crossed) 4) ;; 2 * 2
+  (for ([->name (list string->bytes/utf-8 string->path)])
+    (check-equal? (dataframe-height
+                   (dataframe-join users-df orders-df #:on (list (->name "uid")) #:how 'inner))
+                  3)
+    (check-equal? (series-sum-i32
+                   (dataframe-column (dataframe-join-asof grouped-observations-df
+                                                          grouped-calibration-df
+                                                          #:on (->name "time")
+                                                          #:by (list (->name "sensor")))
+                                     "offset"))
+                  550))
 
   ;; vstack — append rows from a compatible dataframe
   (define more-users
