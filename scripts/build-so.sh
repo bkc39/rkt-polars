@@ -84,6 +84,14 @@ if [[ "$platform" == "linux" ]]; then
     '
   echo ">> staged $dest/$lib"
 else
+  if ! command -v otool >/dev/null 2>&1; then
+    echo "error: otool not found; it checks the dylib's dependencies and minimum macOS" >&2
+    exit 1
+  fi
+  if ! command -v ld >/dev/null 2>&1; then
+    echo "error: ld not found; its version goes in the toolchain record" >&2
+    exit 1
+  fi
   cargo=(cargo)
   rustc=(rustc)
   if command -v rustup >/dev/null 2>&1; then
@@ -98,14 +106,6 @@ else
   release="$("${rustc[@]}" -vV | sed -n 's/^release: //p')" || true
   if [[ "$release" != "$RUST_TOOLCHAIN" ]]; then
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
-    exit 1
-  fi
-  if ! command -v otool >/dev/null 2>&1; then
-    echo "error: otool not found; it checks the dylib's dependencies and minimum macOS" >&2
-    exit 1
-  fi
-  if ! command -v ld >/dev/null 2>&1; then
-    echo "error: ld not found; its version goes in the toolchain record" >&2
     exit 1
   fi
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"

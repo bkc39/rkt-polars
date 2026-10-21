@@ -12,7 +12,7 @@
 # the record names its minimum macOS and summarises on one line.  A failed
 # cargo build stages nothing and writes no record, though an earlier build's
 # dylib is still in the target directory, and a missing otool or ld stops it
-# before the build.
+# before rustup installs anything.
 #
 # The summary is scripts/toolchain-summary.sh's, not the copy's.  Both run
 # under $BASH_UNDER_TEST (default: the bash on PATH), so that macOS's bash 3.2
@@ -328,6 +328,9 @@ for tool in otool ld; do
   expect_refused "$what" "error: $tool not found"
   if grep -q ' cargo build ' "$log"; then
     fail "$what: cargo build ran"
+  fi
+  if grep -q '^rustup toolchain install ' "$log"; then
+    fail "$what: rustup installed the toolchain"
   fi
   [[ ! -e "$repo/polars/native-libs/candidates/darwin/toolchain" ]] \
     || fail "$what: a toolchain record was written"
