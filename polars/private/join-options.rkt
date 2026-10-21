@@ -1,9 +1,9 @@
 #lang racket/base
 
 (require (only-in racket/contract/base
-                  ->i and/c integer-in non-empty-listof not/c or/c rename-contract
-                  unsupplied-arg?)
+                  ->i and/c non-empty-listof not/c or/c rename-contract unsupplied-arg?)
          racket/match
+         (only-in polars/private/c-integer int64/c)
          (only-in polars/private/resource utf-8-name/c utf-8-names/c))
 
 (provide asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
@@ -56,8 +56,7 @@
 (define compat-asof-tolerance/integer 1)
 (define compat-asof-tolerance/float   2)
 
-(define asof-tolerance/c
-  (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63))) (and/c real? (not/c exact-integer?))))
+(define asof-tolerance/c (or/c #f int64/c (and/c real? (not/c exact-integer?))))
 
 (define (asof-tolerance->parts tolerance)
   (match tolerance

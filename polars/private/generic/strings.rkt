@@ -10,18 +10,19 @@
          (only-in racket/string non-empty-string?)
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
          (only-in polars/private/expr-str parse-datetime)
-         (only-in polars/private/io-contracts int64/c nonnegative-int64/c)
          polars/private/generic/expr-util)
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
          str-strip-chars str-strip-prefix str-strip-suffix
-         str-replace str-replace-all str-extract
+         str-replace str-replace-all
          str-len-bytes str-len-chars str-head str-tail
          str-find str-find-literal str-count-matches
          str->date str->time
          (contract-out
+          [str-extract (->* (col-expr/c any/c) (#:group-index size/c) Expr-ptr?)]
           [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
                           ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
                           Expr-ptr?)]
@@ -218,12 +219,16 @@
            (prefix-in contracted: (submod "..")))
   (define slice-length-refused
     (regexp (string-append "^str-slice: contract violation\n  expected: "
-                           (regexp-quote "(or/c #f polars-null? Expr-ptr? nonnegative-int64/c)"))))
+                           (regexp-quote
+                            (format "(or/c #f polars-null? Expr-ptr? ~s)"
+                                    (contract-name nonnegative-int64/c))))))
   (for ([bad (list -1 "n" #t 1.5 (expt 2 63))])
     (check-exn slice-length-refused (lambda () (contracted:str-slice "s" 0 bad))))
   (check-equal? (sliced (contracted:str-slice "s" 1 polars-null))
                 (sliced (contracted:str-slice "s" 1 #f)))
-  (check-exn #rx"^str-slice: contract violation\n  expected: [(]or/c Expr-ptr[?] int64/c[)]"
+  (check-exn (regexp (string-append "^str-slice: contract violation\n  expected: "
+                                    (regexp-quote (format "(or/c Expr-ptr? ~s)"
+                                                          (contract-name int64/c)))))
              (lambda () (contracted:str-slice "s" #\a 2)))
   (define stamps
     (dataframe (list (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock")
