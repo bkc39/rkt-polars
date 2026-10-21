@@ -41,7 +41,7 @@
   #:reflection-name 'series
   #:property prop:cpointer 0                ; marshals as a _Series-ptr
   #:property prop:owned-pointer 0
-  #:property prop:custom-write (write-owned 'series series-dropped series->string)
+  #:property prop:custom-write (write-owned 'series series-dropped series->printed)
   #:property prop:sequence in-series
   #:methods gen:has-ref
   [(define (ref s [key unset] #:columns [columns unset] #:rows [rows unset])
@@ -206,6 +206,15 @@
                      (series '(1.2 3.5 2.0) #:name "cost"))))
 
   (check-equal? (format "~a" ints) (series->string ints))
+  (define blob (wrap-series (series-cast (series '("a" "z q" "") #:name "blob") 'binary)))
+  (define blob-text
+    "shape: (3,)\nSeries: 'blob' [binary]\n[\n\tb\"a\"\n\tb\"z\\x20q\"\n\tb\"\"\n]")
+  (check-equal? (format "~a" blob) blob-text)
+  (check-equal? (format "~s" blob) blob-text)
+  (check-equal? (let ([out (open-output-string)])
+                  (display blob out)
+                  (get-output-string out))
+                blob-text)
   (define past-chrono-zoned
     (wrap-series (series-cast (series-new-i64 "k" '(9000000000000000000))
                               '(datetime microseconds "Europe/Brussels"))))

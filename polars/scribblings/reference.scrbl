@@ -1743,7 +1743,15 @@ an implementation detail and not part of the public series API.)
   Renders @racket[s] in Polars' series format (a @tt{shape} line, a
   @tt{Series: 'name' [dtype]} line, then the bracketed values, truncated to the
   first and last five when longer than ten). This is also what a series prints
-  as in the REPL.}
+  as in the REPL. A @racket['binary] value is Polars' rendering of its
+  bytes, cut to the 30 characters of a Polars table cell where Python's
+  series shows 60 bytes. A value that cannot be shown prints as
+  @tt{#<cannot print: reason>}, and a series that cannot be shown at all
+  prints as @tt{#<series: cannot print: reason>}, where
+  @racket[series->string] raises.
+
+  @examples[#:eval ev #:label #f
+(cast (series '("a" "z q" "") #:name "blob") 'binary)]}
 
 @deftogether[(@defthing[polars-null any/c]
               @defproc[(polars-null? [v any/c]) boolean?])]{

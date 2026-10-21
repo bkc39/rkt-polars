@@ -670,7 +670,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   of that instant, where Python's `to_list` stops at microseconds; `ref` reads
   the physical value through the bulk copy, so the two cannot disagree. The
   conversions raise on an unsupported dtype, `binary` included (#99), even
-  when every entry is null.
+  when every entry is null. The series printer shows a binary value as
+  Polars' frame printer renders it in a one-row frame (`binary->cell`), so a
+  cell stops at the table's 30 characters, and it is total: a cell that
+  raises prints `#<cannot print: ...>`, and a series whose header raises
+  prints `#<series: cannot print: ...>` (#250).
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks

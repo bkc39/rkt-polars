@@ -10,6 +10,7 @@
          (only-in gregor/time time? time->iso8601)
          (only-in racket/format ~r)
          racket/list
+         (only-in racket/match match)
          racket/string
          (only-in polars/private/expr
                   expr-all expr-drop expr-dt-strftime lazyframe-collect/raw lazyframe-select)
@@ -17,7 +18,7 @@
          (only-in polars/private/resource with-release)
          polars/private/foreign)
 
-(provide series->string)
+(provide series->printed series->string)
 
 (define (dtype->polars-label dt)
   (define (tu->label tu)
@@ -136,18 +137,38 @@
     [(<= len 10) (zone-abbreviations s 0 len)]
     [else (append (zone-abbreviations s 0 5) (list #f) (zone-abbreviations s (- len 5) 5))]))
 
+(define (binary->cell s i)
+  (define table
+    (with-release ([row (series-slice s i 1) series-drop]
+                   [frame (dataframe-new (list row)) dataframe-drop])
+      (call/foreign-error 'series->string (lambda () (dataframe->string/raw frame))
+                          "cannot print the value")))
+  (match (regexp-match* #px"b\"\\S*|null" table)
+    [(list _ ... cell) cell]
+    [_ (error 'series->string "Polars printed no value")]))
+
+(define (cell s dt i abbreviation)
+  (with-handlers ([exn:fail? (lambda (e) (format "#<cannot print: ~a>" (exn-message e)))])
+    (cond
+      [(eq? i 'ellipsis) "…"]
+      [(eq? dt 'binary) (binary->cell s i)]
+      [else (value->cell (series-value 'series->string s i #:unreadable unreadable)
+                         dt abbreviation)])))
+
+(define (series->printed s)
+  (with-handlers ([exn:fail? (lambda (e) (format "#<series: cannot print: ~a>" (exn-message e)))])
+    (series->string s)))
+
 (define (series->string s)
   (define len (series-len s))
   (define dt (series-dtype s))
+  (define abbreviations
+    (with-handlers ([exn:fail? (lambda (_) (make-list (length (row-indices len)) #f))])
+      (shown-abbreviations s dt len)))
   (define lines
     (for/list ([i (in-list (row-indices len))]
-               [abbreviation (in-list (shown-abbreviations s dt len))])
-      (string-append "\t"
-                     (if (eq? i 'ellipsis)
-                         "…"
-                         (value->cell (series-value 'series->string s i #:unreadable unreadable)
-                                      dt abbreviation))
-                     "\n")))
+               [abbreviation (in-list abbreviations)])
+      (string-append "\t" (cell s dt i abbreviation) "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
    (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label dt))
@@ -253,4 +274,23 @@
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1 9000000000000000000))
                                     '(datetime microseconds "Europe/Brussels")))
                 '("1970-01-01 01:00:00.000001 CET"
-                  "#<cannot print: polars panicked: invalid or out-of-range datetime>" "]")))
+                  "#<cannot print: polars panicked: invalid or out-of-range datetime>" "]"))
+  (define blobs (series-cast (series-new-str "b" (list "a" polars-null "z\"q " "" "x"))
+                             'binary))
+  (check-equal? (series->string blobs)
+                (string-append "shape: (5,)\nSeries: 'b' [binary]\n[\n"
+                               "\tb\"a\"\n\tnull\n\tb\"z\"q\\x20\"\n\tb\"\"\n\tb\"x\"\n]"))
+  (check-equal? (cells (series-cast (series-new-str "null" '("null")) 'binary))
+                '("b\"null\"" "]"))
+  (check-equal? (cells (series-cast (series-new-str "b\"q null" (list polars-null "a")) 'binary))
+                '("null" "b\"a\"" "]"))
+  (check-equal? (cells (series-cast (series-new-str "b" (for/list ([i (in-range 12)])
+                                                          (number->string i)))
+                                    'binary))
+                '("b\"0\"" "b\"1\"" "b\"2\"" "b\"3\"" "b\"4\"" "…"
+                  "b\"7\"" "b\"8\"" "b\"9\"" "b\"10\"" "b\"11\"" "]"))
+  (check-equal? (cells (series-cast (series-new-str "b" (list (make-string 40 #\x))) 'binary))
+                (list (string-append "b\"" (make-string 28 #\x) "…") "]"))
+  (check-equal? (cell ints 'binary 0 #f) "#<cannot print: series->string: Polars printed no value>")
+  (check-regexp-match #rx"^#<series: cannot print: Series-ptr->C: " (series->printed 'not-a-series))
+  (check-equal? (series->printed blobs) (series->string blobs)))
