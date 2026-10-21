@@ -108,6 +108,7 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in racket/contract/base contract-name)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape      ; with-columns / select
@@ -141,7 +142,8 @@
   (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7))
   (check-pred Expr-ptr? (contracted:rank "x" #:seed (sub1 (expt 2 64))))
   (check-exn
-   #rx"^rank: contract violation\n  expected: [(]or/c #f uint64/c[)]\n  given: 18446744073709551616"
+   (regexp (format "^rank: contract violation\n  expected: ~a\n  given: 18446744073709551616"
+                   (regexp-quote (format "~s" (contract-name (or/c #f uint64/c))))))
    (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
 
 (module+ test

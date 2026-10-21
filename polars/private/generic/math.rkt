@@ -4,8 +4,8 @@
 ;; (alongside + - * / mod in operators.rkt).  abs / floor / sqrt / exp / log
 ;; shadow racket/base and so are defined under p-* spellings here and renamed
 ;; on the way out by the aggregator (with main.rkt re-importing them, like the
-;; arithmetic operators); round is defined under its own name so its contract
-;; reports it, and the aggregator imports it as p-round.  sign / ceil / log1p /
+;; arithmetic operators); round is defined under its own name so its errors
+;; report it, and the aggregator imports it as p-round.  sign / ceil / log1p /
 ;; pow / clip do not collide and are provided directly.
 ;;
 ;; Each op takes an Expr or a bare column-name string (auto-lifted via col).
@@ -13,18 +13,14 @@
 ;; racket/base, so ordinary numeric code keeps working.
 
 (require (prefix-in base: racket/base)
-         (only-in racket/contract/base ->i any/c contract-out or/c)
+         (only-in racket/contract/base contract-name)
          (only-in polars/private/c-integer uint32/c)
          polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
-(provide p-abs p-floor p-sqrt p-exp p-log
-         sign ceil log1p pow clip
-         (contract-out
-          [round (->i ([x (or/c number? col-expr/c)])
-                      (#:decimals [decimals (x) (if (number? x) number? uint32/c)])
-                      [result any/c])]))
+(provide p-abs p-floor p-sqrt p-exp p-log round
+         sign ceil log1p pow clip)
 
 (define-math-unop p-abs   'abs   expr-abs   base:abs)
 (define-math-unop p-floor 'floor expr-floor base:floor)
@@ -39,7 +35,8 @@
   (cond [(number? x)
          (define f (base:expt 10 decimals))
          (base:/ (base:round (base:* x f)) f)]
-        [else (expr-round (->col-expr 'round x) #:decimals decimals)]))
+        [(uint32/c decimals) (expr-round (->col-expr 'round x) #:decimals decimals)]
+        [else (raise-argument-error 'round (format "~s" (contract-name uint32/c)) decimals)]))
 
 ;; logarithm; #:base defaults to natural (e).  Numbers use racket/base log.
 (define (p-log x #:base [base #f])

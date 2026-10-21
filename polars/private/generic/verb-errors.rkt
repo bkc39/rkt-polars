@@ -4,7 +4,7 @@
   (require rackunit
            racket/match
            (prefix-in rkt: (only-in racket/base max min))
-           (only-in racket/contract/base or/c)
+           (only-in racket/contract/base contract-name has-contract? or/c)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
            (only-in polars/private/foreign polars-null series-name)
@@ -22,7 +22,7 @@
            polars/private/generic/reductions
            polars/private/generic/reshape
            polars/private/generic/strings
-           (only-in polars/private/test-helpers message-of refusal refusal-misses))
+           (only-in polars/private/test-helpers refusal refusal-misses))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -75,12 +75,12 @@
            (refusal 'backward-fill (or/c #f uint32/c) -1 (backward-fill "v" #:limit -1))
            (refusal 'str-extract size/c (expt 2 64)
                     (str-extract "s" "(a)" #:group-index (expt 2 64)))
-           (refusal 'round uint32/c -1 (round "v" #:decimals -1))
-           (refusal 'round uint32/c (expt 2 32) (round (col "v") #:decimals (expt 2 32))))))
+           (refusal 'round uint32/c -1 (round "v" #:decimals -1) #:unblamed)
+           (refusal 'round uint32/c 1.5 (round "v" #:decimals 1.5) #:unblamed)
+           (refusal 'round uint32/c (expt 2 32) (round (col "v") #:decimals (expt 2 32))
+                    #:unblamed))))
    '())
-  (check-regexp-match (regexp (string-append "\n  blaming: [^\n]*"
-                                             (regexp-quote "verb-errors.rkt")))
-                      (message-of (lambda () (round "v" #:decimals -1))))
+  (check-false (has-contract? round))
   (check-equal? (list (round 1234 #:decimals -2) (round 2.5) (round 2.345 #:decimals 1))
                 (list 1200 2.0 2.3))
   (check-equal? (series->list (ref (select (dataframe (list (series '(1.25 2.5) #:name "v")))
@@ -235,7 +235,9 @@
   (check-raises 'contract #rx"^unpivot: contract violation\n"
                 (lambda () (unpivot frame #:on "v" #:index '("s"))))
 
-  (define not-a-literal "contract violation\n  expected: [(]or/c boolean[?] int64/c ")
+  (define not-a-literal
+    (string-append "contract violation\n  expected: "
+                   (regexp-quote (format "(or/c boolean? ~s " (contract-name int64/c)))))
   (for ([call (list (cons 'fill-null (lambda () (fill-null (col "v") #\a)))
                     (cons 'fill-nan (lambda () (fill-nan (col "v") #\a)))
                     (cons 'is-between (lambda () (is-between (col "v") #\a 3)))

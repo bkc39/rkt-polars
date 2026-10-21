@@ -3,7 +3,8 @@
 ;; No polars dependency, so a module below generic/core (csv.rkt, parquet.rkt)
 ;; can use these without a module cycle.
 
-(require (only-in file/gzip gzip-through-ports)
+(require (for-syntax racket/base)
+         (only-in file/gzip gzip-through-ports)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file display-to-file file->bytes)
          (only-in racket/match match-define)
@@ -60,16 +61,22 @@
   (settle!)
   (- (count) before))
 
-(define-syntax-parse-rule (refusal who:expr contract:expr given:expr call:expr)
-  (list who contract given (lambda () call)))
+(define-syntax-parse-rule (refusal who:expr contract:expr given:expr call:expr
+                            (~optional (~and #:unblamed (~bind [blamed? #'#f]))
+                                       #:defaults ([blamed? #'#t])))
+  (list who contract given (lambda () call) blamed?))
 
 (define (refusal-miss row)
-  (match-define (list who contract given thunk) row)
+  (match-define (list who contract given thunk blamed?) row)
+  (define-values (refused? matches? end)
+    (if blamed?
+        (values exn:fail:contract:blame? string-prefix? "\n")
+        (values exn:fail:contract? string=? "")))
   (define expected
-    (format "~a: contract violation\n  expected: ~s\n  given: ~e\n"
-            who (contract-name contract) given))
-  (define message (with-handlers ([exn:fail:contract:blame? exn-message]) (thunk) #f))
-  (and (not (and message (string-prefix? message expected)))
+    (format "~a: contract violation\n  expected: ~s\n  given: ~e~a"
+            who (contract-name contract) given end))
+  (define message (with-handlers ([refused? exn-message]) (thunk) #f))
+  (and (not (and message (matches? message expected)))
        (list who given message)))
 
 (define (refusal-misses rows)

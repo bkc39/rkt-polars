@@ -31,7 +31,7 @@
 (provide-public
  #:internal internal-names
  [polars/private/expr ->expr/who expr-cast-to expr-meta-output-name/raw expr-name-keep lit/who
-  lazyframe-collect/raw]
+  lazyframe-collect/raw null-behavior/c rank-method/c]
  [polars/private/foreign
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
@@ -58,7 +58,7 @@
   series-and/who series-or/who series-xor/who series-not/who
   dataframe-vstack/raw dataframe-hstack/raw
   dataframe-select/c dataframe-drop-columns/c dataframe-rename/raw
-  dataframe-with-column/raw dataframe-new/raw])
+  dataframe-with-column/raw dataframe-new/raw provide-row-windows])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -78,21 +78,29 @@
 
 (module+ test
   (require rackunit)
-  (define-values (variables syntaxes) (module->exports 'polars))
-  (define exported
+  (define (phase-0-exports mod)
+    (define-values (variables syntaxes) (module->exports mod))
     (for*/list ([phase+names (in-list (append variables syntaxes))]
                 #:when (eqv? (car phase+names) 0)
                 [name (in-list (cdr phase+names))])
       (car name)))
+  (define exported (phase-0-exports 'polars))
+  (define c-integer-contracts
+    (for/list ([name (in-list (phase-0-exports 'polars/private/c-integer))]
+               #:when (regexp-match? #rx"/c$" (symbol->string name)))
+      name))
   (check-not-false (memq 'cast exported))
   (check-not-false (memq 'series-new-str exported))
+  (check-not-false (memq 'uint32/c c-integer-contracts))
   (for ([internal (in-list (append internal-names
+                                    c-integer-contracts
                                     '(expr-drop/raw expr-dropped
                                       lazyframe-drop/raw lazyframe-dropped
                                       define-frame-op/reason define-reasoned
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
-                                      dataframe-new/raw)))])
+                                      dataframe-new/raw null-behavior/c rank-method/c
+                                      provide-row-windows)))])
     (check-false (memq internal exported) (format "~a is internal" internal))))
 
 (module+ test

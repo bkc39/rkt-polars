@@ -819,6 +819,7 @@
     [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ test
+  (require (only-in racket/contract/base contract-name))
   (define df
     (dataframe-new
      (list (series-new-i32 "x" '(1 2 3 4))
@@ -1618,7 +1619,6 @@
   (check-equal? (col->list m "cmin") '(0.0 0.0 0.0 1.6 4.0))
   (check-= (series-ref (dataframe-column m "sq") 4) 16.0 1e-9)
   (check-= (series-ref (dataframe-column m "log2") 4) 2.0 1e-9)
-  (check-exn exn:fail? (lambda () (expr-round (col "x") #:decimals -1)))
 
   ;; --- membership / distinct predicates ---
   (define df-p
@@ -1728,9 +1728,7 @@
      df-s (list (expr-alias (expr-gather (col "x") '(0 2 4)) "g"))))
   (check-equal? (for/list ([i (in-range 3)]) (series-ref (dataframe-column s-g "g") i))
                 '(30 50 40))
-  (check-exn exn:fail? (lambda () (expr-rank (col "x") #:method 'wat)))
-  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
-  (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))
+  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '()))))
 
 (module+ test
   (require (only-in polars/private/test-helpers settle!))
@@ -1764,7 +1762,8 @@
              (lambda () (lazyframe-collect bad-glob)))
   (for ([op (list expr-add expr-sub expr-mul expr-div expr-mod expr-gt expr-lt expr-ge expr-le
                   expr-eq expr-ne expr-and expr-or expr-xor)])
-    (check-exn (regexp (format "^~a: contract violation\n  expected: int64/c\n" (object-name op)))
+    (check-exn (regexp (format "^~a: contract violation\n  expected: ~a\n" (object-name op)
+                               (regexp-quote (format "~s" (contract-name int64/c)))))
                (lambda () (op (col "x") (expt 2 63))))
     (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
                (lambda () (op #\a (col "x"))))))
@@ -1814,6 +1813,7 @@
           (refusal 'expr-std uint8/c -1 (contracted:expr-std v #:ddof -1))
           (refusal 'expr-var uint8/c 256 (contracted:expr-var v #:ddof 256))
           (refusal 'expr-round uint32/c (expt 2 32) (contracted:expr-round v #:decimals (expt 2 32)))
+          (refusal 'expr-round uint32/c -1 (contracted:expr-round v #:decimals -1))
           (refusal 'expr-forward-fill (or/c #f uint32/c) (expt 2 32)
                    (contracted:expr-forward-fill v #:limit (expt 2 32)))
           (refusal 'expr-backward-fill (or/c #f uint32/c) -1
@@ -1828,6 +1828,7 @@
           (refusal 'expr-diff int64/c (expt 2 63) (contracted:expr-diff v #:n (expt 2 63)))
           (refusal 'expr-diff null-behavior/c 'keep (contracted:expr-diff v #:null-behavior 'keep))
           (refusal 'expr-slice int64/c (expt 2 63) (contracted:expr-slice v 0 (expt 2 63)))
+          (refusal 'expr-slice int64/c 1.5 (contracted:expr-slice v 0 1.5))
           (refusal 'expr-str-extract size/c (expt 2 64)
                    (contracted:expr-str-extract v "(a)" #:group-index (expt 2 64)))
           (refusal 'expr-lit-i32 int32/c (expt 2 31) (contracted:expr-lit-i32 (expt 2 31)))

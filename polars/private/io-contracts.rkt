@@ -8,9 +8,9 @@
 (provide c-string/c column-index/c column-name/c distinct-names? distinct? given positive-size/c
          row-index/c size-max size/c)
 
-(define row-index/c (flat-named-contract 'row-index/c uint32/c))
+(define row-index/c uint32/c)
 
-(define column-index/c (flat-named-contract 'column-index/c int64/c))
+(define column-index/c int64/c)
 
 (define nul-free? (and/c string? (not/c #rx"\0")))
 
@@ -53,4 +53,5 @@
   (check-equal? (map contract-name
                      (list size/c positive-size/c row-index/c column-index/c column-name/c
                            c-string/c))
-                '(size/c positive-size/c row-index/c column-index/c column-name/c c-string/c)))
+                `((integer-in 0 ,size-max) (integer-in 1 ,size-max) (integer-in 0 ,(sub1 (expt 2 32)))
+                  (integer-in ,(- (expt 2 63)) ,(sub1 (expt 2 63))) column-name/c c-string/c)))

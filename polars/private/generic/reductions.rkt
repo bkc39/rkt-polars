@@ -210,8 +210,9 @@
   (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
   (for* ([reduce (list contracted:std contracted:var)]
          [x (list (series '(1 2 3)) (col "v") (series '(1.0 2.0) #:dtype 'float32))])
-    (check-exn (regexp (format "^~a: contract violation\n  expected: uint8/c\n"
-                               (object-name reduce)))
+    (check-exn (regexp (format "^~a: contract violation\n  expected: ~a\n"
+                               (object-name reduce)
+                               (regexp-quote (format "~s" (contract-name uint8/c)))))
                (lambda () (reduce x #:ddof 256))))
   (check-equal? (mean (series (list (date 2020 1 2) (date 2020 1 1))))
                 (datetime 2020 1 1 12 0 0 0))

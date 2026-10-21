@@ -298,7 +298,8 @@
     (check-exn (regexp (format "^lit: contract violation\n  expected: [^\n]*\n  given: ~a\n"
                                (regexp-quote (format "~e" v))))
                (lambda () (contracted:lit v))))
-  (check-exn #rx"^expr-add: contract violation\n  expected: int64/c\n  given: 9223372036854775808$"
+  (check-exn (regexp (format "^expr-add: contract violation\n  expected: ~a\n  given: 9223372036854775808$"
+                             (regexp-quote (format "~s" (contract-name int64/c)))))
              (lambda () (->expr/who 'expr-add (expt 2 63))))
   (check-exn #rx"^\\+: contract violation\n  expected: \\(or/c boolean\\? [^\n]*\n  given: #\\\\a$"
              (lambda () (->expr/who '+ #\a)))

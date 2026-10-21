@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require (only-in ffi/unsafe _size ctype-sizeof)
-         (only-in racket/contract/base flat-named-contract integer-in))
+         (only-in racket/contract/base integer-in))
 
 (provide int32/c int64/c int64-max int64-min nonnegative-int64/c positive-size/c size-max size/c
          uint16-max uint16/c uint32-max uint32/c uint64/c uint8/c)
@@ -15,18 +15,15 @@
 (define uint32-max (unsigned-max 32))
 (define size-max (unsigned-max (* 8 (ctype-sizeof _size))))
 
-(define (range/c name lo hi)
-  (flat-named-contract name (integer-in lo hi)))
-
-(define uint8/c (range/c 'uint8/c 0 (unsigned-max 8)))
-(define uint16/c (range/c 'uint16/c 0 uint16-max))
-(define uint32/c (range/c 'uint32/c 0 uint32-max))
-(define uint64/c (range/c 'uint64/c 0 (unsigned-max 64)))
-(define int32/c (range/c 'int32/c (- (arithmetic-shift 1 31)) (unsigned-max 31)))
-(define int64/c (range/c 'int64/c int64-min int64-max))
-(define nonnegative-int64/c (range/c 'nonnegative-int64/c 0 int64-max))
-(define size/c (range/c 'size/c 0 size-max))
-(define positive-size/c (range/c 'positive-size/c 1 size-max))
+(define uint8/c (integer-in 0 (unsigned-max 8)))
+(define uint16/c (integer-in 0 uint16-max))
+(define uint32/c (integer-in 0 uint32-max))
+(define uint64/c (integer-in 0 (unsigned-max 64)))
+(define int32/c (integer-in (- (arithmetic-shift 1 31)) (unsigned-max 31)))
+(define int64/c (integer-in int64-min int64-max))
+(define nonnegative-int64/c (integer-in 0 int64-max))
+(define size/c (integer-in 0 size-max))
+(define positive-size/c (integer-in 1 size-max))
 
 (module+ test
   (require rackunit
@@ -43,7 +40,7 @@
                         (size/c ,size/c 0 ,(sub1 (expt 2 64)))
                         (positive-size/c ,positive-size/c 1 ,(sub1 (expt 2 64)))))])
     (match-define (list name c lo hi) row)
-    (check-equal? (contract-name c) name)
+    (check-equal? (contract-name c) `(integer-in ,lo ,hi) (format "~a names its range" name))
     (check-true (c lo) (format "~a admits ~a" name lo))
     (check-true (c hi) (format "~a admits ~a" name hi))
     (check-false (c (sub1 lo)) (format "~a refuses ~a" name (sub1 lo)))

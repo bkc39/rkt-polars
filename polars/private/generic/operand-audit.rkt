@@ -4,6 +4,8 @@
   (require rackunit
            racket/match
            racket/runtime-path
+           (only-in racket/contract/base contract-name)
+           (only-in polars/private/c-integer int64/c)
            (only-in racket/file file->value)
            (only-in gregor date moment)
            (only-in gregor/period hours)
@@ -308,7 +310,9 @@
     (check-raises 'contract #rx"^>: contract violation\n  expected: [(]or/c boolean?" thunk))
   (for ([thunk (list (lambda () (p+ (col "v") (expt 2 63))) (lambda () (p+ (expt 2 63) (col "v"))))])
     (check-raises 'contract
-                  #rx"^[+]: contract violation\n  expected: int64/c\n" thunk))
+                  (regexp (format "^[+]: contract violation\n  expected: ~a\n"
+                                  (regexp-quote (format "~s" (contract-name int64/c)))))
+                  thunk))
   (for ([thunk (list (lambda () (> (col "d") far-date)) (lambda () (> far-date (col "d"))))])
     (check-raises 'contract #rx"^>: value out of range for this dtype\n" thunk))
   (check-raises 'contract #rx"^and: contract violation\n" (lambda () (p-and (col "v") #\a)))
