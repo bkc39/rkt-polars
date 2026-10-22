@@ -606,13 +606,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#f`, null on a null, and `<` raises polars' reason, as in Python), beside a
   Decimal series a real or a boolean (compared as 1 or 0), beside a
   duration series a number in `*`, a string before a series in `+`, beside
-  an integer series an Int64 integer past the dtype's range (`(+ u8 300)` is
-  UInt16), and in `/` a negative integer beside an unsigned series (integer
-  division, `(/ u8 -1)` is Int16). Contract errors naming the value and the
+  an integer series an integer past the dtype's range, up to 2^64 − 1
+  (`(+ u8 300)` is UInt16, `(+ i64 (expt 2 63))` Float64), and in `/` a
+  negative integer beside an unsigned series (integer division, `(/ u8 -1)`
+  is Int16). `lit` takes an integer from 2^63 to 2^64 − 1 as
+  `expr_lit_u64`, a dynamic integer that materialises as UInt64, as
+  `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` / `expr_lit_i64`.
+  Contract errors naming the value and the
   series' dtype, where Python raises `TypeError`, `ValueError` or
   `OverflowError`: a negative integer beside an unsigned series outside `/`,
-  an integer past Int64 (but one in range
-  beside a UInt64 series), which our `lit` cannot carry, a gregor value
+  an integer outside −2^63 to 2^64 − 1, which no literal carries, a gregor value
   compared with a series of another kind (a naive datetime beside a date
   series and a date or time beside a string series aside), a time in
   arithmetic, and a value no literal takes. `mod` refuses a temporal series

@@ -10,6 +10,8 @@
          (only-in polars/private/expr
                   expr-alias expr-all expr-drop lazyframe-collect/raw lazyframe-select lit/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
+         (only-in polars/private/c-integer int64/c)
+         (only-in polars/private/expr-core lit-integer/c)
          (only-in polars/private/generic/core series? wrap-series)
          (only-in polars/private/generic/dtype
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
@@ -39,10 +41,6 @@
               ['int (cons (- (quotient limit 2)) (sub1 (quotient limit 2)))]
               ['uint (cons 0 (sub1 limit))]))))
 
-(define (int64-value? v)
-  (match-define (cons low high) (hash-ref integer-ranges 'int64))
-  (<= low v high))
-
 (define (operator-classes who)
   (match who
     ['+ '(add arithmetic)]
@@ -70,12 +68,15 @@
     [(? boolean?) 'boolean]
     [(? exact-integer?)
      (match (hash-ref integer-ranges dt #f)
-       [#f (if (int64-value? v) 'integer 'huge-integer)]
+       [#f (cond
+             [(int64/c v) 'integer]
+             [(lit-integer/c v) 'wide-integer]
+             [else 'huge-integer])]
        [(cons low high)
         (cond
           [(<= low v high) 'integer]
-          [(and (int64-value? v) (not (and (zero? low) (negative? v)))) 'wide-integer]
-          [(int64-value? v) 'negative-integer]
+          [(and (lit-integer/c v) (not (and (zero? low) (negative? v)))) 'wide-integer]
+          [(lit-integer/c v) 'negative-integer]
           [else 'other])])]
     [(? real?) 'real]
     [(or (? string?) (? symbol?)) 'text]
@@ -91,23 +92,25 @@
     [_          _                     series                              series]
     [div        null                  null                                same]
     [_          _                     null                                expression]
-    [_          null                  (boolean integer real text date time datetime moment duration)
+    [_          null                  (boolean integer wide-integer real text date time datetime moment
+                                       duration)
                                       expression]
     [_          enum                  text                                expression]
     [add        _                     text                                (sided expression string)]
-    [_          decimal               (integer real)                      expression]
+    [_          decimal               (integer wide-integer real)         expression]
     [compare    decimal               boolean                             integer-expression]
     [div        decimal               boolean                             (sided float64 expression)]
     [arithmetic decimal               boolean                             expression]
     [mul        duration              (integer real)                      expression]
     [div        duration              (integer real)                      (sided refuse float64)]
     [div        float                 (integer real)                      (sided float64 expression)]
-    [div        boolean               (integer huge-integer)              (sided refuse float64)]
+    [div        boolean               (integer wide-integer huge-integer) (sided refuse float64)]
     [div        integer               real                                (sided float64 expression)]
     [_          integer               wide-integer                        expression]
     [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
-    [compare    string                (integer huge-integer real boolean) python-str]
+    [compare    string                (integer wide-integer huge-integer real boolean)
+                                      python-str]
     [compare    (string categorical)  (date time)                         own]
     [compare    date                  (date datetime moment)              own]
     [compare    datetime              (datetime moment)                   own]
@@ -121,7 +124,8 @@
     [arithmetic _                     text                                string]
     [arithmetic (boolean string)      real                                float64]
     [_          numeric               boolean                             same]
-    [_          float                 (integer huge-integer real)         same]
+    [_          float                 (integer wide-integer huge-integer real)
+                                      same]
     [_          integer               integer                             same]
     [_          integer               real                                float64]
     [_          boolean               boolean                             same]))

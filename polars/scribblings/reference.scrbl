@@ -79,8 +79,10 @@ contract error. A @racket[utf-8-names/c] is a list of them.
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
-              @defproc[(lit [v (or/c boolean? int64/c (and/c real? (not/c exact-integer?))
-                                     string? symbol? polars-null? #,(tt "gregor-value"))])
+              @defproc[(lit [v (or/c boolean?
+                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 64)))
+                                     (and/c real? (not/c exact-integer?)) string? symbol?
+                                     polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
               @defproc[(dtype-spec? [v any/c]) boolean?])]{
   The leaves every other operation builds on. @racket[col] refers to one
@@ -127,9 +129,10 @@ contract error. A @racket[utf-8-names/c] is a list of them.
   matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
-  exact integers (32-bit when they fit, 64-bit otherwise; one outside 64
-  bits is a contract error), other reals (as @racket['float64]) and
-  strings. A symbol is the string of its name, so a
+  exact integers (32-bit when they fit, 64-bit otherwise, and from
+  @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))] unsigned 64-bit, as
+  @tt{pl.lit(2**63)} is; one outside that range is a contract error),
+  other reals (as @racket['float64]) and strings. A symbol is the string of its name, so a
   categorical column compares with the symbols it reads back as. A
   @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
   @tt{moment} or @tt{period}, and becomes a literal of the dtype
@@ -167,7 +170,11 @@ contract error. A @racket[utf-8-names/c] is a list of them.
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))
-(eval:error (lit (expt 2 63)))]}
+(define counters
+  (dataframe (list (series (list (sub1 (expt 2 64)) 1) #:name "u" #:dtype 'u64))))
+(select counters (alias (lit (sub1 (expt 2 64))) "top")
+        (= (col "u") (lit (sub1 (expt 2 64)))))
+(eval:error (lit (expt 2 64)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -1591,7 +1598,9 @@ stations
   @racket['null] list, as Python's @tt{[None]} is, and an empty list
   holds nothing, so every non-null element of @racket[x] gives @racket[#f].
   A null is never a member, so a null element of @racket[x] gives null.
-  Its datetimes share one zone, or
+  Its integers all fit Int64 or all lie from 0 to @racket[(sub1 (expt 2 64))]
+  (UInt64); any other, such as a negative integer beside one past Int64,
+  which Python reads as Int128, is a contract error. Its datetimes share one zone, or
   none: a list that mixes naive datetimes and moments, or moments in two
   zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
   a column from the same list.
@@ -1601,6 +1610,8 @@ stations
 (~> gappy (select (is-in "x" (list 1 polars-null))))
 (~> gappy (select (is-in "x" (list polars-null))))
 (~> gappy (select (is-in "x" '())))
+(~> gappy (select (is-in "x" (list (expt 2 63) 3))))
+(eval:error (~> gappy (select (is-in "x" (list -1 (expt 2 63))))))
 (~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -2177,7 +2188,8 @@ a @racket['null] series (where Python's eager operators raise) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
-an integer series an integer past the dtype's range, and in @racket[/] a
+an integer series an integer past the dtype's range, up to
+@racket[(sub1 (expt 2 64))], the widest @racket[lit] takes, and in @racket[/] a
 negative integer beside an unsigned series. Any other value raises
 @racket[exn:fail:contract] naming it and the series' dtype, where Python
 raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
@@ -2200,6 +2212,7 @@ where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(+ (series '(1 2)) (expt 2 63))
 (+ (series '(1 2)) "x")
 (+ (series '(1 2)) #t)
 (- 10 (series '(1 2) #:name "n"))
