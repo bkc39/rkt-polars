@@ -614,12 +614,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_lit_i64`. Such an integer beside a series follows Python's eager
   operators, which raise `OverflowError` past Int64 except beside UInt64
   (where they wrap), beside Decimal and in `/`: it is a constant beside a
-  UInt64 series, the expression form beside a Decimal series and, in `/`,
-  beside a signed integer series (Float64, Python's true division), and a
+  UInt64 series, the expression form beside a Decimal series, and a
   contract error beside any other integer series and a Null one (Python
-  raises a `TypeError` beside Null); beside a float or string series it is
-  what any integer is there, and it is refused wherever a smaller integer
-  is. Contract errors naming the value and the series' dtype, where Python
+  raises a `TypeError` beside Null), except in `/`, where Python gives
+  Float64 (Float64 nulls beside Null) and ours refuses, since its `/` of
+  integers is integer division (the `past-int64` deviation); beside a float
+  or string series it is what any integer is there, and it is refused
+  wherever a smaller integer is. Contract errors naming the value and the series' dtype, where Python
   raises `TypeError`, `ValueError` or
   `OverflowError`: a negative integer beside an unsigned series outside `/`,
   an integer past Int64 beside a series other than those, an integer

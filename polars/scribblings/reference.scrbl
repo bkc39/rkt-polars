@@ -2193,13 +2193,14 @@ an integer series an integer within Int64 past the dtype's range, and in
 @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
 UInt64 literal carries, is a constant beside a @racket['uint64] series (where
 Python's operator wraps, as ours does), takes the expression form beside a
-Decimal series and, in @racket[/], beside a signed integer series, which gives
-Python's @racket['float64], and is refused beside any other integer series
-and a @racket['null] one, where Python's eager operators raise an
-@tt{OverflowError} (a @tt{TypeError} beside Null); beside a float or string
-series it is what any integer is there. Any other value raises
-@racket[exn:fail:contract] naming it and the series' dtype, where Python
-raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
+Decimal series, and is refused beside any other integer series and a
+@racket['null] one, where Python's eager operators raise an
+@tt{OverflowError} (a @tt{TypeError} beside Null), except in @racket[/],
+where Python gives @racket['float64] (@racket['float64] nulls beside Null)
+and ours refuses, since its @racket[/] of integers is integer division;
+beside a float or string series it is what any integer is there. Any other
+value raises @racket[exn:fail:contract] naming it and the series' dtype,
+where Python raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
 series, a gregor value compared with a series of another kind (a date with a
 datetime series aside), a time in arithmetic, a date in @racket[mod] of a
 float series, a negative integer beside an unsigned series, or a value no

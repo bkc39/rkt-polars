@@ -52,7 +52,7 @@
 
 (define (dtype-classes dt)
   (match dt
-    [(or 'int8 'int16 'int32 'int64) '(integer signed numeric)]
+    [(or 'int8 'int16 'int32 'int64) '(integer numeric)]
     [(or 'uint8 'uint16 'uint32 'uint64) '(integer numeric)]
     [(or 'float32 'float64) '(float numeric)]
     [(list 'decimal _ _) '(decimal)]
@@ -108,7 +108,6 @@
     [div        boolean               integer                             expression]
     [div        integer               real                                (sided float64 expression)]
     [_          integer               wide-integer                        expression]
-    [div        signed                past-int64                          expression]
     [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
     [compare    string                (integer past-int64 huge-integer real boolean)

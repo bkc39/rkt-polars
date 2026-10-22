@@ -150,11 +150,17 @@
       (check-expression-form s op s v (op (col "n") v))
       (check-expression-form s op v s (op v (col "n"))))
     (check-equal? (dtype (p+ s v)) expected (format "~a + ~v" (dtype s) v)))
-  (for* ([s (list i8 i32 i64)] [v (list past-i64 u64-max)])
-    (check-expression-form s p/ s v (p/ (col "n") v))
-    (check-expression-form s p/ v s (p/ v (col "n")))
-    (check-equal? (dtype (p/ s v)) 'float64 (format "~a / ~v" (dtype s) v)))
-  (check-equal? (series->list (p/ i64 past-i64)) (list (expt 2.0 -63) (expt 2.0 -62)))
+  (for* ([s (list i8 (series '(1 2) #:dtype 'i16 #:name "n") i32 i64 u8)]
+         [v (list past-i64 u64-max)]
+         [thunk (list (lambda () (p/ s v)) (lambda () (p/ v s)))])
+    (check-raises 'contract
+                  (regexp (string-append "^/: the value cannot be an element of a series of this "
+                                         "dtype\n  value: " (number->string v) "\n  series dtype: '"
+                                         (symbol->string (dtype s)) "$"))
+                  thunk))
+  (check-raises 'contract #rx"^/: the value cannot be an element of a series of this dtype\n"
+                (lambda () (p/ (series '(-7 10)) (expt 2 63))))
+  (check-equal? (series-shape (p/ (series '(-7 10)) (sub1 (expt 2 63)))) (list 'int64 (list -1 0)))
   (check-equal? (series->list (p- u64 past-i64)) (list (sub1 past-i64) (+ (expt 2 60) 1 past-i64)))
   (check-equal? (series->list (p+ u64 0)) (series->list u64))
   (for ([row (list (list (= (col "n") (lit u64-max)) (list 'boolean (list #t #f)))
@@ -417,6 +423,17 @@
   (for ([entry (in-list audit-series-outcomes)])
     (match-define (list label want) entry)
     (check-equal? (fixture-outcome label) (python-outcome want) (format "fixture ~a" label)))
+
+  (define (operand-sites v)
+    (for*/list ([row (in-list audit-rows)]
+                [site (in-value (match (audit-row-key row)
+                                  [(list op (and label (not 'number-text)) side (== v))
+                                   (list op label side)]
+                                  [_ #f]))]
+                #:when site)
+      site))
+  (check-not-equal? (operand-sites u64-max) '())
+  (check-equal? (operand-sites u64-max) (operand-sites past-i64))
 
   (define rows-by-key (for/hash ([row (in-list audit-rows)]) (values (audit-row-key row) row)))
   (check-equal? (hash-count rows-by-key) (length audit-rows))
