@@ -12,7 +12,7 @@
          (only-in racket/string string-contains? string-prefix?)
          syntax/parse/define)
 
-(provide apply-keywords contains-all? contract-violation-of drops-once gzip-file
+(provide apply-keywords contains-all? contract-violation-of drops-during drops-once gzip-file
          keyword-rejected? message-of not-utf-8-expected not-utf-8-names refusal refusal-misses
          refused scratch-file settle! staging-files)
 
@@ -68,6 +68,12 @@
   (define before (count))
   (drop (make))
   (settle!)
+  (- (count) before))
+
+(define (drops-during count thunk)
+  (settle!)
+  (define before (count))
+  (thunk)
   (- (count) before))
 
 (define-syntax-parse-rule (refusal who:expr contract:expr given:expr call:expr

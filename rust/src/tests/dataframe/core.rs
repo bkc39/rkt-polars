@@ -578,3 +578,16 @@ fn unique_and_drop_nulls_null_df_return_null() {
     assert!(dataframe_unique(ptr::null_mut()).is_null());
     assert!(dataframe_drop_nulls(ptr::null_mut()).is_null());
 }
+
+#[test]
+fn lazyframe_drop_count_increments_per_drop() {
+    let before = lazyframe_drop_count();
+    let df = dataframe_make();
+    let a = dataframe_lazy(df);
+    let b = dataframe_lazy(df);
+    lazyframe_drop(a);
+    lazyframe_drop(b);
+    lazyframe_drop(ptr::null_mut());
+    dataframe_drop(df);
+    assert!(lazyframe_drop_count() >= before + 2);
+}

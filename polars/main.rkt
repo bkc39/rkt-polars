@@ -95,7 +95,8 @@
   (check-not-false (memq 'uint32/c c-integer-contracts))
   (for ([internal (in-list (append internal-names
                                     c-integer-contracts
-                                    '(expr-drop/raw expr-dropped
+                                    '(drop-owned owned-drop-registry register-owned-drop!
+                                      expr-drop/raw expr-dropped
                                       lazyframe-drop/raw lazyframe-dropped
                                       define-frame-op/reason define-reasoned
                                       dataframe-select/c dataframe-drop-columns/c

@@ -136,7 +136,7 @@
 (module+ test
   (require rackunit
            (only-in polars/private/expr expr-add expr-neg)
-           (only-in polars/private/expr-core expr-drop-count)
+           (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
            (only-in polars/private/foreign polars-null series-new-i64 series-ref)
            (only-in polars/private/test-helpers settle!))
   (define (noting build)
@@ -162,6 +162,12 @@
     (check-all-dropped (unbox given)))
 
   (settle!)
-  (let ([before (expr-drop-count)])
+  (let ([before (expr-drop-count)]
+        [plans-before (lazyframe-drop-count)])
     (expression-form-op '+ expr-add ints polars-null)
-    (check >= (- (expr-drop-count) before) 4)))
+    (check >= (- (expr-drop-count) before) 4)
+    (check-equal? (- (lazyframe-drop-count) plans-before) 2))
+  (settle!)
+  (let ([plans-before (lazyframe-drop-count)])
+    (check-exn exn:fail? (lambda () (series-through-expr '- ints (lambda (e) (col "absent")))))
+    (check-equal? (- (lazyframe-drop-count) plans-before) 2)))
