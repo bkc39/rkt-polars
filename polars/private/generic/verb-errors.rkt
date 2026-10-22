@@ -7,6 +7,7 @@
            (only-in racket/contract/base contract-name has-contract? or/c)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
+           (only-in polars/private/expr-core lit-integer/c)
            (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
@@ -286,7 +287,7 @@
 
   (define not-a-literal
     (string-append "contract violation\n  expected: "
-                   (regexp-quote (format "(or/c boolean? ~s " (contract-name int64/c)))))
+                   (regexp-quote (format "(or/c boolean? ~s " (contract-name lit-integer/c)))))
   (for ([call (list (cons 'fill-null (lambda () (fill-null (col "v") #\a)))
                     (cons 'fill-nan (lambda () (fill-nan (col "v") #\a)))
                     (cons 'is-between (lambda () (is-between (col "v") #\a 3)))

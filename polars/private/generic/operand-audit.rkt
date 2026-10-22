@@ -143,15 +143,19 @@
                    (list decimals 1 '(decimal 38 2))
                    (list decimals 1/3 'float64)
                    (list decimals 2.5 'float64)
-                   (list u8 past-i64 'uint64)
-                   (list u8 u64-max 'uint64)
-                   (list i32 u64-max 'float64)
-                   (list i64 past-i64 'float64))])
+                   (list decimals past-i64 '(decimal 38 2))
+                   (list decimals u64-max '(decimal 38 2)))])
     (match-define (list s v expected) row)
     (for ([op (list p+ p- >)])
       (check-expression-form s op s v (op (col "n") v))
       (check-expression-form s op v s (op v (col "n"))))
     (check-equal? (dtype (p+ s v)) expected (format "~a + ~v" (dtype s) v)))
+  (for* ([s (list i8 i32 i64)] [v (list past-i64 u64-max)])
+    (check-expression-form s p/ s v (p/ (col "n") v))
+    (check-expression-form s p/ v s (p/ v (col "n")))
+    (check-equal? (dtype (p/ s v)) 'float64 (format "~a / ~v" (dtype s) v)))
+  (check-equal? (series->list (p/ i64 past-i64)) (list (expt 2.0 -63) (expt 2.0 -62)))
+  (check-equal? (series->list (p- u64 past-i64)) (list (sub1 past-i64) (+ (expt 2 60) 1 past-i64)))
   (check-equal? (series->list (p+ u64 0)) (series->list u64))
   (for ([row (list (list (= (col "n") (lit u64-max)) (list 'boolean (list #t #f)))
                    (list (>= (col "n") past-i64) (list 'boolean (list #t #f)))
@@ -228,6 +232,22 @@
                 (string-append "^[+]: " (refusal past-u64 'uint8)))
           (list (lambda () (p+ u64 past-u64)) 'contract
                 (string-append "^[+]: " (refusal past-u64 'uint64)))
+          (list (lambda () (p+ i64 past-i64)) 'contract
+                (string-append "^[+]: " (refusal past-i64 'int64)))
+          (list (lambda () (> i32 u64-max)) 'contract
+                (string-append "^>: " (refusal u64-max 'int32)))
+          (list (lambda () (p- u64-max u8)) 'contract
+                (string-append "^-: " (refusal u64-max 'uint8)))
+          (list (lambda () (p/ u8 past-i64)) 'contract
+                (string-append "^/: " (refusal past-i64 'uint8)))
+          (list (lambda () (p* past-i64 i8)) 'contract
+                (string-append "^[*]: " (refusal past-i64 'int8)))
+          (list (lambda () (p* nulls past-i64)) 'contract
+                (string-append "^[*]: " (refusal past-i64 'null)))
+          (list (lambda () (= past-i64 nulls)) 'contract
+                (string-append "^=: " (refusal past-i64 'null)))
+          (list (lambda () (p/ nulls u64-max)) 'contract
+                (string-append "^/: " (refusal u64-max 'null)))
           (list (lambda () (> (series '(1 2)) "a")) 'contract
                 (string-append "^>: " (refusal "a" 'int64)))
           (list (lambda () (p+ (series '(1 2)) (series '(1 2 3)))) 'polars
@@ -263,6 +283,10 @@
 
   (check-equal? (series-shape (p+ (series '(1 2)) "x")) '(string ("1x" "2x")))
   (check-equal? (series-shape (p+ (series '(1 2)) #t)) '(int64 (2 3)))
+  (check-equal? (series-shape (p+ (series '(1 2) #:dtype 'u64) (expt 2 63)))
+                (list 'uint64 (list (+ (expt 2 63) 1) (+ (expt 2 63) 2))))
+  (check-raises 'contract (regexp (string-append "^[+]: " (refusal (expt 2 63) 'int64)))
+                (lambda () (p+ (series '(1 2)) (expt 2 63))))
   (check-equal? (series-shape (= (series '("x" "y")) 1)) '(boolean (#f #f)))
   (check-equal? (series-shape (p* (series (list (hours 1))) 2)) (list '(duration microseconds) (list (microseconds 7200000000))))
   (check-raises 'contract (regexp (string-append "^=: " (refusal (date 2024 1 1) 'int64)))
@@ -438,7 +462,7 @@
           (list '(and int64 left 1) '(series "n" int64 (1 2)) 'racket-short-circuit)
           (list '(or int64 left 1) '(value 1) 'racket-short-circuit)
           (list '(and int64 right 1) '(raises contract) 'bitwise)
-          (list '(+ decimal right 9223372036854775808) '(raises contract) 'past-int64)
+          (list '(/ uint8 right 9223372036854775808) '(raises contract) 'past-int64)
           (list '(+ int64 series date) '(raises polars) 'temporal-physical)
           (list '(- date series null) '(raises polars) 'null-temporal-series)
           (list '(+ string right (date 2024 1 1)) '(raises polars) 'string-temporal-concat)

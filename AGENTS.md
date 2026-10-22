@@ -606,16 +606,24 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#f`, null on a null, and `<` raises polars' reason, as in Python), beside a
   Decimal series a real or a boolean (compared as 1 or 0), beside a
   duration series a number in `*`, a string before a series in `+`, beside
-  an integer series an integer past the dtype's range, up to 2^64 − 1
-  (`(+ u8 300)` is UInt16, `(+ i64 (expt 2 63))` Float64), and in `/` a
-  negative integer beside an unsigned series (integer division, `(/ u8 -1)`
-  is Int16). `lit` takes an integer from 2^63 to 2^64 − 1 as
-  `expr_lit_u64`, a dynamic integer that materialises as UInt64, as
-  `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` / `expr_lit_i64`.
-  Contract errors naming the value and the
-  series' dtype, where Python raises `TypeError`, `ValueError` or
+  an integer series an Int64 integer past the dtype's range (`(+ u8 300)`
+  is UInt16), and in `/` a negative integer beside an unsigned series
+  (integer division, `(/ u8 -1)` is Int16). `lit` takes an integer from
+  2^63 to 2^64 − 1 as `expr_lit_u64`, a dynamic integer that materialises
+  as UInt64, as `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` /
+  `expr_lit_i64`. Such an integer beside a series follows Python's eager
+  operators, which raise `OverflowError` past Int64 except beside UInt64
+  (where they wrap), beside Decimal and in `/`: it is a constant beside a
+  UInt64 series, the expression form beside a Decimal series and, in `/`,
+  beside a signed integer series (Float64, Python's true division), and a
+  contract error beside any other integer series and a Null one (Python
+  raises a `TypeError` beside Null); beside a float or string series it is
+  what any integer is there, and it is refused wherever a smaller integer
+  is. Contract errors naming the value and the series' dtype, where Python
+  raises `TypeError`, `ValueError` or
   `OverflowError`: a negative integer beside an unsigned series outside `/`,
-  an integer outside −2^63 to 2^64 − 1, which no literal carries, a gregor value
+  an integer past Int64 beside a series other than those, an integer
+  outside −2^63 to 2^64 − 1, which no literal carries, a gregor value
   compared with a series of another kind (a naive datetime beside a date
   series and a date or time beside a string series aside), a time in
   arithmetic, and a value no literal takes. `mod` refuses a temporal series

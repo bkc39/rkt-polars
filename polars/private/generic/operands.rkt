@@ -52,7 +52,8 @@
 
 (define (dtype-classes dt)
   (match dt
-    [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64) '(integer numeric)]
+    [(or 'int8 'int16 'int32 'int64) '(integer signed numeric)]
+    [(or 'uint8 'uint16 'uint32 'uint64) '(integer numeric)]
     [(or 'float32 'float64) '(float numeric)]
     [(list 'decimal _ _) '(decimal)]
     [(? enum-dtype?) '(enum)]
@@ -70,13 +71,14 @@
      (match (hash-ref integer-ranges dt #f)
        [#f (cond
              [(int64/c v) 'integer]
-             [(lit-integer/c v) 'wide-integer]
+             [(lit-integer/c v) 'past-int64]
              [else 'huge-integer])]
        [(cons low high)
         (cond
           [(<= low v high) 'integer]
-          [(and (lit-integer/c v) (not (and (zero? low) (negative? v)))) 'wide-integer]
-          [(lit-integer/c v) 'negative-integer]
+          [(and (int64/c v) (not (and (zero? low) (negative? v)))) 'wide-integer]
+          [(int64/c v) 'negative-integer]
+          [(lit-integer/c v) 'past-int64]
           [else 'other])])]
     [(? real?) 'real]
     [(or (? string?) (? symbol?)) 'text]
@@ -92,24 +94,24 @@
     [_          _                     series                              series]
     [div        null                  null                                same]
     [_          _                     null                                expression]
-    [_          null                  (boolean integer wide-integer real text date time datetime moment
-                                       duration)
+    [_          null                  (boolean integer real text date time datetime moment duration)
                                       expression]
     [_          enum                  text                                expression]
     [add        _                     text                                (sided expression string)]
-    [_          decimal               (integer wide-integer real)         expression]
+    [_          decimal               (integer past-int64 real)           expression]
     [compare    decimal               boolean                             integer-expression]
     [div        decimal               boolean                             (sided float64 expression)]
     [arithmetic decimal               boolean                             expression]
     [mul        duration              (integer real)                      expression]
     [div        duration              (integer real)                      (sided refuse float64)]
     [div        float                 (integer real)                      (sided float64 expression)]
-    [div        boolean               (integer wide-integer huge-integer) (sided refuse float64)]
+    [div        boolean               (integer past-int64 huge-integer)   (sided refuse float64)]
     [div        integer               real                                (sided float64 expression)]
     [_          integer               wide-integer                        expression]
+    [div        signed                past-int64                          expression]
     [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
-    [compare    string                (integer wide-integer huge-integer real boolean)
+    [compare    string                (integer past-int64 huge-integer real boolean)
                                       python-str]
     [compare    (string categorical)  (date time)                         own]
     [compare    date                  (date datetime moment)              own]
@@ -124,7 +126,7 @@
     [arithmetic _                     text                                string]
     [arithmetic (boolean string)      real                                float64]
     [_          numeric               boolean                             same]
-    [_          float                 (integer wide-integer huge-integer real)
+    [_          float                 (integer past-int64 huge-integer real)
                                       same]
     [_          integer               integer                             same]
     [_          integer               real                                float64]

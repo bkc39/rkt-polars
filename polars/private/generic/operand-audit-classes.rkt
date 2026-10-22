@@ -166,8 +166,10 @@
              [_ #f])))
    (list 'past-int64
          (string-append
-          "an integer past Int64 is a contract error, since lit cannot carry it, where Python's "
-          "eager operator gives a series")
+          "an integer past Int64 is a contract error beside a series other than UInt64, Decimal "
+          "or, in /, a signed integer, as Python's eager operator raises OverflowError beside most "
+          "dtypes, but Python's gives a series for / of an unsigned integer or Null series and "
+          "for * and / of a Duration series")
          (lambda (row python got)
            (and (past-int64? row) (series-outcome? python) (equal? got '(raises contract)))))
    (list 'null-temporal-series

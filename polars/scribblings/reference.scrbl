@@ -2188,9 +2188,16 @@ a @racket['null] series (where Python's eager operators raise) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
-an integer series an integer past the dtype's range, up to
-@racket[(sub1 (expt 2 64))], the widest @racket[lit] takes, and in @racket[/] a
-negative integer beside an unsigned series. Any other value raises
+an integer series an integer within Int64 past the dtype's range, and in
+@racket[/] a negative integer beside an unsigned series. An integer from
+@racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
+UInt64 literal carries, is a constant beside a @racket['uint64] series (where
+Python's operator wraps, as ours does), takes the expression form beside a
+Decimal series and, in @racket[/], beside a signed integer series, which gives
+Python's @racket['float64], and is refused beside any other integer series
+and a @racket['null] one, where Python's eager operators raise an
+@tt{OverflowError} (a @tt{TypeError} beside Null); beside a float or string
+series it is what any integer is there. Any other value raises
 @racket[exn:fail:contract] naming it and the series' dtype, where Python
 raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
 series, a gregor value compared with a series of another kind (a date with a
@@ -2212,7 +2219,8 @@ where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
-(+ (series '(1 2)) (expt 2 63))
+(+ (series '(1 2) #:dtype 'u64) (expt 2 63))
+(eval:error (+ (series '(1 2)) (expt 2 63)))
 (+ (series '(1 2)) "x")
 (+ (series '(1 2)) #t)
 (- 10 (series '(1 2) #:name "n"))
