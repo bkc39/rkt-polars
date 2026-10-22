@@ -8,6 +8,7 @@
          polars/private/generic/dtype
          polars/private/generic/logical
          polars/private/generic/operands
+         (only-in polars/private/resource with-release)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -90,8 +91,25 @@
     (match args
       one.clause ...
       [_ #:when (andmap base:number? args) (apply base-op args)]
-      [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
-                            a more)])))
+      [(cons a more)
+       (fold-arith (lambda (acc b) (binary-arith 'who expr-op series-op base-op acc b)) a more)])))
+
+(define (release-temporary v)
+  (cond [(series? v) (series-drop v)]
+        [(Expr-ptr? v) (expr-drop v)]
+        [else (void)]))
+
+(define (fold-temporaries step acc more)
+  (match more
+    ['() acc]
+    [(cons b rest)
+     (fold-temporaries step (with-release ([consumed acc release-temporary]) (step consumed b))
+                       rest)]))
+
+(define (fold-arith step a more)
+  (match more
+    ['() a]
+    [(cons b rest) (fold-temporaries step (step a b) rest)]))
 
 (define-arith p+ + expr-add series-add/who base:+)
 (define-arith p- - expr-sub series-sub/who base:- #:unary expr-neg series-negate)
@@ -133,6 +151,7 @@
            (only-in gregor/period hours minutes)
            (only-in gregor/time time)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/expr-core expr-drop-count)
            polars/private/generic/core
            polars/private/generic/test-fixtures
            (only-in threading ~>))
@@ -146,6 +165,34 @@
     (let ([before (series-drop-count)])
       (apply-operator)
       (check >= (- (series-drop-count) before) 1)))
+  (define (drops-during count thunk)
+    (settle!)
+    (define before (count))
+    (thunk)
+    (- (count) before))
+  (define (intermediate-drops count fold one-step)
+    (- (drops-during count fold) (* 3 (drops-during count one-step))))
+  (check-equal? (intermediate-drops series-drop-count
+                                    (lambda () (check-equal? (series->list (p+ operand-ints 1 2 3))
+                                                             '(7 8)))
+                                    (lambda () (p+ operand-ints 1)))
+                2)
+  (check-equal? (intermediate-drops series-drop-count
+                                    (lambda () (p* operand-ints operand-ints operand-ints
+                                                   operand-ints))
+                                    (lambda () (p* operand-ints operand-ints)))
+                2)
+  (check-equal? (intermediate-drops expr-drop-count
+                                    (lambda () (p- (col "v") 1 2 3))
+                                    (lambda () (p- (col "v") 1)))
+                2)
+  (check-equal? (- (drops-during series-drop-count
+                                 (lambda () (check-exn exn:fail:contract?
+                                                       (lambda () (p+ operand-ints 1 (box 2))))))
+                   (drops-during series-drop-count (lambda () (p+ operand-ints 1))))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop (lambda () (p+ operand-ints 1 2 3)))
+                (+ 1 (drops-during series-drop-count (lambda () (p+ operand-ints 1 2 3)))))
   (check-equal? (series->list (p+ operand-ints operand-ints)) '(2 4))
   (check-equal? (series->list (p-and operand-flags operand-flags)) '(#t #f))
   (check-equal? (series->list operand-ints) '(1 2))

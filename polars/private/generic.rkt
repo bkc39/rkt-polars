@@ -95,7 +95,8 @@
 (module+ test
   (require rackunit
            (only-in polars/private/expr-core
-                    Expr-ptr? LazyFrame-ptr? col expr-drop expr-drop-count lazyframe-drop)
+                    Expr-ptr? LazyFrame-ptr? col expr-drop expr-drop-count lazyframe-drop
+                    lazyframe-drop-count)
            (only-in polars/private/expr dataframe-lazy expr-alias lazyframe-collect)
            (only-in polars/private/foreign
                     DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-height
@@ -130,7 +131,12 @@
   (check-equal? (drops-once expr-drop-count (drop-twice expr-drop "expression")
                             (lambda () (col "x")))
                 1)
-  ((drop-twice lazyframe-drop 'lazyframe) (lazy (dataframe (list (series '(1) #:name "a")))))
+  (check-equal? (drops-once lazyframe-drop-count (drop-twice lazyframe-drop 'lazyframe)
+                            (lambda () (lazy (dataframe (list (series '(1) #:name "a"))))))
+                1)
+  (check-equal? (drops-once lazyframe-drop-count (drop-twice lazyframe-drop 'lazyframe)
+                            (lambda () (dataframe-lazy (dataframe-new (list (series '(1)))))))
+                1)
   (for ([drop (list series-drop dataframe-drop lazyframe-drop expr-drop)])
     (check-exn (contract-violation-of (object-name drop)) (lambda () (drop "a"))))
 

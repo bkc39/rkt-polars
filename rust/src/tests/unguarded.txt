@@ -113,6 +113,7 @@ expr_tail builder
 expr_when_then builder
 last_error_message error
 lazyframe_drop drop
+lazyframe_drop_count count
 lazyframe_drop_nulls builder
 lazyframe_filter builder
 lazyframe_group_by_agg builder

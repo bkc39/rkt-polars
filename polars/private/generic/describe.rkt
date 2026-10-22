@@ -9,14 +9,15 @@
          (only-in polars/private/expr-dt expr-dt-replace-time-zone)
          (only-in polars/private/foreign
                   dataframe-column dataframe-column-names dataframe-height decimal-dtype?
-                  polars-null polars-null? series-dtype series-null-count series-rename
-                  zoned-datetime-dtype?)
+                  polars-null polars-null? series-drop series-dtype series-null-count
+                  series-rename zoned-datetime-dtype?)
          (only-in polars/private/generic/core dataframe dataframe? ref series series?)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
          (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)
          (only-in polars/private/generic/reductions alias max mean min std)
-         (only-in polars/private/generic/reshape cast collect lazy select with-columns))
+         (only-in polars/private/generic/reshape cast collect lazy select with-columns)
+         (only-in polars/private/resource with-release))
 
 (provide (contract-out [describe (-> (or/c series? dataframe?) dataframe?)]))
 
@@ -175,12 +176,21 @@
       (cons v (cell (local-cell-name plan stat)))
       v))
 
-(define (column-statistics d)
+(define (release-plan plan) (series-drop (column-plan-series plan)))
+
+(define (call-with-column-plans d proc)
   (define height (dataframe-height d))
-  (define plans
-    (for/list ([column (in-list (dataframe-column-names d))]
-               [i (in-naturals)])
-      (plan-column d column i height)))
+  (let plan-next ([columns (dataframe-column-names d)] [i 0] [plans '()])
+    (match columns
+      ['() (proc (reverse plans))]
+      [(cons column more)
+       (with-release ([plan (plan-column d column i height) release-plan])
+         (plan-next more (add1 i) (cons plan plans)))])))
+
+(define (column-statistics d)
+  (call-with-column-plans d plan-statistics))
+
+(define (plan-statistics plans)
   (define row
     (and (ormap (lambda (plan) (pair? (column-plan-queried plan))) plans)
          (statistics-row plans)))
@@ -245,7 +255,7 @@
            (only-in racket/list make-list)
            (only-in racket/math nan?)
            (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/foreign series-quantile)
+           (only-in polars/private/foreign series-drop-count series-quantile)
            (only-in polars/private/generic/math p-abs)
            (only-in polars/private/generic/reshape agg group-by head)
            (prefix-in contracted: (submod "..")))
@@ -424,4 +434,32 @@
   (check-equal? (height no-columns) 9)
 
   (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe 5)))
-  (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe (col "a")))))
+  (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe (col "a"))))
+
+  (define (series-drops-during thunk)
+    (settle!)
+    (define before (series-drop-count))
+    (thunk)
+    (- (series-drop-count) before))
+  (define planned (box '()))
+  (define (note-copies plans)
+    (set-box! planned (map column-plan-series plans)))
+  (check-equal? (series-drops-during (lambda () (call-with-column-plans nums note-copies)))
+                (length (column-names nums)))
+  (check-equal? (length (unbox planned)) (length (column-names nums)))
+  (for ([copy (in-list (unbox planned))])
+    (check-exn #rx"^series-drop: series has been dropped" (lambda () (series-drop copy))))
+  (check-equal? (series-drops-during
+                 (lambda ()
+                   (check-exn #rx"^boom"
+                              (lambda ()
+                                (call-with-column-plans nums (lambda (plans) (error 'boom "")))))))
+                (length (column-names nums)))
+  (define (all-null width)
+    (dataframe (for/list ([i (in-range width)])
+                 (series (nulls 3) #:name (format "n~a" i) #:dtype 'i64))))
+  (define wide-nulls (all-null 4))
+  (define narrow-nulls (all-null 1))
+  (check-equal? (- (series-drops-during (lambda () (describe wide-nulls)))
+                   (series-drops-during (lambda () (describe narrow-nulls))))
+                3))

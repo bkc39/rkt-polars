@@ -239,11 +239,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   data unguarded until #129 (L7 of #223) guards them with a reason reported
   to Racket. The audit fails on a stale or misclassified line, so guarding an
   entry point means deleting its line.
-- `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
-  native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free (`foreign.rkt` has a case for each Series-
-  and DataFrame-returning binding but the file readers, and `bulk.rkt` one for
-  `series_copy_cat`), and pairing tests
+- `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
+  `series_drop_count` count native releases; the reclamation tests assert on
+  them because Racket cannot otherwise observe a native free (`foreign.rkt`
+  has a case for each Series- and DataFrame-returning binding but the file
+  readers, `bulk.rkt` one for `series_copy_cat`, and `expr.rkt` one for each
+  plan helper), and pairing tests
   check that an explicit drop, of a pointer or a wrapper, releases it exactly
   once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory

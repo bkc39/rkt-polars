@@ -27,7 +27,7 @@
          define-compat
          _Expr-ptr _Expr-ptr/null Expr-ptr?
          _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
-         expr-drop-count expr-dropped lazyframe-dropped
+         expr-drop-count expr-dropped lazyframe-drop-count lazyframe-dropped
          sort-by/c
          explain/c lazyframe-explainer
          expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
@@ -67,6 +67,9 @@
     #:wrap (deallocator)))
 
 (define-compat expr-drop-count
+  (_fun -> _size))
+
+(define-compat lazyframe-drop-count
   (_fun -> _size))
 
 (define-compat expr->string/raw
