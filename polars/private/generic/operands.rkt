@@ -24,11 +24,11 @@
          operand-action
          series-through-expr)
 
-(define (const-series who dt n value)
+(define (const-series who dt n value #:name [name ""])
   (wrap-series
    (if (temporal-dtype? dt)
-       (series-repeat-temporal who "" value n dt)
-       ((dtype->constructor dt #f) "" (coerce-elements dt (make-list n value))))))
+       (series-repeat-temporal who name value n dt)
+       ((dtype->constructor dt #f) name (coerce-elements dt (make-list n value))))))
 
 (define integer-ranges
   (for*/hasheq ([bits (in-list '(8 16 32 64))]
@@ -212,15 +212,17 @@
 (define (operand-series who s other side)
   (define dt (series-dtype s))
   (define n (series-len s))
-  (define (lifted dtype value) (const-series who dtype n value))
+  (define (lifted dtype value) (const-series who dtype n value #:name (series-name s)))
   (define o
     (match (operand-action who dt other side)
       ['series other]
       ['same (lifted dt (same-value dt other))]
       ['own (lifted (temporal-value-dtype other) other)]
       ['float64 (lifted 'float64 (same-value 'float64 other))]
-      ['physical (lifted dt (same-value dt ((temporal-encoder who (temporal-value-dtype other))
-                                            other)))]
+      ['physical
+       (match-define (list 'datetime _ zone) (temporal-value-dtype other))
+       (define encode (temporal-encoder who (list 'datetime 'microseconds zone)))
+       (lifted dt (same-value dt (encode other)))]
       ['string (lifted 'string (same-value 'string other))]
       ['python-str (lifted 'string (python-str other))]
       ['modulo (raise-arguments-error who "cannot take the modulo of a temporal dtype"
@@ -237,7 +239,8 @@
 (define (logical-operand who s other)
   (cond
     [(series? other) other]
-    [(or (boolean? other) (polars-null? other)) (const-series who 'boolean (series-len s) other)]
+    [(or (boolean? other) (polars-null? other))
+     (const-series who 'boolean (series-len s) other #:name (series-name s))]
     [else (raise-argument-error who "(or/c series? boolean? polars-null?)" other)]))
 
 (define (call-with-lifted lifted other proc)

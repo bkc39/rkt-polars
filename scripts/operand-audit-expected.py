@@ -3,7 +3,7 @@
 Run from the repo root with Python polars 1.42.1:
     python3 -I scripts/operand-audit-expected.py
 then scripts/operand-audit-deviations.rkt to record Racket's outcome on the
-rows where it differs.
+rows where it differs (--accept admits new and changed rows; see AGENTS.md).
 """
 
 import datetime as dt
@@ -98,7 +98,8 @@ def outcome(f):
     if not isinstance(s, pl.Series):
         return [Sym("value"), s]
     categorical = isinstance(s.dtype, (pl.Categorical, pl.Enum))
-    return [Sym("series"), dtype_datum(s.dtype), [cell(v, categorical) for v in s.to_list()]]
+    return [Sym("series"), s.name, dtype_datum(s.dtype),
+            [cell(v, categorical) for v in s.to_list()]]
 
 
 prices = pl.read_parquet(DATA / "produce.parquet")["price"].head(2).alias("n")

@@ -8,7 +8,7 @@
                   date? datetime datetime? moment moment?)
          (only-in gregor/period microseconds nanoseconds period?)
          (only-in gregor/time time time?)
-         (only-in polars/private/foreign series-cast series-rename series-slice)
+         (only-in polars/private/foreign series-cast series-name series-rename series-slice)
          (only-in polars/private/temporal period->nanoseconds)
          polars/private/generic/core
          polars/private/generic/operators
@@ -66,7 +66,7 @@
 
 (define number-text
   (match (assq 'number-text audit-series-outcomes)
-    [(list _ (list 'series 'string cells)) (series cells #:name "n")]))
+    [(list _ (list 'series _ 'string cells)) (series cells #:name "n")]))
 
 (define audit-fixtures
   (hash 'int64 (series '(1 2) #:name "n")
@@ -123,7 +123,7 @@
         (->nanoseconds v)))
 
 (define (series-outcome s)
-  (list 'series (dtype s) (map encode (series-cells s))))
+  (list 'series (series-name s) (dtype s) (map encode (series-cells s))))
 
 (define leaked #rx"operation failed|Resolved plan|/raw|->C|ptr")
 

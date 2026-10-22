@@ -2107,9 +2107,10 @@ are series, whatever the other operand, as Python's @tt{%} does. A
 @racket[/] of integer, boolean or null operands is integer division (two
 Null operands aside, which give @racket['float64]); any other is Python's
 true division, which first casts an integer, boolean or null series, a
-Decimal series under a plain value on its left, and a series under a plain
-number on its left, to @racket['float64], and divides a duration series by a
-number. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+Decimal series under a boolean or a temporal value on its left, and a series
+under a plain number on its left, to @racket['float64], and divides a duration
+series by a number. The result takes the series' name, on either side. The
+operand audit (@filepath{generic/operand-audit.rkt}) holds every
 operator to Python's outcome, row by row, and records ours, with its reason,
 where they still differ.
 
@@ -2117,6 +2118,7 @@ where they still differ.
 (+ (series '(1 2) #:dtype 'u8) 300)
 (+ (series '(1 2)) "x")
 (+ (series '(1 2)) #t)
+(- 10 (series '(1 2) #:name "n"))
 (= (series '("x" "y")) 1)
 (= (series '("1e-05" "x")) 1e-5)
 (/ (series '(1 2)) (series '(1.5 2.0) #:dtype 'f32))

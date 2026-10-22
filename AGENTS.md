@@ -322,8 +322,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   unlike Python's `/` (#65), two Null operands aside, which give Float64.
   Any other `/` divides as Python's does: an integer, Boolean or Null series
   is cast to Float64 first, and so is the series under a plain number on the
-  left (`(/ 1 f32)` is Float64) and a Decimal series under any plain value on
-  the left (`(/ (hours 1) decimals)` is a duration).
+  left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a
+  temporal value on the left (`(/ (hours 1) decimals)` is a duration).
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
@@ -595,6 +595,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   (the left one when both are series), as Python's `%` does, whatever the
   other operand. The special cases are one table in `generic/operands.rkt`,
   `operand-rules`, keyed by operator class, dtype class and operand class.
+  The result takes the series' name, on either side of the operator.
   `scripts/operand-audit-expected.py` writes Python's outcome of every
   (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
   expression form's and, for `/`, `//`'s where they differ.
@@ -602,14 +603,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   differs, in `generic/operand-deviations.rktd`, under the first class of
   `generic/operand-audit-classes.rkt` that holds. Each class is a predicate
   on the row, Python's outcome (with its expression and `//` forms) and ours,
-  so it names what ours gives, not only which row it is; a row that fits no
-  class makes the recorder print it and exit 1. `generic/operand-audit.rkt`
-  holds every row to Python's outcome or the recorded one, dtype and values
-  exactly, and reclassifies every recorded row, so a change to any row fails
-  and names it. After a deliberate change, rerun the recorder: if it exits 1,
-  fix ours to Python's outcome, or add a class with its predicate and reason
-  (and a forged-outcome row in the test that the predicate refuses), then
-  review the diff of the recorded rows and the class counts it prints.
+  which says what kind of outcome the class admits; the record, not the
+  predicate, says which rows are in it. The recorder is a ratchet: a row that
+  fits no class, or one not already recorded under its class with the same
+  outcome (a new deviation, a changed outcome, a changed class), makes it
+  print the row, ours and the record and exit 1 without writing. `--accept`
+  records the new and changed rows, never an unclassified one; a recorded row
+  that now gives Python's outcome leaves the record either way.
+  `generic/operand-audit.rkt` holds every row to Python's outcome or the
+  recorded one, name, dtype and values exactly, and reclassifies every
+  recorded row, so a change to any row fails and names it. After a
+  deliberate change, rerun the recorder. On an unclassified row, fix ours to
+  Python's outcome, or add a class with its predicate and reason (and a
+  forged-outcome row in the test that the predicate refuses). On a row not
+  recorded, fix ours, or rerun with `--accept` and review the diff of the
+  recorded rows and the class counts it prints.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an

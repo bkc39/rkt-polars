@@ -1,8 +1,9 @@
 #lang racket/base
 
 (require racket/contract/base
-         (only-in racket/match == match match* match-define)
-         (only-in polars/private/foreign series-dtype)
+         (only-in racket/list filter-map)
+         (only-in racket/match == match match* match-define match-lambda)
+         (only-in polars/private/foreign polars-null? series-dtype series-name)
          (only-in polars/private/generic/operand-audit-table
                   eager-outcome fixture-outcome python-alternatives python-outcome row-operand
                   row-series)
@@ -10,7 +11,13 @@
 
 (provide (contract-out
           [operand-deviation-classes (listof (list/c symbol? string?))]
-          [classify-deviation (-> pair? pair? (or/c symbol? #f))]))
+          [classify-deviation (-> pair? pair? (or/c symbol? #f))]
+          [recorder-verdict
+           (-> (listof (list/c pair? (or/c symbol? #f) pair?)) (hash/c pair? (list/c symbol? pair?))
+               boolean?
+               (or/c (list/c 'unclassified (listof (list/c pair? #f pair?)))
+                     (list/c 'unaccepted (listof (list/c pair? symbol? pair? (or/c #f pair?))))
+                     (list/c 'record (listof (list/c pair? symbol? pair?)))))]))
 
 (define (label-kind label)
   (match label
@@ -40,10 +47,10 @@
 
 (define (result-kind outcome)
   (match outcome
-    [(list 'series (or 'date 'time (list (or 'datetime 'duration) _ ...)) _) 'temporal]
-    [(list 'series 'string _) 'string]
-    [(list 'series (or 'null 'categorical (list 'enum _ ...)) _) 'other]
-    [(list 'series _ _) 'number]
+    [(list 'series _ (or 'date 'time (list (or 'datetime 'duration) _ ...)) _) 'temporal]
+    [(list 'series _ 'string _) 'string]
+    [(list 'series _ (or 'null 'categorical (list 'enum _ ...)) _) 'other]
+    [(list 'series _ _ _) 'number]
     [(list 'value (? string?)) 'text]
     [(list 'raises _) 'raised]
     [_ 'other]))
@@ -53,7 +60,7 @@
 
 (define (series-outcome? outcome)
   (match outcome
-    [(list 'series _ _) #t]
+    [(list 'series _ _ _) #t]
     [_ #f]))
 
 (define (alternative? row names got)
@@ -73,6 +80,7 @@
   (match row
     [(list (and op (or 'and 'or)) label 'left operand _ ...)
      (match* (op (row-operand row))
+       [(_ (? polars-null?)) #f]
        [('and #f) '(value #f)]
        [('and _) (fixture-outcome label)]
        [('or #f) (fixture-outcome label)]
@@ -81,16 +89,38 @@
 
 (define (past-int64? row)
   (match row
-    [(list _ _ (or 'left 'right) (? exact-integer? v) _ ...)
-     (not (<= (- (expt 2 63)) v (sub1 (expt 2 63))))]
+    [(list _ label (or 'left 'right) (? exact-integer? v) _ ...)
+     (not (or (<= (- (expt 2 63)) v (sub1 (expt 2 63)))
+              (and (eq? label 'uint64) (<= 0 v (sub1 (expt 2 64))))))]
+    [_ #f]))
+
+(define (null-by-null? row)
+  (match row
+    [(list _ 'null _ 'null _ ...) #t]
     [_ #f]))
 
 (define (op-of row)
   (match-define (list op _ ...) row)
   op)
 
+(define (renamed? row python got)
+  (match* (python got)
+    [((list 'series "literal" dtype cells)
+      (list 'series (== (series-name (row-series row))) dtype cells))
+     #t]
+    [(_ _) #f]))
+
 (define classes
   (list
+   (list 'racket-short-circuit
+         "and / or with a plain value on the left evaluate as Racket's and / or"
+         (lambda (row python got) (equal? got (racket-logical row))))
+   (list 'result-name
+         (string-append
+          "both give the same series, but Python's eager operator names it \"literal\", since it "
+          "runs the expression form with the literal first (a Decimal or Duration series under a "
+          "plain value on its left, a string on the left of +), and ours name it after the series")
+         renamed?)
    (list 'expression-form
          (string-append
           "the rule table sends the operand to the expression form, (op (col name) (lit v)), and "
@@ -101,10 +131,8 @@
    (list 'integer-division
          "/ of integer operands (integer, Boolean or Null) is floor division, and ours gives Python's // (#65)"
          (lambda (row python got)
-           (and (eq? (op-of row) '/) (alternative? row '(floor floor-expression) got))))
-   (list 'racket-short-circuit
-         "and / or with a plain value on the left evaluate as Racket's and / or"
-         (lambda (row python got) (equal? got (racket-logical row))))
+           (and (eq? (op-of row) '/) (not (null-by-null? row))
+                (alternative? row '(floor floor-expression) got))))
    (list 'eager-raises
          (string-append
           "Python's eager operator raises where its expression form gives a series, and ours gives "
@@ -116,7 +144,7 @@
          (string-append
           "both raise, but ours raises a polars error where Python raises a TypeError, ValueError, "
           "OverflowError or AttributeError, or the reverse")
-         (lambda (row python got) (and (raised? python) (raised? got))))
+         (lambda (row python got) (and (raised? python) (raised? got) (not (equal? python got)))))
    (list 'python-string-format
          "Python's str % x is printf-style formatting, so the series' __rmod__ never runs; ours raises"
          (lambda (row python got)
@@ -172,3 +200,17 @@
   (for/or ([c (in-list classes)])
     (match-define (list name _ holds?) c)
     (and (holds? row python got) name)))
+
+(define (recorder-verdict deviating recorded accept?)
+  (define unclassified (filter (match-lambda [(list _ class _) (not class)]) deviating))
+  (define (unrecorded d)
+    (match d
+      [(list _ #f _) #f]
+      [(list key class got)
+       (define was (hash-ref recorded key #f))
+       (and (not (equal? was (list class got))) (append d (list was)))]))
+  (define moved (filter-map unrecorded deviating))
+  (cond
+    [(pair? unclassified) (list 'unclassified unclassified)]
+    [(and (pair? moved) (not accept?)) (list 'unaccepted moved)]
+    [else (list 'record deviating)]))

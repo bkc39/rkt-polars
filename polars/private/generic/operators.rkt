@@ -26,12 +26,18 @@
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a)
           (call-with-operand-series 'name a b 'right
-                                    (lambda (o) (wrap-series (series-op 'name a o))))]
+                                    (lambda (o) (named-after a b (series-op 'name a o))))]
          [(series? b)
           (call-with-operand-series 'name b a 'left
-                                    (lambda (o) (wrap-series (series-op-reflected 'name b o))))]
+                                    (lambda (o) (named-after b a (series-op-reflected 'name b o))))]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
+
+(define (named-after s other result)
+  (cond
+    [(series? other) (wrap-series result)]
+    [else (series-rename result (series-name s))
+          (wrap-series result)]))
 
 (define (base:!= . args) (base:not (apply base:= args)))
 
