@@ -30,8 +30,8 @@
 
 (provide-public
  #:internal internal-names
- [polars/private/expr ->expr/who expr-cast-to expr-meta-output-name/raw expr-name-keep lit/who
-  lazyframe-collect/raw]
+ [polars/private/expr ->expr/who expr-cast-to expr-lit-u64 expr-meta-output-name/raw
+  expr-name-keep lit/who lazyframe-collect/raw]
  [polars/private/foreign
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
@@ -92,7 +92,7 @@
                                       define-frame-op/reason define-reasoned
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
-                                      dataframe-new/raw)))])
+                                      dataframe-new/raw expr-lit-u64)))])
     (check-false (memq internal exported) (format "~a is internal" internal))))
 
 (module+ test
