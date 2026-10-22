@@ -11,10 +11,14 @@
  #:once-each
  [("--accept") "Record new deviations and changed outcomes or classes" (set-box! accept? #t)])
 
+(define python-by-key
+  (for/hash ([row (in-list audit-rows)])
+    (values (audit-row-key row) (python-outcome (eager-outcome row)))))
+
 (define deviating
   (for*/list ([row (in-list audit-rows)]
               [got (in-value (let-values ([(outcome _) (run-row row)]) outcome))]
-              #:unless (equal? got (python-outcome (eager-outcome row))))
+              #:unless (equal? got (hash-ref python-by-key (audit-row-key row))))
     (list (audit-row-key row) (classify-deviation row got) got)))
 
 (match (recorder-verdict deviating deviations (unbox accept?))
@@ -25,8 +29,12 @@
    (exit 1)]
   [(list 'unaccepted rows)
    (for ([r (in-list rows)])
-     (match-define (list key class got was) r)
-     (eprintf "not recorded: ~s\n  now: ~s ~s\n  was: ~s\n" key class got was))
+     (match r
+       [(list key #f #f was)
+        (eprintf "no longer deviates: ~s\n  now: Python's ~s\n  was: ~s\n" key
+                 (hash-ref python-by-key key) was)]
+       [(list key class got was)
+        (eprintf "not recorded: ~s\n  now: ~s ~s\n  was: ~s\n" key class got was)]))
    (eprintf "~a rows differ from the record; rerun with --accept to record them\n" (length rows))
    (exit 1)]
   [(list 'record rows)

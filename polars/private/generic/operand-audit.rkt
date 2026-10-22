@@ -307,6 +307,7 @@
                      (p-and flags polars-null) (p-or polars-null flags))]
         [expected (list "n" "n" "s" "n" "n" "n" "c" "c" "" "f" "f" "f" "f")])
     (check-equal? (series-name named) expected))
+  (check-equal? (series-shape (p- 10 (series '(1 2) #:name "n"))) '(int64 (9 8)))
   (define number-texts (series '("1e-05" "inf" "-inf" "nan" "-0.0" "1e+16" "0.0001")))
   (for ([v (list 1e-5 +inf.0 -inf.0 +nan.0 -0.0 1e16 0.0001)]
         [i (in-naturals)])
@@ -430,7 +431,11 @@
   (for ([verdict
          (list
           (list (list kept) #f (list 'record (list kept)))
-          (list '() #f '(record ()))
+          (list '() #f (list 'unaccepted (list '((+ int64 right 1) #f #f (bitwise (raises polars))))))
+          (list '() #t '(record ()))
+          (list (list fresh) #f
+                (list 'unaccepted
+                      (list (append fresh '(#f)) '((+ int64 right 1) #f #f (bitwise (raises polars))))))
           (list (list kept fresh) #f (list 'unaccepted (list (append fresh '(#f)))))
           (list (list changed) #f
                 (list 'unaccepted (list (append changed '((bitwise (raises polars)))))))

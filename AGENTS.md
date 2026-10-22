@@ -595,7 +595,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   (the left one when both are series), as Python's `%` does, whatever the
   other operand. The special cases are one table in `generic/operands.rkt`,
   `operand-rules`, keyed by operator class, dtype class and operand class.
-  The result takes the series' name, on either side of the operator.
+  The result takes the series' name, on either side of the operator, where
+  Python's eager operator names it `literal` for a Decimal or Duration
+  series under a plain value on its left and for a string on the left of
+  `+` (the `result-name` class).
   `scripts/operand-audit-expected.py` writes Python's outcome of every
   (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
   expression form's and, for `/`, `//`'s where they differ.
@@ -608,8 +611,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   fits no class, or one not already recorded under its class with the same
   outcome (a new deviation, a changed outcome, a changed class), makes it
   print the row, ours and the record and exit 1 without writing. `--accept`
-  records the new and changed rows, never an unclassified one; a recorded row
-  that now gives Python's outcome leaves the record either way.
+  records the new and changed rows, never an unclassified one. A recorded row
+  that now gives Python's outcome counts as changed too, so undoing a
+  documented deviation (`integer-division`, `racket-short-circuit`,
+  `result-name`) also needs `--accept`, which drops the row from the record.
   `generic/operand-audit.rkt` holds every row to Python's outcome or the
   recorded one, name, dtype and values exactly, and reclassifies every
   recorded row, so a change to any row fails and names it. After a

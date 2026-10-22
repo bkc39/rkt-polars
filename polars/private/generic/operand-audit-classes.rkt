@@ -16,7 +16,9 @@
            (-> (listof (list/c pair? (or/c symbol? #f) pair?)) (hash/c pair? (list/c symbol? pair?))
                boolean?
                (or/c (list/c 'unclassified (listof (list/c pair? #f pair?)))
-                     (list/c 'unaccepted (listof (list/c pair? symbol? pair? (or/c #f pair?))))
+                     (list/c 'unaccepted
+                             (listof (or/c (list/c pair? symbol? pair? (or/c #f pair?))
+                                           (list/c pair? #f #f (list/c symbol? pair?)))))
                      (list/c 'record (listof (list/c pair? symbol? pair?)))))]))
 
 (define (label-kind label)
@@ -209,7 +211,15 @@
       [(list key class got)
        (define was (hash-ref recorded key #f))
        (and (not (equal? was (list class got))) (append d (list was)))]))
-  (define moved (filter-map unrecorded deviating))
+  (define now-deviating
+    (for/hash ([d (in-list deviating)])
+      (match-define (list key _ _) d)
+      (values key #t)))
+  (define vanished
+    (for/list ([(key was) (in-hash recorded)]
+               #:unless (hash-ref now-deviating key #f))
+      (list key #f #f was)))
+  (define moved (append (filter-map unrecorded deviating) vanished))
   (cond
     [(pair? unclassified) (list 'unclassified unclassified)]
     [(and (pair? moved) (not accept?)) (list 'unaccepted moved)]
