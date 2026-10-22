@@ -86,7 +86,11 @@ pub extern "C" fn expr_tail(
         return ptr::null_mut();
     }
     let ee = unsafe { (*e).clone() };
-    let n = if has_len != 0 { Some(len) } else { None };
+    let n = if has_len != 0 {
+        Some(len.min(i64::MAX as usize))
+    } else {
+        None
+    };
     Box::into_raw(Box::new(ee.tail(n)))
 }
 

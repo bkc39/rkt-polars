@@ -41,14 +41,14 @@
     [(cons low high) (<= low v high)]
     [#f #f]))
 
-(define (int64-value? v)
-  (and (exact-integer? v) (in-range-of 'int64 v)))
+(define (literal-integer? v)
+  (and (exact-integer? v) (<= (- (expt 2 63)) v (sub1 (expt 2 64)))))
 
 (define (non-integer-real? v)
   (and (real? v) (not (exact-integer? v))))
 
 (define (literal-value? v)
-  (or (boolean? v) (int64-value? v) (non-integer-real? v)
+  (or (boolean? v) (literal-integer? v) (non-integer-real? v)
       (string? v) (symbol? v) (polars-null? v) (and (temporal-value-dtype v) #t)))
 
 (struct constant (dtype value))
@@ -69,10 +69,10 @@
     [_ #:when (polars-null? v) #t]
     ['null (literal-value? v)]
     [(? enum-dtype?) (or (string? v) (symbol? v))]
-    [(list 'decimal _ _) (or (int64-value? v) (non-integer-real? v))]
-    [(or 'int8 'int16 'int32 'int64) (and (int64-value? v) (not (in-range-of dt v)))]
+    [(list 'decimal _ _) (or (literal-integer? v) (non-integer-real? v))]
+    [(or 'int8 'int16 'int32 'int64) (and (literal-integer? v) (not (in-range-of dt v)))]
     [(or 'uint8 'uint16 'uint32 'uint64)
-     (and (int64-value? v) (not (negative? v)) (not (in-range-of dt v)))]
+     (and (literal-integer? v) (not (negative? v)) (not (in-range-of dt v)))]
     [_ #f]))
 
 (define (operand-series who s other)

@@ -1362,6 +1362,11 @@
   (define mid
     (lazyframe-collect (lazyframe-slice (dataframe-lazy df-rows) 2 3)))
   (check-equal? (dataframe-height mid) 3)
+  (for ([n (list (expt 2 32) (add1 (expt 2 32)) (expt 2 63) (sub1 (expt 2 64)))])
+    (for ([cut (list lazyframe-head lazyframe-tail (lambda (lf n) (lazyframe-slice lf 1 n)))]
+          [height '(6 6 5)])
+      (check-equal? (dataframe-height (lazyframe-collect (cut (dataframe-lazy df-rows) n))) height
+                    (format "~a ~a" (object-name cut) n))))
   (check-equal? (series-sum-i32 (dataframe-column mid "x")) 12) ;; 3+4+5
 
   ;; pipeline: filter then take first two — no intermediate collect.
@@ -1732,6 +1737,12 @@
   (check-equal? (take2 "h") '(30 10))
   (check-equal? (take2 "t") '(20 40))
   (check-equal? (take2 "sl") '(10 50))
+  (for ([n (list (expt 2 63) (sub1 (expt 2 64)))])
+    (define whole
+      (dataframe-select-exprs df-s (list (expr-alias (expr-head (col "x") #:n n) "h")
+                                         (expr-alias (expr-tail (col "x") #:n n) "t"))))
+    (check-equal? (dataframe-height whole) 5 (format "~a" n))
+    (check-equal? (take5 whole "t") (take5 whole "h") (format "~a" n)))
   ;; filter + gather
   (define s-f
     (dataframe-select-exprs
@@ -1781,7 +1792,7 @@
   (for ([op (list expr-add expr-sub expr-mul expr-div expr-mod expr-gt expr-lt expr-ge expr-le
                   expr-eq expr-ne expr-and expr-or expr-xor)])
     (check-exn (regexp (format "^~a: contract violation\n  expected: \\(integer-in " (object-name op)))
-               (lambda () (op (col "x") (expt 2 63))))
+               (lambda () (op (col "x") (expt 2 64))))
     (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
                (lambda () (op #\a (col "x"))))))
 

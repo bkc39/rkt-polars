@@ -30,7 +30,8 @@
          expr-drop-count expr-dropped lazyframe-dropped
          sort-by/c
          explain/c lazyframe-explainer
-         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
+         expr-col expr-lit-i32 expr-lit-i64 expr-lit-u64 expr-lit-f64 expr-lit-bool expr-lit-str
+         expr-lit-null
          expr-alias
          ->expr ->expr/who lit/who
          dtype-spec?
@@ -105,6 +106,10 @@
   (_fun _int64 -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
+(define-compat expr-lit-u64
+  (_fun _uint64 -> _Expr-ptr)
+  #:wrap (allocator expr-drop))
+
 (define-compat expr-lit-f64
   (_fun _double -> _Expr-ptr)
   #:wrap (allocator expr-drop))
@@ -148,7 +153,7 @@
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
 
-(define lit-integer/c (integer-in (- (expt 2 63)) (sub1 (expt 2 63))))
+(define lit-integer/c (integer-in (- (expt 2 63)) (sub1 (expt 2 64))))
 
 (define (lit-value? v)
   (or (boolean? v) (string? v) (symbol? v) (polars-null? v)
@@ -157,7 +162,7 @@
 
 (define lit-value/c
   (flat-named-contract
-   '(or/c boolean? (integer-in -9223372036854775808 9223372036854775807)
+   '(or/c boolean? (integer-in -9223372036854775808 18446744073709551615)
           (and/c real? (not/c exact-integer?)) string? symbol? polars-null? gregor-value)
    lit-value?))
 
@@ -165,7 +170,8 @@
   (cond
     [(boolean? v) (expr-lit-bool v)]
     [(and (exact-integer? v) (<= -2147483648 v 2147483647)) (expr-lit-i32 v)]
-    [(and (exact-integer? v) (lit-integer/c v)) (expr-lit-i64 v)]
+    [(and (exact-integer? v) (<= (- (expt 2 63)) v (sub1 (expt 2 63)))) (expr-lit-i64 v)]
+    [(and (exact-integer? v) (lit-integer/c v)) (expr-lit-u64 v)]
     [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name lit-integer/c)) v)]
     [(real? v) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
@@ -290,16 +296,17 @@
   (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
              (lambda () (contracted:col 42)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
-  (for ([v (list (- (expt 2 63)) (sub1 (expt 2 63)) 1/2 +inf.0 "s" 's #t polars-null)])
+  (for ([v (list (- (expt 2 63)) (sub1 (expt 2 63)) (expt 2 63) (sub1 (expt 2 64))
+                 1/2 +inf.0 "s" 's #t polars-null)])
     (check-pred Expr-ptr? (contracted:lit v)))
-  (for ([v (list (expt 2 63) (sub1 (- (expt 2 63))) #\a '(1) (vector))])
+  (for ([v (list (expt 2 64) (sub1 (- (expt 2 63))) #\a '(1) (vector))])
     (check-exn (regexp (format "^lit: contract violation\n  expected: [^\n]*\n  given: ~a\n"
                                (regexp-quote (format "~e" v))))
                (lambda () (contracted:lit v))))
   (check-exn (regexp (string-append "^expr-add: contract violation\n  expected: \\(integer-in "
-                                    "-9223372036854775808 9223372036854775807\\)\n"
-                                    "  given: 9223372036854775808$"))
-             (lambda () (->expr/who 'expr-add (expt 2 63))))
+                                    "-9223372036854775808 18446744073709551615\\)\n"
+                                    "  given: 18446744073709551616$"))
+             (lambda () (->expr/who 'expr-add (expt 2 64))))
   (check-exn #rx"^\\+: contract violation\n  expected: \\(or/c boolean\\? [^\n]*\n  given: #\\\\a$"
              (lambda () (->expr/who '+ #\a)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))

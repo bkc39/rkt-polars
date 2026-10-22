@@ -69,6 +69,7 @@ expr_lit_null builder
 expr_lit_series builder
 expr_lit_str builder
 expr_lit_temporal builder
+expr_lit_u64 builder
 expr_log builder
 expr_meta_eq accessor
 expr_meta_root_name accessor

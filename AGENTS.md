@@ -566,11 +566,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   Python's expressions give them: beside an Enum series a string or symbol
   (`=` with a value outside the categories is `#f`, null on a null, and `<`
   raises polars' reason, as in Python), beside a Decimal series a real, and
-  beside an integer series an Int64 integer past the dtype's range (`(+ u8
-  300)` is UInt16). A negative integer beside an unsigned series, an
-  integer past Int64 (but one in range beside a UInt64 series), which our
-  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
-  series' dtype, as Python's eager `OverflowError` is. Every (operator,
+  beside an integer series an integer past the dtype's range, up to
+  2^64 − 1 (`(+ u8 300)` is UInt16, `(+ i64 (expt 2 63))` Float64). `lit`
+  takes an integer from 2^63 to 2^64 − 1 as `expr_lit_u64`, a dynamic
+  integer that materialises as UInt64, as `pl.lit(2**63)` does, and below
+  2^63 as `expr_lit_i32` / `expr_lit_i64`. A negative integer beside an
+  unsigned series, an integer outside −2^63 to 2^64 − 1, which no literal
+  carries, and a value no literal takes are contract errors naming the
+  value and the series' dtype, as Python's eager `OverflowError` is (which
+  Python's eager operators also raise past Int64, where ours run the
+  expression form). Every (operator,
   dtype, operand) outcome is in `generic/operand-audit.rktd`, which
   `generic/operand-audit.rkt` holds the operators to.
 - Eager reductions on a series return what Python 1.42.1's do (owner's

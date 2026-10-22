@@ -65,7 +65,7 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
               @defproc[(lit [v (or/c boolean?
-                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 64)))
                                      (and/c real? (not/c exact-integer?)) string? symbol?
                                      polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
@@ -114,8 +114,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
-  exact integers (32-bit when they fit, 64-bit otherwise; one outside 64
-  bits is a contract error), other reals (as @racket['float64]) and
+  exact integers (32-bit when they fit, 64-bit otherwise, and from
+  @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))] unsigned 64-bit, as
+  @tt{pl.lit(2**63)} is; one outside that range is a contract error), other reals (as @racket['float64]) and
   strings. A symbol is the string of its name, so a
   categorical column compares with the symbols it reads back as. A
   @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
@@ -154,7 +155,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))
-(eval:error (lit (expt 2 63)))]}
+(define counters
+  (dataframe (list (series (list (sub1 (expt 2 64)) 1) #:name "u" #:dtype 'u64))))
+(select counters (alias (lit (sub1 (expt 2 64))) "top")
+        (= (col "u") (lit (sub1 (expt 2 64)))))
+(eval:error (lit (expt 2 64)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -2088,7 +2093,9 @@ its expression form, @racket[(_op (col _name) _value)], with that form's
 dtypes and values: beside a @racket['null] series (where Python's eager
 operators raise) or with @racket[polars-null], beside an Enum
 series a string or symbol, beside a Decimal series a real, and beside an
-integer series an integer past the dtype's range. Any other value raises
+integer series an integer past the dtype's range, up to
+@racket[(sub1 (expt 2 64))], the widest @racket[lit] takes (where Python's
+eager operators raise @tt{OverflowError} past 64 bits). Any other value raises
 @racket[exn:fail:contract] naming it and the series' dtype: a string, symbol or
 boolean beside a numeric series, a number beside a string series, a negative
 integer beside an unsigned series (as in Python's eager operators), or a value
@@ -2096,6 +2103,7 @@ no literal takes.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(+ (series '(1 2)) (expt 2 63))
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
 (eval:error (+ (series '(1 2) #:dtype 'u8) -1))
 (eval:error (= (series '("x")) 1))]

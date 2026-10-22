@@ -126,14 +126,22 @@
   (define grades (series (list "low" "mid" polars-null "high") #:name "n"
                          #:dtype '(enum low mid high)))
 
-  (for ([s (list u8 u8 i8 i32 decimals decimals decimals)]
-        [v (list 300 (expt 2 40) 300 (expt 2 40) 1 1/3 2.5)]
-        [expected '(uint16 uint64 int16 int64 (decimal 38 2) float64 float64)])
+  (define i64 (series '(1 2) #:name "n"))
+  (for ([s (list u8 u8 i8 i32 decimals decimals decimals u8 u8 i32 i64)]
+        [v (list 300 (expt 2 40) 300 (expt 2 40) 1 1/3 2.5
+                 (expt 2 63) (sub1 (expt 2 64)) (sub1 (expt 2 64)) (expt 2 63))]
+        [expected '(uint16 uint64 int16 int64 (decimal 38 2) float64 float64
+                    uint64 uint64 float64 float64)])
     (for ([op (list p+ p- >)])
       (check-expression-form s op s v (op (col "n") v))
       (check-expression-form s op v s (op v (col "n"))))
     (check-equal? (dtype (p+ s v)) expected (format "~a + ~v" (dtype s) v)))
   (check-equal? (series->list (p+ u64 0)) (series->list u64))
+  (check-equal? (series-shape (selected (= (col "n") (lit (sub1 (expt 2 64)))) u64))
+                (list 'boolean (list #t #f)))
+  (check-equal? (series-shape (selected (>= (col "n") (expt 2 63)) u64)) (list 'boolean (list #t #f)))
+  (check-equal? (series-shape (selected (lit (sub1 (expt 2 64))) u64))
+                (list 'uint64 (list (sub1 (expt 2 64)))))
 
   (for* ([s (list u8 u64)]
          [thunk (list (lambda () (p+ s -1)) (lambda () (> s -1)) (lambda () (p- -1 s)))])
@@ -189,21 +197,23 @@
           (list (lambda () (p- "a" nulls)) 'polars "^-: [^\n]*str`$")
           (list (lambda () (p+ nulls #\a)) 'contract (string-append "^[+]: " (refusal #\a 'null)))
           (list (lambda () (= nulls #\a)) 'contract (string-append "^=: " (refusal #\a 'null)))
-          (list (lambda () (p+ nulls (expt 2 63))) 'contract
-                (string-append "^[+]: " (refusal (expt 2 63) 'null)))
-          (list (lambda () (> (expt 2 63) nulls)) 'contract
-                (string-append "^>: " (refusal (expt 2 63) 'null)))
+          (list (lambda () (p+ nulls (expt 2 64))) 'contract
+                (string-append "^[+]: " (refusal (expt 2 64) 'null)))
+          (list (lambda () (> (expt 2 64) nulls)) 'contract
+                (string-append "^>: " (refusal (expt 2 64) 'null)))
           (list (lambda () (p+ (series '(1 2)) (date 2024 1 1))) 'polars "^[+]: [^\n]*date")
           (list (lambda () (p+ (series '(1 2)) "a")) 'contract
                 (string-append "^[+]: " (refusal "a" 'int64)))
           (list (lambda () (p- #\a (series '(1 2)))) 'contract
                 (string-append "^-: " (refusal #\a 'int64)))
-          (list (lambda () (> (series '(1 2)) (expt 2 63))) 'contract
-                (string-append "^>: " (refusal (expt 2 63) 'int64)))
-          (list (lambda () (> i32 (expt 2 63))) 'contract
-                (string-append "^>: " (refusal (expt 2 63) 'int32)))
-          (list (lambda () (p+ u8 (expt 2 63))) 'contract
-                (string-append "^[+]: " (refusal (expt 2 63) 'uint8)))
+          (list (lambda () (> (series '(1 2)) (expt 2 64))) 'contract
+                (string-append "^>: " (refusal (expt 2 64) 'int64)))
+          (list (lambda () (> i32 (expt 2 64))) 'contract
+                (string-append "^>: " (refusal (expt 2 64) 'int32)))
+          (list (lambda () (p+ u8 (expt 2 64))) 'contract
+                (string-append "^[+]: " (refusal (expt 2 64) 'uint8)))
+          (list (lambda () (p+ u64 (expt 2 64))) 'contract
+                (string-append "^[+]: " (refusal (expt 2 64) 'uint64)))
           (list (lambda () (> (series '(1 2)) "a")) 'contract
                 (string-append "^>: " (refusal "a" 'int64)))
           (list (lambda () (= (series '("x")) 1)) 'contract
@@ -296,7 +306,7 @@
     (list (cells who (lambda (r) (f l r)) (map (match-lambda [(list _ s) s]) audit-series))
           (cells who (lambda (v) (f l v)) audit-plain)
           (cells who (lambda (v) (f v l)) audit-plain)))
-  (define expression-refused (list #\a (expt 2 63) far-date (datetime 300000 1 1) (vector 1)))
+  (define expression-refused (list #\a (expt 2 64) far-date (datetime 300000 1 1) (vector 1)))
   (for* ([op (in-list audit-ops)] [v (in-list expression-refused)])
     (match-define (list who f) op)
     (define first-operand (audit who (lambda () (f (col "n") v))))
@@ -306,9 +316,11 @@
                   (format "~a ~v" who v)))
   (for ([thunk (list (lambda () (> (col "v") #\a)) (lambda () (> #\a (col "v"))))])
     (check-raises 'contract #rx"^>: contract violation\n  expected: [(]or/c boolean?" thunk))
-  (for ([thunk (list (lambda () (p+ (col "v") (expt 2 63))) (lambda () (p+ (expt 2 63) (col "v"))))])
+  (for ([thunk (list (lambda () (p+ (col "v") (expt 2 64))) (lambda () (p+ (expt 2 64) (col "v"))))])
     (check-raises 'contract
-                  #rx"^[+]: contract violation\n  expected: [(]integer-in -9223372036854775808" thunk))
+                  (regexp (string-append "^[+]: contract violation\n  expected: [(]integer-in "
+                                         "-9223372036854775808 18446744073709551615[)]\n"))
+                  thunk))
   (for ([thunk (list (lambda () (> (col "d") far-date)) (lambda () (> far-date (col "d"))))])
     (check-raises 'contract #rx"^>: value out of range for this dtype\n" thunk))
   (check-raises 'contract #rx"^and: contract violation\n" (lambda () (p-and (col "v") #\a)))

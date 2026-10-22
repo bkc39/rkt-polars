@@ -94,14 +94,14 @@
 (define (head x n)
   (cond [(series? x)    (wrap-series    (series-head x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-head x n))]
-        [(lazyframe? x) (wrap-lazyframe (lazyframe-head x (min n lazy-rows-max)))]
-        [else           (expr-head x #:n (min n expr-rows-max))]))
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
+        [else           (expr-head x #:n n)]))
 
 (define (tail x n)
   (cond [(series? x)    (wrap-series    (series-tail x n))]
         [(dataframe? x) (wrap-dataframe (dataframe-tail x n))]
-        [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x (min n lazy-rows-max)))]
-        [else           (expr-tail x #:n (min n expr-rows-max))]))
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
+        [else           (expr-tail x #:n n)]))
 
 (define (slice x offset length)
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
