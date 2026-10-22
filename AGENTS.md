@@ -304,7 +304,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   the extent. A value that may or may not be owned (a variadic operator's
   running result) is released with `drop-owned` (`expr-core.rkt`), which
   dispatches on the four pointer types' predicates and ignores any other
-  value.
+  value; a pointer already dropped raises under that type's drop name, as
+  `series-drop` does.
   No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
   fails on one.
 - **An export never changes its signature under the same symbol.** A new

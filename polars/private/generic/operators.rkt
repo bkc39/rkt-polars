@@ -64,10 +64,10 @@
     [dt (raise-arguments-error '- "cannot negate a series of this dtype" "dtype" dt)]))
 
 (define (expr-reciprocal e)
-  (define divided (p/ 1 e))
-  (match (expr-meta-output-name/raw e)
-    [#f (expr-name-keep divided)]
-    [name (expr-alias divided name)]))
+  (with-release ([divided (p/ 1 e) expr-drop])
+    (match (expr-meta-output-name/raw e)
+      [#f (expr-name-keep divided)]
+      [name (expr-alias divided name)])))
 
 (define (series-reciprocal s)
   (match (series-dtype s)
@@ -178,7 +178,10 @@
                     (list "(+ 1 e)" expr-drop-count (lambda (v) (expr-drop (p+ 1 v))) 3)
                     (list "(> e 1)" expr-drop-count (lambda (v) (expr-drop (> v 1))) 3)
                     (list "(< 1 e)" expr-drop-count (lambda (v) (expr-drop (< 1 v))) 3)
-                    (list "(= e e)" expr-drop-count (lambda (v) (expr-drop (= v v))) 2)))])
+                    (list "(= e e)" expr-drop-count (lambda (v) (expr-drop (= v v))) 2)
+                    (list "(/ e)" expr-drop-count (lambda (v) (expr-drop (p/ v))) 4)
+                    (list "(/ s)" expr-drop-count
+                          (lambda (v) (series-drop (p/ operand-ints))) 6)))])
     (match-define (list label count thunk expected) row)
     (check-equal? (drops-during count (lambda () (owned-temporaries thunk))) expected label)
     (check-equal? (drops-during count (lambda () (owned-temporaries thunk) (settle!))) expected
