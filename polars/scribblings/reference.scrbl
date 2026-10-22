@@ -356,7 +356,7 @@ total
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
 (+ (series '(1 2)) 2.5)
-(eval:error (+ (series '(1 2)) "a"))
+(+ (series '(1 2)) "a")
 (eval:error (+ (series '(1 2)) (date 2024 1 1)))
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
@@ -2081,24 +2081,36 @@ wide, is
 @racket[mean] promotes to @racket['float64]. Use @racket[series-cast] to change
 a series' dtype explicitly.
 
-A plain value beside a series in an operator is a constant of the series'
-dtype when it fits; a gregor value keeps its own dtype, and a non-integer real
-beside an integer series is @racket['float64]. Otherwise the operator runs
-its expression form, @racket[(_op (col _name) _value)], with that form's
-dtypes and values: beside a @racket['null] series (where Python's eager
-operators raise) or with @racket[polars-null], beside an Enum
-series a string or symbol, beside a Decimal series a real, and beside an
+A plain value beside a series in an operator follows Python 1.42.1's eager
+operators. It is a constant of the series' dtype when it fits: a boolean
+beside a numeric series is 1 or 0, and a number compared with a string series
+is its string. A gregor value keeps its own dtype, a non-integer real beside
+an integer series is @racket['float64], and in arithmetic a string or symbol
+is a string, so @racket[+] concatenates. Otherwise the operator runs its
+expression form, @racket[(_op (col _name) _value)], with that form's dtypes
+and values: beside a @racket['null] series (where Python's eager operators
+raise) or with @racket[polars-null], beside an Enum series a string or
+symbol, beside a Decimal series a real or boolean, beside a duration series a
+number in @racket[*], a string before a series in @racket[+], and beside an
 integer series an integer past the dtype's range. Any other value raises
-@racket[exn:fail:contract] naming it and the series' dtype: a string, symbol or
-boolean beside a numeric series, a number beside a string series, a negative
-integer beside an unsigned series (as in Python's eager operators), or a value
-no literal takes.
+@racket[exn:fail:contract] naming it and the series' dtype, where Python
+raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
+series, a gregor value compared with a series of another kind (a date with a
+datetime series aside), a time in arithmetic, a negative integer beside an
+unsigned series, or a value no literal takes. @racket[mod] refuses a temporal
+operand. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+operator to Python's outcome and lists where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(+ (series '(1 2)) "x")
+(+ (series '(1 2)) #t)
+(= (series '("x" "y")) 1)
+(* (series (list (hours 1) (hours 2))) 2)
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
 (eval:error (+ (series '(1 2) #:dtype 'u8) -1))
-(eval:error (= (series '("x")) 1))]
+(eval:error (= (series '(1 2)) (date 2024 1 1)))
+(eval:error (mod (series (list (date 2024 1 1))) 2))]
 
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 

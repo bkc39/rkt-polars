@@ -53,23 +53,54 @@
 
 (struct constant (dtype value))
 
-(define (plain-operand dt v)
+(define comparisons '(= != < > <= >=))
+
+(define (string-like? v)
+  (or (string? v) (symbol? v)))
+
+(define (->text v)
+  (if (symbol? v) (symbol->string v) v))
+
+(define (comparable-temporal? dt value-dtype)
+  (match* (dt value-dtype)
+    [((list 'datetime _ _) (list 'datetime _ _)) #t]
+    [('date (list 'datetime _ #f)) #t]
+    [((list 'duration _) (list 'duration _)) #t]
+    [(_ _) (equal? dt value-dtype)]))
+
+(define (plain-operand who dt v)
+  (define value-dtype (temporal-value-dtype v))
+  (define compare? (and (memq who comparisons) #t))
   (cond
-    [(temporal-value-dtype v) => (lambda (value-dtype) (constant value-dtype v))]
+    [(and value-dtype compare?
+          (not (and (memq dt '(string categorical)) (memq value-dtype '(date time))))
+          (not (comparable-temporal? dt value-dtype)))
+     #f]
+    [(and (eq? value-dtype 'time) (not compare?)) #f]
+    [value-dtype (constant value-dtype v)]
+    [(and (string-like? v) (not compare?) (or (eq? who '+) (not (memq dt '(float32 float64)))))
+     (constant 'string (->text v))]
+    [(and (non-integer-real? v) (not compare?) (memq dt '(boolean string)))
+     (constant 'float64 (exact->inexact v))]
+    [(and (eq? dt 'string) compare? (real? v))
+     (constant 'string (number->string (if (exact-integer? v) v (exact->inexact v))))]
+    [(and (boolean? v) (numeric-dtype? dt)) (plain-operand who dt (if v 1 0))]
     [(and (memq dt '(float32 float64)) (real? v)) (constant dt (exact->inexact v))]
     [(and (exact-integer? v) (in-range-of dt v)) (constant dt v)]
     [(and (numeric-dtype? dt) (non-integer-real? v)) (constant 'float64 (exact->inexact v))]
     [(and (eq? dt 'boolean) (boolean? v)) (constant dt v)]
-    [(and (memq dt '(string categorical)) (string? v)) (constant dt v)]
-    [(and (memq dt '(string categorical)) (symbol? v)) (constant dt (symbol->string v))]
+    [(and (memq dt '(string categorical)) (string-like? v)) (constant dt (->text v))]
     [else #f]))
 
-(define (expression-operand? dt v)
+(define (expression-operand? who dt v left?)
   (match dt
     [_ #:when (polars-null? v) #t]
     ['null (literal-value? v)]
-    [(? enum-dtype?) (or (string? v) (symbol? v))]
-    [(list 'decimal _ _) (or (int64-value? v) (non-integer-real? v))]
+    [_ #:when (and (eq? who '+) left? (string-like? v)) #t]
+    [(? enum-dtype?) (string-like? v)]
+    [(list 'decimal _ _)
+     (or (int64-value? v) (non-integer-real? v) (and (boolean? v) (not (memq who comparisons))))]
+    [(list 'duration _) (and (eq? who '*) (or (int64-value? v) (non-integer-real? v)))]
     [(or 'int8 'int16 'int32 'int64) (and (int64-value? v) (not (in-range-of dt v)))]
     [(or 'uint8 'uint16 'uint32 'uint64)
      (and (int64-value? v) (not (negative? v)) (not (in-range-of dt v)))]
@@ -78,7 +109,7 @@
 (define (operand-series who s other)
   (define dt (series-dtype s))
   (define o
-    (match (if (series? other) other (plain-operand dt other))
+    (match (if (series? other) other (plain-operand who dt other))
       [(? series? o) o]
       [(constant dtype value) (const-series who dtype (series-len s) value)]
       [#f (raise-arguments-error who "the value cannot be an element of a series of this dtype"
@@ -88,6 +119,10 @@
      #:when (not (equal? zone other-zone))
      (raise-arguments-error who "datetimes in different time zones"
                             "series dtype" dt "other dtype" (series-dtype o))]
+    [(_ other-dt)
+     #:when (and (eq? who 'mod) (or (temporal-dtype? dt) (temporal-dtype? other-dt)))
+     (raise-arguments-error who "cannot take the modulo of a temporal dtype"
+                            "series dtype" dt "other dtype" other-dt)]
     [(_ _) o]))
 
 (define (logical-operand who s other)
@@ -122,13 +157,13 @@
     (wrap-series (dataframe-column out name))))
 
 (define (expression-form-op who expr-op a b)
-  (define (expression-form? s v)
-    (and (series? s) (not (series? v)) (expression-operand? (series-dtype s) v)))
+  (define (expression-form? s v left?)
+    (and (series? s) (not (series? v)) (expression-operand? who (series-dtype s) v left?)))
   (cond
-    [(expression-form? a b)
+    [(expression-form? a b #f)
      (with-release ([v (lit/who who b) expr-drop])
        (series-through-expr who a (lambda (e) (expr-op e v))))]
-    [(expression-form? b a)
+    [(expression-form? b a #t)
      (with-release ([v (lit/who who a) expr-drop])
        (series-through-expr who b (lambda (e) (expr-op v e))))]
     [else #f]))

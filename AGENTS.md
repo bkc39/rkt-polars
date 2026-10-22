@@ -558,21 +558,33 @@ it. Racket side: `define-compat` with `#:c-id`.
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
   and `not` refuse a `'null` series, as Python's eager operators do, and any
   other non-Boolean series, where Python's `& | ^` are bitwise on integers.
-- A plain value beside a typed series in an operator is a constant of the
-  series' dtype when it fits (a gregor value keeps its own dtype; a
-  non-integer real beside an integer series is Float64). Otherwise the
-  operator runs its expression form, `(op (col name) (lit v))` on a
-  one-column frame (`series-through-expr`), with that form's dtypes, as
-  Python's expressions give them: beside an Enum series a string or symbol
-  (`=` with a value outside the categories is `#f`, null on a null, and `<`
-  raises polars' reason, as in Python), beside a Decimal series a real, and
-  beside an integer series an Int64 integer past the dtype's range (`(+ u8
-  300)` is UInt16). A negative integer beside an unsigned series, an
-  integer past Int64 (but one in range beside a UInt64 series), which our
-  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
-  series' dtype, as Python's eager `OverflowError` is. Every (operator,
-  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
-  `generic/operand-audit.rkt` holds the operators to.
+- A plain value beside a typed series in an operator follows Python
+  1.42.1's eager operators (decision (b) of #261). It is a constant of the
+  series' dtype when it fits: a boolean beside a numeric series is 1 or 0 and
+  a number compared with a string series is its string, as Python's
+  `maybe_cast` gives them; a gregor value keeps its own dtype, a non-integer
+  real beside an integer, boolean or string series is Float64, and in
+  arithmetic a string or symbol is a String constant (`(+ ints "x")` is
+  `"1x" "2x"`). Otherwise the operator runs its expression form,
+  `(op (col name) (lit v))` on a one-column frame (`series-through-expr`),
+  with that form's dtypes, as Python's expressions give them: beside an Enum
+  series a string or symbol (`=` with a value outside the categories is
+  `#f`, null on a null, and `<` raises polars' reason, as in Python), beside a
+  Decimal series a real (or, in arithmetic, a boolean), beside a duration
+  series a number in `*`, a string before a series in `+`, and beside an
+  integer series an Int64 integer past the dtype's range (`(+ u8 300)` is
+  UInt16). Contract errors naming the value and the series' dtype, where
+  Python raises `TypeError`, `ValueError` or `OverflowError`: a negative
+  integer beside an unsigned series, an integer past Int64 (but one in range
+  beside a UInt64 series), which our `lit` cannot carry, a gregor value
+  compared with a series of another kind (a naive datetime beside a date
+  series and a date or time beside a string series aside), a time in
+  arithmetic, a temporal operand of `mod`, and a value no literal takes.
+  `scripts/operand-audit-expected.py` writes every (operator, dtype,
+  operand) outcome of Python's to `generic/operand-audit.rktd`, with the
+  expression form's where it differs; `generic/operand-audit.rkt` holds the
+  operators to it, dtype and values, and its `deviations` table lists each
+  remaining difference by class with its count.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
