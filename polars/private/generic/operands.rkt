@@ -10,6 +10,8 @@
          (only-in polars/private/expr
                   expr-alias expr-all expr-drop lazyframe-collect/raw lazyframe-select lit/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
+         (only-in polars/private/c-integer int64/c)
+         (only-in polars/private/expr-core lit-integer/c)
          (only-in polars/private/generic/core series? wrap-series)
          (only-in polars/private/generic/dtype
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
@@ -39,10 +41,6 @@
               ['int (cons (- (quotient limit 2)) (sub1 (quotient limit 2)))]
               ['uint (cons 0 (sub1 limit))]))))
 
-(define (int64-value? v)
-  (match-define (cons low high) (hash-ref integer-ranges 'int64))
-  (<= low v high))
-
 (define (operator-classes who)
   (match who
     ['+ '(add arithmetic)]
@@ -54,7 +52,8 @@
 
 (define (dtype-classes dt)
   (match dt
-    [(or 'int8 'int16 'int32 'int64 'uint8 'uint16 'uint32 'uint64) '(integer numeric)]
+    [(or 'int8 'int16 'int32 'int64) '(integer numeric)]
+    [(or 'uint8 'uint16 'uint32 'uint64) '(integer numeric)]
     [(or 'float32 'float64) '(float numeric)]
     [(list 'decimal _ _) '(decimal)]
     [(? enum-dtype?) '(enum)]
@@ -70,12 +69,16 @@
     [(? boolean?) 'boolean]
     [(? exact-integer?)
      (match (hash-ref integer-ranges dt #f)
-       [#f (if (int64-value? v) 'integer 'huge-integer)]
+       [#f (cond
+             [(int64/c v) 'integer]
+             [(lit-integer/c v) 'past-int64]
+             [else 'huge-integer])]
        [(cons low high)
         (cond
           [(<= low v high) 'integer]
-          [(and (int64-value? v) (not (and (zero? low) (negative? v)))) 'wide-integer]
-          [(int64-value? v) 'negative-integer]
+          [(and (int64/c v) (not (and (zero? low) (negative? v)))) 'wide-integer]
+          [(int64/c v) 'negative-integer]
+          [(lit-integer/c v) 'past-int64]
           [else 'other])])]
     [(? real?) 'real]
     [(or (? string?) (? symbol?)) 'text]
@@ -95,7 +98,7 @@
                                       expression]
     [_          enum                  text                                expression]
     [add        _                     text                                (sided expression string)]
-    [_          decimal               (integer real)                      expression]
+    [_          decimal               (integer past-int64 real)           expression]
     [compare    decimal               boolean                             integer-expression]
     [div        decimal               boolean                             (sided float64 expression)]
     [arithmetic decimal               boolean                             expression]
@@ -107,7 +110,8 @@
     [_          integer               wide-integer                        expression]
     [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
-    [compare    string                (integer huge-integer real boolean) python-str]
+    [compare    string                (integer past-int64 huge-integer real boolean)
+                                      python-str]
     [compare    (string categorical)  (date time)                         own]
     [compare    date                  (date datetime moment)              own]
     [compare    datetime              (datetime moment)                   own]
@@ -121,7 +125,8 @@
     [arithmetic _                     text                                string]
     [arithmetic (boolean string)      real                                float64]
     [_          numeric               boolean                             same]
-    [_          float                 (integer huge-integer real)         same]
+    [_          float                 (integer past-int64 huge-integer real)
+                                      same]
     [_          integer               integer                             same]
     [_          integer               real                                float64]
     [_          boolean               boolean                             same]))

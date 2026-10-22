@@ -30,8 +30,8 @@
 
 (provide-public
  #:internal internal-names
- [polars/private/expr ->expr/who expr-cast-to expr-meta-output-name/raw expr-name-keep lit/who
-  lazyframe-collect/raw null-behavior/c rank-method/c]
+ [polars/private/expr ->expr/who expr-cast-to expr-lit-u64 expr-meta-output-name/raw
+  expr-name-keep lit/who lazyframe-collect/raw null-behavior/c rank-method/c]
  [polars/private/foreign
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
@@ -101,8 +101,8 @@
                                       define-frame-op/reason define-reasoned
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
-                                      dataframe-new/raw null-behavior/c rank-method/c
-                                      provide-row-windows)))])
+                                      dataframe-new/raw expr-lit-u64 null-behavior/c
+                                      rank-method/c provide-row-windows)))])
     (check-false (memq internal exported) (format "~a is internal" internal)))
   (for ([name (in-list exported)])
     (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"

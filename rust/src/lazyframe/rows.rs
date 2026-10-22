@@ -23,6 +23,10 @@ pub extern "C" fn lazyframe_drop_nulls(lf: *mut LazyFrame) -> *mut LazyFrame {
 
 // ===== Phase A7: lazy head / tail / slice =====
 
+fn saturating_rows(n: usize) -> IdxSize {
+    IdxSize::try_from(n).unwrap_or(IdxSize::MAX)
+}
+
 #[no_mangle]
 pub extern "C" fn lazyframe_head(
     lf: *mut LazyFrame,
@@ -32,7 +36,7 @@ pub extern "C" fn lazyframe_head(
         return ptr::null_mut();
     }
     let lf_ref = unsafe { (*lf).clone() };
-    Box::into_raw(Box::new(lf_ref.limit(n as u32)))
+    Box::into_raw(Box::new(lf_ref.limit(saturating_rows(n))))
 }
 
 #[no_mangle]
@@ -44,7 +48,7 @@ pub extern "C" fn lazyframe_tail(
         return ptr::null_mut();
     }
     let lf_ref = unsafe { (*lf).clone() };
-    Box::into_raw(Box::new(lf_ref.tail(n as u32)))
+    Box::into_raw(Box::new(lf_ref.tail(saturating_rows(n))))
 }
 
 #[no_mangle]
@@ -57,7 +61,10 @@ pub extern "C" fn lazyframe_slice(
         return ptr::null_mut();
     }
     let lf_ref = unsafe { (*lf).clone() };
-    Box::into_raw(Box::new(lf_ref.slice(offset, length as u32)))
+    let start = offset.max(-i64::from(IdxSize::MAX));
+    let skipped = usize::try_from(start.abs_diff(offset)).unwrap_or(usize::MAX);
+    let rows = saturating_rows(length.saturating_sub(skipped));
+    Box::into_raw(Box::new(lf_ref.slice(start, rows)))
 }
 
 // ===== Phase A8: lazy join =====
