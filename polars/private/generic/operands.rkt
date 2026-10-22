@@ -105,7 +105,7 @@
     [mul        duration              (integer real)                      expression]
     [div        duration              (integer real)                      (sided refuse float64)]
     [div        float                 (integer real)                      (sided float64 expression)]
-    [div        boolean               (integer past-int64 huge-integer)   (sided refuse float64)]
+    [div        boolean               integer                             expression]
     [div        integer               real                                (sided float64 expression)]
     [_          integer               wide-integer                        expression]
     [div        signed                past-int64                          expression]
