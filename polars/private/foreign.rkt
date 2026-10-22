@@ -433,16 +433,6 @@
        [else (drop/raw p)
              (set-cpointer-tag! p dropped)]))))
 
-(define owned-drop-registry (make-hasheq))
-
-(define (register-owned-drop! owned? drop)
-  (hash-set! owned-drop-registry owned? drop))
-
-(define (drop-owned v)
-  (for/first ([(owned? drop) (in-hash owned-drop-registry)]
-              #:when (owned? v))
-    (drop v)))
-
 (define-syntax-parse-rule (define-owned-cpointer-type
                            type:id
                            kind:id
@@ -467,8 +457,7 @@
     (define-values (type type/null) (owned-cpointer-types type-tag 'kind noun dropped wrap))
     release
     (define (drop v)
-      (release-owned 'drop noun dropped drop/raw v))
-    (register-owned-drop! type? drop)))
+      (release-owned 'drop noun dropped drop/raw v))))
 
 (define-owned-cpointer-type _Series-ptr series
   (define-compat series-drop/raw

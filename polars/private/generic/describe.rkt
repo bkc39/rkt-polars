@@ -6,7 +6,8 @@
          (only-in gregor +days date date->iso8601)
          (only-in threading ~>)
          (only-in polars/private/expr
-                  col expr-sort lazyframe-drop lazyframe-select lazyframe-with-columns lit)
+                  col expr-drop expr-sort lazyframe-drop lazyframe-select lazyframe-with-columns
+                  lit)
          (only-in (submod polars/private/expr internal) collect-plan/who)
          (only-in polars/private/expr-dt expr-dt-replace-time-zone)
          (only-in polars/private/foreign
@@ -21,7 +22,7 @@
          (only-in polars/private/generic/ordering gather)
          (only-in polars/private/generic/reductions alias max mean min std)
          (only-in polars/private/generic/reshape cast)
-         (only-in polars/private/resource with-release with-releases))
+         (only-in polars/private/resource with-release with-release-pool with-releases))
 
 (provide (contract-out [describe (-> (or/c series? dataframe?) dataframe?)]))
 
@@ -72,48 +73,49 @@
 (define (nearest-row q count nulls)
   (+ nulls (floor (+ (* (sub1 count) q) 1/2))))
 
-(define (reduce c plan stat)
+(define (reduce c own plan stat)
   (match stat
-    ["mean" (mean c)]
-    ["std" (std c)]
-    ["min" (min c)]
-    ["max" (max c)]
+    ["mean" (own (mean c))]
+    ["std" (own (std c))]
+    ["min" (own (min c))]
+    ["max" (own (max c))]
     [(? quantile-statistic?)
-     (gather c (lit (nearest-row (hash-ref quantiles stat)
-                                 (column-plan-count plan)
-                                 (column-plan-nulls plan))))]))
+     (define row
+       (nearest-row (hash-ref quantiles stat) (column-plan-count plan) (column-plan-nulls plan)))
+     (own (gather c (own (lit row))))]))
 
-(define (cast-when e cast? dtype)
-  (if cast? (cast e dtype) e))
+(define (cast-when e own cast? dtype)
+  (if cast? (own (cast e dtype)) e))
 
 (define (local-cell-name plan stat) (format "~a:local" (cell-name plan stat)))
 
-(define (statistic-exprs plan stat)
+(define (statistic-exprs own plan stat)
   (define dt (column-plan-dtype plan))
   (define value
-    (~> (col (column-plan-name plan))
-        (cast-when (date-mean? dt stat) '(datetime microseconds))
-        (reduce plan stat)))
-  (cons (~> value (cast-when (temporal-dtype? dt) 'int64) (alias (cell-name plan stat)))
+    (~> (col (column-plan-name plan)) own
+        (cast-when own (date-mean? dt stat) '(datetime microseconds))
+        (reduce own plan stat)))
+  (cons (~> value (cast-when own (temporal-dtype? dt) 'int64) (alias (cell-name plan stat)) own)
         (match dt
           [(list 'datetime unit (? string? zone))
-           (list (~> value (cast (list 'datetime (offset-unit unit) zone))
-                     (expr-dt-replace-time-zone #f) (cast 'int64)
-                     (alias (local-cell-name plan stat))))]
+           (list (~> value (cast (list 'datetime (offset-unit unit) zone)) own
+                     (expr-dt-replace-time-zone #f) own (cast 'int64) own
+                     (alias (local-cell-name plan stat)) own))]
           [_ '()])))
 
 (define (statistics-plan source plans)
-  (define sorts
-    (for/list ([plan (in-list plans)]
-               #:when (needs-sort? plan))
-      (expr-sort (col (column-plan-name plan)))))
-  (define cells
-    (for*/list ([plan (in-list plans)]
-                [stat (in-list (column-plan-queried plan))]
-                [e (in-list (statistic-exprs plan stat))])
-      e))
-  (with-release ([sorted (lazyframe-with-columns source sorts) lazyframe-drop])
-    (lazyframe-select sorted cells)))
+  (with-release-pool ([own expr-drop])
+    (define sorts
+      (for/list ([plan (in-list plans)]
+                 #:when (needs-sort? plan))
+        (~> (col (column-plan-name plan)) own expr-sort own)))
+    (define cells
+      (for*/list ([plan (in-list plans)]
+                  [stat (in-list (column-plan-queried plan))]
+                  [e (in-list (statistic-exprs own plan stat))])
+        e))
+    (with-release ([sorted (lazyframe-with-columns source sorts) lazyframe-drop])
+      (lazyframe-select sorted cells))))
 
 (define (call-with-statistics-row plans proc)
   (with-release ([frame (dataframe-new (map column-plan-series plans)) dataframe-drop]
@@ -269,7 +271,7 @@
            (only-in racket/list make-list)
            (only-in racket/math nan?)
            (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/expr-core lazyframe-drop-count)
+           (only-in polars/private/expr-core expr-drop-count lazyframe-drop-count)
            (only-in polars/private/foreign dataframe-drop-count series-drop-count series-quantile)
            (only-in polars/private/generic/math p-abs)
            (only-in polars/private/generic/reshape agg collect group-by head lazy select
@@ -474,13 +476,18 @@
   (define all-null
     (dataframe (for/list ([i (in-range 4)])
                  (series (nulls 3) #:name (format "n~a" i) #:dtype 'i64))))
+  (define zoned-column
+    (dataframe (list (cast (series (list 1 2 polars-null) #:name "k")
+                           '(datetime microseconds "Asia/Kathmandu")))))
   (define counters
     (list (cons 'series series-drop-count)
           (cons 'dataframe dataframe-drop-count)
-          (cons 'lazyframe lazyframe-drop-count)))
-  (for ([row (in-list (list (list "numeric frame" numeric '(19 3 3))
-                            (list "series" (series '(1 2)) '(10 4 3))
-                            (list "all-null frame" all-null '(9 1 0))))])
+          (cons 'lazyframe lazyframe-drop-count)
+          (cons 'expression expr-drop-count)))
+  (for ([row (in-list (list (list "numeric frame" numeric '(19 3 3 52))
+                            (list "series" (series '(1 2)) '(10 4 3 26))
+                            (list "all-null frame" all-null '(9 1 0 0))
+                            (list "zoned frame" zoned-column '(15 3 3 53))))])
     (match-define (list label x expected) row)
     (define (describe-and-drop) (dataframe-drop (describe x)))
     (for ([counter (in-list counters)]

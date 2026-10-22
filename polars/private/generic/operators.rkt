@@ -4,6 +4,7 @@
          (only-in racket/match match match-define)
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/expr-core drop-owned)
          polars/private/generic/core
          polars/private/generic/dtype
          polars/private/generic/logical

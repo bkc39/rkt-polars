@@ -13,8 +13,9 @@
          racket/runtime-path
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _rsstring allocator/or-fail call/foreign-error
-                  check-enum-categories define-owned-cpointer-type enum-dtype? polars-null?
+                  ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstring
+                  allocator/or-fail call/foreign-error check-enum-categories
+                  dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
@@ -22,6 +23,7 @@
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)]
+                       [drop-owned (->/c any/c void?)]
                        [expr-drop (->/c Expr-ptr? void?)]
                        [lazyframe-drop (->/c LazyFrame-ptr? void?)])
          define-compat
@@ -65,6 +67,14 @@
     (_fun _LazyFrame-ptr -> _void)
     #:c-id lazyframe_drop
     #:wrap (deallocator)))
+
+(define (drop-owned v)
+  (cond
+    [(Series-ptr? v) (series-drop v)]
+    [(DataFrame-ptr? v) (dataframe-drop v)]
+    [(Expr-ptr? v) (expr-drop v)]
+    [(LazyFrame-ptr? v) (lazyframe-drop v)]
+    [else (void)]))
 
 (define-compat expr-drop-count
   (_fun -> _size))
