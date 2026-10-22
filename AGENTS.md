@@ -318,7 +318,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 - `series #:dtype`, `cast` and `series-cast` accept short and canonical
   spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
-- `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `/` on integer operands (integer, Boolean or Null) is integer division,
+  unlike Python's `/` (#65). Any other `/` divides as Python's does: an
+  integer, Boolean or Null series is cast to Float64 first, and so is the
+  series under a plain number on the left (`(/ 1 f32)` is Float64).
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
@@ -579,12 +582,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   beside a UInt64 series), which our `lit` cannot carry, a gregor value
   compared with a series of another kind (a naive datetime beside a date
   series and a date or time beside a string series aside), a time in
-  arithmetic, a temporal operand of `mod`, and a value no literal takes.
-  `scripts/operand-audit-expected.py` writes every (operator, dtype,
-  operand) outcome of Python's to `generic/operand-audit.rktd`, with the
-  expression form's where it differs; `generic/operand-audit.rkt` holds the
-  operators to it, dtype and values, and its `deviations` table lists each
-  remaining difference by class with its count.
+  arithmetic, and a value no literal takes. `mod` refuses a temporal series
+  (the left one when both are series), as Python's `%` does, whatever the
+  other operand. The special cases are one table in `generic/operands.rkt`,
+  `operand-rules`, keyed by operator class, dtype class and operand class.
+  `scripts/operand-audit-expected.py` writes Python's outcome of every
+  (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
+  expression form's and, for `/`, `//`'s where they differ.
+  `scripts/operand-audit-deviations.rkt` records ours, under a named class
+  and its reason, for each row where it differs, in
+  `generic/operand-deviations.rktd`. `generic/operand-audit.rkt` holds every
+  row to Python's outcome or the recorded one, dtype and values exactly, so a
+  change to any row fails and names it; after a deliberate change, rerun the
+  recorder and review its diff.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an

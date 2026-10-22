@@ -3,19 +3,16 @@
 (module+ test
   (require rackunit
            racket/match
-           racket/runtime-path
-           (only-in racket/file file->value)
-           (only-in gregor ->timezone date date? datetime? moment moment? moment=?)
-           (only-in gregor/period hours microseconds period? period-ref)
-           (only-in racket/list append* count take)
-           (only-in racket/math nan?)
-           (only-in gregor/time time time?)
+           (only-in gregor date)
+           (only-in gregor/period hours microseconds)
+           (only-in gregor/time time)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr dataframe-select-exprs expr-alias lit)
            (only-in polars/private/foreign
                     dataframe-column series-add series-add/who series-cast series-name
                     series-not series-rename series-slice)
            polars/private/generic/core
+           polars/private/generic/operand-audit-table
            polars/private/generic/operators
            polars/private/generic/test-fixtures
            (only-in threading ~>))
@@ -57,8 +54,8 @@
                   (outcome (lambda () (selected e s)))
                   (format "~a ~a ~v ~v" (dtype s) (object-name op) a b)))
 
-  (define (and-op a b) (p-and a b))
-  (define (or-op a b) (p-or a b))
+  (define and-op (hash-ref audit-operators 'and))
+  (define or-op (hash-ref audit-operators 'or))
 
   (for ([result (list (p+ nulls 1) (p- 1 nulls) (p/ nulls 2) (p* 2.5 nulls) (p+ nulls 2.5)
                       (p+ nulls "a") (p+ nulls 'a) (= nulls 'a) (= nulls "a") (= nulls 1)
@@ -77,9 +74,13 @@
     (cons nulls (for/list ([value (list 1 1.5 "a" #t (date 2024 1 1))])
                   (series (list value polars-null) #:name "n"))))
   (for* ([s (in-list typed-series)]
-         [op (list p+ p- p* p/ mod = != > < >= <=)])
+         [op (list p+ p- p* p/ mod = != > < >= <=)]
+         #:unless (or (and (eq? op p/) (eq? s nulls)) (and (eq? op mod) (eq? (dtype s) 'date))))
     (check-expression-form s op s polars-null (op (col "n") polars-null))
     (check-expression-form s op polars-null s (op polars-null (col "n"))))
+  (check-equal? (series-shape (p/ polars-null nulls)) (list 'float64 (list polars-null polars-null)))
+  (check-raises 'contract #rx"^mod: cannot take the modulo of a temporal dtype\n"
+                (lambda () (mod polars-null (series (list (date 2024 1 1))))))
   (define booleans (series (list #t #f polars-null) #:name "n"))
   (for ([op (list and-op or-op p-xor)])
     (check-expression-form booleans op booleans polars-null (op (col "n") polars-null))
@@ -247,35 +248,40 @@
                 (lambda () (= (series '(1 2) #:dtype 'u64) (time 1))))
   (check-raises 'contract #rx"^mod: cannot take the modulo of a temporal dtype\n"
                 (lambda () (mod (series (list (date 2024 1 1))) (series '(1)))))
+  (define two-dates (series (list (date 2024 1 1) (date 2024 1 2))))
+  (check-equal? (series-shape (mod (series '(1 2)) two-dates)) '(int64 (1 2)))
+  (check-equal? (series-shape (mod (date 2024 1 1) (series '(1 2)))) '(int64 (0 1)))
+  (for ([thunk (list (lambda () (mod two-dates (series '(1 2)))) (lambda () (mod two-dates 2))
+                     (lambda () (mod 2 two-dates)) (lambda () (mod two-dates polars-null)))])
+    (check-raises 'contract #rx"^mod: cannot take the modulo of a temporal dtype\n" thunk))
+  (define f32 (series '(1.5 2.0) #:dtype 'f32))
+  (for ([result (list (p/ 1 f32) (p/ 1/3 f32) (p/ u8 f32) (p/ (series '(1 2)) decimals)
+                      (p/ (series '(1.5 2.0)) 2.5) (p/ (series '(#t #f)) 1) (p/ nulls nulls)
+                      (p/ nulls polars-null) (p/ (series (list (hours 1))) (hours 1)))]
+        [expected (list (list 'float64 (list (/ 1 1.5) 0.5))
+                        (list 'float64 (list (/ (/ 1.0 3) 1.5) (/ (/ 1.0 3) 2.0)))
+                        (list 'float64 (list (/ 1 1.5) 1.0))
+                        (list 'float64 (list 0.8 2.5))
+                        (list 'float64 (list 0.6000000000000001 0.8))
+                        (list 'float64 (list 1.0 0.0))
+                        (list 'float64 (list polars-null polars-null))
+                        (list 'float64 (list polars-null polars-null))
+                        (list 'float64 (list 1.0)))])
+    (check-equal? (series-shape result) expected))
+  (check-equal? (series->list (= (series '("1e-05" "x")) 1e-5)) '(#t #f))
+  (check-equal? (series-shape (p/ (series '(1 2)) f32)) (list 'float64 (list (/ 1 1.5) 1.0)))
+  (define number-texts (series '("1e-05" "inf" "-inf" "nan" "-0.0" "1e+16" "0.0001")))
+  (for ([v (list 1e-5 +inf.0 -inf.0 +nan.0 -0.0 1e16 0.0001)]
+        [i (in-naturals)])
+    (check-equal? (series->list (= number-texts v))
+                  (for/list ([j (in-range 7)]) (= i j))
+                  (format "~v" v)))
   (check-equal? (series->list (p+ (series '(1 2)) 2.5)) '(3.5 4.5))
   (check-equal? (series->list (> (series '(1 2)) 1.5)) '(#f #t))
   (check-equal? (dtype (p+ (series '(1 2) #:dtype 'i32) 2)) 'int32)
   (check-equal? (series->list (p-and (series '(#t #f)) #t)) '(#t #f))
   (check-equal? (series->list (p-xor (series '(#t #f)) #t)) '(#f #t))
   (check-equal? (series->list (p-xor #t (series '(#t #f)))) '(#f #t))
-
-  (define audit-series
-    `((int64 ,(series '(1 2)))
-      (int32 ,(series '(1 2) #:dtype 'i32))
-      (uint8 ,(series '(1 2) #:dtype 'u8))
-      (uint64 ,(series '(1 2) #:dtype 'u64))
-      (float32 ,(series '(1.5 2.0) #:dtype 'f32))
-      (float64 ,(series '(1.5 2.0)))
-      (decimal ,(wrap-series (series-slice prices 0 2)))
-      (string ,(series '("x" "y")))
-      (boolean ,(series '(#t #f)))
-      (date ,(series (list (date 2024 1 1) (date 2024 1 2))))
-      (time ,(series (list (time 1) (time 2))))
-      (duration ,(series (list (hours 1) (hours 2))))
-      (datetime ,(series (list (datetime 2024 1 1) (datetime 2024 1 2))))
-      (zoned ,(wrap-series (series-cast (series (list (datetime 2024 1 1) (datetime 2024 1 2)))
-                                        '(datetime microseconds "Europe/Paris"))))
-      (categorical ,(series '(x y)))
-      (enum ,(series '("x" "y") #:dtype '(enum x y)))
-      (null ,nulls)))
-  (define audit-ops
-    (hash '+ p+ '- p- '* p* '/ p/ 'mod mod '= = '!= != '< < '> > '<= <= '>= >=
-          'and and-op 'or or-op 'xor p-xor))
 
   (define leaked #rx"operation failed|Resolved plan|/raw|->C|ptr")
   (define strays '())
@@ -292,7 +298,7 @@
       (if (series? result) result (list 'value result))))
 
   (define expression-refused (list #\a (expt 2 63) far-date (datetime 300000 1 1) (vector 1)))
-  (for* ([(who f) (in-hash audit-ops)] [v (in-list expression-refused)])
+  (for* ([(who f) (in-hash audit-operators)] [v (in-list expression-refused)])
     (define first-operand (run who (lambda () (f (col "n") v))))
     (define second-operand (run who (lambda () (f v (col "n")))))
     (check-equal? (if (memq who '(and or)) (list first-operand) (list first-operand second-operand))
@@ -308,154 +314,31 @@
   (check-raises 'contract #rx"^and: contract violation\n" (lambda () (p-and (col "v") #\a)))
   (check-raises 'contract #rx"^xor: contract violation\n" (lambda () (p-xor #\a (col "v"))))
 
-  (define temporal-labels '(date time duration datetime zoned))
-  (define (temporal? c)
-    (match-define (audit-case _ label side operand _ _) c)
-    (or (memq label temporal-labels)
-        (and (eq? side 'series) (memq operand temporal-labels))
-        (date? operand) (datetime? operand) (moment? operand) (time? operand) (period? operand)))
-  (define (python-raised? c)
-    (memq (python-kind (audit-case-want c)) '(contract polars)))
-  (define (raised? c)
-    (symbol? (audit-case-got c)))
-  (define (nulls? c)
-    (match-define (audit-case _ label side operand _ _) c)
-    (or (eq? label 'null) (polars-null? operand) (and (eq? side 'series) (eq? operand 'null))))
-  (define deviations
-    (list
-     (list 'error-kind (lambda (c) (and (python-raised? c) (raised? c))) 2430)
-     (list 'racket-short-circuit
-           (lambda (c) (and (memq (audit-case-who c) '(and or)) (eq? (audit-case-side c) 'left)
-                            (not (polars-null? (audit-case-operand c)))))
-           508)
-     (list 'bitwise (lambda (c) (and (memq (audit-case-who c) '(and or xor not))
-                                     (not (python-raised? c))))
-           252)
-     (list 'past-int64 (lambda (c) (eqv? (audit-case-operand c) (expt 2 63))) 51)
-     (list 'nulls-and-temporal (lambda (c) (and (nulls? c) (temporal? c))) 40)
-     (list 'temporal (lambda (c) (and (temporal? c) (not (python-raised? c)) (raised? c))) 408)
-     (list 'division (lambda (c) (eq? (audit-case-who c) '/)) 74)
-     (list 'boolean-operand (lambda (c) (boolean? (audit-case-operand c))) 34)))
-
-  (for* ([who (in-hash-keys audit-ops)] [l (in-list audit-series)] [v (list #\a far-date)])
-    (match-define (list label s) l)
-    (define f (hash-ref audit-ops who))
+  (for* ([(who f) (in-hash audit-operators)]
+         [(label s) (in-hash audit-fixtures)]
+         [v (list #\a far-date)])
     (check-equal? (run who (lambda () (f s v))) 'contract (format "~a ~a ~v" who label v))
     (unless (memq who '(and or))
       (check-equal? (run who (lambda () (f v s))) 'contract (format "~a ~v ~a" who v label))))
 
-  (define-runtime-path expected-path "operand-audit.rktd")
-  (match-define `((series ,python-series ...) (operands ,operand-data ...) (cases ,cases ...))
-    (file->value expected-path))
-  (define double-epsilon (expt 2.0 -52))
-  (define (decode v)
-    (match v
-      ['null polars-null]
-      [(list 'date y m d) (date y m d)]
-      [(list 'datetime y mo d h mi s ns) (datetime y mo d h mi s ns)]
-      [(list 'moment y mo d h mi s ns zone) (moment y mo d h mi s ns #:tz zone)]
-      [(list 'time h m s ns) (time h m s ns)]
-      [(list 'duration-us n) (microseconds n)]
-      [(list 'category name) (string->symbol name)]
-      [(list 'decimal digits) (string->number digits 10 'number-or-false 'decimal-as-exact)]
-      [_ v]))
-  (define (period-nanoseconds p)
-    (for/sum ([field (in-list '(weeks days hours minutes seconds milliseconds microseconds
-                                nanoseconds))]
-              [unit (in-list '(604800000000000 86400000000000 3600000000000 60000000000
-                               1000000000 1000000 1000 1))])
-      (* unit (period-ref p field))))
-  (define (same-value? want got)
-    (match* (want got)
-      [((? flonum?) (? flonum?))
-       (or (= want got) (and (nan? want) (nan? got))
-           (<= (abs (- want got)) (* 4 double-epsilon (abs want))))]
-      [((list 'duration-us n) (? period?)) (= (* 1000 n) (period-nanoseconds got))]
-      [((list 'moment _ ...) (? moment?))
-       (and (moment=? (decode want) got) (equal? (->timezone (decode want)) (->timezone got)))]
-      [(_ _) (equal? (decode want) got)]))
-  (define contract-classes '(TypeError ValueError OverflowError AttributeError))
-  (define (python-kind want)
-    (match want
-      [(? symbol?) (if (memq want contract-classes) 'contract 'polars)]
-      [(list 'not-a-series _) 'contract]
-      [_ 'series]))
-  (define (our-kind got)
-    (match got
-      [(? symbol?) got]
-      [(? series?) 'series]
-      [_ 'value]))
-  (define (same-outcome? want got)
-    (match* ((python-kind want) got)
-      [('series (? series?))
-       (match-define (list dt values ...) want)
-       (and (equal? dt (dtype got))
-            (= (length values) (len got))
-            (andmap same-value? values (series-cells got)))]
-      [(kind _) (eq? kind got)]))
+  (check-equal? python-polars-version "1.42.1")
+  (for ([entry (in-list audit-series-outcomes)])
+    (match-define (list label want) entry)
+    (check-equal? (fixture-outcome label) (python-outcome want) (format "fixture ~a" label)))
 
-  (check-equal? (map car python-series) (map car audit-series))
-  (for ([want (in-list python-series)] [l (in-list audit-series)])
-    (check-true (same-outcome? (cadr want) (cadr l)) (format "fixture ~a" (car l))))
+  (define rows-by-key (for/hash ([row (in-list audit-rows)]) (values (audit-row-key row) row)))
+  (check-equal? (hash-count rows-by-key) (length audit-rows))
+  (for ([row (in-list audit-rows)])
+    (define-values (got stray) (run-row row))
+    (check-equal? got (expected-outcome row) (format "~s" (audit-row-key row)))
+    (when stray (set! strays (cons (list (audit-row-key row) stray) strays))))
 
-  (define (expression-form? who label v side)
-    (or (eq? label 'null) (polars-null? v)
-        (and (eq? who '+) (eq? side 'left) (or (string? v) (symbol? v)))
-        (and (eq? label 'enum) (or (string? v) (symbol? v)))
-        (and (eq? label 'decimal)
-             (or (exact-integer? v) (and (real? v) (not (exact-integer? v)))
-                 (and (boolean? v) (not (memq who '(= != < > <= >=))))))
-        (and (eq? label 'duration) (eq? who '*) (real? v))
-        (and (exact-integer? v) (< (abs v) (expt 2 63))
-             (not (in-range? label v)))))
-  (define (in-range? label v)
-    (match label
-      ['int64 (<= (- (expt 2 63)) v (sub1 (expt 2 63)))]
-      ['int32 (<= (- (expt 2 31)) v (sub1 (expt 2 31)))]
-      ['uint8 (or (negative? v) (<= v 255))]
-      ['uint64 #t]
-      [_ #t]))
-  (define (expected-outcome want who label v side)
-    (match want
-      [(list 'either eager expression)
-       #:when (and (not (eq? (python-kind eager) 'series)) (expression-form? who label v side))
-       expression]
-      [(list 'either eager _) eager]
-      [_ want]))
-
-  (struct audit-case (who label side operand want got) #:transparent)
-  (define plain (map decode operand-data))
-  (define audited
-    (append*
-     (for/list ([c (in-list cases)])
-       (match c
-         [(list 'not label want)
-          (define s (cadr (assq label audit-series)))
-          (list (audit-case 'not label 'unary #f want (run 'not (lambda () (p-not s)))))]
-         [(list who label against right left)
-          (define s (cadr (assq label audit-series)))
-          (define f (hash-ref audit-ops who))
-          (append
-           (for/list ([r (in-list audit-series)] [want (in-list against)])
-             (audit-case who label 'series (car r) want (run who (lambda () (f s (cadr r))))))
-           (for/list ([v (in-list plain)] [want (in-list right)])
-             (audit-case who label 'right v (expected-outcome want who label v 'right)
-                         (run who (lambda () (f s v)))))
-           (for/list ([v (in-list plain)] [want (in-list left)])
-             (audit-case who label 'left v (expected-outcome want who label v 'left)
-                         (run who (lambda () (f v s))))))]))))
-  (check-equal? (length audited) 11679)
-  (define differences
-    (filter (lambda (c) (not (same-outcome? (audit-case-want c) (audit-case-got c)))) audited))
-  (define (deviation-of c)
-    (for/first ([d (in-list deviations)] #:when ((cadr d) c)) (car d)))
-  (define (shown c)
-    (match-define (audit-case who label side operand want got) c)
-    (list who label side operand want (our-kind got)))
-  (check-equal? (for/list ([d (in-list deviations)])
-                  (list (car d) (count (lambda (c) (eq? (deviation-of c) (car d))) differences)))
-                (map (match-lambda [(list name _ n) (list name n)]) deviations))
-  (define unclassified (filter (lambda (c) (not (deviation-of c))) differences))
-  (check-equal? (map shown (take unclassified (min 40 (length unclassified)))) '()
-                (format "~a unclassified differences" (length unclassified)))
+  (define declared (map car deviation-classes))
+  (for ([(key deviation) (in-hash deviations)])
+    (match-define (list class got) deviation)
+    (define row (hash-ref rows-by-key key #f))
+    (check-not-false row (format "deviation ~s names no row" key))
+    (check-not-false (memq class declared) (format "~s: undeclared class ~a" key class))
+    (check-not-equal? got (and row (python-outcome (eager-outcome row)))
+                      (format "~s: the recorded outcome is Python's" key)))
   (check-equal? strays '()))

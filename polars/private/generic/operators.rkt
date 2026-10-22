@@ -8,6 +8,7 @@
          polars/private/generic/dtype
          polars/private/generic/logical
          polars/private/generic/operands
+         (only-in polars/private/resource with-release)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -24,9 +25,10 @@
          [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who 'name a) (->expr/who 'name b))]
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a)
-          (call-with-operand-series 'name a b (lambda (o) (wrap-series (series-op 'name a o))))]
+          (call-with-operand-series 'name a b 'right
+                                    (lambda (o) (wrap-series (series-op 'name a o))))]
          [(series? b)
-          (call-with-operand-series 'name b a
+          (call-with-operand-series 'name b a 'left
                                     (lambda (o) (wrap-series (series-op-reflected 'name b o))))]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
@@ -44,10 +46,30 @@
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who who a) (->expr/who who b))]
         [(expression-form-op who expr-op a b) => values]
         [(series? a)
-         (call-with-operand-series who a b (lambda (o) (wrap-series (series-op who a o))))]
+         (call-with-operand-series who a b 'right
+                                   (lambda (o) (wrap-series (series-op who a o 'right))))]
         [(series? b)
-         (call-with-operand-series who b a (lambda (o) (wrap-series (series-op who o b))))]
+         (call-with-operand-series who b a 'left
+                                   (lambda (o) (wrap-series (series-op who o b 'left))))]
         [else (base-op a b)]))
+
+(define ((sideless series-op) who a b _side)
+  (series-op who a b))
+
+(define (integer-like? dt)
+  (and (memq dt '(int8 int16 int32 int64 uint8 uint16 uint32 uint64 boolean null)) #t))
+
+(define (series-true-div who a b side)
+  (define a-integer? (integer-like? (series-dtype a)))
+  (define b-dtype (series-dtype b))
+  (define floor? (and a-integer? (integer-like? b-dtype)
+                      (not (and (eq? (series-dtype a) 'null) (eq? b-dtype 'null)))))
+  (define cast-a? (and a-integer? (not floor?)))
+  (define cast-b? (and (eq? side 'left) (not floor?)
+                       (or (integer-like? b-dtype) (eq? b-dtype 'float32))))
+  (with-release ([a* (if cast-a? (series-cast a 'float64) a) (if cast-a? series-drop void)]
+                 [b* (if cast-b? (series-cast b 'float64) b) (if cast-b? series-drop void)])
+    (series-div/who who a* b*)))
 
 (define (series-negate s)
   (match (series-dtype s)
@@ -93,15 +115,15 @@
       [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
                             a more)])))
 
-(define-arith p+ + expr-add series-add/who base:+)
-(define-arith p- - expr-sub series-sub/who base:- #:unary expr-neg series-negate)
-(define-arith p* * expr-mul series-mul/who base:*)
-(define-arith p/ / expr-div series-div/who base:/ #:unary expr-reciprocal series-reciprocal)
+(define-arith p+ + expr-add (sideless series-add/who) base:+)
+(define-arith p- - expr-sub (sideless series-sub/who) base:- #:unary expr-neg series-negate)
+(define-arith p* * expr-mul (sideless series-mul/who) base:*)
+(define-arith p/ / expr-div series-true-div base:/ #:unary expr-reciprocal series-reciprocal)
 
 (define (base:mod a b . more)
   (foldl (lambda (m acc) (base:modulo acc m)) (base:modulo a b) more))
 
-(define-arith mod mod expr-mod series-mod/who base:mod #:binary-only)
+(define-arith mod mod expr-mod (sideless series-mod/who) base:mod #:binary-only)
 
 (struct when-pending (clauses cond))
 (struct when-acc (clauses))

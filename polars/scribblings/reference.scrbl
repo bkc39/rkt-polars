@@ -2084,7 +2084,7 @@ a series' dtype explicitly.
 A plain value beside a series in an operator follows Python 1.42.1's eager
 operators. It is a constant of the series' dtype when it fits: a boolean
 beside a numeric series is 1 or 0, and a number compared with a string series
-is its string. A gregor value keeps its own dtype, a non-integer real beside
+is its string as Python's @tt{str} spells it (@tt{1e-05}, @tt{inf}). A gregor value keeps its own dtype, a non-integer real beside
 an integer series is @racket['float64], and in arithmetic a string or symbol
 is a string, so @racket[+] concatenates. Otherwise the operator runs its
 expression form, @racket[(_op (col _name) _value)], with that form's dtypes
@@ -2098,19 +2098,27 @@ raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
 series, a gregor value compared with a series of another kind (a date with a
 datetime series aside), a time in arithmetic, a negative integer beside an
 unsigned series, or a value no literal takes. @racket[mod] refuses a temporal
-operand. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
-operator to Python's outcome and lists where they still differ.
+series, the left one when both are series, whatever the other operand, as
+Python's @tt{%} does. A @racket[/] of integer, boolean or null operands is
+integer division; any other is Python's true division, which first casts an
+integer, boolean or null series, and a series under a plain number on its
+left, to @racket['float64]. The operand audit (@filepath{generic/operand-audit.rkt})
+holds every operator to Python's outcome, row by row, and records ours, with
+its reason, where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
 (+ (series '(1 2)) "x")
 (+ (series '(1 2)) #t)
 (= (series '("x" "y")) 1)
+(= (series '("1e-05" "x")) 1e-5)
+(/ (series '(1 2)) (series '(1.5 2.0) #:dtype 'f32))
+(mod (series '(1 2)) (series (list (date 2024 1 1) (date 2024 1 2))))
 (* (series (list (hours 1) (hours 2))) 2)
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
 (eval:error (+ (series '(1 2) #:dtype 'u8) -1))
 (eval:error (= (series '(1 2)) (date 2024 1 1)))
-(eval:error (mod (series (list (date 2024 1 1))) 2))]
+(eval:error (mod (series (list (date 2024 1 1))) (series '(1))))]
 
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 

@@ -43,6 +43,7 @@
          epoch->moment
          nanoseconds->time
          offset-unit
+         period->nanoseconds
          per-second
          temporal-encoder
          temporal-value-dtype
