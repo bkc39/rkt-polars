@@ -239,11 +239,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   data unguarded until #129 (L7 of #223) guards them with a reason reported
   to Racket. The audit fails on a stale or misclassified line, so guarding an
   entry point means deleting its line.
-- `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
-  native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free (`foreign.rkt` has a case for each Series-
-  and DataFrame-returning binding but the file readers, and `bulk.rkt` one for
-  `series_copy_cat`), and pairing tests
+- `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
+  `series_drop_count` count native releases; the reclamation tests assert on
+  them because Racket cannot otherwise observe a native free (`foreign.rkt`
+  has a case for each Series- and DataFrame-returning binding but the file
+  readers, `bulk.rkt` one for `series_copy_cat`, and `expr.rkt` one for each
+  plan helper), and pairing tests
   check that an explicit drop, of a pointer or a wrapper, releases it exactly
   once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
@@ -296,9 +297,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   `define-cstruct` field, or in `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
-  `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
-  expand into `dynamic-wind`, so the release runs on return, raise and
-  escape; the buffer's finalizer backs up a thread killed inside the extent.
+  `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
+  a `for` loop, or `with-release-pool` for the values a computation hands to
+  the procedure it binds (`polars/private/resource.rkt`), which expand into
+  `dynamic-wind`, so the release runs on return, raise and escape (a raise
+  part way through a `with-releases` loop releases what it acquired, and a
+  release that raises does not stop the others, as with nested
+  `with-release`s); the buffer's finalizer backs up a thread killed inside
+  the extent. A value that may or may not be owned (a variadic operator's
+  running result) is released with `drop-owned` (`expr-core.rkt`), which
+  dispatches on the four pointer types' predicates and ignores any other
+  value; a pointer already dropped raises under that type's drop name, as
+  `series-drop` does.
   No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
   fails on one.
 - **An export never changes its signature under the same symbol.** A new

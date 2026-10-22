@@ -42,8 +42,10 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
+           (only-in polars/private/test-helpers drops-during drops-once settle!)
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -835,18 +837,29 @@
       (set-box! built (list source plan))
       plan)
     (values built extend))
-  (let-values ([(built extend) (plans-built-for "x")])
-    (check-equal? (dataframe-height (collect-plan/who 'plans df extend)) 4)
-    (check-equal? (length (unbox built)) 2)
+  (for* ([row (in-list
+               (list (list "collect" "x"
+                           (lambda (extend) (dataframe-drop (collect-plan/who 'plans df extend))))
+                     (list "failed collect" "nope"
+                           (lambda (extend)
+                             (check-exn #rx"^plans: .*nope"
+                                        (lambda () (collect-plan/who 'plans df extend)))))
+                     (list "call-with-plan" "y"
+                           (lambda (extend)
+                             (call-with-plan df extend
+                                             (lambda (plan) (check-pred LazyFrame-ptr? plan)))))))]
+         [finish (in-list (list void settle!))])
+    (match-define (list label column run) row)
+    (define-values (built extend) (plans-built-for column))
+    (check-equal? (drops-during lazyframe-drop-count (lambda () (run extend) (finish))) 2 label)
+    (check-equal? (length (unbox built)) 2 label)
     (for ([plan (in-list (unbox built))])
       (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
                  (lambda () (lazyframe-drop plan)))))
-  (let-values ([(built extend) (plans-built-for "nope")])
-    (check-exn #rx"^plans: .*nope" (lambda () (collect-plan/who 'plans df extend)))
-    (check-equal? (length (unbox built)) 2)
-    (for ([plan (in-list (unbox built))])
-      (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
-                 (lambda () (lazyframe-drop plan)))))
+  (check-equal? (drops-once lazyframe-drop-count lazyframe-drop (lambda () (dataframe-lazy df))) 1)
+  (check-equal? (drops-once lazyframe-drop-count lazyframe-drop
+                            (lambda () (lazyframe-select (dataframe-lazy df) (list (col "x")))))
+                2)
   (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
              (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 
