@@ -331,7 +331,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 - `series #:dtype`, `cast` and `series-cast` accept short and canonical
   spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
-- `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `/` on integer operands (integer, Boolean or Null) is integer division,
+  unlike Python's `/` (#65), two Null operands aside, which give Float64.
+  Any other `/` divides as Python's does: an integer, Boolean or Null series
+  is cast to Float64 first, and so is the series under a plain number on the
+  left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a
+  temporal value on the left (`(/ (hours 1) decimals)` is a duration).
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
@@ -571,21 +576,66 @@ it. Racket side: `define-compat` with `#:c-id`.
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
   and `not` refuse a `'null` series, as Python's eager operators do, and any
   other non-Boolean series, where Python's `& | ^` are bitwise on integers.
-- A plain value beside a typed series in an operator is a constant of the
-  series' dtype when it fits (a gregor value keeps its own dtype; a
-  non-integer real beside an integer series is Float64). Otherwise the
-  operator runs its expression form, `(op (col name) (lit v))` on a
-  one-column frame (`series-through-expr`), with that form's dtypes, as
-  Python's expressions give them: beside an Enum series a string or symbol
-  (`=` with a value outside the categories is `#f`, null on a null, and `<`
-  raises polars' reason, as in Python), beside a Decimal series a real, and
-  beside an integer series an Int64 integer past the dtype's range (`(+ u8
-  300)` is UInt16). A negative integer beside an unsigned series, an
-  integer past Int64 (but one in range beside a UInt64 series), which our
-  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
-  series' dtype, as Python's eager `OverflowError` is. Every (operator,
-  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
-  `generic/operand-audit.rkt` holds the operators to.
+- A plain value beside a typed series in an operator follows Python
+  1.42.1's eager operators (decision (b) of #261). It is a constant of the
+  series' dtype when it fits: a boolean beside a numeric series is 1 or 0 and
+  a number or boolean compared with a string series is its string, as
+  Python's `str` spells it (`1e-05`, `True`; a tie in the shortest digits
+  goes to the even one, as in Python's `repr`); a gregor value keeps its own
+  dtype (but `mod` of a float series and a datetime reads the datetime's
+  physical integer, as Python does, and a date there is a contract error), a
+  duration series divided by a number is Python's true division, a
+  non-integer real beside an integer, boolean or string series is Float64,
+  and in
+  arithmetic a string or symbol is a String constant (`(+ ints "x")` is
+  `"1x" "2x"`). Otherwise the operator runs its expression form,
+  `(op (col name) (lit v))` on a one-column frame (`series-through-expr`),
+  with that form's dtypes, as Python's expressions give them: beside an Enum
+  series a string or symbol (`=` with a value outside the categories is
+  `#f`, null on a null, and `<` raises polars' reason, as in Python), beside a
+  Decimal series a real or a boolean (compared as 1 or 0), beside a
+  duration series a number in `*`, a string before a series in `+`, beside
+  an integer series an Int64 integer past the dtype's range (`(+ u8 300)` is
+  UInt16), and in `/` a negative integer beside an unsigned series (integer
+  division, `(/ u8 -1)` is Int16). Contract errors naming the value and the
+  series' dtype, where Python raises `TypeError`, `ValueError` or
+  `OverflowError`: a negative integer beside an unsigned series outside `/`,
+  an integer past Int64 (but one in range
+  beside a UInt64 series), which our `lit` cannot carry, a gregor value
+  compared with a series of another kind (a naive datetime beside a date
+  series and a date or time beside a string series aside), a time in
+  arithmetic, and a value no literal takes. `mod` refuses a temporal series
+  (the left one when both are series), as Python's `%` does, whatever the
+  other operand. The special cases are one table in `generic/operands.rkt`,
+  `operand-rules`, keyed by operator class, dtype class and operand class.
+  The result takes the series' name on either side; Python's eager
+  operator instead names it `literal` for a plain value left of `+`, `-`,
+  `*` or `/` on a Decimal series, left of `*` on a Duration series, and for
+  a string left of `+` (the `result-name` class).
+  `scripts/operand-audit-expected.py` writes Python's outcome of every
+  (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
+  expression form's and, for `/`, `//`'s where they differ.
+  `scripts/operand-audit-deviations.rkt` records ours, for each row where it
+  differs, in `generic/operand-deviations.rktd`, under the first class of
+  `generic/operand-audit-classes.rkt` that holds. Each class is a predicate
+  on the row, Python's outcome (with its expression and `//` forms) and ours,
+  which says what kind of outcome the class admits; the record, not the
+  predicate, says which rows are in it. The recorder is a ratchet: a row that
+  fits no class, or one not already recorded under its class with the same
+  outcome (a new deviation, a changed outcome, a changed class), makes it
+  print the row, ours and the record and exit 1 without writing. `--accept`
+  records the new and changed rows, never an unclassified one. A recorded row
+  that now gives Python's outcome counts as changed too, so undoing a
+  documented deviation (`integer-division`, `racket-short-circuit`,
+  `result-name`) also needs `--accept`, which drops the row from the record.
+  `generic/operand-audit.rkt` holds every row to Python's outcome or the
+  recorded one, name, dtype and values exactly, and reclassifies every
+  recorded row, so a change to any row fails and names it. After a
+  deliberate change, rerun the recorder. On an unclassified row, fix ours to
+  Python's outcome, or add a class with its predicate and reason (and a
+  forged-outcome row in the test that the predicate refuses). On a row not
+  recorded, fix ours, or rerun with `--accept` and review the diff of the
+  recorded rows and the class counts it prints.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
