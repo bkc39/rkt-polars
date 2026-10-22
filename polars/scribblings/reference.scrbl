@@ -2083,28 +2083,35 @@ a series' dtype explicitly.
 
 A plain value beside a series in an operator follows Python 1.42.1's eager
 operators. It is a constant of the series' dtype when it fits: a boolean
-beside a numeric series is 1 or 0, and a number compared with a string series
-is its string as Python's @tt{str} spells it (@tt{1e-05}, @tt{inf}). A gregor value keeps its own dtype, a non-integer real beside
-an integer series is @racket['float64], and in arithmetic a string or symbol
-is a string, so @racket[+] concatenates. Otherwise the operator runs its
-expression form, @racket[(_op (col _name) _value)], with that form's dtypes
-and values: beside a @racket['null] series (where Python's eager operators
-raise) or with @racket[polars-null], beside an Enum series a string or
-symbol, beside a Decimal series a real or boolean, beside a duration series a
-number in @racket[*], a string before a series in @racket[+], and beside an
-integer series an integer past the dtype's range. Any other value raises
+beside a numeric series is 1 or 0, and a number or boolean compared with a
+string series is its string as Python's @tt{str} spells it (@tt{1e-05},
+@tt{inf}, @tt{True}). A gregor value keeps its own dtype (but @racket[mod] of
+a float series and a datetime reads the datetime's physical integer, as
+Python does), a non-integer real beside an integer series is
+@racket['float64], and in arithmetic a string or symbol is a string, so
+@racket[+] concatenates. Otherwise the operator runs its expression form,
+@racket[(_op (col _name) _value)], with that form's dtypes and values: beside
+a @racket['null] series (where Python's eager operators raise) or with
+@racket[polars-null], beside an Enum series a string or symbol, beside a
+Decimal series a real or boolean (compared as 1 or 0), beside a duration
+series a number in @racket[*], a string before a series in @racket[+], beside
+an integer series an integer past the dtype's range, and in @racket[/] a
+negative integer beside an unsigned series. Any other value raises
 @racket[exn:fail:contract] naming it and the series' dtype, where Python
 raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
 series, a gregor value compared with a series of another kind (a date with a
-datetime series aside), a time in arithmetic, a negative integer beside an
-unsigned series, or a value no literal takes. @racket[mod] refuses a temporal
-series, the left one when both are series, whatever the other operand, as
-Python's @tt{%} does. A @racket[/] of integer, boolean or null operands is
-integer division; any other is Python's true division, which first casts an
-integer, boolean or null series, and a series under a plain number on its
-left, to @racket['float64]. The operand audit (@filepath{generic/operand-audit.rkt})
-holds every operator to Python's outcome, row by row, and records ours, with
-its reason, where they still differ.
+datetime series aside), a time in arithmetic, a date in @racket[mod] of a
+float series, a negative integer beside an unsigned series, or a value no
+literal takes. @racket[mod] refuses a temporal series, the left one when both
+are series, whatever the other operand, as Python's @tt{%} does. A
+@racket[/] of integer, boolean or null operands is integer division (two
+Null operands aside, which give @racket['float64]); any other is Python's
+true division, which first casts an integer, boolean or null series, a
+Decimal series under a plain value on its left, and a series under a plain
+number on its left, to @racket['float64], and divides a duration series by a
+number. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+operator to Python's outcome, row by row, and records ours, with its reason,
+where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
@@ -2115,6 +2122,7 @@ its reason, where they still differ.
 (/ (series '(1 2)) (series '(1.5 2.0) #:dtype 'f32))
 (mod (series '(1 2)) (series (list (date 2024 1 1) (date 2024 1 2))))
 (* (series (list (hours 1) (hours 2))) 2)
+(/ (series (list (hours 1) (hours 2))) 2.5)
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
 (eval:error (+ (series '(1 2) #:dtype 'u8) -1))
 (eval:error (= (series '(1 2)) (date 2024 1 1)))

@@ -66,7 +66,9 @@
                       (not (and (eq? (series-dtype a) 'null) (eq? b-dtype 'null)))))
   (define cast-a? (and a-integer? (not floor?)))
   (define cast-b? (and (eq? side 'left) (not floor?)
-                       (or (integer-like? b-dtype) (eq? b-dtype 'float32))))
+                       (match b-dtype
+                         [(or 'float32 (list 'decimal _ _)) #t]
+                         [_ (integer-like? b-dtype)])))
   (with-release ([a* (if cast-a? (series-cast a 'float64) a) (if cast-a? series-drop void)]
                  [b* (if cast-b? (series-cast b 'float64) b) (if cast-b? series-drop void)])
     (series-div/who who a* b*)))

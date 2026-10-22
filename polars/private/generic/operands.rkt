@@ -15,7 +15,7 @@
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
          (only-in polars/private/resource with-release)
          (only-in polars/private/series series-repeat-temporal)
-         (only-in polars/private/temporal temporal-value-dtype))
+         (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide call-with-logical-operand
          call-with-operand-series
@@ -75,6 +75,7 @@
         (cond
           [(<= low v high) 'integer]
           [(and (int64-value? v) (not (and (zero? low) (negative? v)))) 'wide-integer]
+          [(int64-value? v) 'negative-integer]
           [else 'other])])]
     [(? real?) 'real]
     [(or (? string?) (? symbol?)) 'text]
@@ -95,19 +96,25 @@
     [_          enum                  text                                expression]
     [add        _                     text                                (sided expression string)]
     [_          decimal               (integer real)                      expression]
+    [compare    decimal               boolean                             integer-expression]
+    [div        decimal               boolean                             (sided float64 expression)]
     [arithmetic decimal               boolean                             expression]
     [mul        duration              (integer real)                      expression]
+    [div        duration              (integer real)                      (sided refuse float64)]
     [div        float                 (integer real)                      (sided float64 expression)]
     [div        boolean               (integer huge-integer)              (sided refuse float64)]
     [div        integer               real                                (sided float64 expression)]
     [_          integer               wide-integer                        expression]
+    [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
-    [compare    string                (integer huge-integer real)         number-text]
+    [compare    string                (integer huge-integer real boolean) python-str]
     [compare    (string categorical)  (date time)                         own]
     [compare    date                  (date datetime moment)              own]
     [compare    datetime              (datetime moment)                   own]
     [compare    duration              duration                            own]
     [compare    time                  time                                own]
+    [mod        float                 date                                refuse]
+    [mod        float                 (datetime moment)                   physical]
     [arithmetic _                     time                                refuse]
     [arithmetic _                     (date datetime moment duration)     own]
     [arithmetic float                 text                                refuse]
@@ -150,8 +157,12 @@
     [(? symbol?) (symbol->string v)]
     [_ v]))
 
-(define (python-number-text v)
-  (if (exact-integer? v) (number->string v) (python-float-text (exact->inexact v))))
+(define (python-str v)
+  (match v
+    [#t "True"]
+    [#f "False"]
+    [(? exact-integer?) (number->string v)]
+    [_ (python-float-text (exact->inexact v))]))
 
 (define (python-float-text x)
   (cond
@@ -164,7 +175,26 @@
      (define leading (string-length (car (regexp-match #rx"^0*" all-digits))))
      (define digits (regexp-replace #rx"0*$" (substring all-digits leading) ""))
      (define point (- (+ (string-length whole) (if exponent (string->number exponent) 0)) leading))
-     (string-append sign (python-digits digits point))]))
+     (string-append sign (python-digits (nearest-digits (abs x) digits point) point))]))
+
+(define (nearest-digits x digits point)
+  (define n (string-length digits))
+  (define shortest (string->number digits))
+  (define exact (inexact->exact x))
+  (define (value c) (* c (expt 10 (- point n))))
+  (define (rank c) (list (abs (- (value c) exact)) (if (even? c) 0 1)))
+  (define (before? a b)
+    (match* ((rank a) (rank b))
+      [((list da pa) (list db pb)) (or (< da db) (and (= da db) (< pa pb)))]))
+  (match shortest
+    [#f digits]
+    [_
+     (define candidates
+       (for/list ([c (in-list (list shortest (sub1 shortest) (add1 shortest)))]
+                  #:when (and (= (string-length (number->string c)) n)
+                              (= (exact->inexact (value c)) x)))
+         c))
+     (regexp-replace #rx"0*$" (number->string (car (sort candidates before?))) "")]))
 
 (define (python-digits digits point)
   (define n (string-length digits))
@@ -188,9 +218,11 @@
       ['series other]
       ['same (lifted dt (same-value dt other))]
       ['own (lifted (temporal-value-dtype other) other)]
-      ['float64 (lifted 'float64 (exact->inexact other))]
+      ['float64 (lifted 'float64 (same-value 'float64 other))]
+      ['physical (lifted dt (same-value dt ((temporal-encoder who (temporal-value-dtype other))
+                                            other)))]
       ['string (lifted 'string (same-value 'string other))]
-      ['number-text (lifted 'string (python-number-text other))]
+      ['python-str (lifted 'string (python-str other))]
       ['modulo (raise-arguments-error who "cannot take the modulo of a temporal dtype"
                                       "series dtype" dt)]
       [_ (raise-arguments-error who "the value cannot be an element of a series of this dtype"
@@ -234,17 +266,19 @@
     (wrap-series (dataframe-column out name))))
 
 (define (expression-form-op who expr-op a b)
-  (define (expression-form? s v side)
-    (and (series? s) (not (series? v))
-         (eq? (operand-action who (series-dtype s) v side) 'expression)))
-  (cond
-    [(expression-form? a b 'right)
-     (with-release ([v (lit/who who b) expr-drop])
+  (define (literal s v side)
+    (match (and (series? s) (not (series? v)) (operand-action who (series-dtype s) v side))
+      ['expression (list v)]
+      ['integer-expression (list (if v 1 0))]
+      [_ #f]))
+  (match* ((literal a b 'right) (literal b a 'left))
+    [((list value) _)
+     (with-release ([v (lit/who who value) expr-drop])
        (series-through-expr who a (lambda (e) (expr-op e v))))]
-    [(expression-form? b a 'left)
-     (with-release ([v (lit/who who a) expr-drop])
+    [(_ (list value))
+     (with-release ([v (lit/who who value) expr-drop])
        (series-through-expr who b (lambda (e) (expr-op v e))))]
-    [else #f]))
+    [(_ _) #f]))
 
 (module+ test
   (require rackunit
@@ -266,11 +300,13 @@
   (define ints (wrap-series (series-new-i64 "x" '(1 2))))
 
   (for ([v (list 1 -7 (expt 2 63) 1/3 2.5 1.0 -0.0 0.0 1e-5 0.0001 1e16 1e22 123456789.0 5e-324
-                 0.30000000000000004 12345678901234567890.0 +inf.0 -inf.0 +nan.0 -2.5e-10)]
+                 0.30000000000000004 12345678901234567890.0 +inf.0 -inf.0 +nan.0 -2.5e-10
+                 651483685541104.2 -651483685541104.2 #t #f)]
         [text (list "1" "-7" "9223372036854775808" "0.3333333333333333" "2.5" "1.0" "-0.0" "0.0"
                     "1e-05" "0.0001" "1e+16" "1e+22" "123456789.0" "5e-324" "0.30000000000000004"
-                    "1.2345678901234567e+19" "inf" "-inf" "nan" "-2.5e-10")])
-    (check-equal? (python-number-text v) text))
+                    "1.2345678901234567e+19" "inf" "-inf" "nan" "-2.5e-10"
+                    "651483685541104.2" "-651483685541104.2" "True" "False")])
+    (check-equal? (python-str v) text))
   (check-equal? (operand-action '+ 'int64 "x" 'left) 'expression)
   (check-equal? (operand-action '+ 'int64 "x" 'right) 'string)
   (check-equal? (operand-action 'mod 'date 2 'right) 'modulo)

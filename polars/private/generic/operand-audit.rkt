@@ -12,6 +12,7 @@
                     dataframe-column series-add series-add/who series-cast series-name
                     series-not series-rename series-slice)
            polars/private/generic/core
+           polars/private/generic/operand-audit-classes
            polars/private/generic/operand-audit-table
            polars/private/generic/operators
            polars/private/generic/test-fixtures
@@ -269,6 +270,30 @@
                         (list 'float64 (list 1.0)))])
     (check-equal? (series-shape result) expected))
   (check-equal? (series->list (= (series '("1e-05" "x")) 1e-5)) '(#t #f))
+  (define words (series '("x" "True")))
+  (for ([row
+         (list
+          (list (lambda () (p/ (series (list (hours 1) (hours 2))) 2.5))
+                (list '(duration microseconds)
+                      (list (microseconds 1440000000) (microseconds 2880000000))))
+          (list (lambda () (p/ (hours 1) decimals))
+                (list '(duration microseconds)
+                      (list (microseconds 2880000000) (microseconds 4500000000))))
+          (list (lambda () (p/ #t decimals)) (list 'float64 (list 0.8 1.25)))
+          (list (lambda () (< decimals #t)) (list 'boolean (list #f #t)))
+          (list (lambda () (= decimals #f)) (list 'boolean (list #f #f)))
+          (list (lambda () (= words #t)) (list 'boolean (list #f #t)))
+          (list (lambda () (> words #f)) (list 'boolean (list #t #t)))
+          (list (lambda () (< #t words)) (list 'boolean (list #t #f)))
+          (list (lambda () (p/ u8 -1)) (list 'int16 (list -1 -2)))
+          (list (lambda () (mod f32 (datetime 2024 1 1))) (list 'float32 (list 1.5 2.0)))
+          (list (lambda () (mod (datetime 2024 1 1) f32)) (list 'float32 (list 0.0 0.0))))])
+    (match-define (list thunk expected) row)
+    (check-equal? (outcome thunk) expected))
+  (for ([thunk (list (lambda () (mod (series '(1.5 2.0)) (date 2024 1 1)))
+                     (lambda () (mod (date 2024 1 1) f32))
+                     (lambda () (p/ 2.5 (series (list (hours 1))))))])
+    (check-raises 'contract #rx"^(mod|/): the value cannot be an element of a series" thunk))
   (check-equal? (series-shape (p/ (series '(1 2)) f32)) (list 'float64 (list (/ 1 1.5) 1.0)))
   (define number-texts (series '("1e-05" "inf" "-inf" "nan" "-0.0" "1e+16" "0.0001")))
   (for ([v (list 1e-5 +inf.0 -inf.0 +nan.0 -0.0 1e16 0.0001)]
@@ -333,12 +358,45 @@
     (check-equal? got (expected-outcome row) (format "~s" (audit-row-key row)))
     (when stray (set! strays (cons (list (audit-row-key row) stray) strays))))
 
-  (define declared (map car deviation-classes))
+  (check-equal? deviation-classes operand-deviation-classes)
   (for ([(key deviation) (in-hash deviations)])
     (match-define (list class got) deviation)
-    (define row (hash-ref rows-by-key key #f))
-    (check-not-false row (format "deviation ~s names no row" key))
-    (check-not-false (memq class declared) (format "~s: undeclared class ~a" key class))
-    (check-not-equal? got (and row (python-outcome (eager-outcome row)))
-                      (format "~s: the recorded outcome is Python's" key)))
+    (match (hash-ref rows-by-key key #f)
+      [#f (fail (format "deviation ~s names no row" key))]
+      [row
+       (check-not-equal? got (python-outcome (eager-outcome row))
+                         (format "~s: the recorded outcome is Python's" key))
+       (check-equal? (classify-deviation row got) class (format "~s: recorded as ~a" key class))]))
+
+  (for ([forged
+         (list
+          (list '(+ int64 right #t) '(series int64 (1 2)) #f)
+          (list '(+ boolean right #t) '(series int64 (2 1)) #f)
+          (list '(= date right (date 2024 1 1)) '(raises contract) #f)
+          (list '(mod float64 right (date 2024 1 1)) '(series float64 (1.5 2.0)) #f)
+          (list '(and boolean right null) '(series boolean (#f #f)) #f)
+          (list '(and int64 right 1) '(series int64 (0 0)) #f)
+          (list '(and int64 left 1) '(value 1) #f)
+          (list '(/ duration right 2.5) '(raises contract) #f)
+          (list '(/ uint8 right -1) '(raises contract) #f)
+          (list '(mod int64 left "x") '(series string ("x" "x")) #f)
+          (list '(+ decimal right 9223372036854775808) '(raises polars) #f)
+          (list '(= string right (date 2024 1 1)) '(raises contract) #f)
+          (list '(+ int64 series date) '(series int64 (0 0)) #f)
+          (list '(+ int32 right 1099511627776) '(series int32 (1 2)) #f)
+          (list '(+ int32 right 1099511627776) '(series int64 (1099511627777 1099511627778))
+                'expression-form)
+          (list '(+ boolean right #t) '(series uint32 (2 1)) 'eager-raises)
+          (list '(and boolean right null) '(series boolean (null #f)) 'eager-raises)
+          (list '(and int64 left 1) '(series int64 (1 2)) 'racket-short-circuit)
+          (list '(or int64 left 1) '(value 1) 'racket-short-circuit)
+          (list '(and int64 right 1) '(raises contract) 'bitwise)
+          (list '(+ decimal right 9223372036854775808) '(raises contract) 'past-int64)
+          (list '(+ int64 series date) '(raises polars) 'temporal-physical)
+          (list '(- date series null) '(raises polars) 'null-temporal-series)
+          (list '(+ string right (date 2024 1 1)) '(raises polars) 'string-temporal-concat)
+          (list '(mod int64 left "x") '(raises polars) 'python-string-format))])
+    (match-define (list key got class) forged)
+    (check-equal? (classify-deviation (hash-ref rows-by-key key) got) class
+                  (format "~s gives ~s" key got)))
   (check-equal? strays '()))
