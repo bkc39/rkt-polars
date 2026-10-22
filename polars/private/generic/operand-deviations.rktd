@@ -1,6 +1,6 @@
 ((classes
   (racket-short-circuit "and / or with a plain value on the left evaluate as Racket's and / or")
-  (result-name "both give the same series, but Python's eager operator names it \"literal\", since it runs the expression form with the literal first (a Decimal or Duration series under a plain value on its left, a string on the left of +), and ours name it after the series")
+  (result-name "the result takes the series' name on either side; Python's eager operator instead names it \"literal\" for a plain value left of +, -, * or / on a Decimal series, left of * on a Duration series, and for a string left of +")
   (expression-form "the rule table sends the operand to the expression form, (op (col name) (lit v)), and ours gives that form's outcome where Python's eager operator gives another: a plain operand beside a Null, Enum or Decimal series, an integer past the dtype's range, a string on the left of + and polars-null")
   (integer-division "/ of integer operands (integer, Boolean or Null) is floor division, and ours gives Python's // (#65)")
   (eager-raises "Python's eager operator raises where its expression form gives a series, and ours gives that series: and, or and xor of a Boolean series with polars-null, + and the ordering comparisons of a Boolean series with a boolean, and a duration over a duration series")

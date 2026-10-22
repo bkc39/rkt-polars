@@ -28,14 +28,7 @@
      (eprintf "unclassified: ~s\n  ours: ~s\n" key got))
    (exit 1)]
   [(list 'unaccepted rows)
-   (for ([r (in-list rows)])
-     (match r
-       [(list key #f #f was)
-        (eprintf "no longer deviates: ~s\n  now: Python's ~s\n  was: ~s\n" key
-                 (hash-ref python-by-key key) was)]
-       [(list key class got was)
-        (eprintf "not recorded: ~s\n  now: ~s ~s\n  was: ~s\n" key class got was)]))
-   (eprintf "~a rows differ from the record; rerun with --accept to record them\n" (length rows))
+   (write-string (unaccepted-report rows python-by-key) (current-error-port))
    (exit 1)]
   [(list 'record rows)
    (write-deviations operand-deviation-classes

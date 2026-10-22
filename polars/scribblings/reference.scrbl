@@ -2109,10 +2109,10 @@ Null operands aside, which give @racket['float64]); any other is Python's
 true division, which first casts an integer, boolean or null series, a
 Decimal series under a boolean or a temporal value on its left, and a series
 under a plain number on its left, to @racket['float64], and divides a duration
-series by a number. The result takes the series' name, on either side,
-where Python's eager operator names it @tt{literal} for a Decimal or Duration
-series under a plain value on its left and for a string on the left of
-@racket[+]. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+series by a number. The result takes the series' name on either side;
+Python's eager operator instead names it @tt{literal} for a plain value left
+of @racket[+], @racket[-], @racket[*] or @racket[/] on a Decimal series, left
+of @racket[*] on a Duration series, and for a string left of @racket[+]. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
 operator to Python's outcome, row by row, and records ours, with its reason,
 where they still differ.
 

@@ -595,10 +595,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   (the left one when both are series), as Python's `%` does, whatever the
   other operand. The special cases are one table in `generic/operands.rkt`,
   `operand-rules`, keyed by operator class, dtype class and operand class.
-  The result takes the series' name, on either side of the operator, where
-  Python's eager operator names it `literal` for a Decimal or Duration
-  series under a plain value on its left and for a string on the left of
-  `+` (the `result-name` class).
+  The result takes the series' name on either side; Python's eager
+  operator instead names it `literal` for a plain value left of `+`, `-`,
+  `*` or `/` on a Decimal series, left of `*` on a Duration series, and for
+  a string left of `+` (the `result-name` class).
   `scripts/operand-audit-expected.py` writes Python's outcome of every
   (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
   expression form's and, for `/`, `//`'s where they differ.

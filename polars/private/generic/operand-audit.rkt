@@ -448,4 +448,19 @@
     (match-define (list deviating accept? expected) verdict)
     (check-equal? (recorder-verdict deviating recorded accept?) expected
                   (format "~s ~a" deviating accept?)))
+  (check-equal? (unaccepted-report
+                 (list '((+ int64 right 1) #f #f (bitwise (raises polars)))
+                       '((* int64 right 7) #f #f (bitwise (raises polars)))
+                       (append fresh '(#f)))
+                 (hash '(+ int64 right 1) '(raises contract)))
+                (string-append
+                 "no longer deviates: (+ int64 right 1)\n"
+                 "  now: Python's (raises contract)\n"
+                 "  was: (bitwise (raises polars))\n"
+                 "no longer an audit row: (* int64 right 7)\n"
+                 "  was: (bitwise (raises polars))\n"
+                 "not recorded: (- int64 right 1)\n"
+                 "  now: bitwise (raises polars)\n"
+                 "  was: #f\n"
+                 "3 rows differ from the record; rerun with --accept to update the record\n"))
   (check-equal? strays '()))

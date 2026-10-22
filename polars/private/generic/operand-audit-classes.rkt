@@ -2,6 +2,7 @@
 
 (require racket/contract/base
          (only-in racket/list filter-map)
+         (only-in racket/string string-append*)
          (only-in racket/match == match match* match-define match-lambda)
          (only-in polars/private/foreign polars-null? series-dtype series-name)
          (only-in polars/private/generic/operand-audit-table
@@ -16,10 +17,12 @@
            (-> (listof (list/c pair? (or/c symbol? #f) pair?)) (hash/c pair? (list/c symbol? pair?))
                boolean?
                (or/c (list/c 'unclassified (listof (list/c pair? #f pair?)))
-                     (list/c 'unaccepted
-                             (listof (or/c (list/c pair? symbol? pair? (or/c #f pair?))
-                                           (list/c pair? #f #f (list/c symbol? pair?)))))
-                     (list/c 'record (listof (list/c pair? symbol? pair?)))))]))
+                     (list/c 'unaccepted (listof unaccepted-row/c))
+                     (list/c 'record (listof (list/c pair? symbol? pair?)))))]
+          [unaccepted-report (-> (listof unaccepted-row/c) (hash/c pair? pair?) string?)]))
+
+(define unaccepted-row/c
+  (or/c (list/c pair? symbol? pair? (or/c #f pair?)) (list/c pair? #f #f (list/c symbol? pair?))))
 
 (define (label-kind label)
   (match label
@@ -119,9 +122,9 @@
          (lambda (row python got) (equal? got (racket-logical row))))
    (list 'result-name
          (string-append
-          "both give the same series, but Python's eager operator names it \"literal\", since it "
-          "runs the expression form with the literal first (a Decimal or Duration series under a "
-          "plain value on its left, a string on the left of +), and ours name it after the series")
+          "the result takes the series' name on either side; Python's eager operator instead names "
+          "it \"literal\" for a plain value left of +, -, * or / on a Decimal series, left of * on "
+          "a Duration series, and for a string left of +")
          renamed?)
    (list 'expression-form
          (string-append
@@ -224,3 +227,18 @@
     [(pair? unclassified) (list 'unclassified unclassified)]
     [(and (pair? moved) (not accept?)) (list 'unaccepted moved)]
     [else (list 'record deviating)]))
+
+(define (unaccepted-report rows python-by-key)
+  (define (report r)
+    (match r
+      [(list key #f #f was)
+       (match (hash-ref python-by-key key #f)
+         [#f (format "no longer an audit row: ~s\n  was: ~s\n" key was)]
+         [python
+          (format "no longer deviates: ~s\n  now: Python's ~s\n  was: ~s\n" key python was)])]
+      [(list key class got was)
+       (format "not recorded: ~s\n  now: ~s ~s\n  was: ~s\n" key class got was)]))
+  (string-append*
+   (append (map report rows)
+           (list (format "~a rows differ from the record; rerun with --accept to update the record\n"
+                         (length rows))))))
