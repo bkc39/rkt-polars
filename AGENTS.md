@@ -294,9 +294,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `define-cstruct` field, or in `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
-  `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
-  expand into `dynamic-wind`, so the release runs on return, raise and
-  escape; the buffer's finalizer backs up a thread killed inside the extent.
+  `with-raw-buffer`, `with-release`, or `with-releases` for a list acquired by
+  a `for` loop (`polars/private/resource.rkt`), which expand into
+  `dynamic-wind`, so the release runs on return, raise and escape (a raise
+  part way through a `with-releases` loop releases what it acquired); the
+  buffer's finalizer backs up a thread killed inside the extent. A value
+  that may or may not be owned (a variadic operator's running result) is
+  released with `drop-owned` (`foreign.rkt`), which every
+  `define-owned-cpointer-type` registers its drop with.
   No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
   fails on one.
 - **An export never changes its signature under the same symbol.** A new

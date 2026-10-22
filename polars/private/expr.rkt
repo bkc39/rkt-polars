@@ -41,9 +41,10 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
-           (only-in polars/private/test-helpers drops-once settle!)
+           (only-in polars/private/test-helpers drops-during drops-once settle!)
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -857,35 +858,25 @@
       (set-box! built (list source plan))
       plan)
     (values built extend))
-  (define (lazyframe-drops-during thunk)
-    (settle!)
-    (define before (lazyframe-drop-count))
-    (thunk)
-    (- (lazyframe-drop-count) before))
-  (let-values ([(built extend) (plans-built-for "x")])
-    (check-equal? (lazyframe-drops-during
-                   (lambda ()
-                     (check-equal? (dataframe-height (collect-plan/who 'plans df extend)) 4)))
-                  2)
-    (check-equal? (length (unbox built)) 2)
+  (for* ([row (in-list
+               (list (list "collect" "x"
+                           (lambda (extend) (dataframe-drop (collect-plan/who 'plans df extend))))
+                     (list "failed collect" "nope"
+                           (lambda (extend)
+                             (check-exn #rx"^plans: .*nope"
+                                        (lambda () (collect-plan/who 'plans df extend)))))
+                     (list "call-with-plan" "y"
+                           (lambda (extend)
+                             (call-with-plan df extend
+                                             (lambda (plan) (check-pred LazyFrame-ptr? plan)))))))]
+         [finish (in-list (list void settle!))])
+    (match-define (list label column run) row)
+    (define-values (built extend) (plans-built-for column))
+    (check-equal? (drops-during lazyframe-drop-count (lambda () (run extend) (finish))) 2 label)
+    (check-equal? (length (unbox built)) 2 label)
     (for ([plan (in-list (unbox built))])
       (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
                  (lambda () (lazyframe-drop plan)))))
-  (let-values ([(built extend) (plans-built-for "nope")])
-    (check-equal? (lazyframe-drops-during
-                   (lambda ()
-                     (check-exn #rx"^plans: .*nope" (lambda () (collect-plan/who 'plans df extend)))))
-                  2)
-    (check-equal? (length (unbox built)) 2)
-    (for ([plan (in-list (unbox built))])
-      (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
-                 (lambda () (lazyframe-drop plan)))))
-  (check-equal? (lazyframe-drops-during
-                 (lambda ()
-                   (call-with-plan df
-                                   (lambda (source) (lazyframe-select source (list (col "y"))))
-                                   (lambda (plan) (check-pred LazyFrame-ptr? plan)))))
-                2)
   (check-equal? (drops-once lazyframe-drop-count lazyframe-drop (lambda () (dataframe-lazy df))) 1)
   (check-equal? (drops-once lazyframe-drop-count lazyframe-drop
                             (lambda () (lazyframe-select (dataframe-lazy df) (list (col "x")))))

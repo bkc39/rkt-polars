@@ -9,7 +9,8 @@
 
 (provide _string-list
          with-raw-buffer
-         with-release)
+         with-release
+         with-releases)
 
 ;; The finalizer allocator registers backs up a thread killed inside the
 ;; extent, whose dynamic-wind post thunks never run; free-buffer unregisters it.
@@ -29,6 +30,22 @@
           (when name
             (release name)
             (set! name #f)))))])
+
+(define-syntax-parse-rule (with-releases ([name:id (clause ...) acquire:expr release:expr])
+                           body:expr ...+)
+  (let ([acquired '()])
+    (dynamic-wind
+     void
+     (lambda ()
+       (for (clause ...)
+         (set! acquired (cons acquire acquired)))
+       (let ([name (reverse acquired)])
+         body ...))
+     (lambda ()
+       (define release-one release)
+       (for ([v (in-list acquired)])
+         (release-one v))
+       (set! acquired '())))))
 
 (define-syntax-parse-rule (with-raw-buffer ([name:id count:expr ctype:expr] ...+) body:expr ...+)
   (with-release ([name (alloc-buffer count ctype) free-buffer] ...) body ...))
@@ -97,6 +114,33 @@
   (set! released '())
   (check-equal? (with-release ([a #f release!] [b 'b release!]) (list a b)) '(#f b))
   (check-equal? released '(b))
+
+  (set! released '())
+  (check-equal? (with-releases ([tags ([i (in-range 3)]) (* 10 i) release!]) tags) '(0 10 20))
+  (check-equal? released '(0 10 20))
+
+  (set! released '())
+  (check-exn #rx"at 2"
+             (lambda ()
+               (with-releases ([tags ([i (in-range 3)])
+                                     (if (= i 2) (error 'test "at ~a" i) i)
+                                     release!])
+                 tags)))
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-exn #rx"boom"
+             (lambda () (with-releases ([tags ([i (in-range 2)]) i release!]) (error 'test "boom"))))
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-equal? (let/ec k (with-releases ([tags ([i (in-range 2)]) i release!]) (k 'escaped)))
+                'escaped)
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-equal? (with-releases ([tags ([i (in-list '())]) i release!]) tags) '())
+  (check-equal? released '())
 
   (check-equal? (with-raw-buffer ([words 3 _int64])
                   (for ([i (in-range 3)]) (ptr-set! words _int64 i (* 10 i)))

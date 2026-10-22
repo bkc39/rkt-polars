@@ -9,7 +9,7 @@
          (only-in racket/path path-has-extension?)
          (only-in racket/string string-contains?))
 
-(provide apply-keywords contains-all? contract-violation-of drops-once gzip-file
+(provide apply-keywords contains-all? contract-violation-of drops-during drops-once gzip-file
          keyword-rejected? message-of scratch-file settle! staging-files)
 
 (define (scratch-file dir name text)
@@ -56,4 +56,10 @@
   (define before (count))
   (drop (make))
   (settle!)
+  (- (count) before))
+
+(define (drops-during count thunk)
+  (settle!)
+  (define before (count))
+  (thunk)
   (- (count) before))

@@ -5,19 +5,23 @@
          racket/match
          (only-in gregor +days date date->iso8601)
          (only-in threading ~>)
-         (only-in polars/private/expr col expr-sort lit)
+         (only-in polars/private/expr
+                  col expr-sort lazyframe-drop lazyframe-select lazyframe-with-columns lit)
+         (only-in (submod polars/private/expr internal) collect-plan/who)
          (only-in polars/private/expr-dt expr-dt-replace-time-zone)
          (only-in polars/private/foreign
-                  dataframe-column dataframe-column-names dataframe-height decimal-dtype?
+                  dataframe-column dataframe-column-names dataframe-drop dataframe-height
+                  dataframe-new decimal-dtype?
                   polars-null polars-null? series-drop series-dtype series-null-count
                   series-rename zoned-datetime-dtype?)
-         (only-in polars/private/generic/core dataframe dataframe? ref series series?)
+         (only-in polars/private/generic/core
+                  dataframe dataframe? ref series series? wrap-dataframe)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
          (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)
          (only-in polars/private/generic/reductions alias max mean min std)
-         (only-in polars/private/generic/reshape cast collect lazy select with-columns)
-         (only-in polars/private/resource with-release))
+         (only-in polars/private/generic/reshape cast)
+         (only-in polars/private/resource with-release with-releases))
 
 (provide (contract-out [describe (-> (or/c series? dataframe?) dataframe?)]))
 
@@ -98,18 +102,25 @@
                      (alias (local-cell-name plan stat))))]
           [_ '()])))
 
-(define (statistics-row plans)
-  (~> (map column-plan-series plans)
-      dataframe
-      lazy
-      (with-columns (for/list ([plan (in-list plans)]
-                               #:when (needs-sort? plan))
-                      (expr-sort (col (column-plan-name plan)))))
-      (select (apply append
-                     (for*/list ([plan (in-list plans)]
-                                 [stat (in-list (column-plan-queried plan))])
-                       (statistic-exprs plan stat))))
-      collect))
+(define (statistics-plan source plans)
+  (define sorts
+    (for/list ([plan (in-list plans)]
+               #:when (needs-sort? plan))
+      (expr-sort (col (column-plan-name plan)))))
+  (define cells
+    (for*/list ([plan (in-list plans)]
+                [stat (in-list (column-plan-queried plan))]
+                [e (in-list (statistic-exprs plan stat))])
+      e))
+  (with-release ([sorted (lazyframe-with-columns source sorts) lazyframe-drop])
+    (lazyframe-select sorted cells)))
+
+(define (call-with-statistics-row plans proc)
+  (with-release ([frame (dataframe-new (map column-plan-series plans)) dataframe-drop]
+                 [row (collect-plan/who 'describe frame (lambda (source)
+                                                          (statistics-plan source plans)))
+                      dataframe-drop])
+    (proc (wrap-dataframe row))))
 
 (define epoch (date 1970 1 1))
 (define microseconds/day 86400000000)
@@ -170,30 +181,23 @@
     [else v]))
 
 (define (statistic-value row plan stat)
-  (define (cell name) (~> row (ref name) (ref 0)))
+  (define (cell name)
+    (with-release ([c (ref row name) series-drop])
+      (ref c 0)))
   (define v (cell (cell-name plan stat)))
   (if (and (zoned-datetime-dtype? (column-plan-dtype plan)) (not (polars-null? v)))
       (cons v (cell (local-cell-name plan stat)))
       v))
 
-(define (release-plan plan) (series-drop (column-plan-series plan)))
-
 (define (call-with-column-plans d proc)
   (define height (dataframe-height d))
-  (let plan-next ([columns (dataframe-column-names d)] [i 0] [plans '()])
-    (match columns
-      ['() (proc (reverse plans))]
-      [(cons column more)
-       (with-release ([plan (plan-column d column i height) release-plan])
-         (plan-next more (add1 i) (cons plan plans)))])))
+  (with-releases ([plans ([column (in-list (dataframe-column-names d))]
+                          [i (in-naturals)])
+                         (plan-column d column i height)
+                         (lambda (plan) (series-drop (column-plan-series plan)))])
+    (proc plans)))
 
-(define (column-statistics d)
-  (call-with-column-plans d plan-statistics))
-
-(define (plan-statistics plans)
-  (define row
-    (and (ormap (lambda (plan) (pair? (column-plan-queried plan))) plans)
-         (statistics-row plans)))
+(define (plan-cells plans row)
   (for/list ([plan (in-list plans)])
     (match-define (column-plan _ _ dt count nulls queried) plan)
     (for/list ([stat (in-list statistics)])
@@ -204,23 +208,33 @@
                     [_ #:when (member stat queried) (statistic-value row plan stat)]
                     [_ polars-null])))))
 
+(define (plan-statistics plans)
+  (if (ormap (lambda (plan) (pair? (column-plan-queried plan))) plans)
+      (call-with-statistics-row plans (lambda (row) (plan-cells plans row)))
+      (plan-cells plans #f)))
+
+(define (dataframe-of-columns names columns)
+  (with-releases ([built ([name (in-list names)] [values (in-list columns)])
+                         (series values #:name name)
+                         series-drop])
+    (dataframe built)))
+
 (define (describe-series s)
   (define rows (dtype-statistics (series-dtype s)))
-  (match-define (list values) (~> (list s) dataframe column-statistics))
-  (dataframe
-   (list (series rows #:name "statistic")
-         (series (for/list ([stat (in-list statistics)]
-                            [v (in-list values)]
-                            #:when (member stat rows))
-                   v)
-                 #:name "value"))))
+  (match-define (list values)
+    (with-release ([d (dataframe-new (list s)) dataframe-drop])
+      (call-with-column-plans d plan-statistics)))
+  (dataframe-of-columns '("statistic" "value")
+                        (list rows
+                              (for/list ([stat (in-list statistics)]
+                                         [v (in-list values)]
+                                         #:when (member stat rows))
+                                v))))
 
 (define (describe-dataframe d)
-  (dataframe
-   (cons (series statistics #:name "statistic")
-         (for/list ([name (in-list (dataframe-column-names d))]
-                    [values (in-list (column-statistics d))])
-           (series values #:name name)))))
+  (define names (dataframe-column-names d))
+  (dataframe-of-columns (cons "statistic" names)
+                        (cons statistics (call-with-column-plans d plan-statistics))))
 
 (define (describe x)
   (if (series? x)
@@ -255,9 +269,11 @@
            (only-in racket/list make-list)
            (only-in racket/math nan?)
            (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/foreign series-drop-count series-quantile)
+           (only-in polars/private/expr-core lazyframe-drop-count)
+           (only-in polars/private/foreign dataframe-drop-count series-drop-count series-quantile)
            (only-in polars/private/generic/math p-abs)
-           (only-in polars/private/generic/reshape agg group-by head)
+           (only-in polars/private/generic/reshape agg collect group-by head lazy select
+                    with-columns)
            (prefix-in contracted: (submod "..")))
 
   (define (check-column d name expected)
@@ -436,30 +452,40 @@
   (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe 5)))
   (check-exn #rx"^describe: contract violation" (lambda () (contracted:describe (col "a"))))
 
-  (define (series-drops-during thunk)
-    (settle!)
-    (define before (series-drop-count))
-    (thunk)
-    (- (series-drop-count) before))
   (define planned (box '()))
   (define (note-copies plans)
     (set-box! planned (map column-plan-series plans)))
-  (check-equal? (series-drops-during (lambda () (call-with-column-plans nums note-copies)))
+  (check-equal? (drops-during series-drop-count
+                              (lambda () (call-with-column-plans nums note-copies)))
                 (length (column-names nums)))
   (check-equal? (length (unbox planned)) (length (column-names nums)))
   (for ([copy (in-list (unbox planned))])
     (check-exn #rx"^series-drop: series has been dropped" (lambda () (series-drop copy))))
-  (check-equal? (series-drops-during
-                 (lambda ()
-                   (check-exn #rx"^boom"
+  (check-equal? (drops-during series-drop-count
                               (lambda ()
-                                (call-with-column-plans nums (lambda (plans) (error 'boom "")))))))
+                                (check-exn #rx"^boom"
+                                           (lambda ()
+                                             (call-with-column-plans
+                                              nums (lambda (plans) (error 'boom "")))))))
                 (length (column-names nums)))
-  (define (all-null width)
-    (dataframe (for/list ([i (in-range width)])
+
+  (define numeric
+    (dataframe (list (series '(5 3 9 1) #:name "i") (series '(1.5 -3.0 0.5 7.75) #:name "f"))))
+  (define all-null
+    (dataframe (for/list ([i (in-range 4)])
                  (series (nulls 3) #:name (format "n~a" i) #:dtype 'i64))))
-  (define wide-nulls (all-null 4))
-  (define narrow-nulls (all-null 1))
-  (check-equal? (- (series-drops-during (lambda () (describe wide-nulls)))
-                   (series-drops-during (lambda () (describe narrow-nulls))))
-                3))
+  (define counters
+    (list (cons 'series series-drop-count)
+          (cons 'dataframe dataframe-drop-count)
+          (cons 'lazyframe lazyframe-drop-count)))
+  (for ([row (in-list (list (list "numeric frame" numeric '(19 3 3))
+                            (list "series" (series '(1 2)) '(10 4 3))
+                            (list "all-null frame" all-null '(9 1 0))))])
+    (match-define (list label x expected) row)
+    (define (describe-and-drop) (dataframe-drop (describe x)))
+    (for ([counter (in-list counters)]
+          [want (in-list expected)])
+      (match-define (cons kind count) counter)
+      (define info (format "~a, ~a releases" label kind))
+      (check-equal? (drops-during count describe-and-drop) want info)
+      (check-equal? (drops-during count (lambda () (describe-and-drop) (settle!))) want info))))
