@@ -61,7 +61,10 @@ pub extern "C" fn lazyframe_slice(
         return ptr::null_mut();
     }
     let lf_ref = unsafe { (*lf).clone() };
-    Box::into_raw(Box::new(lf_ref.slice(offset, saturating_rows(length))))
+    let start = offset.max(-i64::from(IdxSize::MAX));
+    let skipped = usize::try_from(start.abs_diff(offset)).unwrap_or(usize::MAX);
+    let rows = saturating_rows(length.saturating_sub(skipped));
+    Box::into_raw(Box::new(lf_ref.slice(start, rows)))
 }
 
 // ===== Phase A8: lazy join =====

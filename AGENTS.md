@@ -573,10 +573,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   2^63 as `expr_lit_i32` / `expr_lit_i64`. A negative integer beside an
   unsigned series, an integer outside −2^63 to 2^64 − 1, which no literal
   carries, and a value no literal takes are contract errors naming the
-  value and the series' dtype, as Python's eager `OverflowError` is (which
-  Python's eager operators also raise past Int64, where ours run the
-  expression form). Every (operator,
-  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
+  value and the series' dtype, as Python's eager `OverflowError` is.
+  Python's eager operators raise it past Int64 too, where ours run the
+  expression form, except beside a UInt64 series (up to 2^64 − 1) and a
+  Decimal series. Every (operator, dtype, operand) outcome is in
+  `generic/operand-audit.rktd`, which
   `generic/operand-audit.rkt` holds the operators to.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`

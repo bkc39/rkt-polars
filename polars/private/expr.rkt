@@ -7,7 +7,7 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in racket/contract/base ->* contract-out)
+         (only-in racket/contract/base ->* contract-name contract-out)
          (only-in racket/list filter-not)
          polars/private/expr-core
          polars/private/expr-dt
@@ -23,7 +23,7 @@
                   Series-ptr?
                   _rsstring
                   polars-null?
-                  series-new-i64 series-new-f64 series-new-str series-new-bool
+                  series-new-i64 series-new-u64 series-new-f64 series-new-str series-new-bool
                   series-new-null
                   dataframe-drop
                   frame-sort/c sort-flags
@@ -41,6 +41,7 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
            (only-in polars/private/foreign
@@ -67,7 +68,7 @@
 (provide _Expr-ptr Expr-ptr?
          _LazyFrame-ptr LazyFrame-ptr?
          expr-drop lazyframe-drop
-         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
+         expr-col expr-lit-i32 expr-lit-i64 expr-lit-u64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          expr->string
          lit lit/who col ->expr ->expr/who ->key-expr
@@ -381,7 +382,10 @@
      (define s
        (cond
          [(null? vals) (series-new-null "" (length rhs))]
-         [(andmap exact-integer? vals) (series-new-i64 "" rhs)]
+         [(andmap int64/c vals) (series-new-i64 "" rhs)]
+         [(andmap uint64/c vals) (series-new-u64 "" rhs)]
+         [(andmap exact-integer? vals)
+          (raise-argument-error who (format "~s" membership-integers/c) rhs)]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
          [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
@@ -393,6 +397,9 @@
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+
+(define membership-integers/c
+  `(or/c (listof ,(contract-name int64/c)) (listof ,(contract-name uint64/c))))
 
 (define (map-non-null f xs)
   (for/list ([x (in-list xs)])
@@ -1362,11 +1369,22 @@
   (define mid
     (lazyframe-collect (lazyframe-slice (dataframe-lazy df-rows) 2 3)))
   (check-equal? (dataframe-height mid) 3)
-  (for ([n (list (expt 2 32) (add1 (expt 2 32)) (expt 2 63) (sub1 (expt 2 64)))])
-    (for ([cut (list lazyframe-head lazyframe-tail (lambda (lf n) (lazyframe-slice lf 1 n)))]
-          [height '(6 6 5)])
-      (check-equal? (dataframe-height (lazyframe-collect (cut (dataframe-lazy df-rows) n))) height
-                    (format "~a ~a" (object-name cut) n))))
+  (define (lazy-height cut) (dataframe-height (lazyframe-collect (cut (dataframe-lazy df-rows)))))
+  (for* ([n (list (expt 2 32) (add1 (expt 2 32)) (expt 2 63) (sub1 (expt 2 64)))]
+         [row (list (list 'head (lambda (lf) (lazyframe-head lf n)) 6)
+                    (list 'tail (lambda (lf) (lazyframe-tail lf n)) 6)
+                    (list 'slice (lambda (lf) (lazyframe-slice lf 1 n)) 5))])
+    (match-define (list name cut height) row)
+    (check-equal? (lazy-height cut) height (format "~a ~a" name n)))
+  (for ([row (list (list (- (expt 2 33)) (+ (expt 2 33) 2) 6)
+                   (list (- (expt 2 33)) (- (expt 2 33) 3) 3)
+                   (list (- (expt 2 63)) (+ (expt 2 63) 2) 6)
+                   (list (- (expt 2 63)) (- (expt 2 63) 4) 2)
+                   (list (- (expt 2 63)) (sub1 (expt 2 64)) 6)
+                   (list 2 (sub1 (expt 2 64)) 4))])
+    (match-define (list offset length height) row)
+    (check-equal? (lazy-height (lambda (lf) (lazyframe-slice lf offset length))) height
+                  (format "slice ~a ~a" offset length)))
   (check-equal? (series-sum-i32 (dataframe-column mid "x")) 12) ;; 3+4+5
 
   ;; pipeline: filter then take first two — no intermediate collect.
@@ -1741,8 +1759,8 @@
     (define whole
       (dataframe-select-exprs df-s (list (expr-alias (expr-head (col "x") #:n n) "h")
                                          (expr-alias (expr-tail (col "x") #:n n) "t"))))
-    (check-equal? (dataframe-height whole) 5 (format "~a" n))
-    (check-equal? (take5 whole "t") (take5 whole "h") (format "~a" n)))
+    (check-equal? (take5 whole "h") '(30 10 50 20 40) (format "~a" n))
+    (check-equal? (take5 whole "t") '(30 10 50 20 40) (format "~a" n)))
   ;; filter + gather
   (define s-f
     (dataframe-select-exprs

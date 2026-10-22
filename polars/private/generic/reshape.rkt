@@ -52,13 +52,11 @@
 
 (define count/c (integer-in 0 size-max))
 
-(define lazy-rows-max (sub1 (expt 2 32)))
-
 (define expr-rows-max (sub1 (expt 2 63)))
 
-(define (clamped-window offset length limit)
-  (define start (max offset (- limit)))
-  (values start (min limit (max 0 (- length (- start offset))))))
+(define (expr-window offset length)
+  (define start (max offset (- expr-rows-max)))
+  (values start (min expr-rows-max (max 0 (- length (- start offset))))))
 
 (define column-names/c (or/c string? (listof string?)))
 
@@ -106,11 +104,9 @@
 (define (slice x offset length)
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
         [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
-        [(lazyframe? x)
-         (define-values (start rows) (clamped-window offset length lazy-rows-max))
-         (wrap-lazyframe (lazyframe-slice x start rows))]
+        [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
         [else
-         (define-values (start rows) (clamped-window offset length expr-rows-max))
+         (define-values (start rows) (expr-window offset length))
          (expr-slice x start rows)]))
 
 (define (unique x)
@@ -246,6 +242,7 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in polars/private/bulk series->list)
            polars/private/generic/core
            polars/private/generic/operators
            (only-in polars/private/expr-core expr-drop-count)
@@ -483,7 +480,18 @@
   ;; lazy head / tail / slice (build the plan, then collect)
   (check-equal? (height (~> ops-df lazy (head 2) collect)) 2)
   (check-equal? (height (~> ops-df lazy (tail 2) collect)) 2)
-  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3))
+  (check-equal? (height (~> ops-df lazy (slice 1 3) collect)) 3)
+  (for ([row (list (list (- (expt 2 33)) (+ (expt 2 33) 2) '(10 25 7 30 18))
+                   (list (- (expt 2 33)) (- (expt 2 33) 2) '(10 25 7))
+                   (list (- (expt 2 63)) (sub1 (expt 2 64)) '(10 25 7 30 18))
+                   (list 1 (sub1 (expt 2 64)) '(25 7 30 18)))])
+    (match-define (list offset length expected) row)
+    (for ([via (list (list 'eager (lambda () (slice ops-df offset length)))
+                     (list 'lazy (lambda () (~> ops-df lazy (slice offset length) collect)))
+                     (list 'expr (lambda () (select ops-df (slice (col "value") offset length)))))])
+      (match-define (list label sliced) via)
+      (check-equal? (series->list (ref (sliced) "value")) expected
+                    (format "~a ~a ~a" label offset length)))))
 
 (module+ test
   (require racket/runtime-path

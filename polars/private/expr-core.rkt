@@ -34,6 +34,7 @@
          expr-lit-null
          expr-alias
          ->expr ->expr/who lit/who
+         int64/c uint64/c lit-integer/c
          dtype-spec?
          (contract-out
           [lit (->/c lit-value/c Expr-ptr?)]
@@ -153,7 +154,13 @@
                          "no literal of ~v" dtype)]
     [_ (expr-lit-temporal value (->compat-dtype dtype))]))
 
-(define lit-integer/c (integer-in (- (expt 2 63)) (sub1 (expt 2 64))))
+(define int64-min (- (expt 2 63)))
+(define int64-max (sub1 (expt 2 63)))
+(define uint64-max (sub1 (expt 2 64)))
+
+(define int64/c (integer-in int64-min int64-max))
+(define uint64/c (integer-in 0 uint64-max))
+(define lit-integer/c (integer-in int64-min uint64-max))
 
 (define (lit-value? v)
   (or (boolean? v) (string? v) (symbol? v) (polars-null? v)
@@ -162,23 +169,25 @@
 
 (define lit-value/c
   (flat-named-contract
-   '(or/c boolean? (integer-in -9223372036854775808 18446744073709551615)
-          (and/c real? (not/c exact-integer?)) string? symbol? polars-null? gregor-value)
+   `(or/c boolean? ,(contract-name lit-integer/c) (and/c real? (not/c exact-integer?))
+          string? symbol? polars-null? gregor-value)
    lit-value?))
 
 (define (lit/who who v)
   (cond
     [(boolean? v) (expr-lit-bool v)]
     [(and (exact-integer? v) (<= -2147483648 v 2147483647)) (expr-lit-i32 v)]
-    [(and (exact-integer? v) (<= (- (expt 2 63)) v (sub1 (expt 2 63)))) (expr-lit-i64 v)]
-    [(and (exact-integer? v) (lit-integer/c v)) (expr-lit-u64 v)]
-    [(exact-integer? v) (raise-argument-error who (format "~s" (contract-name lit-integer/c)) v)]
-    [(real? v) (expr-lit-f64 (exact->inexact v))]
+    [(int64/c v) (expr-lit-i64 v)]
+    [(uint64/c v) (expr-lit-u64 v)]
+    [(and (real? v) (not (exact-integer? v))) (expr-lit-f64 (exact->inexact v))]
     [(string? v) (expr-lit-str v)]
     [(symbol? v) (expr-lit-str (symbol->string v))]
     [(polars-null? v) (expr-lit-null)]
     [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit who v dtype))]
-    [else (raise-argument-error who (format "~s" (contract-name lit-value/c)) v)]))
+    [else (raise-argument-error
+           who
+           (format "~s" (contract-name (if (exact-integer? v) lit-integer/c lit-value/c)))
+           v)]))
 
 (define (lit v)
   (lit/who 'lit v))
@@ -296,17 +305,17 @@
   (check-exn #rx"^col: contract violation\n  expected: \\(or/c string\\? regexp\\? dtype-spec\\?\\)\n  given: 42"
              (lambda () (contracted:col 42)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col 'list)))
-  (for ([v (list (- (expt 2 63)) (sub1 (expt 2 63)) (expt 2 63) (sub1 (expt 2 64))
-                 1/2 +inf.0 "s" 's #t polars-null)])
+  (for ([v (list int64-min int64-max (add1 int64-max) uint64-max 1/2 +inf.0 "s" 's #t polars-null)])
     (check-pred Expr-ptr? (contracted:lit v)))
-  (for ([v (list (expt 2 64) (sub1 (- (expt 2 63))) #\a '(1) (vector))])
-    (check-exn (regexp (format "^lit: contract violation\n  expected: [^\n]*\n  given: ~a\n"
-                               (regexp-quote (format "~e" v))))
+  (define lit-expected (regexp-quote (format "~s" (contract-name lit-value/c))))
+  (for ([v (list (add1 uint64-max) (sub1 int64-min) #\a '(1) (vector))])
+    (check-exn (regexp (format "^lit: contract violation\n  expected: ~a\n  given: ~a\n"
+                               lit-expected (regexp-quote (format "~e" v))))
                (lambda () (contracted:lit v))))
-  (check-exn (regexp (string-append "^expr-add: contract violation\n  expected: \\(integer-in "
-                                    "-9223372036854775808 18446744073709551615\\)\n"
-                                    "  given: 18446744073709551616$"))
-             (lambda () (->expr/who 'expr-add (expt 2 64))))
+  (check-exn (regexp (format "^expr-add: contract violation\n  expected: ~a\n  given: ~a$"
+                             (regexp-quote (format "~s" (contract-name lit-integer/c)))
+                             (add1 uint64-max)))
+             (lambda () (->expr/who 'expr-add (add1 uint64-max))))
   (check-exn #rx"^\\+: contract violation\n  expected: \\(or/c boolean\\? [^\n]*\n  given: #\\\\a$"
              (lambda () (->expr/who '+ #\a)))
   (check-exn #rx"^col: contract violation" (lambda () (contracted:col #rx#"bytes")))
