@@ -607,16 +607,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   Decimal series a real or a boolean (compared as 1 or 0), beside a
   duration series a number in `*`, a string before a series in `+`, beside
   an integer series an Int64 integer past the dtype's range (`(+ u8 300)`
-  is UInt16), and in `/` a negative integer beside an unsigned series
-  (integer division, `(/ u8 -1)` is Int16). `lit` takes an integer from
+  is UInt16), in `/` a negative integer beside an unsigned series
+  (integer division, `(/ u8 -1)` is Int16), and beside a Boolean series an
+  integer in `/`. `lit` takes an integer from
   2^63 to 2^64 − 1 as `expr_lit_u64`, a dynamic integer that materialises
   as UInt64, as `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` /
   `expr_lit_i64`. Such an integer beside a series follows Python's eager
   operators, which raise `OverflowError` past Int64 except beside UInt64
   (where they wrap), beside Decimal and in `/`: it is a constant beside a
   UInt64 series, the expression form beside a Decimal series, and a
-  contract error beside any other integer series and a Null one (Python
-  raises a `TypeError` beside Null), except in `/`, where Python gives
+  contract error beside any other integer or Boolean series and a Null one
+  (Python raises a `TypeError` beside Null), except in `/`, where Python gives
   Float64 (Float64 nulls beside Null) and ours refuses, since its `/` of
   integers is integer division (the `past-int64` deviation); beside a float
   or string series it is what any integer is there, and it is refused

@@ -2188,13 +2188,14 @@ a @racket['null] series (where Python's eager operators raise) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
-an integer series an integer within Int64 past the dtype's range, and in
-@racket[/] a negative integer beside an unsigned series. An integer from
+an integer series an integer within Int64 past the dtype's range, in
+@racket[/] a negative integer beside an unsigned series, and beside a
+@racket['boolean] series an integer in @racket[/]. An integer from
 @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
 UInt64 literal carries, is a constant beside a @racket['uint64] series (where
 Python's operator wraps, as ours does), takes the expression form beside a
-Decimal series, and is refused beside any other integer series and a
-@racket['null] one, where Python's eager operators raise an
+Decimal series, and is refused beside any other integer or @racket['boolean]
+series and a @racket['null] one, where Python's eager operators raise an
 @tt{OverflowError} (a @tt{TypeError} beside Null), except in @racket[/],
 where Python gives @racket['float64] (@racket['float64] nulls beside Null)
 and ours refuses, since its @racket[/] of integers is integer division;
