@@ -124,7 +124,9 @@ lazyframe_sort_with_options builder
 lazyframe_tail builder
 lazyframe_unique builder
 lazyframe_with_columns builder
+series_binary_byte_len accessor
 series_copy_as_f64 accessor
+series_copy_binary accessor
 series_copy_bool accessor
 series_copy_cat accessor
 series_copy_decimal accessor
