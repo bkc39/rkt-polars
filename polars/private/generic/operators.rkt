@@ -4,10 +4,12 @@
          (only-in racket/match match match-define)
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/expr-core drop-owned)
          polars/private/generic/core
          polars/private/generic/dtype
          polars/private/generic/logical
          polars/private/generic/operands
+         (only-in polars/private/resource with-release)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
@@ -21,7 +23,7 @@
       [_ #:when (andmap base:number? args) (apply base-op args)]
       [(list a b)
        (cond
-         [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who 'name a) (->expr/who 'name b))]
+         [(or (Expr-ptr? a) (Expr-ptr? b)) (call-with-exprs 'name a b expr-op)]
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a)
           (call-with-operand-series 'name a b (lambda (o) (wrap-series (series-op 'name a o))))]
@@ -40,8 +42,13 @@
 (define-cmp =  expr-eq series-eq/who series-eq/who base:=)
 (define-cmp != expr-ne series-ne/who series-ne/who base:!=)
 
+(define (call-with-exprs who a b proc)
+  (with-release ([ea (->expr/who who a) (if (eq? ea a) void expr-drop)]
+                 [eb (->expr/who who b) (if (eq? eb b) void expr-drop)])
+    (proc ea eb)))
+
 (define (binary-arith who expr-op series-op base-op a b)
-  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (expr-op (->expr/who who a) (->expr/who who b))]
+  (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (call-with-exprs who a b expr-op)]
         [(expression-form-op who expr-op a b) => values]
         [(series? a)
          (call-with-operand-series who a b (lambda (o) (wrap-series (series-op who a o))))]
@@ -57,10 +64,10 @@
     [dt (raise-arguments-error '- "cannot negate a series of this dtype" "dtype" dt)]))
 
 (define (expr-reciprocal e)
-  (define divided (p/ 1 e))
-  (match (expr-meta-output-name/raw e)
-    [#f (expr-name-keep divided)]
-    [name (expr-alias divided name)]))
+  (with-release ([divided (p/ 1 e) expr-drop])
+    (match (expr-meta-output-name/raw e)
+      [#f (expr-name-keep divided)]
+      [name (expr-alias divided name)])))
 
 (define (series-reciprocal s)
   (match (series-dtype s)
@@ -90,8 +97,10 @@
     (match args
       one.clause ...
       [_ #:when (andmap base:number? args) (apply base-op args)]
-      [(cons a more) (foldl (lambda (b acc) (binary-arith 'who expr-op series-op base-op acc b))
-                            a more)])))
+      [(cons a more)
+       (for/fold ([acc a]) ([b (in-list more)])
+         (with-release ([consumed acc (if (eq? consumed a) void drop-owned)])
+           (binary-arith 'who expr-op series-op base-op consumed b)))])))
 
 (define-arith p+ + expr-add series-add/who base:+)
 (define-arith p- - expr-sub series-sub/who base:- #:unary expr-neg series-negate)
@@ -133,6 +142,8 @@
            (only-in gregor/period hours minutes)
            (only-in gregor/time time)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/expr-core expr-drop-count)
+           (only-in polars/private/resource with-release)
            polars/private/generic/core
            polars/private/generic/test-fixtures
            (only-in threading ~>))
@@ -146,6 +157,35 @@
     (let ([before (series-drop-count)])
       (apply-operator)
       (check >= (- (series-drop-count) before) 1)))
+  (define (owned-temporaries thunk)
+    (with-release ([v (col "v") expr-drop])
+      (thunk v)))
+  (for ([row (in-list
+              (list (list "(+ s 1)" series-drop-count
+                          (lambda (v) (series-drop (p+ operand-ints 1))) 2)
+                    (list "(+ s 1 2 3)" series-drop-count
+                          (lambda (v) (series-drop (p+ operand-ints 1 2 3))) 6)
+                    (list "(* s s s s)" series-drop-count
+                          (lambda (v) (series-drop (p* operand-ints operand-ints operand-ints
+                                                       operand-ints)))
+                          3)
+                    (list "(+ s 1 (box 2))" series-drop-count
+                          (lambda (v) (check-exn exn:fail:contract?
+                                                 (lambda () (p+ operand-ints 1 (box 2)))))
+                          2)
+                    (list "(- e 1)" expr-drop-count (lambda (v) (expr-drop (p- v 1))) 3)
+                    (list "(- e 1 2 3)" expr-drop-count (lambda (v) (expr-drop (p- v 1 2 3))) 7)
+                    (list "(+ 1 e)" expr-drop-count (lambda (v) (expr-drop (p+ 1 v))) 3)
+                    (list "(> e 1)" expr-drop-count (lambda (v) (expr-drop (> v 1))) 3)
+                    (list "(< 1 e)" expr-drop-count (lambda (v) (expr-drop (< 1 v))) 3)
+                    (list "(= e e)" expr-drop-count (lambda (v) (expr-drop (= v v))) 2)
+                    (list "(/ e)" expr-drop-count (lambda (v) (expr-drop (p/ v))) 4)
+                    (list "(/ s)" expr-drop-count
+                          (lambda (v) (series-drop (p/ operand-ints))) 6)))])
+    (match-define (list label count thunk expected) row)
+    (check-equal? (drops-during count (lambda () (owned-temporaries thunk))) expected label)
+    (check-equal? (drops-during count (lambda () (owned-temporaries thunk) (settle!))) expected
+                  label))
   (check-equal? (series->list (p+ operand-ints operand-ints)) '(2 4))
   (check-equal? (series->list (p-and operand-flags operand-flags)) '(#t #f))
   (check-equal? (series->list operand-ints) '(1 2))

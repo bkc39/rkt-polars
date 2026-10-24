@@ -190,7 +190,7 @@
   ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
            (only-in polars/private/expr dataframe-group-by-agg)
-           (only-in polars/private/expr-core col expr-drop-count)
+           (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
            (only-in polars/private/foreign
                     series-cast series-new-i32 series-new-i64 series-new-null series-new-str
                     series-slice polars-null)
@@ -240,9 +240,11 @@
                                "\t2021-03-27 12:00:00.500 CET\n\tnull\n\t2021-07-01 00:00:00 CEST\n"
                                "\t1970-01-01 00:59:59.999 CET\n]"))
   (settle!)
-  (let ([before (expr-drop-count)])
+  (let ([before (expr-drop-count)]
+        [plans-before (lazyframe-drop-count)])
     (series->string zoned)
-    (check >= (- (expr-drop-count) before) 2))
+    (check >= (- (expr-drop-count) before) 2)
+    (check-equal? (- (lazyframe-drop-count) plans-before) 2))
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
                                     '(datetime microseconds "Asia/Kathmandu")))
                 '("2021-03-27 16:45:00 +0545" "]"))
