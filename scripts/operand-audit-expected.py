@@ -132,7 +132,7 @@ FIXTURES = SERIES + [
 ]
 BY_LABEL = dict(FIXTURES)
 
-PLAIN = [1, -1, 300, 2**40, 2**63, fractions.Fraction(1, 3), 2.5, "x", Sym("x"), True, None,
+PLAIN = [1, -1, 300, 2**40, 2**63, 2**64 - 1, fractions.Fraction(1, 3), 2.5, "x", Sym("x"), True, None,
          dt.date(2024, 1, 1), dt.time(1), dt.timedelta(hours=1), dt.datetime(2024, 1, 1),
          dt.datetime(2024, 1, 1, tzinfo=PARIS)]
 

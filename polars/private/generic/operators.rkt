@@ -101,7 +101,7 @@
 (define (series-reciprocal s)
   (match (series-dtype s)
     ['null s]
-    [(or (? numeric-dtype?) (list 'decimal _ _)) (series-through-expr '/ s expr-reciprocal)]
+    [(or (? numeric-dtype?) 'boolean (list 'decimal _ _)) (series-through-expr '/ s expr-reciprocal)]
     [dt (raise-arguments-error '/ "cannot take the reciprocal of a series of this dtype"
                                "dtype" dt)]))
 
@@ -382,7 +382,11 @@
              (lambda () (p- (series '(1 2) #:dtype 'u8))))
   (check-exn #rx"^-: cannot negate a series of this dtype\n  dtype: 'string"
              (lambda () (p- (series '("a" "b")))))
-  (for ([operand (list (series '("a")) (series '(#t #f)) (series (list (hours 1)))
+  (define bools (series '(#t #f) #:name "b"))
+  (for ([result (list (p/ bools) (p/ 1 bools))])
+    (check-equal? (list (dtype result) (series-name result) (series->list result))
+                  (list 'int32 "b" (list 1 polars-null))))
+  (for ([operand (list (series '("a")) (series (list (hours 1)))
                        (series (list (datetime 2013 1 1))))])
     (check-exn #rx"^/: cannot take the reciprocal of a series of this dtype\n  dtype: "
                (lambda () (p/ operand))))

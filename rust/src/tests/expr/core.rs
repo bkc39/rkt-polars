@@ -113,3 +113,36 @@ fn null_literal_broadcasts_and_compares_to_null() {
     let plus = out.column("plus").unwrap();
     assert_eq!((plus.dtype(), plus.null_count()), (&DataType::Int64, 3));
 }
+
+fn u64_literal(v: u64) -> Expr {
+    let e = expr_lit_u64(v);
+    assert!(!e.is_null());
+    let out = unsafe { (*e).clone() };
+    expr_drop(e);
+    out
+}
+
+#[test]
+fn u64_literal_reaches_past_i64_and_compares_with_a_uint64_column() {
+    let u = Column::new("u".into(), [u64::MAX, 1 << 63, 1]);
+    let out = DataFrame::new_infer_height(vec![u])
+        .unwrap()
+        .lazy()
+        .select([
+            u64_literal(u64::MAX).alias("l"),
+            col("u").eq(u64_literal(u64::MAX)).alias("eq"),
+            col("u").gt_eq(u64_literal(1 << 63)).alias("ge"),
+        ])
+        .collect()
+        .unwrap();
+    let l = out.column("l").unwrap();
+    assert_eq!(l.dtype(), &DataType::UInt64);
+    assert_eq!(l.u64().unwrap().get(0), Some(u64::MAX));
+    let bools = |name: &str| -> Vec<Option<bool>> {
+        let c = out.column(name).unwrap();
+        assert_eq!(c.dtype(), &DataType::Boolean);
+        c.bool().unwrap().iter().collect()
+    };
+    assert_eq!(bools("eq"), vec![Some(true), Some(false), Some(false)]);
+    assert_eq!(bools("ge"), vec![Some(true), Some(true), Some(false)]);
+}
