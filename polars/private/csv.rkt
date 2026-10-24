@@ -6,9 +6,10 @@
          syntax/parse/define
          (for-syntax racket/base)
          (only-in racket/contract/base
-                  and/c cons/c contract-out flat-named-contract integer-in listof or/c)
+                  and/c cons/c contract-out flat-named-contract listof or/c)
          (only-in racket/list index-of partition)
          (only-in racket/string non-empty-string?)
+         (only-in polars/private/c-integer uint16-max uint16/c)
          (only-in polars/private/expr-core
                   _LazyFrame-ptr/null LazyFrame-ptr? define-compat lazyframe-drop)
          (only-in polars/private/foreign
@@ -44,10 +45,9 @@
 
 (define eol-char/c (flat-named-contract 'eol-char/c ascii-char?))
 
-(define float-precision-max #xFFFF)
+(define float-precision-max uint16-max)
 
-(define float-precision/c
-  (flat-named-contract 'float-precision/c (integer-in 0 float-precision-max)))
+(define float-precision/c (flat-named-contract 'float-precision/c uint16/c))
 
 (define csv-dtype/c
   (flat-named-contract

@@ -2,11 +2,12 @@
 
 (require (prefix-in base: (only-in racket/base sort))
          (only-in racket/contract/base
-                  ->* ->i contract-out flat-named-contract integer-in
+                  ->* ->i contract-out flat-named-contract
                   non-empty-listof none/c or/c procedure-arity-includes/c
                   rename-contract the-unsupplied-arg unsupplied-arg?)
+         (only-in polars/private/c-integer uint64/c)
          (only-in polars/private/expr
-                  Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort)
+                  Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by lazyframe-sort rank-method/c)
          (only-in polars/private/expr-core sort-by/c)
          (only-in polars/private/foreign series-sort sort-flags-mismatch sort-flags/c)
          (only-in (submod polars/private/foreign internal) dataframe-sort/who)
@@ -17,9 +18,9 @@
 (provide (contract-out [sort sort/c]
                        [sort-by (sort-by/c col-expr/c 'sort-by/c)]
                        [rank (->* (col-expr/c)
-                                  (#:method (or/c 'average 'min 'max 'dense 'ordinal)
+                                  (#:method rank-method/c
                                    #:descending boolean?
-                                   #:seed (or/c #f (integer-in 0 (sub1 (expt 2 64)))))
+                                   #:seed (or/c #f uint64/c))
                                   Expr-ptr?)])
          gather)
 
@@ -107,6 +108,7 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in racket/contract/base contract-name)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape      ; with-columns / select
@@ -139,8 +141,10 @@
              (lambda () (contracted:rank "x" #:method 'first)))
   (check-pred Expr-ptr? (contracted:rank "x" #:method 'ordinal #:descending #t #:seed 7))
   (check-pred Expr-ptr? (contracted:rank "x" #:seed (sub1 (expt 2 64))))
-  (check-exn #rx"^rank: contract violation\n  expected: \\(or/c #f \\(integer-in 0 18446744073709551615\\)\\)\n  given: 18446744073709551616"
-             (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
+  (check-exn
+   (regexp (format "^rank: contract violation\n  expected: ~a\n  given: 18446744073709551616"
+                   (regexp-quote (format "~s" (contract-name (or/c #f uint64/c))))))
+   (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
 
 (module+ test
   (require racket/match
@@ -153,7 +157,7 @@
            (prefix-in contracted: (submod ".."))
            (only-in polars/private/expr-core expr->string lit)
            (only-in polars/private/generic/cumulative diff shift)
-           (only-in polars/private/generic/math p-abs p-round)
+           (only-in polars/private/generic/math p-abs [round p-round])
            (only-in polars/private/generic/operators p+)
            (only-in polars/private/generic/strings str-to-uppercase)
            (only-in polars/private/generic/window over)

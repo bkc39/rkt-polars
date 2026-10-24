@@ -4,11 +4,13 @@
   (require rackunit
            racket/match
            (prefix-in rkt: (only-in racket/base max min))
+           (only-in racket/contract/base contract-name has-contract? or/c)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/c-integer int64/c size/c uint32/c)
            (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
-                    dataframe-with-columns)
+                    dataframe-with-columns Expr-ptr? null-behavior/c)
            polars/private/generic/core
            polars/private/generic/cumulative
            polars/private/generic/datetime
@@ -20,7 +22,8 @@
            polars/private/generic/reductions
            polars/private/generic/reshape
            polars/private/generic/strings
-           (only-in polars/private/test-helpers not-utf-8-expected not-utf-8-names refused))
+           (only-in polars/private/test-helpers
+                    not-utf-8-expected not-utf-8-names refusal refusal-misses refused))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -51,20 +54,49 @@
   (check-equal? (column-names (drop frame "v")) '("s"))
   (check-equal? (drop '(1 2 3) 1) '(2 3))
 
-  (define count-range "[(]integer-in 0 18446744073709551615[)]")
-  (define offset-range "[(]integer-in -9223372036854775808 9223372036854775807[)]")
-  (for* ([x (list frame (series '(1 2)) (lazy frame) (col "v"))]
-         [call (list (list 'head count-range (lambda () (head x -1)))
-                     (list 'tail count-range (lambda () (tail x -1)))
-                     (list 'slice count-range (lambda () (slice x 0 -1)))
-                     (list 'head count-range (lambda () (head x (expt 2 64))))
-                     (list 'tail count-range (lambda () (tail x (expt 2 64))))
-                     (list 'slice count-range (lambda () (slice x 0 (expt 2 64))))
-                     (list 'slice offset-range (lambda () (slice x (expt 2 63) 1)))
-                     (list 'slice offset-range (lambda () (slice x (sub1 (- (expt 2 63))) 1))))])
-    (match-define (list who range thunk) call)
-    (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: ~a\n" who range))
-                  thunk))
+  (check-equal?
+   (refusal-misses
+    (append
+     (for*/list ([x (list frame (series '(1 2)) (lazy frame) (col "v"))]
+                 [row (list (refusal 'head size/c -1 (head x -1))
+                            (refusal 'tail size/c -1 (tail x -1))
+                            (refusal 'slice size/c -1 (slice x 0 -1))
+                            (refusal 'head size/c (expt 2 64) (head x (expt 2 64)))
+                            (refusal 'tail size/c (expt 2 64) (tail x (expt 2 64)))
+                            (refusal 'slice size/c (expt 2 64) (slice x 0 (expt 2 64)))
+                            (refusal 'slice int64/c (expt 2 63) (slice x (expt 2 63) 1))
+                            (refusal 'slice int64/c (sub1 (- (expt 2 63)))
+                                     (slice x (sub1 (- (expt 2 63))) 1)))])
+       row)
+     (list (refusal 'shift int64/c (expt 2 63) (shift "v" #:n (expt 2 63)))
+           (refusal 'diff int64/c (sub1 (- (expt 2 63))) (diff "v" #:n (sub1 (- (expt 2 63)))))
+           (refusal 'diff null-behavior/c 'keep (diff "v" #:null-behavior 'keep))
+           (refusal 'forward-fill (or/c #f uint32/c) (expt 2 32)
+                    (forward-fill "v" #:limit (expt 2 32)))
+           (refusal 'backward-fill (or/c #f uint32/c) -1 (backward-fill "v" #:limit -1))
+           (refusal 'str-extract size/c (expt 2 64)
+                    (str-extract "s" "(a)" #:group-index (expt 2 64)))
+           (refusal 'round uint32/c -1 (round "v" #:decimals -1) #:unblamed)
+           (refusal 'round uint32/c 1.5 (round "v" #:decimals 1.5) #:unblamed)
+           (refusal 'round uint32/c (expt 2 32) (round (col "v") #:decimals (expt 2 32))
+                    #:unblamed)
+           (refusal 'round number? 'x (round 2.5 #:decimals 'x) #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a #:decimals -1)
+                    #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a) #:unblamed))))
+   '())
+  (check-raises 'contract
+                (regexp (string-append "^round: contract violation\n"
+                                       "  expected: \\(or/c Expr-ptr\\? string\\? number\\?\\)\n"
+                                       "  given: \n   shape: \\(1,\\)"))
+                (lambda () (round (series '(1.0)))))
+  (check-false (has-contract? round))
+  (check-equal? (list (round 1234 #:decimals -2) (round 2.5) (round 2.345 #:decimals 1))
+                (list 1200 2.0 2.3))
+  (check-equal? (series->list (ref (select (dataframe (list (series '(1.25 2.5) #:name "v")))
+                                           (round "v" #:decimals 1))
+                                   "v"))
+                '(1.2 2.5))
 
   (define edge-counts
     (list 0 2 3 4 (sub1 (expt 2 32)) (expt 2 32) (sub1 (expt 2 63)) (expt 2 63)
@@ -252,7 +284,9 @@
   (check-raises 'contract #rx"^unpivot: contract violation\n"
                 (lambda () (unpivot frame #:on "v" #:index '("s"))))
 
-  (define not-a-literal "contract violation\n  expected: [(]or/c boolean[?] [(]integer-in ")
+  (define not-a-literal
+    (string-append "contract violation\n  expected: "
+                   (regexp-quote (format "(or/c boolean? ~s " (contract-name int64/c)))))
   (for ([call (list (cons 'fill-null (lambda () (fill-null (col "v") #\a)))
                     (cons 'fill-nan (lambda () (fill-nan (col "v") #\a)))
                     (cons 'is-between (lambda () (is-between (col "v") #\a 3)))
