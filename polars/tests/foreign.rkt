@@ -57,24 +57,26 @@
                     series-new-null series-ref-bytes series-slice series-sort series-std
                     series-sub-i32 series-sub-i64 series-sub-u32 series-sub-u64 series-tail
                     series-var)
-           (only-in polars/private/resource with-raw-buffer)))
+           (only-in polars/private/resource with-raw-buffer)
+           (only-in racket/string string-join)
+           (only-in racket/contract exn:fail:contract:blame?)
+           (prefix-in contracted: polars/private/foreign)
+           (only-in polars/tests/test-helpers polars-sources refusal refusal-misses settle!)
+           (only-in racket/file delete-directory/files make-temporary-directory))
 
-(module+ test
   (define empty-series-ptr
     (series-empty))
   (check-pred Series-ptr? empty-series-ptr)
-  (check-pred void? (series-drop empty-series-ptr)))
+  (check-pred void? (series-drop empty-series-ptr))
 
-(module+ test
   (check-equal? (series-name (series-empty)) "")
   (check-equal? (series-dtype (series-empty)) 'int32)
   (check-equal?
    (let ([s (series-empty)])
      (series-rename s "hello")
      (series-name s))
-   "hello"))
+   "hello")
 
-(module+ test
   (define s (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
   (check-equal? (series-len (series-head s 3)) 3)
   (check-equal? (series-sum-i32 (series-head s 3)) 8) ;; 3+1+4
@@ -93,9 +95,8 @@
                 9)
 
   ;; drop_nulls on a series with no nulls is a no-op
-  (check-equal? (series-len (series-drop-nulls s)) 8))
+  (check-equal? (series-len (series-drop-nulls s)) 8)
 
-(module+ test
   (define red-i32 (series-new-i32 "x" '(3 1 4 1 5 9 2 6)))
   (check-equal? (series-min-i32 red-i32) 1)
   (check-equal? (series-max-i32 red-i32) 9)
@@ -155,13 +156,11 @@
 
   (check-equal? (series-n-unique
                  (series-new-str "s" '("a" "b" "a" "c" "b")))
-                3))
+                3)
 
-(module+ test
   (check-equal? (series-len (series-empty)) 0)
-  (check-equal? (series-null-count (series-empty)) 0))
+  (check-equal? (series-null-count (series-empty)) 0)
 
-(module+ test
   (check-pred Series-ptr? (series-new-i32 "" '(1 2 3)))
   (check-equal?
    (series-len (series-new-i32 "series" '(0 1)))
@@ -182,17 +181,15 @@
   (check-pred Series-ptr? (series-new-i32/vec "" (vector 1 2 3)))
   (check-equal?
    (series-len (series-new-i32/vec "" (vector 0)))
-   1))
+   1)
 
-(module+ test
   (check-pred Series-ptr? (series-new-i8 "x" '(-8 0 12)))
   (check-equal? (series-dtype (series-new-i8 "x" '(-8 0 12))) 'int8)
   (check-pred Series-ptr? (series-new-i8/vec "x" (vector -8 0 12)))
   (check-pred Series-ptr? (series-new-i16 "x" '(-300 0 1200)))
   (check-equal? (series-dtype (series-new-i16 "x" '(-300 0 1200))) 'int16)
-  (check-pred Series-ptr? (series-new-i16/vec "x" (vector -300 0 1200))))
+  (check-pred Series-ptr? (series-new-i16/vec "x" (vector -300 0 1200)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-f64 "" '(1.1 2.17)))
   (check-equal?
    (series-len (series-new-f64 "series" '(0.0 1.2)))
@@ -221,40 +218,34 @@
   (check-pred Series-ptr? (series-new-f64/vec "" (vector 17.29 40.2)))
   (check-equal?
    (series-len (series-new-f64/vec "" (vector 17.29 40.2)))
-   2))
+   2)
 
-(module+ test
   (check-pred Series-ptr? (series-new-f32 "" '(1.5 2.25)))
   (check-equal? (series-dtype (series-new-f32 "x" '(1.5 2.25))) 'float32)
-  (check-pred Series-ptr? (series-new-f32/vec "" (vector 1.5 2.25))))
+  (check-pred Series-ptr? (series-new-f32/vec "" (vector 1.5 2.25)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-i64 "" '(1 2 3)))
   (check-equal? (series-len (series-new-i64 "x" '(1 2))) 2)
   (check-equal? (series-dtype (series-new-i64 "x" '(1 2))) 'int64)
-  (check-pred Series-ptr? (series-new-i64/vec "" (vector 1 2 3))))
+  (check-pred Series-ptr? (series-new-i64/vec "" (vector 1 2 3)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-u32 "" '(1 2 3)))
   (check-equal? (series-len (series-new-u32 "x" '(0 1 2))) 3)
   (check-equal? (series-dtype (series-new-u32 "x" '(0 1))) 'uint32)
-  (check-pred Series-ptr? (series-new-u32/vec "" (vector 1 2 3))))
+  (check-pred Series-ptr? (series-new-u32/vec "" (vector 1 2 3)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-u8 "x" '(0 1 255)))
   (check-equal? (series-dtype (series-new-u8 "x" '(0 1 255))) 'uint8)
   (check-pred Series-ptr? (series-new-u8/vec "x" (vector 0 1 255)))
   (check-pred Series-ptr? (series-new-u16 "x" '(0 1 65535)))
   (check-equal? (series-dtype (series-new-u16 "x" '(0 1 65535))) 'uint16)
-  (check-pred Series-ptr? (series-new-u16/vec "x" (vector 0 1 65535))))
+  (check-pred Series-ptr? (series-new-u16/vec "x" (vector 0 1 65535)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-u64 "" '(1 2 3)))
   (check-equal? (series-len (series-new-u64 "x" '(0 1 2))) 3)
   (check-equal? (series-dtype (series-new-u64 "x" '(0 1))) 'uint64)
-  (check-pred Series-ptr? (series-new-u64/vec "" (vector 1 2 3))))
+  (check-pred Series-ptr? (series-new-u64/vec "" (vector 1 2 3)))
 
-(module+ test
   (for ([n (in-list '(0 3))])
     (define nulls (series-new-null "nothing" n))
     (check-equal? (list (series-name nulls) (series-len nulls) (series-dtype nulls)
@@ -264,9 +255,8 @@
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
   (check-equal? (series-len (series-new-bool "x" '(#t #f))) 2)
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
-  (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t))))
+  (check-pred Series-ptr? (series-new-bool/vec "" (vector #t #f #t)))
 
-(module+ test
   (check-pred Series-ptr? (series-new-str "" '("foo" "bar" "baz" "")))
   (check-equal?
    (series-len (series-new-str "str" '("" "")))
@@ -292,13 +282,11 @@
    "str")
   (check-equal?
    (series-dtype (series-new-str "str" '("" "")))
-   'string))
+   'string)
 
-(module+ test
   (check-pred YMDHMS?
-              (make-YMDHMS 2014 7 11 12 0 0)))
+              (make-YMDHMS 2014 7 11 12 0 0))
 
-(module+ test
   (let ([bytes-of (series-cast (series-new-str "b" (list "a\u0000é" polars-null "")) 'binary)])
     (check-equal? (map (lambda (i) (series-ref-bytes 'test bytes-of i 10)) '(0 1 2))
                   (list #"a\0\303\251" polars-null #""))
@@ -309,9 +297,8 @@
     (check-exn #rx"^test: cannot read a binary value at index 3$"
                (lambda () (series-ref-bytes 'test bytes-of 3 10)))
     (check-exn #rx"^test: cannot read a binary value at index 0$"
-               (lambda () (series-ref-bytes 'test (series-new-str "s" '("a")) 0 10)))))
+               (lambda () (series-ref-bytes 'test (series-new-str "s" '("a")) 0 10))))
 
-(module+ test
   (define-values (ex0 ex1)
     (values
      (list (make-YMDHMS 2010 1 1 0 0 0))
@@ -352,9 +339,8 @@
     (for ([empty (in-list (list (new-list "e" '()) (new-vector "e" (vector))))])
       (check-equal? (list (series-name empty) (series-len empty) (series-dtype empty))
                     (list "e" 0 dtype)
-                    (format "~s" dtype)))))
+                    (format "~s" dtype))))
 
-(module+ test
   (define-namespace-anchor ref-anchor)
   (define ref-i32 (series-new-i32 "x" (list 10 polars-null -3)))
   (check-equal? (series-len ref-i32) 3)
@@ -488,10 +474,8 @@
   (check-exn #rx"nonnegative"
              (lambda () (series-ref ref-i32 -1)))
   (check-exn #rx"out of bounds"
-             (lambda () (series-ref ref-i32 3))))
+             (lambda () (series-ref ref-i32 3)))
 
-(module+ test
-  (require (only-in racket/string string-join))
   (define (cast-message s dtype)
     (with-handlers ([exn:fail? exn-message])
       (series-cast s dtype)
@@ -538,9 +522,8 @@
                         (string-join (for/list ([i (in-range enum-misses-shown)])
                                        (format "k~a" (+ distinct i))))
                         (- distinct enum-misses-shown)))
-  (check < (- (current-memory-use 'cumulative) allocated) 1000000))
+  (check < (- (current-memory-use 'cumulative) allocated) 1000000)
 
-(module+ test
   (define batch2-x (series-new-i32 "x" (list 1 2 polars-null 4)))
   (define batch2-y (series-new-i32 "y" '(10 20 30 40)))
 
@@ -713,9 +696,8 @@
   (check-equal? (series-ref (series-mod-f64 (series-new-f64 "f" '(3.0 7.5)) 2.0) 1)
                 1.5)
   (check-exn #rx"operation failed"
-             (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3))))
+             (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3)))
 
-(module+ test
   ;; Use a small dataframe so we can read mask results back via dataframe-filter.
   (define cmp-df
     (dataframe-new
@@ -741,9 +723,8 @@
 
   ;; str
   (check-equal? (count-where (series-eq-str (dataframe-column cmp-df "s") "a")) 2)
-  (check-equal? (count-where (series-ne-str (dataframe-column cmp-df "s") "a")) 3))
+  (check-equal? (count-where (series-ne-str (dataframe-column cmp-df "s") "a")) 3)
 
-(module+ test
   (define bool-df
     (dataframe-new
      (list (series-new-i32 "x" '(1 2 3 4 5))
@@ -764,9 +745,8 @@
   (define non-null-mask (series-is-not-null (dataframe-column bool-df "x")))
   (check-equal? (dataframe-height (dataframe-filter bool-df non-null-mask)) 5)
   (define null-mask (series-is-null (dataframe-column bool-df "x")))
-  (check-equal? (dataframe-height (dataframe-filter bool-df null-mask)) 0))
+  (check-equal? (dataframe-height (dataframe-filter bool-df null-mask)) 0)
 
-(module+ test
   (check-pred DataFrame-ptr? (dataframe-make))
   (check-pred DataFrame-ptr? (dataframe-empty))
   (check-pred void? (dataframe-drop (dataframe-make)))
@@ -1063,12 +1043,8 @@
   (check-equal? (dataframe-height unpivoted-sales) 4)
   (check-equal? (dataframe-column-names unpivoted-sales)
                 '("store" "variable" "value"))
-  (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100))
+  (check-equal? (series-sum-i32 (dataframe-column unpivoted-sales "value")) 100)
 
-(module+ test
-  (require (only-in racket/contract exn:fail:contract:blame?)
-           (prefix-in contracted: polars/private/foreign)
-           (only-in polars/tests/test-helpers settle!))
   (define ((sort-blame? rx) e)
     (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
@@ -1097,9 +1073,8 @@
     (for ([_ (in-range 20)])
       (contracted:dataframe-sort sort-src '("x" "y") #:nulls-last '(#t #f)))
     (settle!)
-    (check >= (- (dataframe-drop-count) before) 10)))
+    (check >= (- (dataframe-drop-count) before) 10))
 
-(module+ test
   (define (releases count thunk)
     (define before (count))
     (for ([_ (in-range 20)])
@@ -1310,11 +1285,7 @@
   (check-exn #rx"^dataframe-filter: operation failed$"
              (lambda () (dataframe-filter owned-frame owned-i32)))
   (check-exn #rx"^dataframe-join-asof: [^\n]*\"nope\""
-             (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope"))))
-
-(module+ test
-  (require (only-in racket/file delete-directory/files make-temporary-directory)
-           (only-in polars/tests/test-helpers polars-sources))
+             (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope")))
 
   (define owned-drops
     (hash '_Series-ptr 'series-drop '_Series-ptr/null 'series-drop
@@ -1388,11 +1359,8 @@
                            #:unless (releases-result? form))
                   (cadr form))
                 '(planted))
-  (delete-directory/files planted-root))
+  (delete-directory/files planted-root)
 
-(module+ test
-  (require (prefix-in contracted: polars/private/foreign)
-           (only-in polars/tests/test-helpers refusal refusal-misses))
   (define range-series (series-new-i64 "v" '(1 2 3)))
   (define range-frame (dataframe-new (list range-series)))
   (check-equal?

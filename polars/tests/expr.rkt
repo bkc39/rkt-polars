@@ -3,7 +3,7 @@
 (module+ test
   (require gregor
            rackunit
-           (only-in racket/contract/base or/c)
+           (only-in racket/contract/base contract-name or/c)
            (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
@@ -43,32 +43,17 @@
                     expr-str-strip-chars expr-str-strip-chars-end expr-str-strip-chars-start
                     expr-str-strip-prefix expr-str-strip-suffix expr-str-tail
                     expr-str-to-lowercase expr-str-to-uppercase)
-           (only-in polars/tests/test-helpers drops-during drops-once settle!)
+           (only-in polars/tests/test-helpers
+                    drops-during drops-once refusal refusal-misses settle!)
            (only-in polars/private/foreign
-                    series-new-i32
-                    series-new-i64
-                    series-new-f64
-                    series-new-str
-                    series-new-ymdhms
-                    make-YMDHMS
-                    polars-null
-                    dataframe-new
-                    dataframe-drop-count
-                    dataframe-height
-                    dataframe-width
-                    dataframe-column
-                    dataframe-column-names
-                    dataframe-column-name
-                    series-len
-                    series-ref
-                    series-dtype
-                    series-sum-i32
-                    series-sum-f64
-                    DataFrame-ptr?
-                    dataframe-drop)))
+                    DataFrame-ptr? dataframe-column dataframe-column-name dataframe-column-names
+                    dataframe-drop dataframe-drop-count dataframe-height dataframe-new
+                    dataframe-width make-YMDHMS polars-null series-dtype series-len
+                    series-new-f64 series-new-i32 series-new-i64 series-new-str
+                    series-new-ymdhms series-ref series-sum-f64 series-sum-i32)
+           (only-in racket/contract exn:fail:contract:blame?)
+           (prefix-in contracted: polars/private/expr))
 
-(module+ test
-  (require (only-in racket/contract/base contract-name))
   (define df
     (dataframe-new
      (list (series-new-i32 "x" '(1 2 3 4))
@@ -1010,10 +995,7 @@
      df-s (list (expr-alias (expr-gather (col "x") '(0 2 4)) "g"))))
   (check-equal? (for/list ([i (in-range 3)]) (series-ref (dataframe-column s-g "g") i))
                 '(30 50 40))
-  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '()))))
-
-(module+ test
-  (require (only-in polars/tests/test-helpers settle!))
+  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
 
   (define reclaim-src (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
   (settle!)
@@ -1048,11 +1030,8 @@
                                (regexp-quote (format "~s" (contract-name lit-integer/c)))))
                (lambda () (op (col "x") (expt 2 64))))
     (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
-               (lambda () (op #\a (col "x"))))))
+               (lambda () (op #\a (col "x")))))
 
-(module+ test
-  (require (only-in racket/contract exn:fail:contract:blame?)
-           (prefix-in contracted: polars/private/expr))
   (define ((sort-blame? rx) e)
     (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "g" '(2 1))
@@ -1083,10 +1062,8 @@
     (contracted:expr-sort sort-g #:nulls-last #t)
     (contracted:expr-sort-by sort-g #:by sort-h #:nulls-last #t #:maintain-order #t))
   (settle!)
-  (check >= (- (expr-drop-count) sort-drops-before) 150))
+  (check >= (- (expr-drop-count) sort-drops-before) 150)
 
-(module+ test
-  (require (only-in polars/tests/test-helpers refusal refusal-misses))
   (define range-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1 2 3))))))
   (define v (col "v"))
   (check-equal?

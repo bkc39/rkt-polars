@@ -8,11 +8,13 @@
            (prefix-in contracted: polars/private/expr-core)
            (only-in polars/private/c-integer int64-max int64-min uint64-max)
            (only-in polars/private/expr-core
-                    ->expr/who Expr-ptr? _Expr-ptr define-compat expr-alias expr-col expr-drop-count
-                    lit-integer/c)
+                    ->expr/who Expr-ptr? _Expr-ptr define-compat expr-alias expr-col
+                    expr-drop-count lit-integer/c)
            (only-in (submod polars/private/expr-core internal)
-                    col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
-                    multi-column-expr?))
+                    col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit
+                    lit-value/c multi-column-expr?)
+           (only-in polars/private/foreign polars-null))
+
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))
@@ -64,10 +66,8 @@
   (check-exn #rx"^col: contract violation\n  expected: an enum category without a NUL"
              (lambda () (contracted:col nul-enum)))
   (check-exn #rx"^expr-dtype-col: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (contracted:expr-dtype-col nul-enum))))
+             (lambda () (contracted:expr-dtype-col nul-enum)))
 
-(module+ test
-  (require rackunit (only-in polars/private/foreign polars-null))
   (define-compat expr-add
     (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
     #:wrap (allocator expr-drop))
