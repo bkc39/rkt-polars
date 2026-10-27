@@ -101,12 +101,13 @@ one_reason() {
   return 1
 }
 
+# PRELUDE, when set, runs in the shell before the script is sourced.
 refused() {
   local label=$1 dir=$2 got
   shift 2
   # shellcheck disable=SC2016
   got=$(cd "$dir" && env "$@" bash -c \
-    '. "$1"; printf "%s|%s|%s" "$?" "${PLTUSERHOME-unset}" "${project_root-unset}"' \
+    "${PRELUDE-}"'. "$1"; printf "%s|%s|%s" "$?" "${PLTUSERHOME-unset}" "${project_root-unset}"' \
     _ "$script" 2> "$work/err")
   if [ "$got" != "1|unset|unset" ]; then
     fail "$label: status|PLTUSERHOME|project_root is [$got], not [1|unset|unset]"
@@ -301,6 +302,12 @@ shim silent 'exit 0'
 refused "HOME and XDG_CACHE_HOME unset" "$work/repo" -u HOME -u XDG_CACHE_HOME
 refused "sha256sum fails" "$work/repo" PATH="$work/broken:$base_path"
 refused "sha256sum prints nothing" "$work/repo" PATH="$work/silent:$base_path"
+# The nix sandbox ignores SIGPIPE, so a write to a sha256sum that has already
+# exited fails with a message of its own; the late printf forces that order.
+# shellcheck disable=SC2016
+PRELUDE='trap "" PIPE; printf() { sleep 0.2; builtin printf "$@"; }; ' \
+  refused "sha256sum exits before reading, SIGPIPE ignored" "$work/repo" \
+  PATH="$work/silent:$base_path"
 
 check_hook "$work/repo"
 check_bench "$work/repo"

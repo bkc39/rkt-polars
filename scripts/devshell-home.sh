@@ -38,7 +38,7 @@ rkt_polars_devshell_home() (
   else
     fail "neither XDG_CACHE_HOME nor HOME is set, so PLTUSERHOME has no place"
   fi
-  id=$(printf '%s' "$root" | sha256sum 2>/dev/null | cut -c1-12) \
+  id=$(printf '%s' "$root" 2>/dev/null | sha256sum 2>/dev/null | cut -c1-12) \
     || fail "sha256sum failed, so PLTUSERHOME has no key"
   [[ $id =~ ^[0-9a-f]{12}$ ]] \
     || fail "sha256sum gave no hash, so PLTUSERHOME has no key"
