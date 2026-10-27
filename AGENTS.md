@@ -136,8 +136,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   refusing a dropped value, so an explicit drop frees twice (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
   <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
   `who: operation failed` itself, so no wrapper is needed. A test in
-  `foreign.rkt` reads every `define-compat` under `polars/private` and fails
-  on one of these four result types without its allocator, or on a
+  `polars/tests/foreign.rkt` reads every `define-compat` under
+  `polars/private` and fails on one of these four result types without its allocator, or on a
   `_pointer` result.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
@@ -243,10 +243,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
   `series_drop_count` count native releases; the reclamation tests assert on
-  them because Racket cannot otherwise observe a native free (`foreign.rkt`
-  has a case for each Series- and DataFrame-returning binding but the file
-  readers, `bulk.rkt` one for `series_copy_cat`, and `expr.rkt` one for each
-  plan helper), and pairing tests
+  them because Racket cannot otherwise observe a native free
+  (`polars/tests/foreign.rkt` has a case for each Series- and
+  DataFrame-returning binding but the file readers, `tests/bulk.rkt` one for
+  `series_copy_cat`, and `tests/expr.rkt` one for each plan helper), and
+  pairing tests
   check that an explicit drop, of a pointer or a wrapper, releases it exactly
   once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
@@ -290,8 +291,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   refuse one in an Enum category (`check-enum-categories`); `define-enum`
   refuses it at compile time. Names, single string arguments and categoricals
   cast from a String series still stop at a NUL (#165). A test in
-  `resource.rkt` reads every module under `polars/private` as data and fails
-  on a pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`,
+  `polars/tests/resource.rkt` reads every module under `polars/private` as
+  data and fails on a pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`,
   `_symbol`, `_gcpointer`, `_racket`, their `/` and `*` variants, or a name
   `define`d as one, directly or through `make-ctype`) as the element of a
   `_list` / `_vector` / `_ptr` in mode `i` or `io`, of an `_array`,
@@ -311,8 +312,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   dispatches on the four pointer types' predicates and ignores any other
   value; a pointer already dropped raises under that type's drop name, as
   `series-drop` does.
-  No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
-  fails on one.
+  No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test in
+  `polars/tests/resource.rkt` fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`), so a
@@ -816,11 +817,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (eleven checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (twelve checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
-  `rustls-only`, `docs-check-test`, `install-native-libs`, `devshell-home`,
-  `release-toolchain`, the rustc pin, and `build-so-darwin`,
+  `no-inline-tests`, `rustls-only`, `docs-check-test`, `install-native-libs`,
+  `devshell-home`, `release-toolchain`, the rustc pin, and `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
@@ -867,23 +868,26 @@ it. Racket side: `define-compat` with `#:c-id`.
   `install-native-libs` gate and flake check hold it there.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
-  `private/generic/csv.rkt`), or inline until #256 moves them. Three have no
-  library counterpart: `generic/csv-options.rkt`, `generic/verb-errors.rkt`
-  and `generic/operand-audit.rkt`. The guide's `*-test.rkt`, `bench/` and
-  `lint/` keep theirs. A test file is `#lang racket/base` whose body is one
-  `(module+ test ...)`, so `raco test -x` runs it, with every require in one
-  `require` at its head. That `require` takes every project module through
-  `only-in` or `prefix-in`, never bare: `(prefix-in contracted:
-  polars/private/<path>)` for the contracted exports, `only-in` for the plain
-  ones, and `(only-in (submod polars/private/<path> internal) ...)` for a
-  binding the module does not export or a test calls uncontracted. The
-  module's last form, `(module+ internal (provide ...))`, provides those, only
-  what a test uses; never `require/expose`. The test-only helpers, which test
-  no module, live there too: `test-helpers.rkt`, `gc-pressure.rkt`,
-  `generic/test-fixtures.rkt` (its `test` submodule holds the reader checks),
-  `generic/operand-audit-table.rkt` and `generic/operand-audit-classes.rkt`. A
-  module's inline `test` blocks **merge**: a definition name used in one block
-  collides with the same name in another. Rust tests live in
+  `private/generic/csv.rkt`). Three have no library counterpart:
+  `generic/csv-options.rkt`, `generic/verb-errors.rkt` and
+  `generic/operand-audit.rkt`. No module under `polars/private/` has a `test`
+  submodule: the `no-inline-tests` gate (`scripts/no-inline-tests.sh`, a
+  flake check and CI's Lint job) fails on one. The guide's `*-test.rkt`,
+  `bench/` and `lint/` keep theirs. A test file is `#lang racket/base` whose
+  body is one `(module+ test ...)`, so `raco test -x` runs it, with every
+  require in one `require` at its head. That `require` takes every project
+  module through `only-in` or `prefix-in`, never bare: `(prefix-in
+  contracted: polars/private/<path>)` for the contracted exports, `only-in`
+  for the plain ones, and `(only-in (submod polars/private/<path> internal)
+  ...)` for a binding the module does not export or a test calls
+  uncontracted. The module's last form, `(module+ internal (provide ...))`,
+  provides those, only what a test uses; never `require/expose`. The
+  test-only helpers, which test no module, live there too:
+  `test-helpers.rkt`, `gc-pressure.rkt`, `generic/test-fixtures.rkt` (its
+  `test` submodule holds the reader checks),
+  `generic/operand-audit-table.rkt` and `generic/operand-audit-classes.rkt`.
+  The `test` blocks of one file **merge**: a definition name used in one
+  block collides with the same name in another. Rust tests live in
   `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
@@ -895,9 +899,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
-- The lint gates are `scripts/no-syntax-rule.sh` (a grep; no shell needed)
-  and `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
-  The second runs the project's Resyntax suite, `lint/`: the default
+- The lint gates are `scripts/no-syntax-rule.sh` and
+  `scripts/no-inline-tests.sh` (greps; no shell needed), and
+  `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
+  The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
   each tested by a `#lang resyntax/test` file (`raco test lint`). `lint/` is
   outside the published package and the nix build never compiles it. A

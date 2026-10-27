@@ -367,6 +367,12 @@
             ${pkgs.bash}/bin/bash $src/scripts/no-syntax-rule.sh
             touch $out
           '';
+          no-inline-tests = pkgs.runCommand "rkt-polars-no-inline-tests" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/no-inline-tests.sh
+            touch $out
+          '';
           rustls-only = pkgs.runCommand "rkt-polars-rustls-only" {
             src = pkgs.lib.cleanSource ./.;
           } ''
@@ -424,7 +430,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin;
           inherit (self.packages.${system}) rust racket;
         });
 

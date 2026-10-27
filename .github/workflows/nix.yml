@@ -33,6 +33,10 @@ jobs:
       - name: No define-syntax-rule
         run: scripts/no-syntax-rule.sh
 
+      - name: No inline tests under polars/private
+        if: ${{ !cancelled() }}
+        run: scripts/no-inline-tests.sh
+
       - name: TLS is rustls only
         if: ${{ !cancelled() }}
         run: scripts/rustls-only.sh
