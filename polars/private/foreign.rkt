@@ -8,8 +8,8 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  [-> ->/c] </c ->* ->i and/c any contract-out flat-named-contract listof
-                  non-empty-listof or/c rename-contract)
+                  [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-named-contract
+                  listof non-empty-listof or/c rename-contract)
          (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
@@ -17,13 +17,14 @@
          (only-in racket/string string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
-         (for-syntax racket/base racket/syntax))
+         (for-syntax racket/base racket/syntax syntax/parse))
 
 (module+ test
   (require rackunit))
@@ -31,9 +32,18 @@
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-string strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
-                     series-date-ref series-index/c
+                     series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned
+                     series-std series-var series-new-null
+                     series-head series-tail series-slice
+                     dataframe-head dataframe-tail dataframe-slice
+                     series-add-i32 series-sub-i32 series-mul-i32 series-div-i32 series-mod-i32
+                     series-add-i64 series-sub-i64 series-mul-i64 series-div-i64 series-mod-i64
+                     series-add-u32 series-sub-u32 series-mul-u32 series-div-u32 series-mod-u32
+                     series-add-u64 series-sub-u64 series-mul-u64 series-div-u64 series-mod-u64
+                     series-lt-i32 series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32
+                     series-ne-i32
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
@@ -43,10 +53,27 @@
                                         (lambda (_) DataFrame-ptr?) 'dataframe-join/c)]
           [dataframe-join-asof (frame-join-asof/c DataFrame-ptr? 'dataframe-join-asof/c)]
           [series-drop (->/c Series-ptr? void?)]
+          [series-ref-bytes
+           (->i ([who symbol?]
+                 [s Series-ptr?]
+                 [index (s) (and/c exact-nonnegative-integer? (</c (series-len s)))]
+                 [limit size/c])
+                any)]
           [dataframe-drop (->/c DataFrame-ptr? void?)]
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
-          [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]))
+          [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]
+          [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
+          [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
+          [series-new-null (->/c any/c size/c Series-ptr?)]))
+
+(define-syntax-parse-rule (provide-row-windows frame?:id head:id tail:id slice:id)
+  (provide (contract-out [head (->/c frame? size/c frame?)]
+                         [tail (->/c frame? size/c frame?)]
+                         [slice (->/c frame? int64/c size/c frame?)])))
+
+(provide-row-windows Series-ptr? series-head series-tail series-slice)
+(provide-row-windows DataFrame-ptr? dataframe-head dataframe-tail dataframe-slice)
 
 (define-runtime-path native-libs-dir "../native-libs")
 
@@ -1209,6 +1236,41 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
+
+(define-compat series-binary-byte-len
+  (_fun _Series-ptr _size _size _size -> _int64))
+
+;; The buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-binary
+  (_fun _Series-ptr _size _size _size _bytes _size _pointer _size _pointer _size _bytes _size
+        -> _int64))
+
+(define (series-ref-bytes who s index limit)
+  (define size (series-binary-byte-len s index 1 limit))
+  (define buf (make-bytes (max size 0)))
+  (define valid (make-bytes 1))
+  (define copied
+    (and (not (negative? size))
+         (with-raw-buffer ([offsets 2 _int64])
+           (series-copy-binary s index 1 limit buf size offsets 2 #f 0 valid 1))))
+  (cond
+    [(or (not copied) (negative? copied))
+     (error who "cannot read a binary value at index ~a" index)]
+    [(zero? (bytes-ref valid 0)) polars-null]
+    [else buf]))
+
+(module+ test
+  (let ([bytes-of (series-cast (series-new-str "b" (list "a\u0000é" polars-null "")) 'binary)])
+    (check-equal? (map (lambda (i) (series-ref-bytes 'test bytes-of i 10)) '(0 1 2))
+                  (list #"a\0\303\251" polars-null #""))
+    (check-equal? (for/list ([limit (in-list '(0 1 3 4 5))])
+                    (series-ref-bytes 'test bytes-of 0 limit))
+                  (list #"" #"a" #"a\0\303" #"a\0\303\251" #"a\0\303\251"))
+    (check-equal? (series-ref-bytes 'test bytes-of 1 0) polars-null)
+    (check-exn #rx"^test: cannot read a binary value at index 3$"
+               (lambda () (series-ref-bytes 'test bytes-of 3 10)))
+    (check-exn #rx"^test: cannot read a binary value at index 0$"
+               (lambda () (series-ref-bytes 'test (series-new-str "s" '("a")) 0 10)))))
 ;; The validity buffers are GC memory the collector may move: never #:blocking?.
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
@@ -1391,6 +1453,19 @@
     (check-exn #rx"^series-ref-i64/raw: contract violation\n.*\n  blaming: client\n"
                (lambda () (client-ref-i64 ref-i64 index))))
   (check-equal? (CompatOptI64-value (client-ref-i64 ref-i64 0)) 1099511627776)
+  (define client-ref-bytes
+    (parameterize ([current-namespace (namespace-anchor->empty-namespace ref-anchor)])
+      (namespace-require 'racket/base)
+      (eval '(module bytes-client racket/base
+               (require (only-in polars/private/foreign series-ref-bytes))
+               (provide client-ref-bytes)
+               (define (client-ref-bytes s index) (series-ref-bytes 'client s index 4))))
+      (dynamic-require ''bytes-client 'client-ref-bytes)))
+  (define ref-binary (series-cast (series-new-str "b" '("abcdef")) 'binary))
+  (for ([index (in-list '(-1 a 1))])
+    (check-exn #rx"^series-ref-bytes: contract violation\n.*\n  blaming: bytes-client\n"
+               (lambda () (client-ref-bytes ref-binary index))))
+  (check-equal? (client-ref-bytes ref-binary 0) #"abcd")
 
   (define ref-i8 (series-new-i8 "x" (list -8 polars-null 12)))
   (check-equal? (series-ref ref-i8 0) -8)
@@ -1714,41 +1789,51 @@
 (define-series-series-op series-div series-div/who series-div/raw series_div)
 (define-series-series-op series-mod series-mod/who series-mod/raw series_mod)
 
-(define-syntax-parse-rule (define-series-scalar-op public-name:id rust-id:id ctype:id)
-  (define-compat public-name
-    (_fun _Series-ptr ctype -> _Series-ptr/null)
-    #:c-id rust-id
-    #:wrap (allocator/or-fail series-drop 'public-name)))
+(begin-for-syntax
+  (define-syntax-class scalar-ctype
+    #:attributes (range)
+    (pattern (~literal _int32) #:with range #'int32/c)
+    (pattern (~literal _int64) #:with range #'int64/c)
+    (pattern (~literal _uint32) #:with range #'uint32/c)
+    (pattern (~literal _uint64) #:with range #'uint64/c)
+    (pattern (~or* (~literal _double) (~literal _string)) #:attr range #f)))
 
-(define-series-scalar-op series-add-i32 series_add_i32 _int32)
-(define-series-scalar-op series-sub-i32 series_sub_i32 _int32)
-(define-series-scalar-op series-mul-i32 series_mul_i32 _int32)
-(define-series-scalar-op series-div-i32 series_div_i32 _int32)
-(define-series-scalar-op series-mod-i32 series_mod_i32 _int32)
+(define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
+  (begin
+    (define-compat name
+      (_fun _Series-ptr ctype -> _Series-ptr/null)
+      #:wrap (allocator/or-fail series-drop 'name))
+    (~? (provide (contract-out [name (->/c Series-ptr? ctype.range Series-ptr?)])))))
 
-(define-series-scalar-op series-add-i64 series_add_i64 _int64)
-(define-series-scalar-op series-sub-i64 series_sub_i64 _int64)
-(define-series-scalar-op series-mul-i64 series_mul_i64 _int64)
-(define-series-scalar-op series-div-i64 series_div_i64 _int64)
-(define-series-scalar-op series-mod-i64 series_mod_i64 _int64)
+(define-series-scalar-op series-add-i32 _int32)
+(define-series-scalar-op series-sub-i32 _int32)
+(define-series-scalar-op series-mul-i32 _int32)
+(define-series-scalar-op series-div-i32 _int32)
+(define-series-scalar-op series-mod-i32 _int32)
 
-(define-series-scalar-op series-add-u32 series_add_u32 _uint32)
-(define-series-scalar-op series-sub-u32 series_sub_u32 _uint32)
-(define-series-scalar-op series-mul-u32 series_mul_u32 _uint32)
-(define-series-scalar-op series-div-u32 series_div_u32 _uint32)
-(define-series-scalar-op series-mod-u32 series_mod_u32 _uint32)
+(define-series-scalar-op series-add-i64 _int64)
+(define-series-scalar-op series-sub-i64 _int64)
+(define-series-scalar-op series-mul-i64 _int64)
+(define-series-scalar-op series-div-i64 _int64)
+(define-series-scalar-op series-mod-i64 _int64)
 
-(define-series-scalar-op series-add-u64 series_add_u64 _uint64)
-(define-series-scalar-op series-sub-u64 series_sub_u64 _uint64)
-(define-series-scalar-op series-mul-u64 series_mul_u64 _uint64)
-(define-series-scalar-op series-div-u64 series_div_u64 _uint64)
-(define-series-scalar-op series-mod-u64 series_mod_u64 _uint64)
+(define-series-scalar-op series-add-u32 _uint32)
+(define-series-scalar-op series-sub-u32 _uint32)
+(define-series-scalar-op series-mul-u32 _uint32)
+(define-series-scalar-op series-div-u32 _uint32)
+(define-series-scalar-op series-mod-u32 _uint32)
 
-(define-series-scalar-op series-add-f64 series_add_f64 _double)
-(define-series-scalar-op series-sub-f64 series_sub_f64 _double)
-(define-series-scalar-op series-mul-f64 series_mul_f64 _double)
-(define-series-scalar-op series-div-f64 series_div_f64 _double)
-(define-series-scalar-op series-mod-f64 series_mod_f64 _double)
+(define-series-scalar-op series-add-u64 _uint64)
+(define-series-scalar-op series-sub-u64 _uint64)
+(define-series-scalar-op series-mul-u64 _uint64)
+(define-series-scalar-op series-div-u64 _uint64)
+(define-series-scalar-op series-mod-u64 _uint64)
+
+(define-series-scalar-op series-add-f64 _double)
+(define-series-scalar-op series-sub-f64 _double)
+(define-series-scalar-op series-mul-f64 _double)
+(define-series-scalar-op series-div-f64 _double)
+(define-series-scalar-op series-mod-f64 _double)
 
 (module+ test
   (define batch2-x (series-new-i32 "x" (list 1 2 polars-null 4)))
@@ -2074,27 +2159,22 @@
        (build-path (regexp-replace* #rx"[][*?]" (path->string (current-directory)) "[&]") p))
       full))
 
-(define-syntax-parse-rule (define-cmp-scalar name:id ctype:id)
-  (define-compat name
-    (_fun _Series-ptr ctype -> _Series-ptr/null)
-    #:wrap (allocator/or-fail series-drop 'name)))
+(define-series-scalar-op series-lt-i32 _int32)
+(define-series-scalar-op series-le-i32 _int32)
+(define-series-scalar-op series-gt-i32 _int32)
+(define-series-scalar-op series-ge-i32 _int32)
+(define-series-scalar-op series-eq-i32 _int32)
+(define-series-scalar-op series-ne-i32 _int32)
 
-(define-cmp-scalar series-lt-i32 _int32)
-(define-cmp-scalar series-le-i32 _int32)
-(define-cmp-scalar series-gt-i32 _int32)
-(define-cmp-scalar series-ge-i32 _int32)
-(define-cmp-scalar series-eq-i32 _int32)
-(define-cmp-scalar series-ne-i32 _int32)
+(define-series-scalar-op series-lt-f64 _double)
+(define-series-scalar-op series-le-f64 _double)
+(define-series-scalar-op series-gt-f64 _double)
+(define-series-scalar-op series-ge-f64 _double)
+(define-series-scalar-op series-eq-f64 _double)
+(define-series-scalar-op series-ne-f64 _double)
 
-(define-cmp-scalar series-lt-f64 _double)
-(define-cmp-scalar series-le-f64 _double)
-(define-cmp-scalar series-gt-f64 _double)
-(define-cmp-scalar series-ge-f64 _double)
-(define-cmp-scalar series-eq-f64 _double)
-(define-cmp-scalar series-ne-f64 _double)
-
-(define-cmp-scalar series-eq-str _string)
-(define-cmp-scalar series-ne-str _string)
+(define-series-scalar-op series-eq-str _string)
+(define-series-scalar-op series-ne-str _string)
 
 (module+ test
   ;; Use a small dataframe so we can read mask results back via dataframe-filter.
@@ -2328,7 +2408,7 @@
 
 (module+ internal
   (provide dataframe-hstack/who dataframe-join/who dataframe-join-asof/who dataframe-sort/who
-           dataframe-vstack/who))
+           dataframe-vstack/who series-std series-var))
 
 (define compat-pivot-agg/none  0)
 (define compat-pivot-agg/first 1)
@@ -2649,6 +2729,17 @@
     (dataframe-join (dataframe-head users-df 2) (dataframe-head orders-df 2)
                     #:how 'cross))
   (check-equal? (dataframe-height crossed) 4) ;; 2 * 2
+  (for ([->name (list string->bytes/utf-8 string->path)])
+    (check-equal? (dataframe-height
+                   (dataframe-join users-df orders-df #:on (list (->name "uid")) #:how 'inner))
+                  3)
+    (check-equal? (series-sum-i32
+                   (dataframe-column (dataframe-join-asof grouped-observations-df
+                                                          grouped-calibration-df
+                                                          #:on (->name "time")
+                                                          #:by (list (->name "sensor")))
+                                     "offset"))
+                  550))
 
   ;; vstack — append rows from a compatible dataframe
   (define more-users
@@ -2994,3 +3085,33 @@
                            #:unless (releases-result? form))
                   (cadr form))
                 '()))
+
+(module+ test
+  (require (prefix-in contracted: (submod ".."))
+           (only-in polars/private/test-helpers refusal refusal-misses))
+  (define range-series (series-new-i64 "v" '(1 2 3)))
+  (define range-frame (dataframe-new (list range-series)))
+  (check-equal?
+   (refusal-misses
+    (list (refusal 'series-std uint8/c 256 (contracted:series-std range-series #:ddof 256))
+          (refusal 'series-var uint8/c -1 (contracted:series-var range-series #:ddof -1))
+          (refusal 'series-new-null size/c (expt 2 64) (contracted:series-new-null "n" (expt 2 64)))
+          (refusal 'series-head size/c -1 (contracted:series-head range-series -1))
+          (refusal 'series-tail size/c (expt 2 64) (contracted:series-tail range-series (expt 2 64)))
+          (refusal 'series-slice int64/c (expt 2 63)
+                   (contracted:series-slice range-series (expt 2 63) 1))
+          (refusal 'dataframe-head size/c -1 (contracted:dataframe-head range-frame -1))
+          (refusal 'dataframe-tail size/c (expt 2 64)
+                   (contracted:dataframe-tail range-frame (expt 2 64)))
+          (refusal 'dataframe-slice size/c -1 (contracted:dataframe-slice range-frame 0 -1))
+          (refusal 'series-add-i32 int32/c (expt 2 31)
+                   (contracted:series-add-i32 range-series (expt 2 31)))
+          (refusal 'series-mod-i64 int64/c (expt 2 63)
+                   (contracted:series-mod-i64 range-series (expt 2 63)))
+          (refusal 'series-sub-u32 uint32/c -1 (contracted:series-sub-u32 range-series -1))
+          (refusal 'series-div-u64 uint64/c (expt 2 64)
+                   (contracted:series-div-u64 range-series (expt 2 64)))
+          (refusal 'series-lt-i32 int32/c (expt 2 31)
+                   (contracted:series-lt-i32 range-series (expt 2 31)))))
+   '())
+  (check-not-exn (lambda () (contracted:series-std range-series #:ddof 255))))

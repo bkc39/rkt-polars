@@ -19,9 +19,8 @@
   (require rackunit
            racket/file
            racket/runtime-path
-           (only-in racket/dict dict-set)
            (only-in racket/list filter-map range remove-duplicates second)
-           (only-in racket/match match-lambda)
+           (only-in racket/match match match-lambda)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains? string-join)
            (only-in polars/private/bulk in-series series->list)
@@ -37,8 +36,8 @@
            (submod polars/private/generic/test-fixtures test))
 
   (define-runtime-path data-dir "../../scribblings/data")
-  (define (read-and-scan-agree path kvs)
-    (reads-agree? read-csv scan-csv collect path kvs))
+  (define eager-and-scan
+    (list (cons 'eager (eager-reader read-csv)) (cons 'scan (scan-reader scan-csv collect))))
   (define flights (build-path data-dir "flights.tsv"))
   (define scratch (make-temporary-directory "rkt-polars-io-~a"))
   (for ([sub '("globbed" "ordered" "mixed" "literal" "dirmix")])
@@ -320,18 +319,9 @@
   (check-exn #rx"^read-csv: failed to read csv from [^:]*dirmix: cannot open file: it is a directory"
              (lambda () (read-csv (build-path scratch "dirmix") #:glob #f)))
 
-  (define (outcome thunk)
-    (with-handlers ([exn:fail? (lambda (e) (cause-of (exn-message e)))]) (thunk)))
-  (define (same-outcome? a b)
-    (if (string? a)
-        (equal? a b)
-        (and (not (string? b)) (frame=? a b))))
-  (define (readers-agree? path kvs)
-    (define globbed (dict-set kvs '#:glob #t))
-    (define eager (outcome (lambda () (apply-keywords read-csv kvs path))))
-    (and (same-outcome? eager (outcome (lambda () (apply-keywords read-csv globbed
-                                                                  (one-file-pattern path)))))
-         (same-outcome? eager (outcome (lambda () (collect (apply-keywords scan-csv kvs path)))))))
+  (define every-reader
+    (list (cons 'eager (eager-reader read-csv)) (cons 'glob (glob-reader read-csv))
+          (cons 'scan (scan-reader scan-csv collect))))
   (define semi (scratch-file scratch "semi-opts.txt" "# note\na;b\n'x;y';1\n# mid\nz;2\n"))
   (define reader-files
     (list (cons flights #\tab) (cons quoted #\,) (cons commented #\,) (cons slashed #\,)
@@ -339,7 +329,7 @@
   (define reader-options
     '(() ((#:has-header . #f)) ((#:quote-char . #\')) ((#:quote-char . #f))
       ((#:comment-prefix . "#")) ((#:comment-prefix . "//"))
-      ((#:skip-rows . 1)) ((#:n-rows . 1)) ((#:skip-rows . 1) (#:n-rows . 2))
+      ((#:skip-rows . 1)) ((#:n-rows . 0)) ((#:n-rows . 1)) ((#:skip-rows . 1) (#:n-rows . 2))
       ((#:null-values . "NA")) ((#:null-values . ("NA" "-")))
       ((#:infer-schema-length . 0)) ((#:infer-schema-length . 1)) ((#:infer-schema-length . #f))
       ((#:schema-overrides . (("dep_delay" . f64))))
@@ -349,10 +339,41 @@
       ((#:null-values . "NA") (#:try-parse-dates . #t) (#:n-rows . 50)
        (#:schema-overrides . (("dep_delay" . f64))))))
   (for* ([file (in-list reader-files)] [kvs (in-list reader-options)])
-    (check-true (readers-agree? (car file) (cons (cons '#:separator (cdr file)) kvs))
-                (format "~a ~s" (car file) kvs)))
+    (check-readers-agree every-reader (car file) (cons (cons '#:separator (cdr file)) kvs)))
   (for ([path (list csv-pattern ordered (build-path data-dir "parts" "*.csv"))])
-    (check-true (read-and-scan-agree path '()) (format "~a" path)))
+    (check-readers-agree eager-and-scan path '()))
+
+  (define (failure-infos thunk)
+    (parameterize ([current-check-around (lambda (check) (check))])
+      (with-handlers ([exn:test:check? exn:test:check-stack]) (thunk) '())))
+  (define (info-text infos name)
+    (for/first ([info (in-list infos)] #:when (eq? (check-info-name info) name))
+      (match (check-info-value info)
+        [(string-info text) text]
+        [location (vector-ref (struct->vector location) 1)])))
+  (define small (scratch-file scratch "small.csv" "a,b\n1,x\n2,y\n"))
+  (define nulled
+    (cons 'nulled (lambda (path kvs) (apply-keywords read-csv (cons '(#:null-values . "x") kvs) path))))
+  (define disagreeing
+    (failure-infos (lambda () (check-readers-agree (list (car eager-and-scan) nulled) small '()))))
+  (define call-line (sub1 (syntax-line (quote-syntax here))))
+  (check-regexp-match #rx"^eager against nulled: column \"b\", row 0: \"x\" against "
+                      (info-text disagreeing 'disagreement))
+  (check-regexp-match #rx"^shape [(]2 2[)], dtypes [(][(]\"a\" int64[)] [(]\"b\" string[)][)]\n"
+                      (info-text disagreeing 'eager))
+  (check-regexp-match #rx"^shape [(]2 2[)]" (info-text disagreeing 'nulled))
+  (check-equal? (cadr (info-text disagreeing 'location)) call-line)
+  (check-equal? (failure-infos (lambda () (check-readers-agree every-reader small '()))) '())
+  (define one-column (dataframe (list (series '(1 2) #:name "a"))))
+  (for ([a (list "x" "x" one-column one-column one-column one-column one-column)]
+        [b (list "x" "y" one-column "x" (dataframe (list (series '(1 2) #:name "z")))
+                 (dataframe (list (series '(1 2) #:name "a" #:dtype 'i32)))
+                 (dataframe (list (series '(1) #:name "a"))))]
+        [expected (list #f "the errors differ" #f "only the second raised"
+                        "columns (\"a\") against (\"z\")" "column \"a\": dtype int64 against int32"
+                        "shape (2 1) against (1 1)")])
+    (check-equal? (outcome-difference a b) expected))
+  (check-equal? (outcome-difference "x" one-column) "only the first raised")
 
   (define (guard-message path)
     (message-of (lambda () (read-csv path))))

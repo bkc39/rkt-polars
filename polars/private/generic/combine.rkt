@@ -48,8 +48,10 @@
            (only-in threading ~>)
            (only-in polars/private/foreign polars-null)
            polars/private/generic/core
+           (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/reshape collect head lazy)
-           (only-in polars/private/generic/test-fixtures column)
+           (only-in polars/private/generic/test-fixtures
+                    column not-utf-8-expected not-utf-8-names refused)
            (prefix-in contracted: (submod "..")))
 
   (define usr (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
@@ -69,6 +71,31 @@
                        #:how 'cross)])
     (check-equal? (map list (column crossed "l") (column crossed "r"))
                   '(("a" 1) ("a" 2) ("b" 1) ("b" 2))))
+
+  (define (sorted-rows d)
+    (define sorted (sort d (column-names d)))
+    (for/list ([name (in-list (column-names sorted))])
+      (cons name (column sorted name))))
+  (define ticks (dataframe (list (series '(1 3 5) #:name "t") (series '("a" "a" "b") #:name "g"))))
+  (define marks (dataframe (list (series '(1 2 4) #:name "t") (series '("a" "b" "b") #:name "g")
+                                 (series '(10 20 40) #:name "o"))))
+  (define joins-by-name
+    (list (list "uid" (lambda (k) (contracted:join usr ord #:on (list k) #:how 'left)))
+          (list "uid" (lambda (k) (contracted:join usr ord #:left-on (list k) #:right-on '("uid")
+                                                   #:how 'left)))
+          (list "uid" (lambda (k) (collect (contracted:join (lazy usr) (lazy ord) #:on (list k)
+                                                            #:how 'left))))
+          (list "t" (lambda (k) (contracted:join-asof ticks marks #:on k)))
+          (list "t" (lambda (k) (contracted:join-asof ticks marks #:left-on k #:right-on "t")))
+          (list "g" (lambda (k) (contracted:join-asof ticks marks #:on "t" #:by (list k))))
+          (list "g" (lambda (k) (contracted:join-asof ticks marks #:on "t"
+                                                      #:left-by (list k) #:right-by '("g"))))))
+  (for* ([entry (in-list joins-by-name)]
+         [->name (in-list (list string->bytes/utf-8 string->path))])
+    (match-define (list name joined) entry)
+    (check-equal? (sorted-rows (joined (->name name))) (sorted-rows (joined name))
+                  (format "~s" (->name name))))
+  (check-equal? (column (join-asof ticks marks #:on "t" #:by '("g")) "o") '(10 10 40))
 
   (define more (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
                                 (series '("eve" "frank") #:name "name"))))
@@ -95,6 +122,9 @@
   (define keyed-right (dataframe (list (series '("a" "c") #:name "k")
                                        (series '(10 30) #:name "w"))))
   (check-equal? (column (join keyed-left keyed-right #:on '("k") #:how 'inner) "w") '(10))
+  (let ([by-bytes (contracted:join keyed-left keyed-right #:on '(#"k") #:how 'inner)])
+    (check-equal? (map (lambda (name) (cons name (column by-bytes name))) (column-names by-bytes))
+                  '(("k" "a") ("v" 1) ("w" 10))))
   (define readings (dataframe (list (series '(1 3 5) #:name "t")
                                     (series '(100 300 500) #:name "v"))))
   (define offsets (dataframe (list (series '(1 2 4) #:name "t")
@@ -167,9 +197,15 @@
      (list (lambda () (contracted:join 5 ints-x #:on '("x"))) exn:fail:contract?
            #rx"^join: contract violation\n  expected: \\(or/c dataframe\\? lazyframe\\?\\)\n  given: 5\n")
      (list (lambda () (contracted:join ints-x ints-x #:on "x")) exn:fail:contract?
-           #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof string\\?[^\n]*\n  given: \"x\"\n")
+           (refused 'join "x"))
      (list (lambda () (contracted:join ints-x ints-x #:on '(x))) exn:fail:contract?
-           #rx"^join: contract violation\n  expected: [^\n]*\n  given: '\\(x\\)\n")
+           (refused 'join '(x)))
+     (list (lambda () (contracted:join ints-x ints-x #:left-on '(5) #:right-on '("x")))
+           exn:fail:contract? (refused 'join '(5)))
+     (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on (list 'x)))
+           exn:fail:contract? (refused 'join '(x)))
+     (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '(y))) exn:fail:contract?
+           (refused 'join-asof '(y)))
      (list (lambda () (contracted:join (lazy ints-x) (lazy ints-x) #:on '())) exn:fail:contract?
            #rx"^join: contract violation\n  expected: [^\n]*non-empty-listof[^\n]*\n  given: '\\(\\)\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "nope")) polars-failure?
@@ -178,13 +214,13 @@
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: [^\n]*backward[^\n]*\n  given: 'sideways\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on '("x"))) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f string\\?\\)\n  given: '\\(\"x\"\\)\n")
+           (refused 'join-asof '("x")))
      (list (lambda () (contracted:join-asof ints-x 5 #:on "x")) exn:fail:contract?
            #rx"^join-asof: contract violation\n  expected: dataframe\\?\n  given: 5\n")
      (list (lambda () (contracted:join-asof ints-x ints-x)) exn:fail:contract?
            #rx"^join-asof: contract violation\n  must supply #:on, or #:left-on and #:right-on\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by "y")) exn:fail:contract?
-           #rx"^join-asof: contract violation\n  expected: \\(or/c #f \\(listof string\\?\\)\\)\n  given: \"y\"\n")
+           (refused 'join-asof "y"))
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:by '("y") #:left-by '("y")))
            exn:fail:contract?
            #rx"^join-asof: contract violation\n  supply either #:by or #:left-by and #:right-by, not both\n")
@@ -200,7 +236,22 @@
            #rx"^join-asof: contract violation\n  expected: [^\n]*\n  given: 9223372036854775808\n")
      (list (lambda () (contracted:join-asof ints-x ints-x #:on "x" #:tolerance 'x))
            exn:fail:contract? #rx"^join-asof: contract violation\n  expected: [^\n]*\n  given: 'x\n")))
-  (for ([refusal (in-list refusals)])
+  (define not-utf-8-refusals
+    (for*/list ([bad (in-list not-utf-8-names)]
+                [entry (in-list
+                       (list (list 'join (list bad)
+                                   (lambda () (contracted:join ints-x ints-x #:on (list bad))))
+                             (list 'join (list bad)
+                                   (lambda () (contracted:join (lazy ints-x) (lazy ints-x)
+                                                               #:on (list bad))))
+                             (list 'join-asof bad
+                                   (lambda () (contracted:join-asof ints-x ints-x #:on bad)))
+                             (list 'join-asof (list bad)
+                                   (lambda () (contracted:join-asof ints-x ints-x #:on "x"
+                                                                    #:by (list bad))))))])
+      (match-define (list who given thunk) entry)
+      (list thunk exn:fail:contract? (refused who given #:expected not-utf-8-expected))))
+  (for ([refusal (in-list (append refusals not-utf-8-refusals))])
     (match-define (list thunk kind rx) refusal)
     (check-exn (lambda (e) (and (kind e) (regexp-match? rx (exn-message e)))) thunk
                (object-name rx))))

@@ -62,6 +62,11 @@ pub extern "C" fn expr_rank(
     Box::into_raw(Box::new(ee.rank(opts, s)))
 }
 
+fn row_count(has_len: u8, len: usize) -> Option<usize> {
+    let max = usize::try_from(i64::MAX).unwrap_or(usize::MAX);
+    (has_len != 0).then(|| len.min(max))
+}
+
 #[no_mangle]
 pub extern "C" fn expr_head(
     e: *const Expr,
@@ -72,8 +77,7 @@ pub extern "C" fn expr_head(
         return ptr::null_mut();
     }
     let ee = unsafe { (*e).clone() };
-    let n = if has_len != 0 { Some(len) } else { None };
-    Box::into_raw(Box::new(ee.head(n)))
+    Box::into_raw(Box::new(ee.head(row_count(has_len, len))))
 }
 
 #[no_mangle]
@@ -86,8 +90,7 @@ pub extern "C" fn expr_tail(
         return ptr::null_mut();
     }
     let ee = unsafe { (*e).clone() };
-    let n = if has_len != 0 { Some(len) } else { None };
-    Box::into_raw(Box::new(ee.tail(n)))
+    Box::into_raw(Box::new(ee.tail(row_count(has_len, len))))
 }
 
 #[no_mangle]

@@ -29,7 +29,7 @@
 (define-expr-unop is-last-distinct  'is-last-distinct  expr-is-last-distinct)
 
 (module+ test
-  (require rackunit (only-in threading ~>)
+  (require rackunit (only-in racket/match match-define) (only-in threading ~>)
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape      ; with-columns
@@ -72,6 +72,8 @@
   (check-equal? (membership (list 1 polars-null)) (list #t polars-null #f))
   (check-equal? (membership (list 1.0 polars-null 3)) (list #t polars-null #t))
   (check-equal? (membership '()) (list #f polars-null #f))
+  (check-equal? (membership (list (expt 2 63) 3)) (list #f polars-null #t))
+  (check-exn #rx"^is-in: contract violation\n" (lambda () (membership (list -1 (expt 2 63)))))
   (for ([column (list (series (list "a" polars-null) #:name "x")
                       (series (list #t polars-null) #:name "x")
                       (series (list polars-null polars-null) #:name "x"))]
@@ -87,4 +89,20 @@
                 (list #f polars-null #t))
   (check-equal? (~> carriers (select (is-in "carrier" (list polars-null 'UA))) (ref "carrier")
                     series->list)
-                '(#t #f #t #f)))
+                '(#t #f #t #f))
+  (define wide
+    (dataframe (list (series (list (expt 2 63) 1 2) #:name "u" #:dtype 'u64)
+                     (series '(1 2 3) #:name "i"))))
+  (for ([row (list (list "u" (list (expt 2 63) 1) '(#t #t #f))
+                   (list "u" (list (sub1 (expt 2 64)) polars-null 2) '(#f #f #t))
+                   (list "i" (list (expt 2 63)) '(#f #f #f))
+                   (list "i" (list (sub1 (expt 2 64)) 3) '(#f #f #t)))])
+    (match-define (list name rhs expected) row)
+    (check-equal? (~> wide (select (is-in name rhs)) (ref name) series->list) expected
+                  (format "~a ~a" name rhs)))
+  (for ([rhs (list (list -1 (expt 2 63)) (list (expt 2 64)) (list (sub1 (- (expt 2 63)))))])
+    (check-exn (regexp (string-append "^is-in: contract violation\n  expected: [(]or/c [(]listof "
+                                      "[(]integer-in -9223372036854775808 9223372036854775807[)][)] "
+                                      "[(]listof [(]integer-in 0 18446744073709551615[)][)][)]\n"))
+               (lambda () (is-in "i" rhs))
+               (format "~a" rhs))))

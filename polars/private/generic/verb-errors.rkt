@@ -4,11 +4,14 @@
   (require rackunit
            racket/match
            (prefix-in rkt: (only-in racket/base max min))
+           (only-in racket/contract/base contract-name has-contract? or/c)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/c-integer int64/c size/c uint32/c)
+           (only-in polars/private/expr-core lit-integer/c)
            (only-in polars/private/foreign polars-null series-name)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
-                    dataframe-with-columns)
+                    dataframe-with-columns Expr-ptr? null-behavior/c)
            polars/private/generic/core
            polars/private/generic/cumulative
            polars/private/generic/datetime
@@ -19,7 +22,9 @@
            polars/private/generic/predicates
            polars/private/generic/reductions
            polars/private/generic/reshape
-           polars/private/generic/strings)
+           polars/private/generic/strings
+           (only-in polars/private/test-helpers
+                    not-utf-8-expected not-utf-8-names refusal refusal-misses refused))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -50,20 +55,49 @@
   (check-equal? (column-names (drop frame "v")) '("s"))
   (check-equal? (drop '(1 2 3) 1) '(2 3))
 
-  (define count-range "[(]integer-in 0 18446744073709551615[)]")
-  (define offset-range "[(]integer-in -9223372036854775808 9223372036854775807[)]")
-  (for* ([x (list frame (series '(1 2)) (lazy frame) (col "v"))]
-         [call (list (list 'head count-range (lambda () (head x -1)))
-                     (list 'tail count-range (lambda () (tail x -1)))
-                     (list 'slice count-range (lambda () (slice x 0 -1)))
-                     (list 'head count-range (lambda () (head x (expt 2 64))))
-                     (list 'tail count-range (lambda () (tail x (expt 2 64))))
-                     (list 'slice count-range (lambda () (slice x 0 (expt 2 64))))
-                     (list 'slice offset-range (lambda () (slice x (expt 2 63) 1)))
-                     (list 'slice offset-range (lambda () (slice x (sub1 (- (expt 2 63))) 1))))])
-    (match-define (list who range thunk) call)
-    (check-raises 'contract (regexp (format "^~a: contract violation\n  expected: ~a\n" who range))
-                  thunk))
+  (check-equal?
+   (refusal-misses
+    (append
+     (for*/list ([x (list frame (series '(1 2)) (lazy frame) (col "v"))]
+                 [row (list (refusal 'head size/c -1 (head x -1))
+                            (refusal 'tail size/c -1 (tail x -1))
+                            (refusal 'slice size/c -1 (slice x 0 -1))
+                            (refusal 'head size/c (expt 2 64) (head x (expt 2 64)))
+                            (refusal 'tail size/c (expt 2 64) (tail x (expt 2 64)))
+                            (refusal 'slice size/c (expt 2 64) (slice x 0 (expt 2 64)))
+                            (refusal 'slice int64/c (expt 2 63) (slice x (expt 2 63) 1))
+                            (refusal 'slice int64/c (sub1 (- (expt 2 63)))
+                                     (slice x (sub1 (- (expt 2 63))) 1)))])
+       row)
+     (list (refusal 'shift int64/c (expt 2 63) (shift "v" #:n (expt 2 63)))
+           (refusal 'diff int64/c (sub1 (- (expt 2 63))) (diff "v" #:n (sub1 (- (expt 2 63)))))
+           (refusal 'diff null-behavior/c 'keep (diff "v" #:null-behavior 'keep))
+           (refusal 'forward-fill (or/c #f uint32/c) (expt 2 32)
+                    (forward-fill "v" #:limit (expt 2 32)))
+           (refusal 'backward-fill (or/c #f uint32/c) -1 (backward-fill "v" #:limit -1))
+           (refusal 'str-extract size/c (expt 2 64)
+                    (str-extract "s" "(a)" #:group-index (expt 2 64)))
+           (refusal 'round uint32/c -1 (round "v" #:decimals -1) #:unblamed)
+           (refusal 'round uint32/c 1.5 (round "v" #:decimals 1.5) #:unblamed)
+           (refusal 'round uint32/c (expt 2 32) (round (col "v") #:decimals (expt 2 32))
+                    #:unblamed)
+           (refusal 'round number? 'x (round 2.5 #:decimals 'x) #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a #:decimals -1)
+                    #:unblamed)
+           (refusal 'round (or/c Expr-ptr? string? number?) #\a (round #\a) #:unblamed))))
+   '())
+  (check-raises 'contract
+                (regexp (string-append "^round: contract violation\n"
+                                       "  expected: \\(or/c Expr-ptr\\? string\\? number\\?\\)\n"
+                                       "  given: \n   shape: \\(1,\\)"))
+                (lambda () (round (series '(1.0)))))
+  (check-false (has-contract? round))
+  (check-equal? (list (round 1234 #:decimals -2) (round 2.5) (round 2.345 #:decimals 1))
+                (list 1200 2.0 2.3))
+  (check-equal? (series->list (ref (select (dataframe (list (series '(1.25 2.5) #:name "v")))
+                                           (round "v" #:decimals 1))
+                                   "v"))
+                '(1.2 2.5))
 
   (define edge-counts
     (list 0 2 3 4 (sub1 (expt 2 32)) (expt 2 32) (sub1 (expt 2 63)) (expt 2 63)
@@ -195,8 +229,47 @@
                   ("value" 10 30 20 0)))
   (check-raises 'polars #rx"^unpivot: cannot unpivot the dataframe: [^\n]*\"nope\" not found$"
                 (lambda () (unpivot by-quarter #:on '("nope") #:index '("store"))))
-  (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
+  (for ([name (list string->bytes/utf-8 string->path)])
+    (check-equal? (column-names (drop pair (name "a"))) '("b"))
+    (check-equal? (column-names (drop pair (list (name "a")))) '("b"))
+    (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop pair (name "nope"))))
+    (check-raises 'contract #rx"^drop: \"a\" named more than once$"
+                  (lambda () (drop pair (list "a" (name "a")))))
+    (check-equal? (columns-of (sort (pivot sales #:on (list (name "quarter"))
+                                           #:index (list (name "store"))
+                                           #:values (list (name "sales"))
+                                           #:agg 'sum)
+                                    "store"))
+                  (columns-of by-quarter))
+    (check-equal? (columns-of (unpivot by-quarter #:on (list (name "q1") (name "q2"))
+                                       #:index (list (name "store"))))
+                  (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))))
   (define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (for ([name (list string->bytes/utf-8 string->path)])
+    (check-equal? (series-name (rename (series '(1) #:name "a") (name "b"))) "b")
+    (check-equal? (column-names (rename named (name "a") (name "z"))) '("z" "b"))
+    (check-raises 'contract #rx"^rename: \"nope\" not found$"
+                  (lambda () (rename named (name "nope") "z")))
+    (check-raises 'contract #rx"^rename: column 'b' is duplicate$"
+                  (lambda () (rename named "a" (name "b")))))
+  (for* ([bad (in-list not-utf-8-names)]
+         [entry (in-list
+                (list (list 'drop bad (lambda () (drop pair bad)))
+                      (list 'drop (list "a" bad) (lambda () (drop pair (list "a" bad))))
+                      (list 'pivot bad (lambda () (pivot sales #:on (list bad) #:index '("store")
+                                                         #:values '("sales"))))
+                      (list 'unpivot bad
+                            (lambda () (unpivot by-quarter #:on '("q1") #:index (list bad))))
+                      (list 'rename bad (lambda () (rename named bad "z")))
+                      (list 'rename bad (lambda () (rename (series '(1) #:name "a") bad)))))])
+    (match-define (list who given thunk) entry)
+    (check-raises 'contract (refused who given #:expected not-utf-8-expected) thunk))
+  (check-raises 'contract #rx"^drop: contract violation\n" (lambda () (drop pair '(a))))
+  (check-raises 'contract #rx"^pivot: contract violation\n"
+                (lambda () (pivot sales #:on '(quarter) #:index '("store") #:values '("sales"))))
+  (check-raises 'contract #rx"^unpivot: contract violation\n"
+                (lambda () (unpivot by-quarter #:on '("q1") #:index '(store))))
+  (check-equal? (series-name (rename (series '(1) #:name "a") "b")) "b")
   (check-equal? (column-names (rename named "a" "z")) '("z" "b"))
   (check-raises 'contract #rx"^rename: column 'b' is duplicate$" (lambda () (rename named "a" "b")))
   (check-raises 'contract #rx"^dataframe: [^\n]*column with name 'k' has more than one occurrence$"
@@ -212,7 +285,9 @@
   (check-raises 'contract #rx"^unpivot: contract violation\n"
                 (lambda () (unpivot frame #:on "v" #:index '("s"))))
 
-  (define not-a-literal "contract violation\n  expected: [(]or/c boolean[?] [(]integer-in ")
+  (define not-a-literal
+    (string-append "contract violation\n  expected: "
+                   (regexp-quote (format "(or/c boolean? ~s " (contract-name lit-integer/c)))))
   (for ([call (list (cons 'fill-null (lambda () (fill-null (col "v") #\a)))
                     (cons 'fill-nan (lambda () (fill-nan (col "v") #\a)))
                     (cons 'is-between (lambda () (is-between (col "v") #\a 3)))
@@ -232,7 +307,6 @@
                     (cons 'str-replace (lambda () (str-replace "s" "a" #\b)))
                     (cons 'str-replace-all (lambda () (str-replace-all "s" #\a "b")))
                     (cons 'str-extract (lambda () (str-extract "s" #\a)))
-                    (cons 'str-slice (lambda () (str-slice "s" #\a 2)))
                     (cons 'str-head (lambda () (str-head "s" #\a)))
                     (cons 'str-tail (lambda () (str-tail "s" #\a)))
                     (cons 'str-find (lambda () (str-find "s" #\a)))
