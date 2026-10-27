@@ -1,4 +1,4 @@
-"""Writes polars/private/generic/operand-audit.rktd from Python polars.
+"""Writes polars/tests/generic/operand-audit.rktd from Python polars.
 
 Run from the repo root with Python polars 1.42.1:
     python3 -I scripts/operand-audit-expected.py
@@ -18,7 +18,7 @@ import polars as pl
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DATA = ROOT / "polars" / "scribblings" / "data"
-OUT = ROOT / "polars" / "private" / "generic" / "operand-audit.rktd"
+OUT = ROOT / "polars" / "tests" / "generic" / "operand-audit.rktd"
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
 warnings.simplefilter("ignore")
 

@@ -12,17 +12,25 @@
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
                     dataframe-with-columns Expr-ptr? null-behavior/c)
-           polars/private/generic/core
-           polars/private/generic/cumulative
-           polars/private/generic/datetime
-           polars/private/generic/math
-           polars/private/generic/nullable
-           polars/private/generic/operators
+           (only-in polars/private/generic/core
+                    column-names dataframe dataframe? height lazyframe? ref series series? shape)
+           (only-in polars/private/generic/cumulative diff shift)
+           (only-in polars/private/generic/datetime dt-truncate)
+           (only-in polars/private/generic/math clip pow round)
+           (only-in polars/private/generic/nullable
+                    backward-fill fill-nan fill-null forward-fill)
+           (only-in polars/private/generic/operators
+                    < <= > else-when otherwise p-when then)
            (only-in polars/private/generic/ordering sort)
-           polars/private/generic/predicates
-           polars/private/generic/reductions
-           polars/private/generic/reshape
-           polars/private/generic/strings
+           (only-in polars/private/generic/predicates is-between)
+           (only-in polars/private/generic/reductions alias count max min sum)
+           (only-in polars/private/generic/reshape
+                    agg collect drop filter group-by head lazy pivot rename select slice tail
+                    unpivot with-column)
+           (only-in polars/private/generic/strings
+                    str-contains str-count-matches str-ends-with str-extract str-find
+                    str-find-literal str-head str-replace str-replace-all str-starts-with
+                    str-strip-chars str-strip-prefix str-strip-suffix str-tail)
            (only-in polars/tests/test-helpers
                     not-utf-8-expected not-utf-8-names refusal refusal-misses refused))
 

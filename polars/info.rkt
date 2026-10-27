@@ -23,5 +23,5 @@
 (define compile-omit-files '("private/install-compat.rkt"))
 
 (define test-timeouts
-  '(("private/generic/core.rkt" 600)
+  '(("tests/generic/core.rkt" 600)
     ("tests/generic/csv-options.rkt" 900)))

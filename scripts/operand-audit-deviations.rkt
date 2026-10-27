@@ -3,8 +3,8 @@
 (require racket/cmdline
          racket/match
          (only-in racket/list count)
-         polars/private/generic/operand-audit-classes
-         polars/private/generic/operand-audit-table)
+         polars/tests/generic/operand-audit-classes
+         polars/tests/generic/operand-audit-table)
 
 (define accept? (box #f))
 (command-line

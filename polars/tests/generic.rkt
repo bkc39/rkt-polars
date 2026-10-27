@@ -1,0 +1,127 @@
+#lang racket/base
+
+(module+ test
+  (require rackunit
+           (only-in polars/private/expr-core
+                    Expr-ptr? LazyFrame-ptr? col drop-owned expr-drop expr-drop-count
+                    lazyframe-drop lazyframe-drop-count)
+           (only-in polars/private/expr dataframe-lazy expr-alias lazyframe-collect)
+           (only-in polars/private/foreign
+                    DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-height
+                    dataframe-new series-drop series-drop-count series-len series-new-i64)
+           (only-in polars/private/generic
+                    > collect dataframe dataframe? filter height is-in lazy lazyframe? len ref
+                    series series? sort write-csv)
+           (only-in polars/private/generic/core wrap-series)
+           (only-in polars/tests/test-helpers contract-violation-of drops-once))
+
+  (define-check (check-dropped thunk who noun)
+    (define expected (format "~a: ~a has been dropped" who noun))
+    (define actual (with-handlers ([exn:fail:contract? exn-message]) (thunk) #f))
+    (with-check-info (['expected expected] ['actual actual])
+      (unless (equal? actual expected) (fail-check))))
+
+  (define ((drop-twice drop noun) v)
+    (drop v)
+    (check-dropped (lambda () (drop v)) (object-name drop) noun))
+
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop 'series)
+                            (lambda () (series '(1 2))))
+                1)
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop 'series)
+                            (lambda () (series-new-i64 "raw" '(1 2))))
+                1)
+  (check-equal? (drops-once series-drop-count (drop-twice series-drop 'series)
+                            (lambda () (wrap-series (wrap-series (series-new-i64 "x" '(1))))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count (drop-twice dataframe-drop 'dataframe)
+                            (lambda () (dataframe (list (series '(1 2) #:name "a")))))
+                1)
+  (check-equal? (drops-once dataframe-drop-count (drop-twice dataframe-drop 'dataframe)
+                            (lambda () (dataframe-new (list (series '(1 2) #:name "a")))))
+                1)
+  (check-equal? (drops-once expr-drop-count (drop-twice expr-drop "expression")
+                            (lambda () (col "x")))
+                1)
+  (for ([make (list (lambda () (lazy (dataframe (list (series '(1) #:name "a")))))
+                    (lambda () (dataframe-lazy (dataframe-new (list (series '(1)))))))])
+    (check-equal? (drops-once lazyframe-drop-count (drop-twice lazyframe-drop 'lazyframe) make) 1))
+  (for ([drop (list series-drop dataframe-drop lazyframe-drop expr-drop)])
+    (check-exn (contract-violation-of (object-name drop)) (lambda () (drop "a"))))
+  (for ([count (list series-drop-count series-drop-count dataframe-drop-count expr-drop-count
+                     lazyframe-drop-count)]
+        [make (list (lambda () (series '(1 2)))
+                    (lambda () (series-new-i64 "raw" '(1)))
+                    (lambda () (dataframe-new (list (series '(1)))))
+                    (lambda () (col "x"))
+                    (lambda () (lazy (dataframe (list (series '(1) #:name "a"))))))])
+    (check-equal? (drops-once count drop-owned make) 1))
+  (check-equal? (drop-owned 5) (void))
+
+  (define temps (series '(21.5 23.0 19.8) #:name "temp"))
+  (series-drop temps)
+  (check-equal? (format "~v" temps) "#<series: dropped>")
+  (check-pred series? temps)
+  (check-pred Series-ptr? temps)
+  (check-dropped (lambda () (len temps)) 'series 'series)
+  (check-dropped (lambda () (ref temps 0)) 'series 'series)
+  (check-dropped (lambda () (series-len temps)) 'series 'series)
+  (check-dropped (lambda () (dataframe (list temps))) 'series 'series)
+  (check-dropped (lambda () (sort temps)) 'series 'series)
+  (check-dropped (lambda () (is-in "v" temps)) 'series 'series)
+
+  (define raw-series (series-new-i64 "raw" '(1)))
+  (series-drop raw-series)
+  (check-dropped (lambda () (series-len raw-series)) 'series 'series)
+
+  (define raw-frame (dataframe-new (list (series-new-i64 "v" '(1)))))
+  (dataframe-drop raw-frame)
+  (check-dropped (lambda () (dataframe-height raw-frame)) 'dataframe 'dataframe)
+
+  (define raw-query (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1))))))
+  (lazyframe-drop raw-query)
+  (check-dropped (lambda () (lazyframe-collect raw-query)) 'lazyframe 'lazyframe)
+
+  (define inner-series (series '(4 5)))
+  (series-drop (wrap-series inner-series))
+  (check-dropped (lambda () (len inner-series)) 'series 'series)
+  (check-dropped (lambda () (series-drop inner-series)) 'series-drop 'series)
+
+  (define shared-raw (series-new-i64 "shared" '(1 2)))
+  (define first-holder (wrap-series shared-raw))
+  (define second-holder (wrap-series shared-raw))
+  (series-drop first-holder)
+  (check-equal? (format "~a" second-holder) "#<series: dropped>")
+  (check-dropped (lambda () (len second-holder)) 'series 'series)
+  (check-dropped (lambda () (series-drop second-holder)) 'series-drop 'series)
+
+  (define readings (dataframe (list (series '(3 1 2) #:name "v"))))
+  (dataframe-drop readings)
+  (check-equal? (format "~v" readings) "#<dataframe: dropped>")
+  (check-pred dataframe? readings)
+  (check-pred DataFrame-ptr? readings)
+  (check-dropped (lambda () (height readings)) 'dataframe 'dataframe)
+  (check-dropped (lambda () (sort readings "v")) 'dataframe 'dataframe)
+  (check-dropped (lambda () (write-csv readings (build-path (find-system-path 'temp-dir)
+                                                           "rkt-polars-dropped-131.csv")))
+                 'dataframe 'dataframe)
+
+  (define query (lazy (dataframe (list (series '(3 1 2) #:name "v")))))
+  (lazyframe-drop query)
+  (check-equal? (format "~v" query) "#<lazyframe: dropped>")
+  (check-pred lazyframe? query)
+  (check-pred LazyFrame-ptr? query)
+  (check-dropped (lambda () (collect query)) 'lazyframe 'lazyframe)
+  (check-dropped (lambda () (lazyframe-collect query)) 'lazyframe 'lazyframe)
+  (check-dropped (lambda () (sort query "v")) 'lazyframe 'lazyframe)
+
+  (define threshold (> (col "v") 2))
+  (expr-drop threshold)
+  (check-equal? (format "~v" threshold) "#<expr: dropped>")
+  (check-pred Expr-ptr? threshold)
+  (check-dropped (lambda () (filter (dataframe (list (series '(1 3) #:name "v"))) threshold))
+                 'expr "expression")
+  (check-dropped (lambda () (expr-drop threshold)) 'expr-drop "expression")
+  (check-dropped (lambda () (expr-alias threshold "w")) 'expr "expression")
+  (check-dropped (lambda () (sort threshold)) 'expr "expression")
+  (check-dropped (lambda () (is-in "v" threshold)) 'expr "expression"))
