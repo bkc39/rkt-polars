@@ -2,16 +2,32 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           racket/match
+           (prefix-in base: (only-in racket/base sort))
+           (for-syntax (only-in syntax/parse expr))
+           (only-in gregor datetime datetime<?)
+           (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/contract/base contract-name or/c)
+           (only-in racket/list cartesian-product make-list range remove-duplicates take)
+           (only-in racket/math nan?)
+           (only-in syntax/parse/define define-syntax-parse-rule)
            (only-in polars/private/c-integer uint64/c)
+           (only-in polars/private/expr-core expr->string lit)
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? ref series)
+           (only-in polars/private/generic/cumulative diff shift)
+           (only-in polars/private/generic/math p-abs [round p-round])
+           (only-in polars/private/generic/operators p+)
            (only-in polars/private/generic/reductions alias first last max mean sum)
            (only-in polars/private/generic/reshape
                     agg cast collect filter group-by head lazy select with-columns)
+           (only-in polars/private/generic/strings str-to-uppercase)
+           (only-in polars/private/generic/window over)
            (only-in polars/private/generic/ordering gather)
            (prefix-in contracted: polars/private/generic/ordering)
-           (only-in (submod polars/private/generic/ordering internal) rank sort sort-by))
+           (only-in (submod polars/private/generic/ordering internal) rank sort sort-by)
+           (only-in polars/tests/generic/test-fixtures
+                    Expr-ptr? col column datetime ops-df polars-null polars-null? series-cells v64))
   (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
                               (series '("b" "a" "b" "a" "b") #:name "g"))))
   ;; rank is length-preserving -> with-columns
@@ -43,26 +59,8 @@
   (check-exn
    (regexp (format "^rank: contract violation\n  expected: ~a\n  given: 18446744073709551616"
                    (regexp-quote (format "~s" (contract-name (or/c #f uint64/c))))))
-   (lambda () (contracted:rank "x" #:seed (expt 2 64)))))
+   (lambda () (contracted:rank "x" #:seed (expt 2 64))))
 
-(module+ test
-  (require racket/match
-           (prefix-in base: (only-in racket/base sort))
-           (only-in gregor datetime datetime<?)
-           (only-in racket/contract exn:fail:contract:blame?)
-           (only-in racket/list cartesian-product make-list range remove-duplicates take)
-           (only-in racket/math nan?)
-           (only-in syntax/parse/define define-syntax-parse-rule)
-           (for-syntax (only-in syntax/parse expr))
-           (prefix-in contracted: polars/private/generic/ordering)
-           (only-in polars/private/expr-core expr->string lit)
-           (only-in polars/private/generic/cumulative diff shift)
-           (only-in polars/private/generic/math p-abs [round p-round])
-           (only-in polars/private/generic/operators p+)
-           (only-in polars/private/generic/strings str-to-uppercase)
-           (only-in polars/private/generic/window over)
-           (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col column datetime ops-df polars-null polars-null? series-cells v64))
 
   (define (frame-rows d)
     (define cols (for/list ([name (in-list (column-names d))])

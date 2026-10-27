@@ -2,8 +2,9 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/contract/base contract-name)
-           (only-in gregor date datetime)
+           (only-in gregor date datetime moment resolve-offset/post resolve-offset/pre)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c nonnegative-int64/c)
            (only-in polars/private/expr col)
@@ -11,6 +12,7 @@
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape collect lazy select with-columns)
+           (prefix-in contracted: polars/private/generic/strings)
            (only-in polars/private/generic/strings
                     str->date str->time str-contains str-count-matches str-ends-with str-find
                     str-find-literal str-head str-len-bytes str-len-chars str-replace
@@ -118,12 +120,8 @@
   (check-equal? (ref (ref out4 #:columns "dt") 0) (datetime 2024 1 2 3 4 5))
   (check-equal? (ref (ref out4 #:columns "dt") 1) polars-null)
   (check-not-eq? (ref (ref out4 #:columns "tm") 0) polars-null)
-  (check-equal? (ref (ref out4 #:columns "tm") 1) polars-null))
+  (check-equal? (ref (ref out4 #:columns "tm") 1) polars-null)
 
-(module+ test
-  (require (only-in gregor moment resolve-offset/post resolve-offset/pre)
-           (only-in racket/contract exn:fail:contract:blame?)
-           (prefix-in contracted: polars/private/generic/strings))
   (define slice-length-refused
     (regexp (string-append "^str-slice: contract violation\n  expected: "
                            (regexp-quote

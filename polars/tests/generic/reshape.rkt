@@ -2,9 +2,13 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
+           racket/runtime-path
+           (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/contract/base flat-contract-predicate)
            (only-in racket/match match-define)
+           (only-in racket/string string-contains?)
            (only-in polars/private/bulk series->list)
+           (only-in polars/private/csv lazyframe-scan-csv)
            (only-in polars/private/generic/core
                     column-names dataframe dataframe? dtype height lazyframe? len ref series
                     series? wrap-dataframe wrap-lazyframe)
@@ -262,14 +266,8 @@
                      (list 'expr (lambda () (select ops-df (slice (col "value") offset length)))))])
       (match-define (list label sliced) via)
       (check-equal? (series->list (ref (sliced) "value")) expected
-                    (format "~a ~a ~a" label offset length)))))
+                    (format "~a ~a ~a" label offset length))))
 
-(module+ test
-  (require racket/runtime-path
-           (only-in racket/contract exn:fail:contract:blame?)
-           (only-in racket/string string-contains?)
-           (only-in polars/private/csv lazyframe-scan-csv)
-           (prefix-in contracted: polars/private/generic/reshape))
   (define-runtime-path iris-csv "../../scribblings/guide/iris.csv")
   (define iris-plan
     (~> (wrap-lazyframe (lazyframe-scan-csv iris-csv))

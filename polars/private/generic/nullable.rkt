@@ -8,7 +8,6 @@
 
 (require (only-in racket/contract/base ->* contract-out or/c)
          (only-in polars/private/c-integer uint32/c)
-         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 

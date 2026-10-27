@@ -7,7 +7,6 @@
 
 (require (only-in racket/contract/base ->* any/c contract-out)
          (only-in polars/private/c-integer int64/c)
-         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 

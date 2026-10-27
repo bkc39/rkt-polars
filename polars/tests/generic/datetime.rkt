@@ -2,12 +2,26 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
-           (only-in gregor datetime date)
+           (only-in gregor
+                    ->posix ->tzid ->utc-offset date datetime moment moment->iso8601/tzid
+                    posix->datetime posix->moment resolve-offset/post resolve-offset/pre)
+           (only-in gregor/period hours microseconds nanoseconds period weeks)
+           (only-in gregor/private/moment-base make-moment)
+           (only-in gregor/time time)
+           (only-in racket/contract exn:fail:contract:blame?)
+           (only-in racket/list make-list)
+           (only-in polars/private/bulk in-series series->list)
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign polars-null polars-null? series-name)
            (only-in polars/private/generic/core column-names dataframe dtype height len ref series)
+           (only-in polars/private/generic/nullable fill-null)
+           (only-in polars/private/generic/operands const-series)
+           (prefix-in p: polars/private/generic/operators)
+           (only-in polars/private/generic/predicates is-between is-in)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape cast filter rename select with-columns)
+           (only-in polars/private/generic/strings str->datetime)
+           (prefix-in contracted: polars/private/generic/datetime)
            (only-in polars/private/generic/datetime
                     dt-date dt-day dt-hour dt-is-leap-year dt-iso-year dt-microsecond
                     dt-millisecond dt-minute dt-month dt-nanosecond dt-ordinal-day dt-quarter
@@ -72,18 +86,8 @@
   (check-equal? (c0 "ns") 123000000)
   (check-equal? (c0 "epoch") 1704164645123)
   (check-not-eq? (c0 "time") polars-null)      ; gregor time-of-day value
-  (check-not-eq? (c0 "bucket") polars-null))   ; truncated datetime[ms]
+  (check-not-eq? (c0 "bucket") polars-null)   ; truncated datetime[ms]
 
-(module+ test
-  (require (only-in racket/list make-list)
-           (only-in gregor moment)
-           (only-in gregor/period hours microseconds nanoseconds period weeks)
-           (only-in gregor/time time)
-           (only-in polars/private/bulk series->list)
-           (only-in polars/private/generic/operands const-series)
-           (prefix-in p: polars/private/generic/operators)
-           (only-in polars/private/generic/nullable fill-null)
-           (only-in polars/private/generic/predicates is-between is-in))
   (define calendar
     (dataframe
      (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2)) #:name "d")
@@ -180,18 +184,8 @@
                   '(datetime microseconds #f) '(duration microseconds) '(duration nanoseconds)
                   '(datetime microseconds #f))])
     (check-equal? (series->list (const-series 'test dt 3 value))
-                  (series->list (series (make-list 3 value) #:dtype dt)))))
+                  (series->list (series (make-list 3 value) #:dtype dt))))
 
-(module+ test
-  (require (only-in gregor
-                    ->posix ->tzid ->utc-offset moment moment->iso8601/tzid posix->datetime
-                    posix->moment
-                    resolve-offset/pre resolve-offset/post)
-           (only-in gregor/private/moment-base make-moment)
-           (only-in racket/contract exn:fail:contract:blame?)
-           (only-in polars/private/bulk in-series)
-           (only-in polars/private/generic/strings str->datetime)
-           (prefix-in contracted: polars/private/generic/datetime))
 
   (define (cells s) (for/list ([x (in-series s)]) x))
   (define (column d name) (cells (ref d name)))

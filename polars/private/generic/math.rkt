@@ -15,7 +15,6 @@
 (require (prefix-in base: racket/base)
          (only-in racket/contract/base contract-name)
          (only-in polars/private/c-integer uint32/c)
-         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 

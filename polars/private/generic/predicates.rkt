@@ -5,8 +5,7 @@
 ;; is-unique / is-duplicated / is-first-distinct / is-last-distinct.  Each takes
 ;; an Expr or a bare column-name string (auto-lifted via col).
 
-(require polars/private/foreign
-         polars/private/expr
+(require polars/private/expr
          polars/private/generic/expr-util
          (only-in racket/contract/base ->* any/c contract-out or/c))
 

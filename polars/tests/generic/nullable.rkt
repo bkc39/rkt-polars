@@ -12,12 +12,14 @@
                     alias count first last max mean median min n-unique std sum var)
            (only-in polars/private/generic/reshape
                     agg cast drop-nulls group-by select unique with-columns)
+           (prefix-in contracted: polars/private/generic/nullable)
            (only-in polars/private/generic/nullable
                     drop-nans fill-nan fill-null is-finite is-infinite is-nan is-null)
            (only-in (submod polars/private/generic/nullable internal) backward-fill forward-fill)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/operators [= p=] p+)
-           (only-in polars/tests/generic/test-fixtures series-shape))
+           (only-in polars/tests/generic/test-fixtures series-shape)
+           (only-in polars/tests/test-helpers contract-violation-of))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
                      (series (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:name "y"))))
@@ -108,10 +110,7 @@
             (alias (forward-fill "v" #:limit 1) "forward_1")
             (alias (backward-fill "v") "backward")))
   (check-equal? (map (lambda (name) (series->list (ref filled name))) (column-names filled))
-                (list '(1 1 1 4) (list 1 1 polars-null 4) '(1 4 4 4))))
+                (list '(1 1 1 4) (list 1 1 polars-null 4) '(1 4 4 4)))
 
-(module+ test
-  (require (only-in polars/tests/test-helpers contract-violation-of)
-           (prefix-in contracted: polars/private/generic/nullable))
   (check-exn (contract-violation-of 'forward-fill)
              (lambda () (contracted:forward-fill "v" #:limit -1))))

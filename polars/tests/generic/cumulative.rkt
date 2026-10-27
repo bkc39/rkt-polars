@@ -7,8 +7,10 @@
            (only-in polars/private/generic/core column-names dataframe ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape select with-columns)
+           (prefix-in contracted: polars/private/generic/cumulative)
            (only-in polars/private/generic/cumulative cum-count cum-max cum-min cum-prod cum-sum)
-           (only-in (submod polars/private/generic/cumulative internal) diff shift))
+           (only-in (submod polars/private/generic/cumulative internal) diff shift)
+           (only-in polars/tests/test-helpers contract-violation-of))
   (define df (dataframe (list (series '(1 2 3 4 5) #:name "x" #:dtype 'i64))))
   (define out
     (~> df (with-columns
@@ -44,9 +46,6 @@
                                  (alias (shift "v" #:n -1 #:fill-value 0) "up")
                                  (alias (diff "v") "change")))
                 (list (list polars-null 1 3 6) '(3 6 10 0) (list polars-null 2 3 4)))
-  (check-equal? (columns (select steps (diff "v" #:null-behavior 'drop))) '((2 3 4))))
+  (check-equal? (columns (select steps (diff "v" #:null-behavior 'drop))) '((2 3 4)))
 
-(module+ test
-  (require (only-in polars/tests/test-helpers contract-violation-of)
-           (prefix-in contracted: polars/private/generic/cumulative))
   (check-exn (contract-violation-of 'shift) (lambda () (contracted:shift "v" #:n (expt 2 63)))))

@@ -773,13 +773,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in
   `polars/tests/generic/selectors.rkt` checks the selection against
-  `regexp-match?`. It never emits the crate's `(?i`,
-  whose Unicode folding differs from Racket's; it expands case-insensitive
-  literals and ranges itself. `\p{...}` classes follow each side's Unicode
-  tables, and Racket misjudges some classes above U+00FF (#85), so the
-  oracle's names stay out of both. Lookaround, backreferences, atomic groups
-  and conditionals, which the crate lacks, are rejected by `col` and
-  `exclude`, naming the construct (#151).
+  `regexp-match?`. It never emits the crate's `(?i`, whose Unicode folding
+  differs from Racket's; it expands case-insensitive literals and ranges
+  itself. `\p{...}` classes follow each side's Unicode tables, and Racket
+  misjudges some classes above U+00FF (#85), so the oracle's names stay out of
+  both. Lookaround, backreferences, atomic groups and conditionals, which the
+  crate lacks, are rejected by `col` and `exclude`, naming the construct
+  (#151).
 
 ## Documentation
 
