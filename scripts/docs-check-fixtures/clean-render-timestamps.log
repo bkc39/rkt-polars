@@ -1,0 +1,5 @@
+raco setup: version: 9.3 @ 412
+raco setup: --- building documentation --- @ 1530
+raco setup: running: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl @ 1688
+raco setup: rendering: <pkgs>/rkt-polars/polars/scribblings/polars.scrbl @ 40231
+raco setup: --- installing collections --- @ 52107

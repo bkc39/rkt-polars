@@ -33,7 +33,8 @@ racket "$ROOT/scripts/check-bindings.rkt"
 
 echo ">> building docs + checking declared deps (as the package server does)"
 # --no-docs above skipped threading-doc too; the manual's `~>` links need it.
-raco setup --check-pkg-deps --pkgs polars threading-doc
+raco setup --check-pkg-deps --pkgs threading-doc
+DOCS_CHECK_PKG=polars scripts/docs-check.sh
 
 echo ">> running tests"
 raco test -x --timeout 600 -c polars

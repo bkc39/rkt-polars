@@ -24,10 +24,18 @@
   ;; CI's rustfmt check; `nix build .#racket` does not run it.
   (fmt           "cargo fmt --manifest-path rust/Cargo.toml --all --check")
   ;; A fresh dev shell has no threading docs, and without them the manual's
-  ;; `~>` link is an undefined tag and threading-doc looks like an unused
-  ;; dependency.  Cheap once built.
+  ;; `~>` link is an undefined tag, which fails the docs gate, and
+  ;; threading-doc looks like an unused dependency.  Cheap once built.
   (threading-doc "raco setup --pkgs threading-doc")
-  (docs          "raco setup --check-pkg-deps --unused-pkg-deps --pkgs rkt-polars")
+  ;; raco setup over rkt-polars, red on an undefined tag, a key collected
+  ;; multiple times or a badlink in the rendered manual, all of which raco
+  ;; setup only warns about.  A run that does not render the manual reads the
+  ;; warnings its last render recorded.  The flake's Racket build runs the
+  ;; same script, and the dev shell's setup on entry records with --record.
+  (docs          "scripts/docs-check.sh")
+  ;; scripts/docs-check.sh against fixture logs and manuals, with raco,
+  ;; racket and tee stubbed.  Plain bash, so no shell.
+  (docs-check-test ("bash scripts/docs-check-test.sh" #:shell ""))
   ;; No define-syntax-rule or syntax-rules in the Racket sources.  A grep, so
   ;; no shell.
   (no-syntax-rule ("bash scripts/no-syntax-rule.sh" #:shell ""))
@@ -59,4 +67,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule rustls-only devshell-home install-native-libs compile test examples fmt)))
+ (push-gates (no-syntax-rule rustls-only docs-check-test devshell-home install-native-libs compile test examples fmt)))

@@ -1,0 +1,3 @@
+raco setup: version: 9.3
+raco setup: --- building documentation ---
+raco setup: --- installing collections ---
