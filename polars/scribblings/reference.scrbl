@@ -2215,7 +2215,7 @@ under a plain number on its left, to @racket['float64], and divides a duration
 series by a number. The result takes the series' name on either side;
 Python's eager operator instead names it @tt{literal} for a plain value left
 of @racket[+], @racket[-], @racket[*] or @racket[/] on a Decimal series, left
-of @racket[*] on a Duration series, and for a string left of @racket[+]. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+of @racket[*] on a Duration series, and for a string left of @racket[+]. The operand audit (@filepath{polars/tests/generic/operand-audit.rkt}) holds every
 operator to Python's outcome, row by row, and records ours, with its reason,
 where they still differ.
 

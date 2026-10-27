@@ -1,8 +1,6 @@
 #lang racket/base
 
 (module+ test
-  ;; series->string operates on the raw FFI series, so build them directly here
-  ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
            (only-in polars/private/expr dataframe-group-by-agg)
            (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
@@ -11,7 +9,7 @@
                     dataframe-column dataframe-new series-cast series-new-i32 series-new-i64
                     series-new-null series-new-str series-slice polars-null)
            (only-in polars/private/generic/printing series->printed series->string)
-           (submod polars/private/generic/printing internal)
+           (only-in (submod polars/private/generic/printing internal) cell)
            (only-in polars/tests/test-helpers settle!)
            (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))

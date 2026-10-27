@@ -2,14 +2,25 @@
 
 (module+ test
   (require rackunit
+           (only-in gregor moment)
+           (only-in racket/list make-list)
            (only-in racket/match match-define)
+           (only-in racket/math nan?)
            (only-in threading ~>)
-           (only-in polars/private/foreign dataframe-drop series-drop)
+           (only-in polars/private/expr-core expr-drop-count lazyframe-drop-count)
+           (only-in polars/private/foreign
+                    dataframe-drop dataframe-drop-count series-drop series-drop-count
+                    series-quantile)
            (only-in polars/private/generic/core
                     column-names dataframe dataframe? height len null-count ref series)
-           (submod polars/private/generic/describe internal)
+           (prefix-in contracted: polars/private/generic/describe)
+           (only-in (submod polars/private/generic/describe internal)
+                    call-with-column-plans column-plan-series describe offset->string)
+           (only-in polars/private/generic/math p-abs)
+           (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/reductions alias max mean min std)
-           (only-in polars/private/generic/reshape cast)
+           (only-in polars/private/generic/reshape
+                    agg cast collect group-by head lazy select with-columns)
            (only-in polars/tests/generic/test-fixtures
                     col column drops-during frame polars-null polars-null? produce-parquet
                     settle!))
@@ -32,17 +43,6 @@
   (check-equal? (ref (ref fr-desc #:columns "user") 8) "carol")   ; string max
   (check-pred polars-null? (ref (ref fr-desc #:columns "user") 2)) ; mean -> null
   (check-equal? (ref (ref fr-desc #:columns "score") 4) 10.0)     ; numeric min
-
-  (require (only-in gregor moment)
-           (only-in racket/list make-list)
-           (only-in racket/math nan?)
-           (only-in polars/private/generic/parquet read-parquet)
-           (only-in polars/private/expr-core expr-drop-count lazyframe-drop-count)
-           (only-in polars/private/foreign dataframe-drop-count series-drop-count series-quantile)
-           (only-in polars/private/generic/math p-abs)
-           (only-in polars/private/generic/reshape agg collect group-by head lazy select
-                    with-columns)
-           (prefix-in contracted: polars/private/generic/describe))
 
   (define (check-column d name expected)
     (check-equal? (length (column d name)) (length expected))

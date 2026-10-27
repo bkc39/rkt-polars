@@ -17,7 +17,7 @@
                     series-slice series-sum-f64)
            (only-in polars/private/generic/core dtype series wrap-series)
            (only-in polars/private/generic/reductions first last max mean min sum)
-           (submod polars/private/generic/reductions internal)
+           (only-in (submod polars/private/generic/reductions internal) n-unique std var)
            (only-in polars/tests/generic/test-fixtures
                     Expr-ptr? col datetime floats ints past-chrono-zoned polars-null prices
                     series-cells settle!)

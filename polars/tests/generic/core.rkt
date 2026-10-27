@@ -1,18 +1,25 @@
 #lang racket/base
 
 (module+ test
-  ;; fixtures are inline here: core can't require test-fixtures (which requires
-  ;; core) without a compile-time cycle.
-  (require rackunit (only-in gregor datetime) (only-in racket/sequence sequence->list)
+  (require rackunit
+           (only-in compiler/find-exe find-exe)
+           (only-in gregor date datetime moment now)
+           (only-in gregor/period days hours microseconds milliseconds months nanoseconds weeks)
+           (only-in gregor/time time)
+           (only-in racket/match match match-define)
+           (only-in racket/port port->string)
+           (only-in racket/sequence sequence->list)
            (only-in threading ~>)
+           (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign
                     polars-null series-cast series-drop-count series-dtype series-len series-name
                     series-new-i64 series-new-str)
            (only-in polars/private/generic/core
                     column-name column-names dataframe? dtype height len null-count ref series
                     series? shape shape/values width wrap-series)
-           (submod polars/private/generic/core internal)
-           (only-in polars/private/generic/printing series->string))
+           (only-in (submod polars/private/generic/core internal) dataframe)
+           (only-in polars/private/generic/printing series->string)
+           (only-in polars/tests/test-helpers settle!))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -128,10 +135,8 @@
   (check-exn exn:fail? (lambda () (ref frame #:rows 0)))
 
   ;; custom-write prints the Polars table
-  (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame))))
+  (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame)))
 
-(module+ test
-  (require (only-in polars/tests/test-helpers settle!))
   (define (drops-while-raising thunk)
     (settle!)
     (define before (series-drop-count))
@@ -142,12 +147,8 @@
                     (lambda () (series '(info error) #:dtype '(enum debug info))))
                    (drops-while-raising
                     (lambda () (series-cast held '(enum debug info)))))
-                1))
+                1)
 
-(module+ test
-  (require (only-in gregor date moment now)
-           (only-in gregor/period days hours microseconds milliseconds months nanoseconds weeks)
-           (only-in gregor/time time))
   (define (round-trip elements [dtype #f])
     (define s (if dtype (series elements #:dtype dtype) (series elements)))
     (list (series-dtype s) (for/list ([x s]) x)))
@@ -210,11 +211,8 @@
   (check-exn #rx"^series: expected a gregor period without years or months"
              (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
   (check-exn #rx"^series: value out of range for this dtype"
-             (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f)))))
+             (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f))))
 
-(module+ test
-  (require (only-in polars/private/bulk series->list)
-           (only-in racket/match match match-define))
   (define (empty-series-summary s)
     (list (series-name s) (series-dtype s) (series-len s) (series->list s)))
 
@@ -254,12 +252,8 @@
         [(list spec expected) (values spec expected)]))
     (check-equal? (empty-series-summary (series elements #:name "e" #:dtype spec))
                   (list "e" expected 0 '())
-                  (format "~s ~s" spec elements))))
+                  (format "~s ~s" spec elements)))
 
-(module+ test
-  (require (only-in compiler/find-exe find-exe)
-           (only-in racket/match match-define)
-           (only-in racket/port port->string))
   (define (placeholder what)
     (format "^#<~a: cannot print: polars panicked: [^>]+>$" what))
   (define past-chrono-probes

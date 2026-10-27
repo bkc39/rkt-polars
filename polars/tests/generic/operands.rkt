@@ -8,7 +8,7 @@
            (only-in polars/private/generic/core wrap-series)
            (only-in polars/private/generic/operands
                     expression-form-op operand-action series-through-expr)
-           (submod polars/private/generic/operands internal)
+           (only-in (submod polars/private/generic/operands internal) python-str)
            (only-in polars/tests/test-helpers settle!)
            (only-in gregor date))
   (define (noting build)

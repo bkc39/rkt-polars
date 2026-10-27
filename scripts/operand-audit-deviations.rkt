@@ -3,8 +3,12 @@
 (require racket/cmdline
          racket/match
          (only-in racket/list count)
-         polars/tests/generic/operand-audit-classes
-         polars/tests/generic/operand-audit-table)
+         (only-in polars/tests/generic/operand-audit-classes
+                  classify-deviation operand-deviation-classes recorder-verdict
+                  unaccepted-report)
+         (only-in polars/tests/generic/operand-audit-table
+                  audit-row-key audit-rows deviations eager-outcome python-outcome run-row
+                  write-deviations))
 
 (define accept? (box #f))
 (command-line

@@ -866,21 +866,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `install-native-libs` gate and flake check hold it there.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
-  `private/generic/csv.rkt`; `tests/generic/csv-options.rkt`, which has no
-  counterpart, tests it too), or inline until #256 moves them. The guide's
-  `*-test.rkt`, `bench/` and `lint/` keep theirs. A test file is `#lang
-  racket/base` whose body is one `(module+ test ...)`, so `raco test -x` runs
-  it, with every require in one `require` at its head. That `require` takes
-  every project module through `only-in` or `prefix-in`, never bare:
-  `(prefix-in contracted: polars/private/<path>)` for the contracted exports,
-  `only-in` for the plain ones, and `(only-in (submod polars/private/<path>
-  internal) ...)` for a binding the module does not export or a test calls
-  uncontracted. The module's last form, `(module+ internal (provide ...))`,
-  provides those, only what a test uses; never `require/expose`. The
-  test-only helpers live there too: `test-helpers.rkt`, `gc-pressure.rkt` and
-  `generic/test-fixtures.rkt`, whose `test` submodule holds the reader
-  checks. A module's inline `test` blocks **merge**: a definition name used
-  in one block collides with the same name in another. Rust tests live in
+  `private/generic/csv.rkt`), or inline until #256 moves them. Three have no
+  library counterpart: `generic/csv-options.rkt`, `generic/verb-errors.rkt`
+  and `generic/operand-audit.rkt`. The guide's `*-test.rkt`, `bench/` and
+  `lint/` keep theirs. A test file is `#lang racket/base` whose body is one
+  `(module+ test ...)`, so `raco test -x` runs it, with every require in one
+  `require` at its head. That `require` takes every project module through
+  `only-in` or `prefix-in`, never bare: `(prefix-in contracted:
+  polars/private/<path>)` for the contracted exports, `only-in` for the plain
+  ones, and `(only-in (submod polars/private/<path> internal) ...)` for a
+  binding the module does not export or a test calls uncontracted. The
+  module's last form, `(module+ internal (provide ...))`, provides those, only
+  what a test uses; never `require/expose`. The test-only helpers, which test
+  no module, live there too: `test-helpers.rkt`, `gc-pressure.rkt`,
+  `generic/test-fixtures.rkt` (its `test` submodule holds the reader checks),
+  `generic/operand-audit-table.rkt` and `generic/operand-audit-classes.rkt`. A
+  module's inline `test` blocks **merge**: a definition name used in one block
+  collides with the same name in another. Rust tests live in
   `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),

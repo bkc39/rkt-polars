@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require (prefix-in base: racket/base)
-         (only-in racket/match match match-define)
+         (only-in racket/match match)
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/expr-core drop-owned)

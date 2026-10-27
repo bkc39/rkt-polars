@@ -10,7 +10,7 @@
            (only-in racket/list append-map)
            (only-in racket/sequence sequence->list)
            (prefix-in contracted: polars/private/generic/convert)
-           (submod polars/private/generic/convert internal)
+           (only-in (submod polars/private/generic/convert internal) in-dataframe-columns)
            (only-in polars/private/bulk
                     dataframe->columns dataframe->f64vector dataframe->hash dataframe->rows
                     in-dataframe-rows in-series series->f64vector series->list series->vector)
@@ -446,9 +446,8 @@
            [row (in-dataframe-rows mixed)])
       row)
     (settle!)
-    (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2))))
+    (check >= (- (series-drop-count) before) (quotient (* wanted (width mixed)) 2)))
 
-(module+ test
   (define repro-rows 300000)
   (define two-strings
     (series (for/list ([i (in-range repro-rows)]) (if (< i 2) "a" "b")) #:name "g"))
