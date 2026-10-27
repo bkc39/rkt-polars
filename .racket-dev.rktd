@@ -34,6 +34,8 @@
   ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
+  ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
+  (build-so      ("bash scripts/test-build-so.sh" #:shell ""))
   ;; Every way into one checkout (a trailing slash, a symlink, a
   ;; subdirectory) keys the dev shell's one PLTUSERHOME.  Plain bash, so no
   ;; shell.

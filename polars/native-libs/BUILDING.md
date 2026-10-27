@@ -152,8 +152,19 @@ candidate and stages it, with its `toolchain` record, in
   against glibc 2.17. Do not post-process a `.so` built against a newer glibc
   with `polyfill-glibc`: that corrupts the ELF and segfaults on newer glibc.
 - **darwin** needs a Mac with rustup, from which the script installs the
-  pinned rustc, or with that rustc on `PATH`. The script rewrites the install
-  name to `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
+  pinned rustc and builds with `rustup run <channel> cargo`, whatever `cargo`
+  is first on `PATH` (nix's, in the dev shell). Without rustup, the rustc on
+  `PATH` must be that release. cargo runs without the nix cc wrapper's
+  flag variables (every `NIX_LDFLAGS*` and `NIX_CFLAGS*`), and the script
+  refuses a dylib that `otool -L` shows linked against `/nix/store` or
+  `otool -l` shows with an `LC_RPATH` there; build outside the dev shell if
+  it does. The `toolchain` record names the dylib's minimum macOS
+  (`minos`), which nothing pins. `scripts/test-build-so.sh` checks all of
+  this against fakes (the `build-so-darwin` flake check, under nixpkgs'
+  bash); `BASH_UNDER_TEST=/bin/bash` runs it under macOS's bash 3.2,
+  which nixpkgs lacks. The script
+  rewrites the install name to
+  `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
   invalidates the linker's signature, and Apple Silicon kills an unsigned
   dylib (`Killed: 9`) the moment Racket `dlopen()`s it.
 

@@ -371,6 +371,12 @@
             ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
             touch $out
           '';
+          build-so-darwin = pkgs.runCommand "rkt-polars-build-so-darwin" {
+            src = pkgs.lib.cleanSource ./.;
+          } ''
+            ${pkgs.bash}/bin/bash $src/scripts/test-build-so.sh
+            touch $out
+          '';
           install-native-libs = pkgs.runCommand "rkt-polars-install-native-libs" {
             src = pkgs.lib.cleanSource ./.;
             nativeBuildInputs = [ pkgs.git ];
@@ -407,7 +413,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule rustls-only install-native-libs devshell-home release-toolchain;
+          inherit rustfmt racket-version no-syntax-rule rustls-only install-native-libs devshell-home release-toolchain build-so-darwin;
           inherit (self.packages.${system}) rust racket;
         });
 
