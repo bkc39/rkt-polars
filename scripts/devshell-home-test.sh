@@ -68,8 +68,10 @@ same() {
 
 check_checkout() {
   local kind=$1 root=$2 canon want
-  mkdir -p "$root/polars/private"
+  mkdir -p "$root/polars/private" "$root/scripts"
   touch "$root/info.rkt" "$root/polars/info.rkt"
+  printf '#!%s\necho "$*" >> %q\n' "$(command -v bash)" "$work/docs-check.log" \
+    > "$root/scripts/docs-check.sh"
   ln -s "$root" "$work/link-$kind"
   canon=$(cd "$root" && pwd -P)
   want=$(printf '%s\n%s' "$canon" "$(key_of "$canon")")
@@ -192,7 +194,7 @@ render_bench() {
 }
 
 stubs() {
-  rm -rf "$work/stub" "$work/raco.log" "$work/racket.log"
+  rm -rf "$work/stub" "$work/raco.log" "$work/racket.log" "$work/docs-check.log"
   mkdir -p "$work/rust/lib" "$work/stub"
   printf 'library\n' > "$work/rust/lib/libcompat.so"
   printf '#!%s\necho "$*" >> %q\n' "$(command -v bash)" "$work/raco.log" > "$work/stub/raco"
@@ -213,7 +215,7 @@ check_hook() {
     PATH="$work/stub:$base_path" bash -c "$hook" 2> "$work/err") \
     || fail "hook, HOME unset: status $?"
   if [ -n "$out" ] || [ -e "$root/polars/native-libs" ] || [ -e "$work/raco.log" ] \
-    || [ -e "$work/racket.log" ]; then
+    || [ -e "$work/racket.log" ] || [ -e "$work/docs-check.log" ]; then
     fail "hook, HOME unset: it went on: [$out]"
   elif one_reason "hook, HOME unset" "$work/err"; then
     echo "ok: hook, HOME unset: neither the setup nor Resyntax's runs"
@@ -238,6 +240,8 @@ check_hook() {
     fail "hook: no Resyntax stamp in $want"
   elif ! grep -qxF -- "pkg install --batch --auto --no-setup --link --scope user --skip-installed --name rkt-polars $canon" "$work/raco.log"; then
     fail "hook: raco did not link $canon: [$(cat "$work/raco.log")]"
+  elif [ "$(cat "$work/docs-check.log" 2> /dev/null)" != --record ]; then
+    fail "hook: scripts/docs-check.sh was not run once with --record: [$(cat "$work/docs-check.log" 2> /dev/null)]"
   elif ! grep -qxF -- "pkg install --batch --auto --no-docs --scope user --skip-installed $resyntax" "$work/raco.log"; then
     fail "hook: raco did not install $resyntax: [$(cat "$work/raco.log")]"
   else
