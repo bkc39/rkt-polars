@@ -4,8 +4,7 @@
   (require rackunit
            (for-syntax racket/base)
            racket/match
-           racket/runtime-path
-           (only-in racket/file delete-directory/files file->string make-temporary-directory)
+           (only-in racket/file file->string)
            (only-in racket/list append-map)
            (only-in ffi/unsafe
                     _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
@@ -14,7 +13,8 @@
                     _string-list with-raw-buffer with-release with-release-pool with-releases)
            (only-in (submod polars/private/resource internal) strings->c-array)
            (only-in polars/tests/gc-pressure call-with-collections)
-           (only-in polars/tests/test-helpers polars-sources))
+           (only-in polars/tests/test-helpers
+                    polars-dir polars-sources read-source with-planted-sources))
 
   (define released '())
   (define (release! tag) (set! released (cons tag released)))
@@ -130,11 +130,11 @@
   (check-exn #rx"^_string-list: contract violation\n  expected: \\(or/c string\\? bytes\\? path\\?\\)\n  given: 'b"
              (lambda () (strings->c-array '("a" b))))
 
-  (define-runtime-path resource-module "../private/resource.rkt")
+  (define resource-module (simplify-path (build-path polars-dir "private" "resource.rkt")))
   (define raw-allocation #px"\\((?:malloc|free)\\s")
   (define (offenders pattern sources)
     (for/list ([f (in-list sources)]
-               #:unless (equal? f (simplify-path resource-module))
+               #:unless (equal? f resource-module)
                #:when (regexp-match? pattern (file->string f)))
       f))
   (check-equal? (offenders raw-allocation (polars-sources)) '()
@@ -205,10 +205,8 @@
                 '())
 
   (define (source-forms sources)
-    (parameterize ([read-accept-reader #t]
-                   [read-accept-lang #t])
-      (for/list ([f (in-list sources)])
-        (cons f (forms-in (call-with-input-file f read))))))
+    (for/list ([f (in-list sources)])
+      (cons f (forms-in (read-source f)))))
   (define (pointer-store-offenders file-forms)
     (define aliases (pointer-aliases (append-map cdr file-forms)))
     (for*/list ([file+forms (in-list file-forms)]
@@ -220,17 +218,43 @@
                 '()
                 "a string or Racket object stored by address in Racket memory: use _string-list")
 
-  (define planted-root (make-temporary-directory "rkt-polars-audit-~a"))
-  (for ([dir (in-list '("private" "tests"))])
-    (make-directory (build-path planted-root dir)))
-  (define planted (build-path planted-root "tests" "planted.rkt"))
-  (with-output-to-file planted
-    (lambda ()
-      (displayln "#lang racket/base")
-      (displayln (format "(define (planted-buffer) (~a 16))" 'malloc))
-      (write '(define planted-type (_list i _string)))))
-  (define planted-sources (polars-sources planted-root))
-  (check-equal? (offenders raw-allocation planted-sources) (list (simplify-path planted)))
-  (check-equal? (pointer-store-offenders (source-forms planted-sources))
-                (list (list (simplify-path planted) '(_list i _string))))
-  (delete-directory/files planted-root))
+  (define planted-text
+    (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"
+            'malloc '(define planted-type (_list i _string))))
+  (with-planted-sources (root ["tests/planted.rkt" planted-text]
+                              ["tests/resource.rkt" (format "#lang racket/base\n(~a 16)" 'malloc)])
+    (define planted-sources (polars-sources root))
+    (define (planted name) (simplify-path (build-path root "tests" name)))
+    (check-equal? (sort (offenders raw-allocation planted-sources) path<?)
+                  (sort (list (planted "planted.rkt") (planted "resource.rkt")) path<?))
+    (check-equal? (pointer-store-offenders (source-forms planted-sources))
+                  (list (list (planted "planted.rkt") '(_list i _string)))))
+
+  (define (test-submodules forms)
+    (for/list ([form (in-list forms)]
+               #:when (match form
+                        [(list* (or 'module 'module* 'module+) 'test _) #t]
+                        [_ #f]))
+      form))
+  (define (inline-test-offenders sources)
+    (for/list ([f (in-list sources)]
+               #:unless (null? (test-submodules (forms-in (read-source f)))))
+      f))
+  (check-equal? (inline-test-offenders (polars-sources #:dirs '("private")))
+                '()
+                "a test submodule under polars/private: move it to the mirrored file under polars/tests")
+  (with-planted-sources (root ["private/bracket.rkt" "#lang racket/base\n[module+ test 1]"]
+                              ["private/spaced.rkt" "#lang racket/base\n( module+ test 2)"]
+                              ["private/split.rkt" "#lang racket/base\n(module+\n  test 3)"]
+                              ["private/star.rkt" "#lang racket/base\n(module* test #f 4)"]
+                              ["private/nested.rkt"
+                               "#lang racket/base\n(module+ internal (module test racket/base 5))"]
+                              ["private/mentions.rkt"
+                               (string-append "#lang racket/base\n;; (module+ test)\n"
+                                              "#| (module+ test) |#\n#;(module+ test)\n"
+                                              "(define s \"(module+ test)\")\n(module+ test-x 6)")])
+    (check-equal? (map (lambda (f) (let-values ([(_dir name _must-be-dir?) (split-path f)])
+                                     (path->string name)))
+                       (sort (inline-test-offenders (polars-sources root #:dirs '("private")))
+                             path<?))
+                  '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt"))))

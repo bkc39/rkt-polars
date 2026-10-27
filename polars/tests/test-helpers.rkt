@@ -6,24 +6,48 @@
 (require (for-syntax racket/base)
          (only-in file/gzip gzip-through-ports)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
-         (only-in racket/file display-to-file file->bytes)
+         (only-in racket/file
+                  delete-directory/files display-to-file file->bytes make-temporary-directory)
          (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
          (only-in racket/runtime-path define-runtime-path)
          (only-in racket/string string-contains? string-prefix?)
          syntax/parse/define)
 
-(provide apply-keywords contains-all? contract-violation-of drops-during drops-once gzip-file
-         keyword-rejected? message-of not-utf-8-expected not-utf-8-names polars-sources refusal
-         refusal-misses refused scratch-file settle! staging-files)
+(provide apply-keywords contains-all? contract-violation-of drops-during
+         drops-once gzip-file keyword-rejected? message-of not-utf-8-expected not-utf-8-names
+         polars-dir polars-sources read-source refusal refusal-misses refused scratch-file settle!
+         staging-files with-planted-sources)
 
 (define-runtime-path polars-dir "..")
 
-(define (polars-sources [root polars-dir])
-  (for*/list ([dir (in-list '("private" "tests"))]
+(define (polars-sources [root polars-dir] #:dirs [dirs '("private" "tests")])
+  (for*/list ([dir (in-list dirs)]
               [file (in-directory (build-path root dir))]
               #:when (path-has-extension? file #".rkt"))
     (simplify-path file)))
+
+(define (read-source file)
+  (parameterize ([read-accept-reader #t]
+                 [read-accept-lang #t])
+    (call-with-input-file file read)))
+
+(define (call-with-planted-sources files proc)
+  (define root (make-temporary-directory "rkt-polars-audit-~a"))
+  (dynamic-wind
+   void
+   (lambda ()
+     (for ([dir (in-list '("private" "tests"))])
+       (make-directory (build-path root dir)))
+     (for ([file (in-list files)])
+       (display-to-file (cdr file) (build-path root (car file))))
+     (proc root))
+   (lambda () (delete-directory/files root))))
+
+(define-syntax-parser with-planted-sources
+  [(_ (root:id [path:expr text:expr] ...) body:expr ...+)
+   (syntax/loc this-syntax
+     (call-with-planted-sources (list (cons path text) ...) (lambda (root) body ...)))])
 
 (define (scratch-file dir name text)
   (define path (build-path dir name))

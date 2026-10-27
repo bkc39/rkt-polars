@@ -247,9 +247,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`polars/tests/foreign.rkt` has a case for each Series- and
   DataFrame-returning binding but the file readers, `tests/bulk.rkt` one for
   `series_copy_cat`, and `tests/expr.rkt` one for each plan helper), and
-  pairing tests
-  check that an explicit drop, of a pointer or a wrapper, releases it exactly
-  once.
+  pairing tests check that an explicit drop, of a pointer or a wrapper,
+  releases it exactly once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
   Racket allocated: a raw buffer of the column's native type (bound with
   `with-raw-buffer`, freed when the conversion's extent exits), byte strings,
@@ -295,10 +294,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/tests` as data and fails on a pointer-holding ctype (`_string`,
   `_bytes`, `_path`, `_file`, `_symbol`, `_gcpointer`, `_racket`, their `/`
   and `*` variants, or a name `define`d as one, directly or through
-  `make-ctype`) as the element of a
-  `_list` / `_vector` / `_ptr` in mode `i` or `io`, of an `_array`,
-  `_array/list`, `_array/vector`, `_box` or `_list-struct`, as a
-  `define-cstruct` field, or in `define-series-constructors`.
+  `make-ctype`) as the element of a `_list` / `_vector` / `_ptr` in mode `i`
+  or `io`, of an `_array`, `_array/list`, `_array/vector`, `_box` or
+  `_list-struct`, as a `define-cstruct` field, or in
+  `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -873,24 +872,25 @@ it. Racket side: `define-compat` with `#:c-id`.
   `private/generic/csv.rkt`). Three have no library counterpart:
   `generic/csv-options.rkt`, `generic/verb-errors.rkt` and
   `generic/operand-audit.rkt`. No module under `polars/private/` has a `test`
-  submodule: the `no-inline-tests` gate (`scripts/no-inline-tests.sh`, a
-  flake check and CI's Lint job) fails on one. The guide's `*-test.rkt`,
-  `bench/` and `lint/` keep theirs. A test file is `#lang racket/base` whose
-  body is one `(module+ test ...)`, so `raco test -x` runs it, with every
-  require in one `require` at its head. That `require` takes every project
-  module through `only-in` or `prefix-in`, never bare: `(prefix-in
-  contracted: polars/private/<path>)` for the contracted exports, `only-in`
-  for the plain ones, and `(only-in (submod polars/private/<path> internal)
-  ...)` for a binding the module does not export or a test calls
+  submodule: the `no-inline-tests` gate (`scripts/no-inline-tests.sh`, a flake
+  check and CI's Lint job) fails on one; it is a grep, which a form split
+  across lines escapes, and the exact check is a test in
+  `polars/tests/resource.rkt` that reads each module as data. The guide's
+  `*-test.rkt`, `bench/` and `lint/` keep theirs. A test file is `#lang
+  racket/base` whose body is one `(module+ test ...)`, so `raco test -x` runs
+  it, with every require in one `require` at its head. That `require` takes
+  every project module through `only-in` or `prefix-in`, never bare:
+  `(prefix-in contracted: polars/private/<path>)` for the contracted exports,
+  `only-in` for the plain ones, and `(only-in (submod polars/private/<path>
+  internal) ...)` for a binding the module does not export or a test calls
   uncontracted. The module's last form, `(module+ internal (provide ...))`,
-  provides those, only what a test uses; never `require/expose`. The
-  test-only helpers, which test no module, live there too:
-  `test-helpers.rkt`, `gc-pressure.rkt`, `generic/test-fixtures.rkt` (its
-  `test` submodule holds the reader checks),
-  `generic/operand-audit-table.rkt` and `generic/operand-audit-classes.rkt`.
-  The `test` blocks of one file **merge**: a definition name used in one
-  block collides with the same name in another. Rust tests live in
-  `rust/src/tests/`.
+  provides those, only what a test uses; never `require/expose`. The test-only
+  helpers, which test no module, live there too: `test-helpers.rkt`,
+  `gc-pressure.rkt`, `generic/test-fixtures.rkt` (its `test` submodule holds
+  the reader checks), `generic/operand-audit-table.rkt` and
+  `generic/operand-audit-classes.rkt`. The `test` blocks of one file
+  **merge**: a definition name used in one block collides with the same name
+  in another. Rust tests live in `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).

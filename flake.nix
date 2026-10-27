@@ -361,24 +361,15 @@
             echo "OK: Racket $have >= $want"
             touch $out
           '';
-          no-syntax-rule = pkgs.runCommand "rkt-polars-no-syntax-rule" {
+          grepGate = name: script: pkgs.runCommand "rkt-polars-${name}" {
             src = pkgs.lib.cleanSource ./.;
           } ''
-            ${pkgs.bash}/bin/bash $src/scripts/no-syntax-rule.sh
+            ${pkgs.bash}/bin/bash $src/scripts/${script}
             touch $out
           '';
-          no-inline-tests = pkgs.runCommand "rkt-polars-no-inline-tests" {
-            src = pkgs.lib.cleanSource ./.;
-          } ''
-            ${pkgs.bash}/bin/bash $src/scripts/no-inline-tests.sh
-            touch $out
-          '';
-          rustls-only = pkgs.runCommand "rkt-polars-rustls-only" {
-            src = pkgs.lib.cleanSource ./.;
-          } ''
-            ${pkgs.bash}/bin/bash $src/scripts/rustls-only.sh
-            touch $out
-          '';
+          no-syntax-rule = grepGate "no-syntax-rule" "no-syntax-rule.sh";
+          no-inline-tests = grepGate "no-inline-tests" "no-inline-tests.sh";
+          rustls-only = grepGate "rustls-only" "rustls-only.sh";
           docs-check-test = pkgs.runCommand "rkt-polars-docs-check-test" {
             src = pkgs.lib.cleanSource ./.;
           } ''

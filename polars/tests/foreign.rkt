@@ -61,8 +61,8 @@
            (only-in racket/string string-join)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: polars/private/foreign)
-           (only-in polars/tests/test-helpers polars-sources refusal refusal-misses settle!)
-           (only-in racket/file delete-directory/files make-temporary-directory))
+           (only-in polars/tests/test-helpers
+                    polars-sources read-source refusal refusal-misses settle! with-planted-sources))
 
   (define empty-series-ptr
     (series-empty))
@@ -1320,9 +1320,7 @@
 
   (define (compat-bindings sources)
     (for*/list ([file (in-list sources)]
-                [form (in-list (compat-forms
-                                (parameterize ([read-accept-reader #t] [read-accept-lang #t])
-                                  (call-with-input-file file read))))])
+                [form (in-list (compat-forms (read-source file)))])
       form))
   (define bindings (compat-bindings (polars-sources)))
   (define compat 'define-compat)
@@ -1348,18 +1346,13 @@
                            #:unless (releases-result? form))
                   (cadr form))
                 '())
-  (define planted-root (make-temporary-directory "rkt-polars-audit-~a"))
-  (for ([dir (in-list '("private" "tests"))])
-    (make-directory (build-path planted-root dir)))
-  (with-output-to-file (build-path planted-root "tests" "planted.rkt")
-    (lambda ()
-      (displayln "#lang racket/base")
-      (write `(,compat planted (_fun -> _DataFrame-ptr)))))
-  (check-equal? (for/list ([form (in-list (compat-bindings (polars-sources planted-root)))]
-                           #:unless (releases-result? form))
-                  (cadr form))
-                '(planted))
-  (delete-directory/files planted-root)
+  (with-planted-sources (root ["tests/planted.rkt"
+                               (format "#lang racket/base\n~s"
+                                       `(,compat planted (_fun -> _DataFrame-ptr)))])
+    (check-equal? (for/list ([form (in-list (compat-bindings (polars-sources root)))]
+                             #:unless (releases-result? form))
+                    (cadr form))
+                  '(planted)))
 
   (define range-series (series-new-i64 "v" '(1 2 3)))
   (define range-frame (dataframe-new (list range-series)))
