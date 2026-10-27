@@ -62,7 +62,7 @@
            polars/private/generic/core
            polars/private/generic/reductions   ; alias
            polars/private/generic/reshape      ; with-columns
-           polars/private/generic/test-fixtures)
+           polars/tests/generic/test-fixtures)
   ;; numeric fall-through keeps racket/base behaviour for the shadowing ops
   (check-equal? (p-abs -3) 3)
   (check-equal? (p-floor 2.7) 2.0)

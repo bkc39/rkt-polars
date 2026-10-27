@@ -246,7 +246,7 @@
 (module+ test
   (require rackunit
            polars/private/generic/core
-           polars/private/generic/test-fixtures)
+           polars/tests/generic/test-fixtures)
   ;; describe returns a Polars-style stats dataframe (matching .describe())
   (define sc (series '(10 25 18) #:name "score" #:dtype 'i32))
   (define sc-desc (describe sc))

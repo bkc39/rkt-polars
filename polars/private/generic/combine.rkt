@@ -50,7 +50,7 @@
            polars/private/generic/core
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/reshape collect head lazy)
-           (only-in polars/private/generic/test-fixtures
+           (only-in polars/tests/generic/test-fixtures
                     column not-utf-8-expected not-utf-8-names refused)
            (prefix-in contracted: (submod "..")))
 

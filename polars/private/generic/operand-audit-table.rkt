@@ -12,7 +12,7 @@
          (only-in polars/private/temporal period->nanoseconds)
          polars/private/generic/core
          polars/private/generic/operators
-         (only-in polars/private/generic/test-fixtures polars-null polars-null? prices
+         (only-in polars/tests/generic/test-fixtures polars-null polars-null? prices
                   series-cells))
 
 (provide audit-fixtures

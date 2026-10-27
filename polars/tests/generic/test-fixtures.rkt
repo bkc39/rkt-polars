@@ -1,13 +1,13 @@
 #lang racket/base
 
-;; Shared fixtures for the polars/private/generic/* test submodules.  Requires
+;; Shared fixtures for the polars/tests/generic/* tests.  Requires
 ;; the wrapper core directly (not the aggregator) so a test submodule can depend
 ;; on it without a module cycle; re-exports the handful of low-level names the
 ;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
 
 (require racket/runtime-path
          polars/private/generic/core
-         polars/private/test-helpers
+         polars/tests/test-helpers
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign
                   dataframe-column polars-null polars-null? series-cast series-new-i32
@@ -16,7 +16,7 @@
          (only-in gregor datetime))
 
 (provide (all-defined-out)
-         (all-from-out polars/private/test-helpers)
+         (all-from-out polars/tests/test-helpers)
          col Expr-ptr? expr-add polars-null polars-null? datetime)
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))

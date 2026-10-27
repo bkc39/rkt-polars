@@ -81,6 +81,6 @@
   (check-equal? (columns (select steps (diff "v" #:null-behavior 'drop))) '((2 3 4))))
 
 (module+ test
-  (require (only-in polars/private/test-helpers contract-violation-of)
+  (require (only-in polars/tests/test-helpers contract-violation-of)
            (prefix-in contracted: (submod "..")))
   (check-exn (contract-violation-of 'shift) (lambda () (contracted:shift "v" #:n (expt 2 63)))))

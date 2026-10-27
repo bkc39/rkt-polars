@@ -23,7 +23,7 @@
            polars/private/generic/reductions
            polars/private/generic/reshape
            polars/private/generic/strings
-           (only-in polars/private/test-helpers
+           (only-in polars/tests/test-helpers
                     not-utf-8-expected not-utf-8-names refusal refusal-misses refused))
 
   (define (raised thunk)

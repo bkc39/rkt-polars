@@ -138,7 +138,7 @@
            (only-in ffi/unsafe
                     _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
                     ptr-set!)
-           (only-in polars/private/gc-pressure call-with-collections))
+           (only-in polars/tests/gc-pressure call-with-collections))
 
   (define released '())
   (define (release! tag) (set! released (cons tag released)))

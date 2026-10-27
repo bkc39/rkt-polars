@@ -358,7 +358,7 @@
            (only-in polars/private/foreign
                     dataframe-new polars-null? series-cast series-drop-count
                     series-new-i32 series-new-i64 series-new-str series-new-str/vec series-ref)
-           (only-in polars/private/gc-pressure call-with-collections))
+           (only-in polars/tests/gc-pressure call-with-collections))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])

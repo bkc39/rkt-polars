@@ -22,7 +22,7 @@
            polars/private/generic/operators
            polars/private/generic/reductions
            polars/private/generic/reshape
-           polars/private/generic/test-fixtures)
+           polars/tests/generic/test-fixtures)
 
   (define people
     (dataframe

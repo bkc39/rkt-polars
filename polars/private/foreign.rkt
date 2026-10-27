@@ -2776,7 +2776,7 @@
 (module+ test
   (require (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: (submod ".."))
-           (only-in polars/private/test-helpers settle!))
+           (only-in polars/tests/test-helpers settle!))
   (define ((sort-blame? rx) e)
     (and (exn:fail:contract:blame? e) (regexp-match? rx (exn-message e))))
   (define sort-src (dataframe-new (list (series-new-i64 "x" (list 3 polars-null 1))
@@ -3088,7 +3088,7 @@
 
 (module+ test
   (require (prefix-in contracted: (submod ".."))
-           (only-in polars/private/test-helpers refusal refusal-misses))
+           (only-in polars/tests/test-helpers refusal refusal-misses))
   (define range-series (series-new-i64 "v" '(1 2 3)))
   (define range-frame (dataframe-new (list range-series)))
   (check-equal?

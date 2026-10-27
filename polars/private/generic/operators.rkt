@@ -174,7 +174,7 @@
            (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/resource with-release)
            polars/private/generic/core
-           polars/private/generic/test-fixtures
+           polars/tests/generic/test-fixtures
            (only-in threading ~>))
 
   (define operand-ints (series '(1 2) #:name "x"))

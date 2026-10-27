@@ -17,7 +17,7 @@
            polars/private/generic/operand-audit-classes
            polars/private/generic/operand-audit-table
            polars/private/generic/operators
-           polars/private/generic/test-fixtures
+           polars/tests/generic/test-fixtures
            (only-in threading ~>))
 
   (define (raised thunk)

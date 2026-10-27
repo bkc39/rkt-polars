@@ -101,7 +101,7 @@
            (only-in polars/private/foreign
                     DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-height
                     dataframe-new series-drop series-drop-count series-len series-new-i64)
-           (only-in polars/private/test-helpers contract-violation-of drops-once))
+           (only-in polars/tests/test-helpers contract-violation-of drops-once))
 
   (define-check (check-dropped thunk who noun)
     (define expected (format "~a: ~a has been dropped" who noun))

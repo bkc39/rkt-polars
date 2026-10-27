@@ -16,8 +16,8 @@
            (only-in polars/private/generic/reshape collect rename select [filter frame-filter])
            (only-in polars/private/generic/operators [> gt])
            (only-in polars/private/io-contracts size-max)
-           polars/private/generic/test-fixtures
-           (submod polars/private/generic/test-fixtures test))
+           polars/tests/generic/test-fixtures
+           (submod polars/tests/generic/test-fixtures test))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define eager-and-scan

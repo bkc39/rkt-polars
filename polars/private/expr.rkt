@@ -45,7 +45,7 @@
            (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
-           (only-in polars/private/test-helpers drops-during drops-once settle!)
+           (only-in polars/tests/test-helpers drops-during drops-once settle!)
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -1772,7 +1772,7 @@
   (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '()))))
 
 (module+ test
-  (require (only-in polars/private/test-helpers settle!))
+  (require (only-in polars/tests/test-helpers settle!))
 
   (define reclaim-src (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))
   (settle!)
@@ -1845,7 +1845,7 @@
   (check >= (- (expr-drop-count) sort-drops-before) 150))
 
 (module+ test
-  (require (only-in polars/private/test-helpers refusal refusal-misses))
+  (require (only-in polars/tests/test-helpers refusal refusal-misses))
   (define range-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1 2 3))))))
   (define v (col "v"))
   (check-equal?

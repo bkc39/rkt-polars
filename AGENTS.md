@@ -93,8 +93,8 @@ and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
 gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`,
 guide coverage and a numbered example in the same change (see
-Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
-in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
+Documentation). Tests go in the module's file under `polars/tests/` (see
+Verification). Contracts go in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
 the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
 
 ### Macros
@@ -788,9 +788,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:hidden` for setup. A broken example fails the build, on the package
   server too.
 - **Every guide or reference example is a test case.** The PR that adds or
-  changes an example adds a test in the module's `test` submodule asserting
-  the same result, or, for an `eval:error`, the failure and its `who:` (#152
-  will run the examples themselves under `raco test`). An `eval:error` shows
+  changes an example adds a test in the module's file under `polars/tests/`
+  asserting the same result, or, for an `eval:error`, the failure and its
+  `who:` (#152 will run the examples themselves under `raco test`). An
+  `eval:error` shows
   a failure that is the behaviour being documented, with a message that names
   the function the reader called; an example that errors because of a gap,
   or blames an internal binding, is a bug (#151).
@@ -859,9 +860,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   and replaces a differing one by a rename, never in place, so a racket in
   another shell that has the old one mapped keeps running (#265); the
   `install-native-libs` gate and flake check hold it there.
-- Racket tests live in `(module+ test ...)` submodules, which **merge per
-  file** — a definition name used in one test block collides with the same
-  name in another. Rust tests live in `rust/src/tests/`.
+- Racket tests live in `polars/tests/`, which mirrors `polars/private/`
+  (`polars/tests/generic/csv.rkt` tests `polars/private/generic/csv.rkt`;
+  modules not yet moved by #256 keep theirs inline). A test file is `#lang
+  racket/base` whose body is `(module+ test ...)`, so `raco test -x` runs it.
+  It requires the module by collection path, and as `(prefix-in contracted:
+  ...)` for its contracted exports. A binding the module does not export, or
+  exports through `contract-out` and a test calls uncontracted, is provided
+  by the module's `(module+ internal (provide ...))`, only what a test uses,
+  and required as `(submod polars/private/<path> internal)` (with the module
+  itself `except-in` those names), never through `require/expose`. The
+  test-only helpers live there too: `test-helpers.rkt`, `gc-pressure.rkt`
+  and `generic/test-fixtures.rkt`, whose `test` submodule holds the reader
+  checks. The `test` blocks of one file **merge**: a definition name used in
+  one block collides with the same name in another. Rust tests live in
+  `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).

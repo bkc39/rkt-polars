@@ -293,7 +293,7 @@
            (only-in polars/private/expr expr-add expr-neg)
            (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
            (only-in polars/private/foreign polars-null series-new-i64 series-ref)
-           (only-in polars/private/test-helpers settle!)
+           (only-in polars/tests/test-helpers settle!)
            (only-in gregor date))
   (define (noting build)
     (define given (box '()))
