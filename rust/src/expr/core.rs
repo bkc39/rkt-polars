@@ -54,6 +54,11 @@ pub extern "C" fn expr_lit_i64(v: i64) -> *mut Expr {
 }
 
 #[no_mangle]
+pub extern "C" fn expr_lit_u64(v: u64) -> *mut Expr {
+    Box::into_raw(Box::new(lit(v)))
+}
+
+#[no_mangle]
 pub extern "C" fn expr_lit_f64(v: f64) -> *mut Expr {
     Box::into_raw(Box::new(lit(v)))
 }

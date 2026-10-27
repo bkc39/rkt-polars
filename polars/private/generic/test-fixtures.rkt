@@ -66,13 +66,6 @@
 (define (cause-of message)
   (caddr (regexp-match #rx"^[^:]*: (failed to [^:]*: )?([^\n]*)" message)))
 
-(define (reads-agree? read scan collect path kvs)
-  (define eager (with-handlers ([exn:fail? exn-message]) (apply-keywords read kvs path)))
-  (define lazy (with-handlers ([exn:fail? exn-message]) (collect (apply-keywords scan kvs path))))
-  (if (string? eager)
-      (and (string? lazy) (equal? (cause-of eager) (cause-of lazy)))
-      (and (not (string? lazy)) (frame=? eager lazy))))
-
 (define (one-file-pattern path)
   (define-values (dir name _) (split-path path))
   (build-path dir (regexp-replace #rx"^." (path->string name) "[&]")))
@@ -83,12 +76,85 @@
 
 (module+ test
   (require rackunit
+           syntax/parse/define
+           (for-syntax racket/base)
            (only-in compiler/find-exe find-exe)
+           (only-in racket/dict dict-set)
            (only-in racket/file delete-directory/files file->string make-temporary-directory)
+           (only-in racket/list filter-map)
+           (only-in racket/match match match* match-define)
            (only-in racket/port copy-port)
+           (only-in racket/string string-join)
            (only-in polars/private/io-contracts size-max))
 
-  (provide call-in-child check-reads-like-every check-staged-write)
+  (provide call-in-child check-readers-agree check-reads-like-every check-staged-write
+           eager-reader glob-reader outcome-difference read-outcome scan-reader)
+
+  (define (read-outcome thunk)
+    (with-handlers ([exn:fail? (lambda (e) (cause-of (exn-message e)))]) (thunk)))
+
+  (define ((eager-reader read) path kvs)
+    (apply-keywords read kvs path))
+  (define ((glob-reader read) path kvs)
+    (apply-keywords read (dict-set kvs '#:glob #t) (one-file-pattern path)))
+  (define ((scan-reader scan collect) path kvs)
+    (collect (apply-keywords scan kvs path)))
+
+  (define (column-difference a b name)
+    (define da (dtype (ref a name)))
+    (define db (dtype (ref b name)))
+    (cond
+      [(equal? da db) (column-value-difference name (column a name) (column b name))]
+      [else (format "column ~s: dtype ~s against ~s" name da db)]))
+
+  (define (column-value-difference name as bs)
+    (define row (for/first ([x (in-list as)] [y (in-list bs)] [i (in-naturals)]
+                            #:unless (equal? x y))
+                  i))
+    (and row (format "column ~s, row ~a: ~e against ~e"
+                     name row (list-ref as row) (list-ref bs row))))
+
+  (define (frame-difference a b)
+    (cond
+      [(not (equal? (column-names a) (column-names b)))
+       (format "columns ~s against ~s" (column-names a) (column-names b))]
+      [(not (equal? (shape a) (shape b)))
+       (format "shape ~s against ~s" (shape a) (shape b))]
+      [else (for/or ([name (in-list (column-names a))]) (column-difference a b name))]))
+
+  (define (outcome-difference a b)
+    (match* (a b)
+      [((? string?) (? string?)) (and (not (equal? a b)) "the errors differ")]
+      [((? string?) _) "only the first raised"]
+      [(_ (? string?)) "only the second raised"]
+      [(_ _) (frame-difference a b)]))
+
+  (define (describe-outcome outcome)
+    (match outcome
+      [(? string?) (format "raised: ~a" outcome)]
+      [_ (format "shape ~s, dtypes ~s\n~a" (shape outcome) (dtypes-of outcome) outcome)]))
+
+  (define-check (check-readers-agree* readers path kvs)
+    (define outcomes
+      (for/list ([reader (in-list readers)])
+        (cons (car reader) (read-outcome (lambda () ((cdr reader) path kvs))))))
+    (match-define (cons (cons first-label first) others) outcomes)
+    (define differences
+      (filter-map (lambda (other)
+                    (define difference (outcome-difference first (cdr other)))
+                    (and difference (format "~a against ~a: ~a" first-label (car other) difference)))
+                  others))
+    (unless (null? differences)
+      (with-check-info* (cons (make-check-info 'disagreement
+                                               (string-info (string-join differences "; ")))
+                              (for/list ([outcome (in-list outcomes)])
+                                (make-check-info (car outcome)
+                                                 (string-info (describe-outcome (cdr outcome))))))
+        fail-check)))
+
+  (define-syntax-parser check-readers-agree
+    [(_ readers:expr path:expr kvs:expr (~optional message:expr))
+     (syntax/loc this-syntax (check-readers-agree* readers path kvs (~? message)))])
 
   (define (call-in-child form #:timeout [seconds 120])
     (define-values (child out in err)

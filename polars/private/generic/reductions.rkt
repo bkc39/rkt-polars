@@ -4,16 +4,19 @@
          racket/match
          (prefix-in base: racket/base)
          syntax/parse/define
-         polars/private/foreign
-         polars/private/expr
+         (except-in polars/private/foreign series-std series-var)
+         (only-in (submod polars/private/foreign internal) series-std series-var)
+         (except-in polars/private/expr expr-std expr-var)
+         (only-in (submod polars/private/expr internal) expr-std expr-var)
+         (only-in polars/private/c-integer uint8/c)
          polars/private/generic/core
          polars/private/generic/dtype
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c)
          (only-in polars/private/resource with-release))
 
 (provide (contract-out
-          [std (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
-          [var (->* ((or/c series? col-expr/c)) (#:ddof (integer-in 0 255)) any/c)]
+          [std (->* ((or/c series? col-expr/c)) (#:ddof uint8/c) any/c)]
+          [var (->* ((or/c series? col-expr/c)) (#:ddof uint8/c) any/c)]
           [n-unique (-> (or/c series? col-expr/c) any/c)]
           [alias (-> col-expr/c string? Expr-ptr?)])
          sum mean min max count median first last)
@@ -207,8 +210,9 @@
   (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
   (for* ([reduce (list contracted:std contracted:var)]
          [x (list (series '(1 2 3)) (col "v") (series '(1.0 2.0) #:dtype 'float32))])
-    (check-exn (regexp (format "^~a: contract violation.*expected: \\(integer-in 0 255\\)"
-                               (object-name reduce)))
+    (check-exn (regexp (format "^~a: contract violation\n  expected: ~a\n"
+                               (object-name reduce)
+                               (regexp-quote (format "~s" (contract-name uint8/c)))))
                (lambda () (reduce x #:ddof 256))))
   (check-equal? (mean (series (list (date 2020 1 2) (date 2020 1 1))))
                 (datetime 2020 1 1 12 0 0 0))

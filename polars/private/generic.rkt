@@ -24,7 +24,7 @@
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators
-         polars/private/generic/math
+         (rename-in polars/private/generic/math [round p-round])
          polars/private/generic/reshape
          polars/private/generic/combine
          polars/private/generic/strings
@@ -95,7 +95,8 @@
 (module+ test
   (require rackunit
            (only-in polars/private/expr-core
-                    Expr-ptr? LazyFrame-ptr? col expr-drop expr-drop-count lazyframe-drop)
+                    Expr-ptr? LazyFrame-ptr? col drop-owned expr-drop expr-drop-count
+                    lazyframe-drop lazyframe-drop-count)
            (only-in polars/private/expr dataframe-lazy expr-alias lazyframe-collect)
            (only-in polars/private/foreign
                     DataFrame-ptr? Series-ptr? dataframe-drop dataframe-drop-count dataframe-height
@@ -130,9 +131,20 @@
   (check-equal? (drops-once expr-drop-count (drop-twice expr-drop "expression")
                             (lambda () (col "x")))
                 1)
-  ((drop-twice lazyframe-drop 'lazyframe) (lazy (dataframe (list (series '(1) #:name "a")))))
+  (for ([make (list (lambda () (lazy (dataframe (list (series '(1) #:name "a")))))
+                    (lambda () (dataframe-lazy (dataframe-new (list (series '(1)))))))])
+    (check-equal? (drops-once lazyframe-drop-count (drop-twice lazyframe-drop 'lazyframe) make) 1))
   (for ([drop (list series-drop dataframe-drop lazyframe-drop expr-drop)])
     (check-exn (contract-violation-of (object-name drop)) (lambda () (drop "a"))))
+  (for ([count (list series-drop-count series-drop-count dataframe-drop-count expr-drop-count
+                     lazyframe-drop-count)]
+        [make (list (lambda () (series '(1 2)))
+                    (lambda () (series-new-i64 "raw" '(1)))
+                    (lambda () (dataframe-new (list (series '(1)))))
+                    (lambda () (col "x"))
+                    (lambda () (lazy (dataframe (list (series '(1) #:name "a"))))))])
+    (check-equal? (drops-once count drop-owned make) 1))
+  (check-equal? (drop-owned 5) (void))
 
   (define temps (series '(21.5 23.0 19.8) #:name "temp"))
   (series-drop temps)

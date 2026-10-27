@@ -39,6 +39,17 @@ Underneath sits a monomorphic, dtype-suffixed layer (@racket[series-new-i32],
 for completeness --- see @secref["ref-expressions"] and the low-level
 subsections --- but the generic spelling is the preferred one throughout.
 
+A count, position or option that Polars holds in a fixed-width integer is
+contracted by its @deftech{integer range}, which the signatures name:
+@racket[uint8/c], @racket[uint16/c], @racket[uint32/c] and @racket[uint64/c]
+are the unsigned 8-, 16-, 32- and 64-bit integers, @racket[int32/c] and
+@racket[int64/c] the signed 32- and 64-bit ones, @racket[nonnegative-int64/c]
+an @racket[int64/c] from @racket[0], @racket[size/c] a native size (an
+unsigned 64-bit integer) and @racket[positive-size/c] one from @racket[1].
+@racket[row-index/c] is a @racket[uint32/c] and @racket[column-index/c] an
+@racket[int64/c]. A value outside its range is a contract error that names
+the range.
+
 @section[#:tag "ref-fluent"]{Operators and pipelines}
 
 This is the surface to write @racketmodname[polars] in. An
@@ -60,12 +71,16 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     (agg (alias (sum (col "value")) "sum_value")))
 ]
 
+A @racket[utf-8-name/c] in a signature below is a column name: a string, or a
+byte string or path whose bytes are UTF-8. Any other byte string or path is a
+contract error. A @racket[utf-8-names/c] is a list of them.
+
 @defproc[(Expr-ptr? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
 
 @deftogether[(@defproc[(col [spec (or/c string? regexp? dtype-spec?)]) Expr-ptr?]
               @defproc[(lit [v (or/c boolean?
-                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
+                                     (integer-in (- (expt 2 63)) (sub1 (expt 2 64)))
                                      (and/c real? (not/c exact-integer?)) string? symbol?
                                      polars-null? #,(tt "gregor-value"))])
                        Expr-ptr?]
@@ -114,9 +129,10 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
   matched column's name; a frame with no match yields no columns.
 
   @racket[lit] lifts a Racket scalar to a literal expression: booleans,
-  exact integers (32-bit when they fit, 64-bit otherwise; one outside 64
-  bits is a contract error), other reals (as @racket['float64]) and
-  strings. A symbol is the string of its name, so a
+  exact integers (32-bit when they fit, 64-bit otherwise, and from
+  @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))] unsigned 64-bit, as
+  @tt{pl.lit(2**63)} is; one outside that range is a contract error),
+  other reals (as @racket['float64]) and strings. A symbol is the string of its name, so a
   categorical column compares with the symbols it reads back as. A
   @tt{gregor-value} is a gregor @tt{date}, @tt{time}, @tt{datetime},
   @tt{moment} or @tt{period}, and becomes a literal of the dtype
@@ -154,7 +170,11 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 (eval:error (col #px"^(?!id)"))
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))
-(eval:error (lit (expt 2 63)))]}
+(define counters
+  (dataframe (list (series (list (sub1 (expt 2 64)) 1) #:name "u" #:dtype 'u64))))
+(select counters (alias (lit (sub1 (expt 2 64))) "top")
+        (= (col "u") (lit (sub1 (expt 2 64)))))
+(eval:error (lit (expt 2 64)))]}
 
 @deftogether[(@defproc[(all) Expr-ptr?]
               @defproc[(exclude [e multi-column-expr?] [name (or/c string? regexp?)] ...+)
@@ -356,7 +376,7 @@ total
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
 (+ (series '(1 2)) 2.5)
-(eval:error (+ (series '(1 2)) "a"))
+(+ (series '(1 2)) "a")
 (eval:error (+ (series '(1 2)) (date 2024 1 1)))
 (~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
     (select (/ (col #rx"^c"))))
@@ -574,13 +594,13 @@ far-zoned
 (shape (with-column (dataframe '()) (series '(1 2) #:name "w")))
 (eval:error (with-column top (series '(1 2 3) #:name "w")))]}
 
-@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n (integer-in 0 18446744073709551615)]) any/c]
-              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                             [n (integer-in 0 18446744073709551615)]) any/c]
+@deftogether[(@defproc[(head [x (or/c series? dataframe? lazyframe? Expr-ptr?)] [n size/c])
+                       any/c]
+              @defproc[(tail [x (or/c series? dataframe? lazyframe? Expr-ptr?)] [n size/c])
+                       any/c]
               @defproc[(slice [x (or/c series? dataframe? lazyframe? Expr-ptr?)]
-                              [offset (integer-in -9223372036854775808 9223372036854775807)]
-                              [length (integer-in 0 18446744073709551615)]) any/c])]{
+                              [offset int64/c]
+                              [length size/c]) any/c])]{
   The first @racket[n] rows, the last @racket[n] rows, or @racket[length] rows
   starting at @racket[offset], of the same kind as @racket[x] (Polars'
   @tt{head}, @tt{tail}, @tt{slice}); a negative @racket[offset] counts from
@@ -614,7 +634,7 @@ far-zoned
 (drop-nulls dups)
 (eval:error (unique '(1 1 2)))]}
 
-@defproc[(drop [d dataframe?] [names (or/c string? (listof string?))]) dataframe?]{
+@defproc[(drop [d dataframe?] [names (or/c utf-8-name/c utf-8-names/c)]) dataframe?]{
   Removes the named column(s) (@tt{df.drop}). A name @racket[d] lacks, or one
   given twice, raises. Applied to a list it falls back to
   @racketmodname[racket/list]'s @racketid[drop].
@@ -626,9 +646,9 @@ far-zoned
 (drop '(1 2 3) 1)]}
 
 @defproc[(pivot [d dataframe?]
-                [#:on on (listof string?)]
-                [#:index index (listof string?)]
-                [#:values values (listof string?)]
+                [#:on on utf-8-names/c]
+                [#:index index utf-8-names/c]
+                [#:values values utf-8-names/c]
                 [#:agg agg (or/c #f 'none 'first 'sum 'min 'max 'mean 'count) 'first])
          dataframe?]{
   Spreads @racket[d] wide (@tt{df.pivot}): one row per distinct key of the
@@ -651,7 +671,9 @@ far-zoned
 by-quarter
 (eval:error (pivot sales #:on '("nope") #:index '("store") #:values '("sales")))]}
 
-@defproc[(unpivot [d dataframe?] [#:on on (listof string?)] [#:index index (listof string?)])
+@defproc[(unpivot [d dataframe?]
+                  [#:on on utf-8-names/c]
+                  [#:index index utf-8-names/c])
          dataframe?]{
   Melts @racket[d] long (@tt{df.unpivot}): each @racket[on] column becomes
   rows of a @racket["variable"] and a @racket["value"] column beside the
@@ -665,14 +687,14 @@ by-quarter
 
 @defproc[(join [left (or/c dataframe? lazyframe?)]
                [right (or/c dataframe? lazyframe?)]
-               [#:on on (or/c #f (non-empty-listof string?)) #f]
-               [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-               [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+               [#:on on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+               [#:left-on left-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+               [#:right-on right-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
                [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          (or/c dataframe? lazyframe?)]{
   Joins @racket[right], of the same kind as @racket[left], onto it on the
   shared key columns @racket[#:on], or on @racket[#:left-on] /
-  @racket[#:right-on] (@tt{left.join(right, ...)}); a @racket['cross] join
+  @racket[#:right-on] (@tt{left.join(right, ...)}). A @racket['cross] join
   takes no keys, and @racket['full] is @racket['outer]. Eager on a
   @tech{dataframe}, deferred on a @tech{lazyframe}. As in Python Polars, only
   a @racket['cross] join promises a row order; sort the result when order
@@ -686,21 +708,21 @@ by-quarter
                                 (series '(10 30) #:name "w"))))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)
+(join left right #:on '(#"k") #:how 'inner)
 (eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
 (eval:error (join left right))]}
 
 @defproc[(join-asof [left dataframe?]
                     [right dataframe?]
-                    [#:on on (or/c #f string?) #f]
-                    [#:left-on left-on (or/c #f string?) #f]
-                    [#:right-on right-on (or/c #f string?) #f]
-                    [#:by by (or/c #f (listof string?)) #f]
-                    [#:left-by left-by (or/c #f (listof string?)) #f]
-                    [#:right-by right-by (or/c #f (listof string?)) #f]
+                    [#:on on (or/c #f utf-8-name/c) #f]
+                    [#:left-on left-on (or/c #f utf-8-name/c) #f]
+                    [#:right-on right-on (or/c #f utf-8-name/c) #f]
+                    [#:by by (or/c #f utf-8-names/c) #f]
+                    [#:left-by left-by (or/c #f utf-8-names/c) #f]
+                    [#:right-by right-by (or/c #f utf-8-names/c) #f]
                     [#:strategy strategy (or/c 'backward 'forward 'nearest) 'backward]
                     [#:tolerance tolerance
-                                 (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63)))
-                                       (and/c real? (not/c exact-integer?)))
+                                 (or/c #f int64/c (and/c real? (not/c exact-integer?)))
                                  #f])
          dataframe?]{
   Matches each row of @racket[left] to the nearest row of @racket[right] by
@@ -733,9 +755,7 @@ by-quarter
   by a bare @litchar{dir/*}.
 
   A @racket[csv-char/c] is one ASCII character other than newline or
-  return. A @racket[size/c] is a count or position Polars takes as a native
-  size, an unsigned 64-bit integer, a @racket[positive-size/c] one from
-  @racket[1], and a @racket[row-index/c] an unsigned 32-bit integer. A
+  return; the integer contracts are @tech{integer ranges}. A
   @racket[c-string/c] is a string without a NUL, and so is a
   @racket[column-name/c].
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
@@ -1069,8 +1089,7 @@ stations
   by a bare @litchar{dir/*}, and makes a read of the directory fail.
 
   @racket[columns] picks columns by name, or by position from 0 (negative
-  counts from the end, a @racket[column-index/c] being a signed 64-bit
-  integer), in the order given; a name the file lacks, a position out of
+  counts from the end), in the order given; a name the file lacks, a position out of
   range or a column picked twice is an error. A name is matched literally.
   @racket[n-rows] caps the rows read. @racket[row-index-name] adds a first
   column numbering the rows from @racket[row-index-offset]; a row number
@@ -1395,7 +1414,7 @@ stations
 @deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
-                             [#:seed seed (or/c (integer-in 0 (sub1 (expt 2 64))) #f) #f])
+                             [#:seed seed (or/c uint64/c #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series? (listof exact-integer?))])
@@ -1416,6 +1435,47 @@ stations
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
 (~> scores (select (gather "name" '(3 0))))
 (eval:error (rank "score" #:method 'first))]}
+
+@deftogether[(@defproc[(shift [x (or/c Expr-ptr? string?)]
+                              [#:n n int64/c 1]
+                              [#:fill-value fill-value any/c #f])
+                       Expr-ptr?]
+              @defproc[(diff [x (or/c Expr-ptr? string?)]
+                             [#:n n int64/c 1]
+                             [#:null-behavior null-behavior (or/c 'ignore 'drop) 'ignore])
+                       Expr-ptr?])]{
+  @racket[shift] moves each value @racket[n] rows down, or up for a negative
+  @racket[n], and fills the rows it vacates with null, or with
+  @racket[fill-value] lifted by @racket[lit] (@tt{.shift}). @racket[diff] is
+  each value less the one @racket[n] rows before it (@tt{.diff});
+  @racket['drop] removes the leading nulls that leaves.
+
+  @examples[#:eval ev
+(define steps (dataframe (list (series '(1 3 6 10) #:name "v"))))
+(select steps
+        (alias (shift "v") "down")
+        (alias (shift "v" #:n -1 #:fill-value 0) "up")
+        (alias (diff "v") "change"))
+(select steps (diff "v" #:null-behavior 'drop))
+(eval:error (shift "v" #:n (expt 2 63)))]}
+
+@deftogether[(@defproc[(forward-fill [x (or/c Expr-ptr? string?)]
+                                     [#:limit limit (or/c uint32/c #f) #f])
+                       Expr-ptr?]
+              @defproc[(backward-fill [x (or/c Expr-ptr? string?)]
+                                      [#:limit limit (or/c uint32/c #f) #f])
+                       Expr-ptr?])]{
+  Each null takes the nearest non-null value before it (@tt{.forward_fill})
+  or after it (@tt{.backward_fill}); @racket[#:limit] caps how many nulls in
+  a row one value fills.
+
+  @examples[#:eval ev
+(define gaps (dataframe (list (series (list 1 polars-null polars-null 4) #:name "v"))))
+(select gaps
+        (alias (forward-fill "v") "forward")
+        (alias (forward-fill "v" #:limit 1) "forward_1")
+        (alias (backward-fill "v") "backward"))
+(eval:error (forward-fill "v" #:limit -1))]}
 
 @deftogether[(@defproc[(sum [v any/c] ...) any/c]
               @defproc[(mean [v any/c] ...+) any/c]
@@ -1459,9 +1519,9 @@ stations
               @defproc[(n-unique [x (or/c series? string? Expr-ptr?)]) any/c]
               @defproc[(median   [x any/c]) any/c]
               @defproc[(std [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
+                            [#:ddof ddof uint8/c 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
-                            [#:ddof ddof (integer-in 0 255) 1]) any/c]
+                            [#:ddof ddof uint8/c 1]) any/c]
               @defproc[(alias [e (or/c Expr-ptr? string?)] [name string?]) Expr-ptr?])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
@@ -1500,17 +1560,20 @@ stations
 
 @deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
               @defproc[(round [x (or/c Expr-ptr? string? number?)]
-                              [#:decimals decimals exact-nonnegative-integer? 0]) any/c])]{
+                              [#:decimals decimals uint32/c 0]) any/c])]{
   Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
   (@tt{.round}). Each takes an expression or a bare column-name string (lifted
   with @racket[col]); @racket[round] on a plain number falls back to numeric
-  rounding. Ties round to even in both cases, as in Python Polars and
-  @racketmodname[racket/base]. See @secref["fluent-shadowing"].
+  rounding, where @racket[decimals] may be any number. Ties round to even in
+  both cases, as in Python Polars and @racketmodname[racket/base]. See
+  @secref["fluent-shadowing"].
 
   @examples[#:eval ev
 (~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
     (select (round "x")))
-(round 2.5)]}
+(round 2.5)
+(round 1234 #:decimals -2)
+(eval:error (round "x" #:decimals -1))]}
 
 @defproc[(sign [x (or/c Expr-ptr? string?)]) Expr-ptr?]{
   The sign of each element (@tt{.sign}): @racket[-1], @racket[0] or
@@ -1535,7 +1598,9 @@ stations
   @racket['null] list, as Python's @tt{[None]} is, and an empty list
   holds nothing, so every non-null element of @racket[x] gives @racket[#f].
   A null is never a member, so a null element of @racket[x] gives null.
-  Its datetimes share one zone, or
+  Its integers all fit Int64 or all lie from 0 to @racket[(sub1 (expt 2 64))]
+  (UInt64); any other, such as a negative integer beside one past Int64,
+  which Python reads as Int128, is a contract error. Its datetimes share one zone, or
   none: a list that mixes naive datetimes and moments, or moments in two
   zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
   a column from the same list.
@@ -1545,6 +1610,8 @@ stations
 (~> gappy (select (is-in "x" (list 1 polars-null))))
 (~> gappy (select (is-in "x" (list polars-null))))
 (~> gappy (select (is-in "x" '())))
+(~> gappy (select (is-in "x" (list (expt 2 63) 3))))
+(eval:error (~> gappy (select (is-in "x" (list -1 (expt 2 63))))))
 (~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -1561,8 +1628,26 @@ stations
   @racketid[dt-nanosecond], @racketid[dt-timestamp], @racketid[dt-strftime],
   @racketid[dt-truncate].}
 
+@defproc[(str-slice [x (or/c Expr-ptr? string?)]
+                    [offset (or/c Expr-ptr? int64/c)]
+                    [length (or/c #f polars-null? Expr-ptr? nonnegative-int64/c) #f])
+         Expr-ptr?]{
+  Substring of @racket[length] characters from @racket[offset]
+  (@tt{.str.slice}); a negative @racket[offset] counts from the end;
+  @racket[#f] (or @racket[polars-null], or a null row of a @racket[length]
+  expression) runs to the end.
+
+  @examples[#:eval ev
+(define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
+                               (series (list 1 polars-null 2 0) #:name "n"))))
+(select words
+        (alias (str-slice "s" 1 #f) "rest")
+        (alias (str-slice "s" -2) "last2")
+        (alias (str-slice "s" 0 (col "n")) "by_col"))
+(eval:error (str-slice "s" 0 -1))]}
+
 @deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
-                                    [#:group-index group-index exact-nonnegative-integer? 1])
+                                    [#:group-index group-index size/c 1])
                        Expr-ptr?]
               @defproc[(str->date [x (or/c Expr-ptr? string?)]
                                   [#:format format (or/c string? #f) #f]
@@ -1743,7 +1828,14 @@ an implementation detail and not part of the public series API.)
   Renders @racket[s] in Polars' series format (a @tt{shape} line, a
   @tt{Series: 'name' [dtype]} line, then the bracketed values, truncated to the
   first and last five when longer than ten). This is also what a series prints
-  as in the REPL.}
+  as in the REPL. A @racket['binary] value shows bytes @tt{!} to @tt{~} as
+  themselves and any other as @tt{\xNN}, cut after 60 bytes, as in Python.
+  A value that cannot be shown prints as @tt{#<cannot print: reason>}, and a
+  series that cannot be shown at all as @tt{#<series: cannot print:
+  reason>}, where @racket[series->string] raises.
+
+  @examples[#:eval ev #:label #f
+(~> (series '("a" "z q" "") #:name "blob") (cast 'binary))]}
 
 @deftogether[(@defthing[polars-null any/c]
               @defproc[(polars-null? [v any/c]) boolean?])]{
@@ -1771,9 +1863,10 @@ an implementation detail and not part of the public series API.)
   @examples[#:eval ev #:label #f
 (series-name (series '(1 2) #:name "ints"))]}
 
-@deftogether[(@defproc[(rename [s series?] [new-name string?]) series?]
+@deftogether[(@defproc[(rename [s series?] [new-name utf-8-name/c]) series?]
               @defproc[#:link-target? #f
-                       (rename [d dataframe?] [old string?] [new string?]) dataframe?]
+                       (rename [d dataframe?] [old utf-8-name/c] [new utf-8-name/c])
+                       dataframe?]
               @defproc[(rename! [s series?] [new-name string?]) void?]
               @defproc[(clone [s series?]) series?]
               @defproc[(series-clone [s series?]) series?])]{
@@ -2081,24 +2174,68 @@ wide, is
 @racket[mean] promotes to @racket['float64]. Use @racket[series-cast] to change
 a series' dtype explicitly.
 
-A plain value beside a series in an operator is a constant of the series'
-dtype when it fits; a gregor value keeps its own dtype, and a non-integer real
-beside an integer series is @racket['float64]. Otherwise the operator runs
-its expression form, @racket[(_op (col _name) _value)], with that form's
-dtypes and values: beside a @racket['null] series (where Python's eager
-operators raise) or with @racket[polars-null], beside an Enum
-series a string or symbol, beside a Decimal series a real, and beside an
-integer series an integer past the dtype's range. Any other value raises
-@racket[exn:fail:contract] naming it and the series' dtype: a string, symbol or
-boolean beside a numeric series, a number beside a string series, a negative
-integer beside an unsigned series (as in Python's eager operators), or a value
-no literal takes.
+A plain value beside a series in an operator follows Python 1.42.1's eager
+operators. It is a constant of the series' dtype when it fits: a boolean
+beside a numeric series is 1 or 0, and a number or boolean compared with a
+string series is its string as Python's @tt{str} spells it (@tt{1e-05},
+@tt{inf}, @tt{True}). A gregor value keeps its own dtype (but @racket[mod] of
+a float series and a datetime reads the datetime's physical integer, as
+Python does), a non-integer real beside an integer series is
+@racket['float64], and in arithmetic a string or symbol is a string, so
+@racket[+] concatenates. Otherwise the operator runs its expression form,
+@racket[(_op (col _name) _value)], with that form's dtypes and values: beside
+a @racket['null] series (where Python's eager operators raise) or with
+@racket[polars-null], beside an Enum series a string or symbol, beside a
+Decimal series a real or boolean (compared as 1 or 0), beside a duration
+series a number in @racket[*], a string before a series in @racket[+], beside
+an integer series an integer within Int64 past the dtype's range, in
+@racket[/] a negative integer beside an unsigned series, and beside a
+@racket['boolean] series an integer in @racket[/]. An integer from
+@racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
+UInt64 literal carries, is a constant beside a @racket['uint64] series (where
+Python's operator wraps, as ours does), takes the expression form beside a
+Decimal series, and is refused beside any other integer or @racket['boolean]
+series and a @racket['null] one, where Python's eager operators raise an
+@tt{OverflowError} (a @tt{TypeError} beside Null), except in @racket[/],
+where Python gives @racket['float64] (@racket['float64] nulls beside Null)
+and ours refuses, since its @racket[/] of integers is integer division;
+beside a float or string series it is what any integer is there. Any other
+value raises @racket[exn:fail:contract] naming it and the series' dtype,
+where Python raises a @tt{TypeError}: a string, symbol or boolean compared with a numeric
+series, a gregor value compared with a series of another kind (a date with a
+datetime series aside), a time in arithmetic, a date in @racket[mod] of a
+float series, a negative integer beside an unsigned series, or a value no
+literal takes. @racket[mod] refuses a temporal series, the left one when both
+are series, whatever the other operand, as Python's @tt{%} does. A
+@racket[/] of integer, boolean or null operands is integer division (two
+Null operands aside, which give @racket['float64]); any other is Python's
+true division, which first casts an integer, boolean or null series, a
+Decimal series under a boolean or a temporal value on its left, and a series
+under a plain number on its left, to @racket['float64], and divides a duration
+series by a number. The result takes the series' name on either side;
+Python's eager operator instead names it @tt{literal} for a plain value left
+of @racket[+], @racket[-], @racket[*] or @racket[/] on a Decimal series, left
+of @racket[*] on a Duration series, and for a string left of @racket[+]. The operand audit (@filepath{generic/operand-audit.rkt}) holds every
+operator to Python's outcome, row by row, and records ours, with its reason,
+where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(+ (series '(1 2) #:dtype 'u64) (expt 2 63))
+(eval:error (+ (series '(1 2)) (expt 2 63)))
+(+ (series '(1 2)) "x")
+(+ (series '(1 2)) #t)
+(- 10 (series '(1 2) #:name "n"))
+(= (series '("x" "y")) 1)
+(= (series '("1e-05" "x")) 1e-5)
+(/ (series '(1 2)) (series '(1.5 2.0) #:dtype 'f32))
+(mod (series '(1 2)) (series (list (date 2024 1 1) (date 2024 1 2))))
+(* (series (list (hours 1) (hours 2))) 2)
+(/ (series (list (hours 1) (hours 2))) 2.5)
 (= (series (list "low" "mid" polars-null "high") #:dtype '(enum low mid high)) "bogus")
 (eval:error (+ (series '(1 2) #:dtype 'u8) -1))
-(eval:error (= (series '("x")) 1))]
+(eval:error (= (series '(1 2)) (date 2024 1 1)))
+(eval:error (mod (series (list (date 2024 1 1))) (series '(1))))]
 
 @subsection[#:tag "ref-series-lowlevel"]{Low-level Series API}
 
@@ -2163,7 +2300,7 @@ temps
   (@racketid[series-new-i32/vec], @racketid[series-new-f64/vec], …) that takes a
   vector instead of a list.}
 
-@defproc[(series-new-null [name string?] [length exact-nonnegative-integer?]) Series-ptr?]{
+@defproc[(series-new-null [name string?] [length size/c]) Series-ptr?]{
   Builds a series of @racket[length] nulls of dtype @racket['null]. It is
   what @racket[(series '())] and @racket[series] with @racket[#:dtype 'null]
   build on.
@@ -2710,17 +2847,18 @@ query
 
 @defproc[(lazyframe-join [left LazyFrame-ptr?]
                          [right LazyFrame-ptr?]
-                         [#:on on (or/c #f (non-empty-listof string?)) #f]
-                         [#:left-on left-on (or/c #f (non-empty-listof string?)) #f]
-                         [#:right-on right-on (or/c #f (non-empty-listof string?)) #f]
+                         [#:on on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+                         [#:left-on left-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
+                         [#:right-on right-on (or/c #f (non-empty-listof utf-8-name/c)) #f]
                          [#:how how (or/c 'inner 'left 'outer 'full 'cross 'semi 'anti) 'inner])
          LazyFrame-ptr?]{
   Joins two plans. Give the key columns either as one list with @racket[#:on],
   when they have the same names on both sides, or as parallel
-  @racket[#:left-on] and @racket[#:right-on] lists. @racket[#:how] selects the
-  join kind; @racket['outer] and @racket['full] are synonyms, and a
-  @racket['cross] join takes no keys. Omitting the keys for any other kind is
-  an error. Collect the result with @racket[lazyframe-collect]:
+  @racket[#:left-on] and @racket[#:right-on] lists of @racket[utf-8-name/c]
+  names. @racket[#:how] selects the join kind; @racket['outer] and
+  @racket['full] are synonyms, and a @racket['cross] join takes no keys.
+  Omitting the keys for any other kind is an error. Collect the result with
+  @racket[lazyframe-collect]:
 
   @racketblock[
   (lazyframe-collect
@@ -2840,16 +2978,22 @@ built.
               @defproc[(expr-n-unique [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-first    [e Expr-ptr?]) Expr-ptr?]
               @defproc[(expr-last     [e Expr-ptr?]) Expr-ptr?]
-              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?]
-              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof exact-nonnegative-integer? 1]) Expr-ptr?])]{
+              @defproc[(expr-std [e Expr-ptr?] [#:ddof ddof uint8/c 1]) Expr-ptr?]
+              @defproc[(expr-var [e Expr-ptr?] [#:ddof ddof uint8/c 1]) Expr-ptr?])]{
   Aggregations. Each reduces the column @racket[e] evaluates to — over the
   whole frame in a @emph{select}, or per group inside @emph{group_by/agg}.
   @racket[expr-count] counts the non-null entries, as Polars' @tt{.count()}
   does. @racket[expr-std] and @racket[expr-var] take a @racket[#:ddof]
-  degrees-of-freedom adjustment, defaulting to 1. The generic @racket[sum],
+  degrees-of-freedom adjustment, defaulting to 1; Polars holds it in a byte,
+  so a value past 255 is a contract error. The generic @racket[sum],
   @racket[mean], @racket[min], @racket[max], @racket[median], @racket[count],
   @racket[n-unique], @racket[first], @racket[last], @racket[std] and
-  @racket[var] dispatch to these when given an expression or a column name.}
+  @racket[var] dispatch to these when given an expression or a column name.
+
+  @examples[#:eval ev
+(~> (dataframe (list (series '(2.0 4.0 4.0 6.0) #:name "v")))
+    (select (expr-alias (expr-std (col "v") #:ddof 0) "s")))
+(eval:error (expr-std (col "v") #:ddof 256))]}
 
 @deftogether[(@defproc[(expr-sort [e Expr-ptr?]
                                   [#:descending descending boolean? #f]

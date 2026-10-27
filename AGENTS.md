@@ -239,11 +239,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   data unguarded until #129 (L7 of #223) guards them with a reason reported
   to Racket. The audit fails on a stale or misclassified line, so guarding an
   entry point means deleting its line.
-- `dataframe_drop_count`, `expr_drop_count` and `series_drop_count` count
-  native releases; the reclamation tests assert on them because Racket cannot
-  otherwise observe a native free (`foreign.rkt` has a case for each Series-
-  and DataFrame-returning binding but the file readers, and `bulk.rkt` one for
-  `series_copy_cat`), and pairing tests
+- `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
+  `series_drop_count` count native releases; the reclamation tests assert on
+  them because Racket cannot otherwise observe a native free (`foreign.rkt`
+  has a case for each Series- and DataFrame-returning binding but the file
+  readers, `bulk.rkt` one for `series_copy_cat`, and `expr.rkt` one for each
+  plan helper), and pairing tests
   check that an explicit drop, of a pointer or a wrapper, releases it exactly
   once.
 - The bulk copies (`series_copy_*`, `series_copy_as_f64`) write into memory
@@ -272,7 +273,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
   `const char **` table and every NUL-terminated string share one
   `'atomic-interior` block, which the collector never moves. Its elements are
-  what `_string` took: a string (as UTF-8), a byte string, or a path.
+  what `_string` took: a string (as UTF-8), a byte string, or a path. A
+  name a verb passes to a `_string-list` has the contract `utf-8-name/c`
+  (`resource.rkt`): the same, but not a byte string or path that is not
+  UTF-8 (#248).
   `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
   retains the values it is given and not what a ctype converts them to: as a
   ctype the block could be freed by a collection during a `#:blocking?` call
@@ -293,9 +297,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   `define-cstruct` field, or in `define-series-constructors`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
-  `with-raw-buffer` or `with-release` (`polars/private/resource.rkt`), which
-  expand into `dynamic-wind`, so the release runs on return, raise and
-  escape; the buffer's finalizer backs up a thread killed inside the extent.
+  `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
+  a `for` loop, or `with-release-pool` for the values a computation hands to
+  the procedure it binds (`polars/private/resource.rkt`), which expand into
+  `dynamic-wind`, so the release runs on return, raise and escape (a raise
+  part way through a `with-releases` loop releases what it acquired, and a
+  release that raises does not stop the others, as with nested
+  `with-release`s); the buffer's finalizer backs up a thread killed inside
+  the extent. A value that may or may not be owned (a variadic operator's
+  running result) is released with `drop-owned` (`expr-core.rkt`), which
+  dispatches on the four pointer types' predicates and ignores any other
+  value; a pointer already dropped raises under that type's drop name, as
+  `series-drop` does.
   No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test there
   fails on one.
 - **An export never changes its signature under the same symbol.** A new
@@ -318,17 +331,33 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 - `series #:dtype`, `cast` and `series-cast` accept short and canonical
   spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
-- `/` on an integer column is integer division, unlike Python's `/` (#65).
+- `/` on integer operands (integer, Boolean or Null) is integer division,
+  unlike Python's `/` (#65), two Null operands aside, which give Float64.
+  Any other `/` divides as Python's does: an integer, Boolean or Null series
+  is cast to Float64 first, and so is the series under a plain number on the
+  left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a
+  temporal value on the left (`(/ (hours 1) decimals)` is a duration).
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
-    glob pattern by scan and collect, and a single file with 0.55's eager
-    `CsvReader`, about three times faster on nycflights. Both are built
+    glob pattern, or any path given `#:n-rows`, by scan and collect, and
+    any other single file with 0.55's eager `CsvReader`, about three times
+    faster on nycflights. Given `n_rows`, the eager reader stops spawning
+    chunks once the chunks already parsed hold more rows, so whether it
+    reaches a later chunk that fails (a late `NA` in an inferred integer
+    column) depends on thread timing (#147). The scan cuts line batches in
+    order (the first is what schema inference read, at least 32 KiB or the
+    whole file with `#:infer-schema-length #f`, plus 32 KiB; each later one
+    larger, up to 512 KiB), decodes them in parallel, and stops at the
+    first batch past the slice, so a bad value beyond it is not reported:
+    deterministic, but dependent on the file's size. Given
+    `#:comment-prefix` too, polars-stream does not push the slice into the
+    CSV source, so the scan parses the whole file: a bad value anywhere in
+    it fails the read, and `#:n-rows 5` of a 100 MB file takes about
+    105 ms, against 15 ms for the eager reader. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    listed exceptions (a malformed-quote error's chunk locator; an
-    `#:n-rows 0` read of a line that does not parse, invalid UTF-8 or a
-    ragged line, fails eagerly).
+    one listed exception, a malformed-quote error's chunk locator.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,
@@ -558,21 +587,79 @@ it. Racket side: `define-compat` with `#:c-id`.
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
   and `not` refuse a `'null` series, as Python's eager operators do, and any
   other non-Boolean series, where Python's `& | ^` are bitwise on integers.
-- A plain value beside a typed series in an operator is a constant of the
-  series' dtype when it fits (a gregor value keeps its own dtype; a
-  non-integer real beside an integer series is Float64). Otherwise the
-  operator runs its expression form, `(op (col name) (lit v))` on a
-  one-column frame (`series-through-expr`), with that form's dtypes, as
-  Python's expressions give them: beside an Enum series a string or symbol
-  (`=` with a value outside the categories is `#f`, null on a null, and `<`
-  raises polars' reason, as in Python), beside a Decimal series a real, and
-  beside an integer series an Int64 integer past the dtype's range (`(+ u8
-  300)` is UInt16). A negative integer beside an unsigned series, an
-  integer past Int64 (but one in range beside a UInt64 series), which our
-  `lit` cannot carry, and a value no literal takes are contract errors naming the value and the
-  series' dtype, as Python's eager `OverflowError` is. Every (operator,
-  dtype, operand) outcome is in `generic/operand-audit.rktd`, which
-  `generic/operand-audit.rkt` holds the operators to.
+- A plain value beside a typed series in an operator follows Python
+  1.42.1's eager operators (decision (b) of #261). It is a constant of the
+  series' dtype when it fits: a boolean beside a numeric series is 1 or 0 and
+  a number or boolean compared with a string series is its string, as
+  Python's `str` spells it (`1e-05`, `True`; a tie in the shortest digits
+  goes to the even one, as in Python's `repr`); a gregor value keeps its own
+  dtype (but `mod` of a float series and a datetime reads the datetime's
+  physical integer, as Python does, and a date there is a contract error), a
+  duration series divided by a number is Python's true division, a
+  non-integer real beside an integer, boolean or string series is Float64,
+  and in
+  arithmetic a string or symbol is a String constant (`(+ ints "x")` is
+  `"1x" "2x"`). Otherwise the operator runs its expression form,
+  `(op (col name) (lit v))` on a one-column frame (`series-through-expr`),
+  with that form's dtypes, as Python's expressions give them: beside an Enum
+  series a string or symbol (`=` with a value outside the categories is
+  `#f`, null on a null, and `<` raises polars' reason, as in Python), beside a
+  Decimal series a real or a boolean (compared as 1 or 0), beside a
+  duration series a number in `*`, a string before a series in `+`, beside
+  an integer series an Int64 integer past the dtype's range (`(+ u8 300)`
+  is UInt16), in `/` a negative integer beside an unsigned series
+  (integer division, `(/ u8 -1)` is Int16), and beside a Boolean series an
+  integer in `/`. `lit` takes an integer from
+  2^63 to 2^64 − 1 as `expr_lit_u64`, a dynamic integer that materialises
+  as UInt64, as `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` /
+  `expr_lit_i64`. Such an integer beside a series follows Python's eager
+  operators, which raise `OverflowError` past Int64 except beside UInt64
+  (where they wrap), beside Decimal and in `/`: it is a constant beside a
+  UInt64 series, the expression form beside a Decimal series, and a
+  contract error beside any other integer or Boolean series and a Null one
+  (Python raises a `TypeError` beside Null), except in `/`, where Python gives
+  Float64 (Float64 nulls beside Null) and ours refuses, since its `/` of
+  integers is integer division (the `past-int64` deviation); beside a float
+  or string series it is what any integer is there, and it is refused
+  wherever a smaller integer is. Contract errors naming the value and the series' dtype, where Python
+  raises `TypeError`, `ValueError` or
+  `OverflowError`: a negative integer beside an unsigned series outside `/`,
+  an integer past Int64 beside a series other than those, an integer
+  outside −2^63 to 2^64 − 1, which no literal carries, a gregor value
+  compared with a series of another kind (a naive datetime beside a date
+  series and a date or time beside a string series aside), a time in
+  arithmetic, and a value no literal takes. `mod` refuses a temporal series
+  (the left one when both are series), as Python's `%` does, whatever the
+  other operand. The special cases are one table in `generic/operands.rkt`,
+  `operand-rules`, keyed by operator class, dtype class and operand class.
+  The result takes the series' name on either side; Python's eager
+  operator instead names it `literal` for a plain value left of `+`, `-`,
+  `*` or `/` on a Decimal series, left of `*` on a Duration series, and for
+  a string left of `+` (the `result-name` class).
+  `scripts/operand-audit-expected.py` writes Python's outcome of every
+  (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
+  expression form's and, for `/`, `//`'s where they differ.
+  `scripts/operand-audit-deviations.rkt` records ours, for each row where it
+  differs, in `generic/operand-deviations.rktd`, under the first class of
+  `generic/operand-audit-classes.rkt` that holds. Each class is a predicate
+  on the row, Python's outcome (with its expression and `//` forms) and ours,
+  which says what kind of outcome the class admits; the record, not the
+  predicate, says which rows are in it. The recorder is a ratchet: a row that
+  fits no class, or one not already recorded under its class with the same
+  outcome (a new deviation, a changed outcome, a changed class), makes it
+  print the row, ours and the record and exit 1 without writing. `--accept`
+  records the new and changed rows, never an unclassified one. A recorded row
+  that now gives Python's outcome counts as changed too, so undoing a
+  documented deviation (`integer-division`, `racket-short-circuit`,
+  `result-name`) also needs `--accept`, which drops the row from the record.
+  `generic/operand-audit.rkt` holds every row to Python's outcome or the
+  recorded one, name, dtype and values exactly, and reclassifies every
+  recorded row, so a change to any row fails and names it. After a
+  deliberate change, rerun the recorder. On an unclassified row, fix ours to
+  Python's outcome, or add a class with its predicate and reason (and a
+  forged-outcome row in the test that the predicate refuses). On a row not
+  recorded, fix ours, or rerun with `--accept` and review the diff of the
+  recorded rows and the class counts it prints.
 - Eager reductions on a series return what Python 1.42.1's do (owner's
   decision, 2026-10-16; before it the typed paths gave `#f`): `polars-null`
   where the reduction is undefined (`mean`, `min`, `max`, `std`, `var` of an
@@ -670,7 +757,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   of that instant, where Python's `to_list` stops at microseconds; `ref` reads
   the physical value through the bulk copy, so the two cannot disagree. The
   conversions raise on an unsupported dtype, `binary` included (#99), even
-  when every entry is null.
+  when every entry is null. The series printer shows a binary value as
+  Python 1.42.1's series repr does, read through `series_copy_binary` for
+  the shown rows only and at most 61 bytes of each value (its
+  `max_value_len`; the copy still reports each value's full length): bytes
+  `!` to `~` as themselves, any other as `\xNN`, cut after 60 bytes with
+  `"…` (Python's `POLARS_FMT_STR_LEN`, doubled, is not read). It is total: a cell that raises prints `#<cannot print:
+  ...>`, and a series whose header raises `#<series: cannot print: ...>`
+  (#250).
 - A regexp given to `col` / `exclude` keeps its Racket meaning:
   `polars/private/column-pattern.rkt` rewrites `#rx` and `#px` syntax into the
   Rust regex crate's, and the oracle test in `generic/selectors.rkt` checks
@@ -716,20 +810,32 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (cargo tests, the
+- **`nix flake check` is the CI-equivalent** (ten checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
-  `rustls-only`, `release-toolchain`, the rustc pin, and `build-so-darwin`,
+  `rustls-only`, `install-native-libs`, `devshell-home`,
+  `release-toolchain`, the rustc pin, and `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
-- Each worktree gets its own `PLTUSERHOME` (keyed on the path). In a fresh
+- Each worktree gets its own `PLTUSERHOME`, keyed on its root as
+  `git rev-parse --show-toplevel` gives it (`scripts/devshell-home.sh`, which
+  the dev shell's hook sources), so a trailing slash, a symlink or a
+  subdirectory reaches the same home (#158), inside a git hook too, whose
+  `GIT_DIR` it ignores. Outside git the key is the
+  directory's real path, so a subdirectory has its own. With no home to key
+  (`HOME` unset, say) the hook says so in one line and skips the setup. The
+  `devshell-home` gate and flake check hold it there. In a fresh
   one, `raco setup --pkgs threading-doc` once, or the manual's `~>` link is an
   undefined tag and `threading-doc` looks unused.
 - After any Rust change: `nix run .#copy-native-libs`, or the Racket tests run
-  against the stale library.
+  against the stale library. It and the dev shell's hook copy through
+  `scripts/install-native-libs.sh`, which leaves an identical library alone
+  and replaces a differing one by a rename, never in place, so a racket in
+  another shell that has the old one mapped keeps running (#265); the
+  `install-native-libs` gate and flake check hold it there.
 - Racket tests live in `(module+ test ...)` submodules, which **merge per
   file** — a definition name used in one test block collides with the same
   name in another. Rust tests live in `rust/src/tests/`.

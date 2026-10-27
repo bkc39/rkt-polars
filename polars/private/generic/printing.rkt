@@ -15,9 +15,10 @@
                   expr-all expr-drop expr-dt-strftime lazyframe-collect/raw lazyframe-select)
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
-         polars/private/foreign)
+         polars/private/foreign
+         (only-in threading ~>>))
 
-(provide series->string)
+(provide series->printed series->string)
 
 (define (dtype->polars-label dt)
   (define (tu->label tu)
@@ -91,10 +92,31 @@
 
 (struct unreadable (reason))
 
+(define (cannot-print reason #:kind [kind #f])
+  (format "#<~acannot print: ~a>" (if kind (format "~a: " kind) "") reason))
+
+(define (call/cannot-print thunk #:kind [kind #f])
+  (with-handlers ([exn:fail? (lambda (e) (cannot-print (exn-message e) #:kind kind))])
+    (thunk)))
+
+(define binary-shown-bytes 60)
+
+(define (byte->cell b)
+  (if (<= #x21 b #x7e)
+      (string (integer->char b))
+      (string-append "\\x" (~r b #:base 16 #:min-width 2 #:pad-string "0"))))
+
+(define (bytes->cell v)
+  (define shown (min (bytes-length v) binary-shown-bytes))
+  (string-append "b\""
+                 (~>> (subbytes v 0 shown) bytes->list (map byte->cell) string-append*)
+                 (if (< shown (bytes-length v)) "\"…" "\"")))
+
 (define (value->cell v dt [abbreviation #f])
   (cond
     [(polars-null? v) "null"]
-    [(unreadable? v) (format "#<cannot print: ~a>" (unreadable-reason v))]
+    [(unreadable? v) (cannot-print (unreadable-reason v))]
+    [(bytes? v) (bytes->cell v)]
     [(and (pair? dt) (eq? (car dt) 'duration)) (duration->cell (period-ref v (cadr dt)) (cadr dt))]
     [(date? v) (date->cell v)]
     [(time? v) (clock->cell v)]
@@ -136,18 +158,26 @@
     [(<= len 10) (zone-abbreviations s 0 len)]
     [else (append (zone-abbreviations s 0 5) (list #f) (zone-abbreviations s (- len 5) 5))]))
 
+(define (cell s dt i abbreviation)
+  (call/cannot-print
+   (lambda ()
+     (cond
+       [(eq? i 'ellipsis) "…"]
+       [(eq? dt 'binary)
+        (value->cell (series-ref-bytes 'series->string s i (add1 binary-shown-bytes)) dt)]
+       [else (value->cell (series-value 'series->string s i #:unreadable unreadable)
+                          dt abbreviation)]))))
+
+(define (series->printed s)
+  (call/cannot-print (lambda () (series->string s)) #:kind 'series))
+
 (define (series->string s)
   (define len (series-len s))
   (define dt (series-dtype s))
   (define lines
     (for/list ([i (in-list (row-indices len))]
                [abbreviation (in-list (shown-abbreviations s dt len))])
-      (string-append "\t"
-                     (if (eq? i 'ellipsis)
-                         "…"
-                         (value->cell (series-value 'series->string s i #:unreadable unreadable)
-                                      dt abbreviation))
-                     "\n")))
+      (string-append "\t" (cell s dt i abbreviation) "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
    (format "Series: '~a' [~a]\n" (series-name s) (dtype->polars-label dt))
@@ -159,11 +189,13 @@
   ;; series->string operates on the raw FFI series, so build them directly here
   ;; (printing is a leaf — no dependency on the wrapper core).
   (require rackunit racket/list
-           (only-in polars/private/expr-core expr-drop-count)
+           (only-in polars/private/expr dataframe-group-by-agg)
+           (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
            (only-in polars/private/foreign
                     series-cast series-new-i32 series-new-i64 series-new-null series-new-str
-                    polars-null)
-           (only-in polars/private/test-helpers settle!))
+                    series-slice polars-null)
+           (only-in polars/private/test-helpers settle!)
+           (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
   (check-equal? (series->string (series-new-null "nothing" 3))
                 "shape: (3,)\nSeries: 'nothing' [null]\n[\n\tnull\n\tnull\n\tnull\n]")
@@ -208,9 +240,11 @@
                                "\t2021-03-27 12:00:00.500 CET\n\tnull\n\t2021-07-01 00:00:00 CEST\n"
                                "\t1970-01-01 00:59:59.999 CET\n]"))
   (settle!)
-  (let ([before (expr-drop-count)])
+  (let ([before (expr-drop-count)]
+        [plans-before (lazyframe-drop-count)])
     (series->string zoned)
-    (check >= (- (expr-drop-count) before) 2))
+    (check >= (- (expr-drop-count) before) 2)
+    (check-equal? (- (lazyframe-drop-count) plans-before) 2))
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1616842800000000))
                                     '(datetime microseconds "Asia/Kathmandu")))
                 '("2021-03-27 16:45:00 +0545" "]"))
@@ -253,4 +287,71 @@
   (check-equal? (cells (series-cast (series-new-i64 "k" '(1 9000000000000000000))
                                     '(datetime microseconds "Europe/Brussels")))
                 '("1970-01-01 01:00:00.000001 CET"
-                  "#<cannot print: polars panicked: invalid or out-of-range datetime>" "]")))
+                  "#<cannot print: polars panicked: invalid or out-of-range datetime>" "]"))
+  (define (binary-cells values) (~> (series-new-str "b" values) (series-cast 'binary) cells))
+  (define (check-binary-cell value shown) (check-equal? (binary-cells (list value)) (list shown "]")))
+  (define (xs n) (make-string n #\x))
+  ;; Python 1.42.1's series repr of each value as Binary
+  (for ([value+shown
+         (in-list
+          `(("a" "b\"a\"")
+            ("z\"q " "b\"z\"q\\x20\"")
+            ("" "b\"\"")
+            ("\\" "b\"\\\"")
+            ("\u007f" "b\"\\x7f\"")
+            ("\u0000\u001f!~" "b\"\\x00\\x1f!~\"")
+            ("é" "b\"\\xc3\\xa9\"")
+            (,(xs 60) ,(string-append "b\"" (xs 60) "\""))
+            (,(xs 61) ,(string-append "b\"" (xs 60) "\"…"))
+            (,(xs 1000) ,(string-append "b\"" (xs 60) "\"…"))
+            (,(string-append (xs 59) "é") ,(string-append "b\"" (xs 59) "\\xc3\"…"))
+            (,(string-append (xs 27) "é") ,(string-append "b\"" (xs 27) "\\xc3\\xa9\""))))])
+    (apply check-binary-cell value+shown))
+  (check-equal? (~> (series-new-str "b" (list "a" polars-null "x")) (series-cast 'binary) series->string)
+                "shape: (3,)\nSeries: 'b' [binary]\n[\n\tb\"a\"\n\tnull\n\tb\"x\"\n]")
+  (check-equal? (binary-cells (map number->string (range 12)))
+                '("b\"0\"" "b\"1\"" "b\"2\"" "b\"3\"" "b\"4\"" "…"
+                  "b\"7\"" "b\"8\"" "b\"9\"" "b\"10\"" "b\"11\"" "]"))
+  (test-case "a binary cell does not follow POLARS_TABLE_WIDTH, as round 1's renderer did"
+    (define table-width (getenv "POLARS_TABLE_WIDTH"))
+    (dynamic-wind
+     (lambda () (putenv "POLARS_TABLE_WIDTH" "8"))
+     (lambda ()
+       (check-equal? (binary-cells (list (xs 61) polars-null))
+                     (list (string-append "b\"" (xs 60) "\"…") "null" "]")))
+     (lambda ()
+       (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
+                                   (and table-width (string->bytes/utf-8 table-width))))))
+  (define twelve-blobs
+    (~> (series-new-str "b" (for/list ([i (in-range 12)])
+                              (case i
+                                [(2) "a bé"]
+                                [(5) polars-null]
+                                [(7) (xs 61)]
+                                [else (number->string i)])))
+        (series-cast 'binary)))
+  ;; Python 1.42.1's repr of the same slices
+  (check-equal? (series->string (series-slice twelve-blobs 3 4))
+                "shape: (4,)\nSeries: 'b' [binary]\n[\n\tb\"3\"\n\tb\"4\"\n\tnull\n\tb\"6\"\n]")
+  (check-equal? (series->string (series-slice twelve-blobs 1 11))
+                (string-append
+                 "shape: (11,)\nSeries: 'b' [binary]\n[\n"
+                 "\tb\"1\"\n\tb\"a\\x20b\\xc3\\xa9\"\n\tb\"3\"\n\tb\"4\"\n\tnull\n\t…\n"
+                 "\tb\"" (xs 60) "\"…\n\tb\"8\"\n\tb\"9\"\n\tb\"10\"\n\tb\"11\"\n]"))
+  (define ten-megabytes (xs 10000000))
+  (define large-blobs
+    (~> (series-new-str "b" (list ten-megabytes ten-megabytes ten-megabytes)) (series-cast 'binary)))
+  (collect-garbage)
+  (define allocated-before-print (current-memory-use 'cumulative))
+  (check-equal? (cells large-blobs) (append (make-list 3 (string-append "b\"" (xs 60) "\"…")) '("]")))
+  (check < (- (current-memory-use 'cumulative) allocated-before-print) 1000000)
+  (check-equal? (cell ints 'binary 0 #f)
+                "#<cannot print: series->string: cannot read a binary value at index 0>")
+  (define nested
+    (dataframe-group-by-agg (dataframe-new (list (series-new-i32 "g" '(1 1))
+                                                 (series-new-i32 "v" '(2 3))))
+                            '("g")
+                            (list (col "v"))))
+  (check-regexp-match #rx"\n\\[\n\t#<cannot print: series->string: unsupported dtype "
+                      (series->string (dataframe-column nested "v")))
+  (check-regexp-match #rx"^#<series: cannot print: Series-ptr->C: " (series->printed 'not-a-series)))
