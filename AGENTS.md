@@ -137,8 +137,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
   `who: operation failed` itself, so no wrapper is needed. A test in
   `polars/tests/foreign.rkt` reads every `define-compat` under
-  `polars/private` and fails on one of these four result types without its allocator, or on a
-  `_pointer` result.
+  `polars/private` and `polars/tests` and fails on one of these four result
+  types without its allocator, or on a `_pointer` result.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -291,10 +291,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   refuse one in an Enum category (`check-enum-categories`); `define-enum`
   refuses it at compile time. Names, single string arguments and categoricals
   cast from a String series still stop at a NUL (#165). A test in
-  `polars/tests/resource.rkt` reads every module under `polars/private` as
-  data and fails on a pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`,
-  `_symbol`, `_gcpointer`, `_racket`, their `/` and `*` variants, or a name
-  `define`d as one, directly or through `make-ctype`) as the element of a
+  `polars/tests/resource.rkt` reads every module under `polars/private` and
+  `polars/tests` as data and fails on a pointer-holding ctype (`_string`,
+  `_bytes`, `_path`, `_file`, `_symbol`, `_gcpointer`, `_racket`, their `/`
+  and `*` variants, or a name `define`d as one, directly or through
+  `make-ctype`) as the element of a
   `_list` / `_vector` / `_ptr` in mode `i` or `io`, of an `_array`,
   `_array/list`, `_array/vector`, `_box` or `_list-struct`, as a
   `define-cstruct` field, or in `define-series-constructors`.
@@ -312,7 +313,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   dispatches on the four pointer types' predicates and ignores any other
   value; a pointer already dropped raises under that type's drop name, as
   `series-drop` does.
-  No `(malloc …)` or `(free …)` appears outside `resource.rkt`: a test in
+  No `(malloc …)` or `(free …)` appears under `polars/private` or
+  `polars/tests` outside `polars/private/resource.rkt`: a test in
   `polars/tests/resource.rkt` fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became

@@ -9,12 +9,21 @@
          (only-in racket/file display-to-file file->bytes)
          (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
+         (only-in racket/runtime-path define-runtime-path)
          (only-in racket/string string-contains? string-prefix?)
          syntax/parse/define)
 
 (provide apply-keywords contains-all? contract-violation-of drops-during drops-once gzip-file
-         keyword-rejected? message-of not-utf-8-expected not-utf-8-names refusal refusal-misses
-         refused scratch-file settle! staging-files)
+         keyword-rejected? message-of not-utf-8-expected not-utf-8-names polars-sources refusal
+         refusal-misses refused scratch-file settle! staging-files)
+
+(define-runtime-path polars-dir "..")
+
+(define (polars-sources [root polars-dir])
+  (for*/list ([dir (in-list '("private" "tests"))]
+              [file (in-directory (build-path root dir))]
+              #:when (path-has-extension? file #".rkt"))
+    (simplify-path file)))
 
 (define (scratch-file dir name text)
   (define path (build-path dir name))

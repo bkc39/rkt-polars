@@ -2,14 +2,12 @@
 
 (module+ test
   (require rackunit
-           (for-syntax racket/base)
            (only-in ffi/unsafe _int64 ptr-add)
            (only-in gregor
                     ->datetime/local ->posix ->tzid ->utc-offset date datetime iso8601->time
                     moment posix->datetime)
            (only-in gregor/period milliseconds)
            (only-in racket/match == match match-define)
-           (only-in racket/runtime-path define-runtime-path)
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
            (only-in polars/private/foreign
                     ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS?
@@ -1315,8 +1313,8 @@
              (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope"))))
 
 (module+ test
-  (require (only-in racket/path path-has-extension?))
-  (define-runtime-path private-dir "../private")
+  (require (only-in racket/file delete-directory/files make-temporary-directory)
+           (only-in polars/tests/test-helpers polars-sources))
 
   (define owned-drops
     (hash '_Series-ptr 'series-drop '_Series-ptr/null 'series-drop
@@ -1349,13 +1347,13 @@
          [else #t])]
       [_ #t]))
 
-  (define bindings
-    (for*/list ([file (in-directory private-dir)]
-                #:when (path-has-extension? file #".rkt")
+  (define (compat-bindings sources)
+    (for*/list ([file (in-list sources)]
                 [form (in-list (compat-forms
                                 (parameterize ([read-accept-reader #t] [read-accept-lang #t])
                                   (call-with-input-file file read))))])
       form))
+  (define bindings (compat-bindings (polars-sources)))
   (define compat 'define-compat)
   (check-true (releases-result?
                `(,compat good (_fun _string -> _DataFrame-ptr/null) #:wrap (allocator dataframe-drop))))
@@ -1378,7 +1376,19 @@
   (check-equal? (for/list ([form (in-list bindings)]
                            #:unless (releases-result? form))
                   (cadr form))
-                '()))
+                '())
+  (define planted-root (make-temporary-directory "rkt-polars-audit-~a"))
+  (for ([dir (in-list '("private" "tests"))])
+    (make-directory (build-path planted-root dir)))
+  (with-output-to-file (build-path planted-root "tests" "planted.rkt")
+    (lambda ()
+      (displayln "#lang racket/base")
+      (write `(,compat planted (_fun -> _DataFrame-ptr)))))
+  (check-equal? (for/list ([form (in-list (compat-bindings (polars-sources planted-root)))]
+                           #:unless (releases-result? form))
+                  (cadr form))
+                '(planted))
+  (delete-directory/files planted-root))
 
 (module+ test
   (require (prefix-in contracted: polars/private/foreign)

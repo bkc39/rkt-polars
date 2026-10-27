@@ -5,15 +5,16 @@
            (for-syntax racket/base)
            racket/match
            racket/runtime-path
-           (only-in racket/file file->string)
-           (only-in racket/list append-map last)
+           (only-in racket/file delete-directory/files file->string make-temporary-directory)
+           (only-in racket/list append-map)
            (only-in ffi/unsafe
                     _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
                     ptr-set!)
            (only-in polars/private/resource
                     _string-list with-raw-buffer with-release with-release-pool with-releases)
            (only-in (submod polars/private/resource internal) strings->c-array)
-           (only-in polars/tests/gc-pressure call-with-collections))
+           (only-in polars/tests/gc-pressure call-with-collections)
+           (only-in polars/tests/test-helpers polars-sources))
 
   (define released '())
   (define (release! tag) (set! released (cons tag released)))
@@ -129,14 +130,14 @@
   (check-exn #rx"^_string-list: contract violation\n  expected: \\(or/c string\\? bytes\\? path\\?\\)\n  given: 'b"
              (lambda () (strings->c-array '("a" b))))
 
-  (define-runtime-path private-dir "../private")
-  (define (offenders pattern)
-    (for/list ([f (in-directory private-dir)]
-               #:when (regexp-match? #rx"[.]rkt$" (path->string f))
-               #:unless (equal? (last (explode-path f)) (string->path "resource.rkt"))
+  (define-runtime-path resource-module "../private/resource.rkt")
+  (define raw-allocation #px"\\((?:malloc|free)\\s")
+  (define (offenders pattern sources)
+    (for/list ([f (in-list sources)]
+               #:unless (equal? f (simplify-path resource-module))
                #:when (regexp-match? pattern (file->string f)))
       f))
-  (check-equal? (offenders #px"\\((?:malloc|free)\\s") '()
+  (check-equal? (offenders raw-allocation (polars-sources)) '()
                 "raw malloc/free outside polars/private/resource.rkt: use with-raw-buffer")
 
   (define (forms-in datum)
@@ -203,16 +204,33 @@
                    (define (f _string) (_list i _int)) '(_list i _string)))
                 '())
 
-  (define private-forms
+  (define (source-forms sources)
     (parameterize ([read-accept-reader #t]
                    [read-accept-lang #t])
-      (for/list ([f (in-directory private-dir)]
-                 #:when (regexp-match? #rx"[.]rkt$" (path->string f)))
+      (for/list ([f (in-list sources)])
         (cons f (forms-in (call-with-input-file f read))))))
-  (check > (length private-forms) 30)
-  (define private-aliases (pointer-aliases (append-map cdr private-forms)))
-  (check-equal? (for*/list ([file+forms (in-list private-forms)]
-                            [form (in-list (pointer-stores (cdr file+forms) private-aliases))])
-                  (list (car file+forms) form))
+  (define (pointer-store-offenders file-forms)
+    (define aliases (pointer-aliases (append-map cdr file-forms)))
+    (for*/list ([file+forms (in-list file-forms)]
+                [form (in-list (pointer-stores (cdr file+forms) aliases))])
+      (list (car file+forms) form)))
+  (define polars-forms (source-forms (polars-sources)))
+  (check > (length polars-forms) 30)
+  (check-equal? (pointer-store-offenders polars-forms)
                 '()
-                "a string or Racket object stored by address in Racket memory: use _string-list"))
+                "a string or Racket object stored by address in Racket memory: use _string-list")
+
+  (define planted-root (make-temporary-directory "rkt-polars-audit-~a"))
+  (for ([dir (in-list '("private" "tests"))])
+    (make-directory (build-path planted-root dir)))
+  (define planted (build-path planted-root "tests" "planted.rkt"))
+  (with-output-to-file planted
+    (lambda ()
+      (displayln "#lang racket/base")
+      (displayln (format "(define (planted-buffer) (~a 16))" 'malloc))
+      (write '(define planted-type (_list i _string)))))
+  (define planted-sources (polars-sources planted-root))
+  (check-equal? (offenders raw-allocation planted-sources) (list (simplify-path planted)))
+  (check-equal? (pointer-store-offenders (source-forms planted-sources))
+                (list (list (simplify-path planted) '(_list i _string))))
+  (delete-directory/files planted-root))
