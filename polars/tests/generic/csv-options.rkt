@@ -16,8 +16,12 @@
            (only-in polars/private/generic/reshape collect rename select [filter frame-filter])
            (only-in polars/private/generic/operators [> gt])
            (only-in polars/private/io-contracts size-max)
-           polars/tests/generic/test-fixtures
-           (submod polars/tests/generic/test-fixtures test))
+           (only-in polars/tests/generic/test-fixtures
+                    apply-keywords cause-of col column contract-violation-of dtypes-of frame=?
+                    message-of one-file-pattern polars-null scratch-file staging-files)
+           (only-in (submod polars/tests/generic/test-fixtures test)
+                    call-in-child check-readers-agree check-reads-like-every check-staged-write
+                    eager-reader scan-reader))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define eager-and-scan

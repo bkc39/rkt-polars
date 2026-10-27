@@ -4,7 +4,9 @@
   (require rackunit
            racket/file
            (prefix-in contracted: polars/private/json)
-           (submod polars/private/json internal)
+           (only-in (submod polars/private/json internal)
+                    dataframe-read-json dataframe-read-json-lines dataframe-write-json
+                    dataframe-write-json-lines lazyframe-scan-json-lines)
            (only-in polars/private/expr lazyframe-collect)
            (only-in polars/private/foreign
                     dataframe-column dataframe-column-names dataframe-drop dataframe-drop-count

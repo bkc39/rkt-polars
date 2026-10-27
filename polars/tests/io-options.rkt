@@ -4,7 +4,7 @@
   (require rackunit
            (for-syntax racket/base)
            (only-in racket/contract/region define/contract)
-           polars/private/io-options)
+           (only-in polars/private/io-options define-io-options keyword-forwarder))
 
   (define-io-options demo-options
     ([(reader/c range/c) read-keywords ([path string?]) range/c]

@@ -23,10 +23,6 @@
           [lazyframe-scan-parquet (parquet-scanner/c LazyFrame-ptr?)]
           [dataframe-write-parquet (parquet-writer/c DataFrame-ptr?)]))
 
-(module+ internal
-  (provide dataframe-read-parquet dataframe-write-parquet dataframe-write-parquet/raw
-           lazyframe-scan-parquet make-CompatParquetWriteOptions))
-
 (define parallel-codes
   '((auto . 0) (columns . 1) (row-groups . 2) (prefiltered . 3) (none . 4)))
 
@@ -215,3 +211,7 @@
 (define dataframe-read-parquet (parquet-reader 'dataframe-read-parquet))
 (define lazyframe-scan-parquet (parquet-scanner 'lazyframe-scan-parquet))
 (define dataframe-write-parquet (parquet-writer 'dataframe-write-parquet))
+
+(module+ internal
+  (provide dataframe-read-parquet dataframe-write-parquet dataframe-write-parquet/raw
+           lazyframe-scan-parquet make-CompatParquetWriteOptions))

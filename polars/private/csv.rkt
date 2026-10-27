@@ -33,9 +33,6 @@
           [lazyframe-scan-csv (csv-scanner/c LazyFrame-ptr?)]
           [dataframe-write-csv (csv-writer/c DataFrame-ptr?)]))
 
-(module+ internal
-  (provide dataframe-read-csv dataframe-write-csv lazyframe-scan-csv))
-
 (define (ascii-char? v)
   (and (char? v) (< (char->integer v) 128)))
 
@@ -359,3 +356,6 @@
                                "failed to write csv to ~a" path)))))
 
 (define dataframe-write-csv (csv-writer 'dataframe-write-csv))
+
+(module+ internal
+  (provide dataframe-read-csv dataframe-write-csv lazyframe-scan-csv))

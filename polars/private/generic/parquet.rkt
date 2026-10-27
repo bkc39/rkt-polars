@@ -12,9 +12,9 @@
           [scan-parquet (parquet-scanner/c lazyframe?)]
           [write-parquet (parquet-writer/c dataframe?)]))
 
-(module+ internal
-  (provide read-parquet scan-parquet write-parquet))
-
 (define-wrapped read-parquet wrap-dataframe (parquet-reader 'read-parquet))
 (define-wrapped scan-parquet wrap-lazyframe (parquet-scanner 'scan-parquet))
 (define write-parquet (parquet-writer 'write-parquet))
+
+(module+ internal
+  (provide read-parquet scan-parquet write-parquet))

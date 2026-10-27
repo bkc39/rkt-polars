@@ -9,7 +9,8 @@
            (only-in gregor moment)
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/parquet)
-           (submod polars/private/generic/parquet internal)
+           (only-in (submod polars/private/generic/parquet internal)
+                    read-parquet scan-parquet write-parquet)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr-core col)
            (only-in polars/private/generic/core
@@ -21,8 +22,10 @@
            (only-in polars/private/generic/csv read-csv write-csv)
            (only-in polars/private/generic/reshape
                     collect explain lazy select [filter frame-filter])
-           polars/tests/generic/test-fixtures
-           (submod polars/tests/generic/test-fixtures test))
+           (only-in polars/tests/generic/test-fixtures
+                    apply-keywords column contains-all? dtypes-of frame frame=? keyword-rejected?
+                    message-of polars-null)
+           (only-in (submod polars/tests/generic/test-fixtures test) check-staged-write))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define scratch (make-temporary-directory "rkt-polars-parquet-~a"))

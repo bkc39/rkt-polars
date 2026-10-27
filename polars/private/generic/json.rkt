@@ -14,11 +14,11 @@
           [scan-ndjson (ndjson-reader/c lazyframe?)]
           [write-ndjson (ndjson-writer/c dataframe?)]))
 
-(module+ internal
-  (provide read-json read-ndjson scan-ndjson write-json write-ndjson))
-
 (define-wrapped read-json wrap-dataframe (json-reader 'read-json))
 (define-wrapped read-ndjson wrap-dataframe (ndjson-reader 'read-ndjson))
 (define-wrapped scan-ndjson wrap-lazyframe (ndjson-scanner 'scan-ndjson))
 (define write-json (json-writer 'write-json))
 (define write-ndjson (ndjson-writer 'write-ndjson))
+
+(module+ internal
+  (provide read-json read-ndjson scan-ndjson write-json write-ndjson))

@@ -13,7 +13,9 @@
                     dataframe-drop dataframe-height dataframe-new polars-null
                     series-new-f64 series-new-i32 series-new-i64 series-new-str series-ref)
            (prefix-in contracted: polars/private/parquet)
-           (submod polars/private/parquet internal)
+           (only-in (submod polars/private/parquet internal)
+                    dataframe-read-parquet dataframe-write-parquet dataframe-write-parquet/raw
+                    lazyframe-scan-parquet make-CompatParquetWriteOptions)
            (only-in polars/private/io-contracts size-max)
            (only-in polars/tests/test-helpers
                     apply-keywords contract-violation-of drops-once

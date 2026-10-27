@@ -5,16 +5,20 @@
            racket/file
            racket/runtime-path
            (only-in racket/list make-list)
-           (only-in gregor date moment)
+           (only-in gregor date datetime moment)
            (prefix-in contracted: polars/private/generic/json)
-           (submod polars/private/generic/json internal)
+           (only-in (submod polars/private/generic/json internal)
+                    read-json read-ndjson scan-ndjson write-json write-ndjson)
            (only-in threading ~>)
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
            (only-in polars/private/generic/reshape cast collect filter select)
-           polars/tests/generic/test-fixtures
-           (submod polars/tests/generic/test-fixtures test))
+           (only-in polars/tests/generic/test-fixtures
+                    apply-keywords col column contract-violation-of dtypes-of frame frame=?
+                    gzip-file message-of polars-null scratch-file staging-files)
+           (only-in (submod polars/tests/generic/test-fixtures test)
+                    check-reads-like-every check-staged-write))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define stations (build-path data-dir "stations.json"))

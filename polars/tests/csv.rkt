@@ -4,7 +4,8 @@
   (require rackunit
            racket/file
            (prefix-in contracted: polars/private/csv)
-           (submod polars/private/csv internal)
+           (only-in (submod polars/private/csv internal)
+                    dataframe-read-csv dataframe-write-csv lazyframe-scan-csv)
            (only-in polars/private/foreign
                     dataframe-column dataframe-column-names dataframe-drop dataframe-drop-count
                     dataframe-height dataframe-new dataframe-shape last-error-message

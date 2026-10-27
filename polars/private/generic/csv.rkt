@@ -11,9 +11,9 @@
           [scan-csv (csv-scanner/c lazyframe?)]
           [write-csv (csv-writer/c dataframe?)]))
 
-(module+ internal
-  (provide read-csv scan-csv write-csv))
-
 (define-wrapped read-csv wrap-dataframe (csv-reader 'read-csv))
 (define-wrapped scan-csv wrap-lazyframe (csv-scanner 'scan-csv))
 (define write-csv (csv-writer 'write-csv))
+
+(module+ internal
+  (provide read-csv scan-csv write-csv))

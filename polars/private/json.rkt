@@ -29,10 +29,6 @@
           [lazyframe-scan-json-lines (ndjson-reader/c LazyFrame-ptr?)]
           [dataframe-write-json-lines (ndjson-writer/c DataFrame-ptr?)]))
 
-(module+ internal
-  (provide dataframe-read-json dataframe-read-json-lines dataframe-write-json
-           dataframe-write-json-lines lazyframe-scan-json-lines))
-
 (define json-dtype/c
   (flat-named-contract
    'json-dtype/c
@@ -253,3 +249,7 @@
 (define dataframe-read-json-lines (ndjson-reader 'dataframe-read-json-lines))
 (define lazyframe-scan-json-lines (ndjson-scanner 'lazyframe-scan-json-lines))
 (define dataframe-write-json-lines (ndjson-writer 'dataframe-write-json-lines))
+
+(module+ internal
+  (provide dataframe-read-json dataframe-read-json-lines dataframe-write-json
+           dataframe-write-json-lines lazyframe-scan-json-lines))

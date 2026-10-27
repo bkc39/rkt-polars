@@ -12,14 +12,17 @@
            (only-in threading ~>)
            (only-in gregor date datetime moment)
            (prefix-in contracted: polars/private/generic/csv)
-           (submod polars/private/generic/csv internal)
+           (only-in (submod polars/private/generic/csv internal) read-csv scan-csv write-csv)
            (prefix-in raw: polars/private/csv)
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
            (only-in polars/private/generic/reshape collect)
-           polars/tests/generic/test-fixtures
-           (submod polars/tests/generic/test-fixtures test))
+           (only-in polars/tests/generic/test-fixtures
+                    apply-keywords column contains-all? contract-violation-of dtypes-of frame
+                    frame=? gzip-file keyword-rejected? message-of polars-null scratch-file)
+           (only-in (submod polars/tests/generic/test-fixtures test)
+                    check-readers-agree eager-reader glob-reader outcome-difference scan-reader))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define eager-and-scan

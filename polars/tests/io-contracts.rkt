@@ -3,7 +3,9 @@
 (module+ test
   (require rackunit
            (only-in racket/contract/base contract-name)
-           polars/private/io-contracts)
+           (only-in polars/private/io-contracts
+                    c-string/c column-index/c column-name/c distinct-names? distinct? given
+                    positive-size/c row-index/c size-max size/c))
 
   (check-true (row-index/c 0))
   (check-true (row-index/c (sub1 (expt 2 32))))
