@@ -1,9 +1,10 @@
 #lang racket/base
 
 (require (only-in racket/contract/base
-                  ->i and/c integer-in listof non-empty-listof not/c or/c rename-contract
-                  unsupplied-arg?)
-         racket/match)
+                  ->i and/c non-empty-listof not/c or/c rename-contract unsupplied-arg?)
+         racket/match
+         (only-in polars/private/c-integer int64/c)
+         (only-in polars/private/resource utf-8-name/c utf-8-names/c))
 
 (provide asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
          frame-join/c join-keys join-symbol->code)
@@ -31,7 +32,7 @@
       (and (supplied left-on) (supplied right-on) #t)
       "must supply #:on, or #:left-on and #:right-on"))
 
-(define join-keys/c (or/c #f (non-empty-listof string?)))
+(define join-keys/c (or/c #f (non-empty-listof utf-8-name/c)))
 
 (define (frame-join/c left/c right/c-of result/c-of name)
   (rename-contract
@@ -55,8 +56,7 @@
 (define compat-asof-tolerance/integer 1)
 (define compat-asof-tolerance/float   2)
 
-(define asof-tolerance/c
-  (or/c #f (integer-in (- (expt 2 63)) (sub1 (expt 2 63))) (and/c real? (not/c exact-integer?))))
+(define asof-tolerance/c (or/c #f int64/c (and/c real? (not/c exact-integer?))))
 
 (define (asof-tolerance->parts tolerance)
   (match tolerance
@@ -80,17 +80,15 @@
       (and (supplied left-on) (supplied right-on) #t)
       "must supply #:on, or #:left-on and #:right-on"))
 
-(define asof-by/c (or/c #f (listof string?)))
-
 (define (frame-join-asof/c frame/c name)
   (rename-contract
    (->i ([left frame/c] [right frame/c])
-        (#:on [on (or/c #f string?)]
-         #:left-on [left-on (or/c #f string?)]
-         #:right-on [right-on (or/c #f string?)]
-         #:by [by asof-by/c]
-         #:left-by [left-by asof-by/c]
-         #:right-by [right-by asof-by/c]
+        (#:on [on (or/c #f utf-8-name/c)]
+         #:left-on [left-on (or/c #f utf-8-name/c)]
+         #:right-on [right-on (or/c #f utf-8-name/c)]
+         #:by [by (or/c #f utf-8-names/c)]
+         #:left-by [left-by (or/c #f utf-8-names/c)]
+         #:right-by [right-by (or/c #f utf-8-names/c)]
          #:strategy [strategy asof-strategy/c]
          #:tolerance [tolerance asof-tolerance/c])
         #:pre/desc (on left-on right-on) (asof-on-given on left-on right-on)

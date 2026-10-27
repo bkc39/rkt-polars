@@ -122,11 +122,15 @@ fn write(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 }
 
 fn int_column_with_late_na() -> String {
+    int_column_with_na_after(150)
+}
+
+fn int_column_with_na_after(rows: usize) -> String {
     let mut text = String::from("id,delay\n");
-    for i in 0..150 {
+    for i in 0..rows {
         text.push_str(&format!("{},{}\n", i, i % 7));
     }
-    text.push_str("150,NA\n");
+    text.push_str(&format!("{},NA\n", rows));
     text
 }
 
@@ -413,9 +417,6 @@ const EAGER_ONLY_OUTCOMES: &[(&str, &str)] = &[
     ("separator ;", "quoted.csv"),
     ("separator tab", "quoted.csv"),
     ("decimal comma ;", "quoted.csv"),
-    ("n rows 0", "latin.csv"),
-    ("n rows 0", "ragged.csv"),
-    ("n rows 0", "comma-decimals.csv"),
 ];
 
 #[test]
@@ -677,7 +678,7 @@ fn try_parse_dates_parses_iso_timestamps() {
 }
 
 #[test]
-fn skip_rows_and_n_rows_apply_to_the_eager_read() {
+fn skip_rows_and_n_rows_apply_to_a_read() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "s.csv", b"junk\nx\n1\n2\n3\n");
     let mut csv = Csv::default();
@@ -687,6 +688,34 @@ fn skip_rows_and_n_rows_apply_to_the_eager_read() {
     let df = csv.read(&path);
     assert_eq!(df.get_column_names(), ["x"]);
     assert_eq!(df.height(), 2);
+}
+
+#[test]
+fn an_n_rows_read_gives_the_scan_outcome_every_time() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let late_na = int_column_with_na_after(4500);
+    assert!((16 * 1024..32 * 1024).contains(&late_na.len()));
+    let path = write(dir.path(), "late-na.csv", late_na.as_bytes());
+    let mut csv = Csv::default();
+    csv.options.has_n_rows = true;
+    csv.options.n_rows = 1;
+    let scan = csv.scan_outcome(&path);
+    assert!(scan.as_ref().is_err_and(|e| e.contains("NA")), "{:?}", scan);
+    let first_line = |outcome: &Outcome| {
+        outcome
+            .clone()
+            .map_err(|e| e.lines().next().unwrap_or("").to_string())
+    };
+    let differing: Vec<Outcome> = (0..200)
+        .map(|_| csv.read_outcome(&path))
+        .filter(|eager| !same_outcome(&first_line(eager), &first_line(&scan)))
+        .collect();
+    assert!(
+        differing.is_empty(),
+        "{} of 200: {:?}",
+        differing.len(),
+        differing.first()
+    );
 }
 
 #[test]

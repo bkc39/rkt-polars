@@ -3,11 +3,20 @@ use crate::{
     clear_last_error, guard_panic, record, rust_string_to_ptr, set_last_error,
     without_plan,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static DROPPED: AtomicUsize = AtomicUsize::new(0);
+
+#[no_mangle]
+pub extern "C" fn lazyframe_drop_count() -> usize {
+    DROPPED.load(Ordering::Relaxed)
+}
 
 #[no_mangle]
 pub extern "C" fn lazyframe_drop(lf: *mut LazyFrame) {
     if !lf.is_null() {
         unsafe { drop(Box::from_raw(lf)) };
+        DROPPED.fetch_add(1, Ordering::Relaxed);
     }
 }
 

@@ -7,8 +7,9 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in racket/contract/base ->* contract-out)
-         (only-in racket/list filter-not)
+         (only-in racket/contract/base [-> ->/c] ->* any/c contract-name contract-out or/c)
+         (only-in racket/list filter-not index-of)
+         (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          polars/private/expr-core
          polars/private/expr-dt
          polars/private/expr-str
@@ -23,10 +24,10 @@
                   Series-ptr?
                   _rsstring
                   polars-null?
-                  series-new-i64 series-new-f64 series-new-str series-new-bool
+                  series-new-i64 series-new-u64 series-new-f64 series-new-str series-new-bool
                   series-new-null
                   dataframe-drop
-                  frame-sort/c sort-flags
+                  frame-sort/c provide-row-windows sort-flags
                   _CompatDType ->compat-dtype check-enum-categories enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
@@ -41,8 +42,10 @@
 (module+ test
   (require gregor
            rackunit
+           (only-in racket/match match-define)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/csv lazyframe-scan-csv)
+           (only-in polars/private/test-helpers drops-during drops-once settle!)
            (only-in polars/private/foreign
                     series-new-i32
                     series-new-i64
@@ -67,7 +70,7 @@
 (provide _Expr-ptr Expr-ptr?
          _LazyFrame-ptr LazyFrame-ptr?
          expr-drop lazyframe-drop
-         expr-col expr-lit-i32 expr-lit-i64 expr-lit-f64 expr-lit-bool expr-lit-str
+         expr-col expr-lit-i32 expr-lit-i64 expr-lit-u64 expr-lit-f64 expr-lit-bool expr-lit-str
          expr-alias
          expr->string
          lit lit/who col ->expr ->expr/who ->key-expr
@@ -94,28 +97,38 @@
          expr-not expr-neg expr-name-keep expr-is-null expr-is-not-null
          expr-drop-nulls expr-drop-nans
          expr-is-nan expr-is-not-nan expr-is-finite expr-is-infinite
-         expr-fill-null expr-fill-nan expr-forward-fill expr-backward-fill
+         expr-fill-null expr-fill-nan
          expr-abs expr-sign expr-floor expr-ceil expr-sqrt expr-exp expr-log1p
-         expr-round expr-log expr-pow expr-clip
+         expr-log expr-pow expr-clip
          expr-lit-series expr-is-in expr-is-between
          expr-is-unique expr-is-duplicated
          expr-is-first-distinct expr-is-last-distinct
          expr-cum-sum expr-cum-prod expr-cum-min expr-cum-max expr-cum-count
-         expr-shift expr-diff
          expr-reverse expr-filter expr-gather
-         expr-rank expr-head expr-tail expr-slice
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
-         expr-std expr-var
          expr-over
          expr-when
+         null-behavior/c rank-method/c
          dataframe-lazy
          lazyframe-with-columns lazyframe-collect lazyframe-collect/raw
          lazyframe-filter lazyframe-select
          lazyframe-group-by-agg
          lazyframe-unique lazyframe-drop-nulls
-         lazyframe-head lazyframe-tail lazyframe-slice
          (contract-out
+          [expr-forward-fill (->* (Expr-ptr?) (#:limit (or/c #f uint32/c)) Expr-ptr?)]
+          [expr-backward-fill (->* (Expr-ptr?) (#:limit (or/c #f uint32/c)) Expr-ptr?)]
+          [expr-round (->* (Expr-ptr?) (#:decimals uint32/c) Expr-ptr?)]
+          [expr-shift (->* (Expr-ptr?) (#:n int64/c #:fill-value any/c) Expr-ptr?)]
+          [expr-diff (->* (Expr-ptr?) (#:n int64/c #:null-behavior null-behavior/c) Expr-ptr?)]
+          [expr-rank (->* (Expr-ptr?)
+                          (#:method rank-method/c #:descending boolean? #:seed (or/c #f uint64/c))
+                          Expr-ptr?)]
+          [expr-head (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
+          [expr-tail (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
+          [expr-slice (->/c Expr-ptr? int64/c int64/c Expr-ptr?)]
+          [expr-std (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
+          [expr-var (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [lazyframe-explain (explain/c LazyFrame-ptr?)]
           [lazyframe-join (frame-join/c LazyFrame-ptr? (lambda (_) LazyFrame-ptr?)
                                         (lambda (_) LazyFrame-ptr?) 'lazyframe-join/c)])
@@ -193,7 +206,7 @@
   (call-with-plan df extend (lambda (plan) (lazyframe-collect/who who plan))))
 
 (module+ internal
-  (provide call-with-plan collect-plan/who lazyframe-collect/who))
+  (provide call-with-plan collect-plan/who expr-std expr-var lazyframe-collect/who))
 
 ;; --- Phase A2: Expr operations ---
 
@@ -292,17 +305,10 @@
   #:c-id expr_backward_fill
   #:wrap (allocator expr-drop))
 
-(define (check-fill-limit who limit)
-  (when limit
-    (unless (exact-nonnegative-integer? limit)
-      (error who "limit must be an exact nonnegative integer, got ~v" limit))))
-
 (define (expr-forward-fill e #:limit [limit #f])
-  (check-fill-limit 'expr-forward-fill limit)
   (expr-forward-fill/raw e (if limit 1 0) (or limit 0)))
 
 (define (expr-backward-fill e #:limit [limit #f])
-  (check-fill-limit 'expr-backward-fill limit)
   (expr-backward-fill/raw e (if limit 1 0) (or limit 0)))
 
 ;; --- Element-wise math ---
@@ -321,8 +327,6 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-round e #:decimals [decimals 0])
-  (unless (exact-nonnegative-integer? decimals)
-    (error 'expr-round "decimals must be an exact nonnegative integer, got ~v" decimals))
   (expr-round/raw e decimals))
 
 (define-compat expr-log/raw
@@ -381,7 +385,10 @@
      (define s
        (cond
          [(null? vals) (series-new-null "" (length rhs))]
-         [(andmap exact-integer? vals) (series-new-i64 "" rhs)]
+         [(andmap int64/c vals) (series-new-i64 "" rhs)]
+         [(andmap uint64/c vals) (series-new-u64 "" rhs)]
+         [(andmap exact-integer? vals)
+          (raise-argument-error who (format "~s" membership-integers/c) rhs)]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
          [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
@@ -393,6 +400,9 @@
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+
+(define membership-integers/c
+  `(or/c (listof ,(contract-name int64/c)) (listof ,(contract-name uint64/c))))
 
 (define (map-non-null f xs)
   (for/list ([x (in-list xs)])
@@ -450,8 +460,6 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-shift e #:n [n 1] #:fill-value [fill-value #f])
-  (unless (exact-integer? n)
-    (error 'expr-shift "n must be an exact integer, got ~v" n))
   (if fill-value
       (expr-shift-and-fill/raw e n (->expr fill-value))
       (expr-shift/raw e n)))
@@ -461,15 +469,10 @@
   #:c-id expr_diff
   #:wrap (allocator expr-drop))
 
-(define (null-behavior->byte who nb)
-  (case nb
-    [(ignore) 0] [(drop) 1]
-    [else (error who "null-behavior must be 'ignore or 'drop, got ~v" nb)]))
+(define null-behavior/c (or/c 'ignore 'drop))
 
 (define (expr-diff e #:n [n 1] #:null-behavior [null-behavior 'ignore])
-  (unless (exact-integer? n)
-    (error 'expr-diff "n must be an exact integer, got ~v" n))
-  (expr-diff/raw e n (null-behavior->byte 'expr-diff null-behavior)))
+  (expr-diff/raw e n (if (eq? null-behavior 'drop) 1 0)))
 
 ;; --- Sorting / selection helpers ---
 
@@ -519,17 +522,13 @@
   #:c-id expr_rank
   #:wrap (allocator expr-drop))
 
-(define (rank-method->byte who method)
-  (case method
-    [(average) 0] [(min) 1] [(max) 2] [(dense) 3] [(ordinal) 4]
-    [else (error who "method must be one of 'average 'min 'max 'dense 'ordinal, got ~v" method)]))
+(define rank-methods '(average min max dense ordinal))
+
+(define rank-method/c (apply or/c rank-methods))
 
 (define (expr-rank e #:method [method 'average] #:descending [descending #f] #:seed [seed #f])
-  (when seed
-    (unless (exact-nonnegative-integer? seed)
-      (error 'expr-rank "seed must be an exact nonnegative integer, got ~v" seed)))
   (expr-rank/raw e
-                 (rank-method->byte 'expr-rank method)
+                 (index-of rank-methods method)
                  (if descending 1 0)
                  (if seed 1 0)
                  (or seed 0)))
@@ -544,28 +543,15 @@
   #:c-id expr_tail
   #:wrap (allocator expr-drop))
 
-(define (check-opt-count who n)
-  (when n
-    (unless (exact-nonnegative-integer? n)
-      (error who "n must be an exact nonnegative integer or #f, got ~v" n))))
-
 (define (expr-head e #:n [n 10])
-  (check-opt-count 'expr-head n)
   (expr-head/raw e (if n 1 0) (or n 0)))
 
 (define (expr-tail e #:n [n 10])
-  (check-opt-count 'expr-tail n)
   (expr-tail/raw e (if n 1 0) (or n 0)))
 
-(define-compat expr-slice/raw
+(define-compat expr-slice
   (_fun _Expr-ptr _int64 _int64 -> _Expr-ptr)
-  #:c-id expr_slice
   #:wrap (allocator expr-drop))
-
-(define (expr-slice e offset length)
-  (unless (and (exact-integer? offset) (exact-integer? length))
-    (error 'expr-slice "offset and length must be exact integers, got ~v ~v" offset length))
-  (expr-slice/raw e offset length))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---
 
@@ -605,8 +591,6 @@
   (_fun _Expr-ptr -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
-;; std / var carry a ddof argument (degrees-of-freedom adjustment).
-;; Default to 1 to match polars (and pandas).
 (define-compat expr-std/raw
   (_fun _Expr-ptr _uint8 -> _Expr-ptr)
   #:c-id expr_std
@@ -782,6 +766,8 @@
   (_fun _LazyFrame-ptr _int64 _size -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
+(provide-row-windows LazyFrame-ptr? lazyframe-head lazyframe-tail lazyframe-slice)
+
 ;; --- Phase A8: lazy join ---
 
 (define-compat lazyframe-join/c
@@ -841,6 +827,7 @@
     [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ test
+  (require (only-in racket/contract/base contract-name))
   (define df
     (dataframe-new
      (list (series-new-i32 "x" '(1 2 3 4))
@@ -856,18 +843,29 @@
       (set-box! built (list source plan))
       plan)
     (values built extend))
-  (let-values ([(built extend) (plans-built-for "x")])
-    (check-equal? (dataframe-height (collect-plan/who 'plans df extend)) 4)
-    (check-equal? (length (unbox built)) 2)
+  (for* ([row (in-list
+               (list (list "collect" "x"
+                           (lambda (extend) (dataframe-drop (collect-plan/who 'plans df extend))))
+                     (list "failed collect" "nope"
+                           (lambda (extend)
+                             (check-exn #rx"^plans: .*nope"
+                                        (lambda () (collect-plan/who 'plans df extend)))))
+                     (list "call-with-plan" "y"
+                           (lambda (extend)
+                             (call-with-plan df extend
+                                             (lambda (plan) (check-pred LazyFrame-ptr? plan)))))))]
+         [finish (in-list (list void settle!))])
+    (match-define (list label column run) row)
+    (define-values (built extend) (plans-built-for column))
+    (check-equal? (drops-during lazyframe-drop-count (lambda () (run extend) (finish))) 2 label)
+    (check-equal? (length (unbox built)) 2 label)
     (for ([plan (in-list (unbox built))])
       (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
                  (lambda () (lazyframe-drop plan)))))
-  (let-values ([(built extend) (plans-built-for "nope")])
-    (check-exn #rx"^plans: .*nope" (lambda () (collect-plan/who 'plans df extend)))
-    (check-equal? (length (unbox built)) 2)
-    (for ([plan (in-list (unbox built))])
-      (check-exn #rx"^lazyframe-drop: lazyframe has been dropped"
-                 (lambda () (lazyframe-drop plan)))))
+  (check-equal? (drops-once lazyframe-drop-count lazyframe-drop (lambda () (dataframe-lazy df))) 1)
+  (check-equal? (drops-once lazyframe-drop-count lazyframe-drop
+                            (lambda () (lazyframe-select (dataframe-lazy df) (list (col "x")))))
+                2)
   (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
              (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
 
@@ -1033,6 +1031,8 @@
      (list (expr-alias (expr-str-len-bytes (col "text")) "bytes")
            (expr-alias (expr-str-len-chars (col "text")) "chars")
            (expr-alias (expr-str-slice (col "text") 1 3) "slice")
+           (expr-alias (expr-str-slice (col "text") 2 #f) "slice_rest")
+           (expr-alias (expr-str-slice (col "text") -2) "slice_last")
            (expr-alias (expr-str-head (col "text") 2) "head")
            (expr-alias (expr-str-tail (col "text") 2) "tail")
            (expr-alias (expr-str-find (col "text") "[0-9]+") "find_digits")
@@ -1042,6 +1042,8 @@
   (check-equal? (series-ref (dataframe-column str-batch3 "bytes") 1) 6)
   (check-equal? (series-ref (dataframe-column str-batch3 "chars") 1) 5)
   (check-equal? (series-ref (dataframe-column str-batch3 "slice") 2) "ana")
+  (check-equal? (series-ref (dataframe-column str-batch3 "slice_rest") 2) "nana")
+  (check-equal? (series-ref (dataframe-column str-batch3 "slice_last") 3) "bc")
   (check-equal? (series-ref (dataframe-column str-batch3 "head") 1) "hé")
   (check-equal? (series-ref (dataframe-column str-batch3 "tail") 2) "na")
   (check-equal? (series-ref (dataframe-column str-batch3 "find_digits") 3) 3)
@@ -1362,6 +1364,22 @@
   (define mid
     (lazyframe-collect (lazyframe-slice (dataframe-lazy df-rows) 2 3)))
   (check-equal? (dataframe-height mid) 3)
+  (define (lazy-height cut) (dataframe-height (lazyframe-collect (cut (dataframe-lazy df-rows)))))
+  (for* ([n (list (expt 2 32) (add1 (expt 2 32)) (expt 2 63) (sub1 (expt 2 64)))]
+         [row (list (list 'head (lambda (lf) (lazyframe-head lf n)) 6)
+                    (list 'tail (lambda (lf) (lazyframe-tail lf n)) 6)
+                    (list 'slice (lambda (lf) (lazyframe-slice lf 1 n)) 5))])
+    (match-define (list name cut height) row)
+    (check-equal? (lazy-height cut) height (format "~a ~a" name n)))
+  (for ([row (list (list (- (expt 2 33)) (+ (expt 2 33) 2) 6)
+                   (list (- (expt 2 33)) (- (expt 2 33) 3) 3)
+                   (list (- (expt 2 63)) (+ (expt 2 63) 2) 6)
+                   (list (- (expt 2 63)) (- (expt 2 63) 4) 2)
+                   (list (- (expt 2 63)) (sub1 (expt 2 64)) 6)
+                   (list 2 (sub1 (expt 2 64)) 4))])
+    (match-define (list offset length height) row)
+    (check-equal? (lazy-height (lambda (lf) (lazyframe-slice lf offset length))) height
+                  (format "slice ~a ~a" offset length)))
   (check-equal? (series-sum-i32 (dataframe-column mid "x")) 12) ;; 3+4+5
 
   ;; pipeline: filter then take first two — no intermediate collect.
@@ -1636,7 +1654,6 @@
   (check-equal? (col->list m "cmin") '(0.0 0.0 0.0 1.6 4.0))
   (check-= (series-ref (dataframe-column m "sq") 4) 16.0 1e-9)
   (check-= (series-ref (dataframe-column m "log2") 4) 2.0 1e-9)
-  (check-exn exn:fail? (lambda () (expr-round (col "x") #:decimals -1)))
 
   ;; --- membership / distinct predicates ---
   (define df-p
@@ -1691,8 +1708,10 @@
   (check-equal? (c5 "s1")   (list polars-null 1 2 3 4))
   (check-equal? (c5 "s1f")  '(0 1 2 3 4))
   (check-equal? (c5 "d1")   (list polars-null 1 1 1 1))
-  (check-exn exn:fail? (lambda () (expr-diff (col "x") #:null-behavior 'wat)))
-  (check-exn exn:fail? (lambda () (expr-shift (col "x") #:n 1.5)))
+  (check-exn #rx"^expr-diff: contract violation"
+             (lambda () (contracted:expr-diff (col "x") #:null-behavior 'wat)))
+  (check-exn #rx"^expr-shift: contract violation"
+             (lambda () (contracted:expr-shift (col "x") #:n 1.5)))
 
   ;; --- sorting / selection helpers ---
   (define df-s
@@ -1732,6 +1751,12 @@
   (check-equal? (take2 "h") '(30 10))
   (check-equal? (take2 "t") '(20 40))
   (check-equal? (take2 "sl") '(10 50))
+  (for ([n (list (expt 2 63) (sub1 (expt 2 64)))])
+    (define whole
+      (dataframe-select-exprs df-s (list (expr-alias (expr-head (col "x") #:n n) "h")
+                                         (expr-alias (expr-tail (col "x") #:n n) "t"))))
+    (check-equal? (take5 whole "h") '(30 10 50 20 40) (format "~a" n))
+    (check-equal? (take5 whole "t") '(30 10 50 20 40) (format "~a" n)))
   ;; filter + gather
   (define s-f
     (dataframe-select-exprs
@@ -1744,9 +1769,7 @@
      df-s (list (expr-alias (expr-gather (col "x") '(0 2 4)) "g"))))
   (check-equal? (for/list ([i (in-range 3)]) (series-ref (dataframe-column s-g "g") i))
                 '(30 50 40))
-  (check-exn exn:fail? (lambda () (expr-rank (col "x") #:method 'wat)))
-  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '())))
-  (check-exn exn:fail? (lambda () (expr-slice (col "x") 0 1.5))))
+  (check-exn exn:fail? (lambda () (expr-sort-by (col "x") #:by '()))))
 
 (module+ test
   (require (only-in polars/private/test-helpers settle!))
@@ -1780,8 +1803,9 @@
              (lambda () (lazyframe-collect bad-glob)))
   (for ([op (list expr-add expr-sub expr-mul expr-div expr-mod expr-gt expr-lt expr-ge expr-le
                   expr-eq expr-ne expr-and expr-or expr-xor)])
-    (check-exn (regexp (format "^~a: contract violation\n  expected: \\(integer-in " (object-name op)))
-               (lambda () (op (col "x") (expt 2 63))))
+    (check-exn (regexp (format "^~a: contract violation\n  expected: ~a\n" (object-name op)
+                               (regexp-quote (format "~s" (contract-name lit-integer/c)))))
+               (lambda () (op (col "x") (expt 2 64))))
     (check-exn (regexp (format "^~a: contract violation\n[^\n]*\n  given: #\\\\a$" (object-name op)))
                (lambda () (op #\a (col "x"))))))
 
@@ -1819,3 +1843,59 @@
     (contracted:expr-sort-by sort-g #:by sort-h #:nulls-last #t #:maintain-order #t))
   (settle!)
   (check >= (- (expr-drop-count) sort-drops-before) 150))
+
+(module+ test
+  (require (only-in polars/private/test-helpers refusal refusal-misses))
+  (define range-lf (dataframe-lazy (dataframe-new (list (series-new-i64 "v" '(1 2 3))))))
+  (define v (col "v"))
+  (check-equal?
+   (refusal-misses
+    (list (refusal 'expr-std uint8/c 256 (contracted:expr-std v #:ddof 256))
+          (refusal 'expr-std uint8/c -1 (contracted:expr-std v #:ddof -1))
+          (refusal 'expr-var uint8/c 256 (contracted:expr-var v #:ddof 256))
+          (refusal 'expr-round uint32/c (expt 2 32) (contracted:expr-round v #:decimals (expt 2 32)))
+          (refusal 'expr-round uint32/c -1 (contracted:expr-round v #:decimals -1))
+          (refusal 'expr-forward-fill (or/c #f uint32/c) (expt 2 32)
+                   (contracted:expr-forward-fill v #:limit (expt 2 32)))
+          (refusal 'expr-backward-fill (or/c #f uint32/c) -1
+                   (contracted:expr-backward-fill v #:limit -1))
+          (refusal 'expr-rank (or/c #f uint64/c) (expt 2 64)
+                   (contracted:expr-rank v #:seed (expt 2 64)))
+          (refusal 'expr-rank rank-method/c 'first (contracted:expr-rank v #:method 'first))
+          (refusal 'expr-rank boolean? 1 (contracted:expr-rank v #:descending 1))
+          (refusal 'expr-head (or/c #f size/c) (expt 2 64) (contracted:expr-head v #:n (expt 2 64)))
+          (refusal 'expr-tail (or/c #f size/c) -1 (contracted:expr-tail v #:n -1))
+          (refusal 'expr-shift int64/c (expt 2 63) (contracted:expr-shift v #:n (expt 2 63)))
+          (refusal 'expr-diff int64/c (expt 2 63) (contracted:expr-diff v #:n (expt 2 63)))
+          (refusal 'expr-diff null-behavior/c 'keep (contracted:expr-diff v #:null-behavior 'keep))
+          (refusal 'expr-slice int64/c (expt 2 63) (contracted:expr-slice v 0 (expt 2 63)))
+          (refusal 'expr-slice int64/c 1.5 (contracted:expr-slice v 0 1.5))
+          (refusal 'expr-str-extract size/c (expt 2 64)
+                   (contracted:expr-str-extract v "(a)" #:group-index (expt 2 64)))
+          (refusal 'expr-lit-i32 int32/c (expt 2 31) (contracted:expr-lit-i32 (expt 2 31)))
+          (refusal 'expr-lit-i64 int64/c (expt 2 63) (contracted:expr-lit-i64 (expt 2 63)))
+          (refusal 'lazyframe-head size/c (expt 2 64)
+                   (contracted:lazyframe-head range-lf (expt 2 64)))
+          (refusal 'lazyframe-tail size/c -1 (contracted:lazyframe-tail range-lf -1))
+          (refusal 'lazyframe-slice int64/c (expt 2 63)
+                   (contracted:lazyframe-slice range-lf (expt 2 63) 1))))
+   '())
+  (define rank-input (dataframe-new (list (series-new-i64 "v" '(3 1 3)))))
+  (check-equal? (for/list ([method (in-list rank-methods)])
+                  (define ranks
+                    (dataframe-column
+                     (dataframe-select-exprs
+                      rank-input (list (contracted:expr-rank v #:method method #:descending #t)))
+                     "v"))
+                  (for/list ([i (in-range 3)]) (series-ref ranks i)))
+                '((1.5 3.0 1.5) (1 3 1) (2 3 2) (1 2 1) (1 3 2)))
+  (define widest
+    (dataframe-select-exprs
+     (dataframe-new (list (series-new-f64 "v" '(1.0 2.0))))
+     (list (expr-alias (contracted:expr-std (col "v") #:ddof 255) "s"))))
+  (check-equal? (dataframe-height widest) 1)
+  (define population
+    (dataframe-select-exprs
+     (dataframe-new (list (series-new-f64 "v" '(2.0 4.0 4.0 6.0))))
+     (list (expr-alias (contracted:expr-std (col "v") #:ddof 0) "s"))))
+  (check-= (series-ref (dataframe-column population "s") 0) (sqrt 2) 1e-12))

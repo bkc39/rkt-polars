@@ -4,12 +4,19 @@
                   _byte _gcpointer _pointer ctype-sizeof define-fun-syntax free malloc memcpy
                   ptr-add ptr-set!)
          (only-in ffi/unsafe/alloc allocator deallocator)
+         (only-in racket/contract/base and/c flat-named-contract listof or/c)
+         (only-in racket/match match)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
 (provide _string-list
+         utf-8-name->string
+         utf-8-name/c
+         utf-8-names/c
          with-raw-buffer
-         with-release)
+         with-release
+         with-release-pool
+         with-releases)
 
 ;; The finalizer allocator registers backs up a thread killed inside the
 ;; extent, whose dynamic-wind post thunks never run; free-buffer unregisters it.
@@ -17,18 +24,62 @@
 (define alloc-buffer
   ((allocator free-buffer) (lambda (count ctype) (malloc (max count 1) ctype 'raw))))
 
+(begin-for-syntax
+  (define-syntax-class release-clause
+    (pattern [name:id acquire:expr release:expr]))
+  (define-splicing-syntax-class for-clause
+    (pattern [name:id sequence:expr])
+    (pattern [(name:id ...) sequence:expr])
+    (pattern (~seq keyword:keyword guard:expr))))
+
+(define (release-each release vs)
+  (match vs
+    ['() (void)]
+    [(cons v more)
+     (dynamic-wind void
+                   (lambda () (release v))
+                   (lambda () (release-each release more)))]))
+
 (define-syntax-parser with-release
   [(_ () body:expr ...+)
    #'(let () body ...)]
-  [(_ ([name:id acquire:expr release:expr] more ...) body:expr ...+)
-   #'(let ([name #f])
+  [(_ (first:release-clause more:release-clause ...) body:expr ...+)
+   #'(let ([first.name #f])
        (dynamic-wind
-        (lambda () (set! name acquire))
+        (lambda () (set! first.name first.acquire))
         (lambda () (with-release (more ...) body ...))
         (lambda ()
-          (when name
-            (release name)
-            (set! name #f)))))])
+          (when first.name
+            (first.release first.name)
+            (set! first.name #f)))))])
+
+(define-syntax-parse-rule (with-releases ([name:id (clause:for-clause ...)
+                                          acquire:expr release:expr])
+                           body:expr ...+)
+  (let ([acquired '()])
+    (dynamic-wind
+     void
+     (lambda ()
+       (for ((~@ . clause) ...)
+         (set! acquired (cons acquire acquired)))
+       (let ([name (reverse acquired)])
+         body ...))
+     (lambda ()
+       (define pending acquired)
+       (set! acquired '())
+       (release-each release pending)))))
+
+(define-syntax-parse-rule (with-release-pool ([own:id release:expr]) body:expr ...+)
+  (let ([owned '()])
+    (dynamic-wind
+     void
+     (lambda ()
+       (let ([own (lambda (v) (set! owned (cons v owned)) v)])
+         body ...))
+     (lambda ()
+       (define pending owned)
+       (set! owned '())
+       (release-each release pending)))))
 
 (define-syntax-parse-rule (with-raw-buffer ([name:id count:expr ctype:expr] ...+) body:expr ...+)
   (with-release ([name (alloc-buffer count ctype) free-buffer] ...) body ...))
@@ -39,6 +90,18 @@
     [(bytes? v) v]
     [(path? v) (path->bytes v)]
     [else (raise-argument-error '_string-list "(or/c string? bytes? path?)" v)]))
+
+(define (utf-8-name->string v)
+  (cond
+    [(string? v) v]
+    [else
+     (define encoded (c-string-bytes v))
+     (and (bytes-utf-8-length encoded #f) (bytes->string/utf-8 encoded))]))
+
+(define utf-8-name/c
+  (or/c string? (and/c (or/c bytes? path?) (flat-named-contract 'utf-8? utf-8-name->string))))
+
+(define utf-8-names/c (listof utf-8-name/c))
 
 ;; The table's addresses point into its own block, which the collector never
 ;; moves (#143).
@@ -97,6 +160,67 @@
   (set! released '())
   (check-equal? (with-release ([a #f release!] [b 'b release!]) (list a b)) '(#f b))
   (check-equal? released '(b))
+
+  (set! released '())
+  (check-equal? (with-releases ([tags ([i (in-range 3)]) (* 10 i) release!]) tags) '(0 10 20))
+  (check-equal? released '(0 10 20))
+
+  (set! released '())
+  (check-exn #rx"at 2"
+             (lambda ()
+               (with-releases ([tags ([i (in-range 3)])
+                                     (if (= i 2) (error 'test "at ~a" i) i)
+                                     release!])
+                 tags)))
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-exn #rx"boom"
+             (lambda () (with-releases ([tags ([i (in-range 2)]) i release!]) (error 'test "boom"))))
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-equal? (let/ec k (with-releases ([tags ([i (in-range 2)]) i release!]) (k 'escaped)))
+                'escaped)
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (check-equal? (with-releases ([tags ([i (in-list '())]) i release!]) tags) '())
+  (check-equal? released '())
+
+  (define ((release-raising-on n) tag)
+    (release! tag)
+    (when (eqv? tag n) (error 'test "release ~a" tag)))
+
+  (set! released '())
+  (check-exn #rx"release 2"
+             (lambda ()
+               (with-releases ([tags ([i (in-range 4)]) i (release-raising-on 2)]) tags)))
+  (check-equal? released '(0 1 2 3))
+
+  (set! released '())
+  (check-equal? (with-releases ([pairs ([i (in-range 4)] #:when (even? i) [j (in-range 1)])
+                                       (cons i j)
+                                       release!])
+                  pairs)
+                '((0 . 0) (2 . 0)))
+  (check-equal? released '((0 . 0) (2 . 0)))
+
+  (set! released '())
+  (check-equal? (with-release-pool ([own release!]) (list (own 'a) (own 'b))) '(a b))
+  (check-equal? released '(a b))
+
+  (set! released '())
+  (check-exn #rx"boom"
+             (lambda () (with-release-pool ([own release!]) (own 'a) (error 'test "boom"))))
+  (check-equal? released '(a))
+
+  (set! released '())
+  (check-exn #rx"release 1"
+             (lambda ()
+               (with-release-pool ([own (release-raising-on 1)])
+                 (for ([i (in-range 3)]) (own i)))))
+  (check-equal? released '(0 1 2))
 
   (check-equal? (with-raw-buffer ([words 3 _int64])
                   (for ([i (in-range 3)]) (ptr-set! words _int64 i (* 10 i)))

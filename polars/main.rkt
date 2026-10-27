@@ -30,8 +30,8 @@
 
 (provide-public
  #:internal internal-names
- [polars/private/expr ->expr/who expr-cast-to expr-meta-output-name/raw expr-name-keep lit/who
-  lazyframe-collect/raw]
+ [polars/private/expr ->expr/who expr-cast-to expr-lit-u64 expr-meta-output-name/raw
+  expr-name-keep lit/who lazyframe-collect/raw null-behavior/c rank-method/c]
  [polars/private/foreign
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
@@ -39,7 +39,8 @@
   owned-cpointer-types owned-pointer-accessor owned-pointer-arg
   owned-pointer? prop:owned-pointer raise-dropped release-owned
   series-drop-count series-drop/raw series-dropped write-owned
-  dataframe-sort/raw frame-sort/c series-copy-decimal series-copy-str
+  dataframe-sort/raw frame-sort/c series-binary-byte-len series-copy-binary
+  series-copy-decimal series-copy-str series-ref-bytes
   series-new-str/raw series-sort/raw series-str-byte-len sort-flags
   sort-flags/c sort-flags-mismatch string-has-nul?
   dtype-short-names
@@ -48,7 +49,7 @@
   series-dt-replace-time-zone series-dt-replace-time-zone/raw
   series-time-zone replace-zone-failure zoned-datetime-dtype?
   dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-u8 series-copy-u16
+  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64 series-copy-u8 series-copy-u16
   series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool
   series-add/raw series-sub/raw series-mul/raw series-div/raw series-mod/raw
   series-eq/raw series-ne/raw series-gt/raw series-ge/raw series-lt/raw series-le/raw
@@ -58,7 +59,7 @@
   series-and/who series-or/who series-xor/who series-not/who
   dataframe-vstack/raw dataframe-hstack/raw
   dataframe-select/c dataframe-drop-columns/c dataframe-rename/raw
-  dataframe-with-column/raw dataframe-new/raw])
+  dataframe-with-column/raw dataframe-new/raw provide-row-windows])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -78,22 +79,35 @@
 
 (module+ test
   (require rackunit)
-  (define-values (variables syntaxes) (module->exports 'polars))
-  (define exported
+  (define (phase-0-exports mod)
+    (define-values (variables syntaxes) (module->exports mod))
     (for*/list ([phase+names (in-list (append variables syntaxes))]
                 #:when (eqv? (car phase+names) 0)
                 [name (in-list (cdr phase+names))])
       (car name)))
+  (define exported (phase-0-exports 'polars))
+  (define c-integer-contracts
+    (for/list ([name (in-list (phase-0-exports 'polars/private/c-integer))]
+               #:when (regexp-match? #rx"/c$" (symbol->string name)))
+      name))
   (check-not-false (memq 'cast exported))
   (check-not-false (memq 'series-new-str exported))
+  (check-not-false (memq 'uint32/c c-integer-contracts))
   (for ([internal (in-list (append internal-names
-                                    '(expr-drop/raw expr-dropped
+                                    c-integer-contracts
+                                    '(drop-owned owned-drop-registry register-owned-drop!
+                                      expr-drop/raw expr-dropped
                                       lazyframe-drop/raw lazyframe-dropped
                                       define-frame-op/reason define-reasoned
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
-                                      dataframe-new/raw)))])
-    (check-false (memq internal exported) (format "~a is internal" internal))))
+                                      dataframe-new/raw expr-lit-u64 null-behavior/c
+                                      rank-method/c provide-row-windows)))])
+    (check-false (memq internal exported) (format "~a is internal" internal)))
+  (for ([name (in-list exported)])
+    (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"
+                                (symbol->string name))
+                 (format "~a is internal" name))))
 
 (module+ test
   (require racket/match

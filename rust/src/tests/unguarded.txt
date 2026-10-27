@@ -69,6 +69,7 @@ expr_lit_null builder
 expr_lit_series builder
 expr_lit_str builder
 expr_lit_temporal builder
+expr_lit_u64 builder
 expr_log builder
 expr_meta_eq accessor
 expr_meta_root_name accessor
@@ -113,6 +114,7 @@ expr_tail builder
 expr_when_then builder
 last_error_message error
 lazyframe_drop drop
+lazyframe_drop_count count
 lazyframe_drop_nulls builder
 lazyframe_filter builder
 lazyframe_group_by_agg builder
@@ -124,7 +126,9 @@ lazyframe_sort_with_options builder
 lazyframe_tail builder
 lazyframe_unique builder
 lazyframe_with_columns builder
+series_binary_byte_len accessor
 series_copy_as_f64 accessor
+series_copy_binary accessor
 series_copy_bool accessor
 series_copy_cat accessor
 series_copy_decimal accessor

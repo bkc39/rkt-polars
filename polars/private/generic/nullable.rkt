@@ -6,12 +6,17 @@
 ;; col), mirroring pl.col(x).<op>().  drop-nulls itself lives in reshape, where
 ;; it also covers eager series / dataframe; it accepts an Expr there too.
 
-(require polars/private/foreign
+(require (only-in racket/contract/base ->* contract-out or/c)
+         (only-in polars/private/c-integer uint32/c)
+         polars/private/foreign
          polars/private/expr
          polars/private/generic/expr-util)
 
 (provide is-null is-not-null is-nan is-not-nan is-finite is-infinite
-         fill-null fill-nan forward-fill backward-fill drop-nans)
+         fill-null fill-nan drop-nans
+         (contract-out
+          [forward-fill (->* (col-expr/c) (#:limit (or/c #f uint32/c)) Expr-ptr?)]
+          [backward-fill (->* (col-expr/c) (#:limit (or/c #f uint32/c)) Expr-ptr?)]))
 
 (define-expr-unop is-null     'is-null     expr-is-null)
 (define-expr-unop is-not-null 'is-not-null expr-is-not-null)
@@ -125,4 +130,18 @@
   (check-equal? (list (column-names null-literal) (column-of null-literal "nothing")
                       (column-of null-literal "x"))
                 (list '("nothing" "x") (list 'null (make-list 3 polars-null))
-                      (list 'int64 (make-list 3 polars-null)))))
+                      (list 'int64 (make-list 3 polars-null))))
+  (define gaps (dataframe (list (series (list 1 polars-null polars-null 4) #:name "v"))))
+  (define filled
+    (select gaps
+            (alias (forward-fill "v") "forward")
+            (alias (forward-fill "v" #:limit 1) "forward_1")
+            (alias (backward-fill "v") "backward")))
+  (check-equal? (map (lambda (name) (series->list (ref filled name))) (column-names filled))
+                (list '(1 1 1 4) (list 1 1 polars-null 4) '(1 4 4 4))))
+
+(module+ test
+  (require (only-in polars/private/test-helpers contract-violation-of)
+           (prefix-in contracted: (submod "..")))
+  (check-exn (contract-violation-of 'forward-fill)
+             (lambda () (contracted:forward-fill "v" #:limit -1))))

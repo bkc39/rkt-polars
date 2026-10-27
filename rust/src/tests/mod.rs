@@ -8,6 +8,7 @@ mod dataframe;
 mod expr;
 mod guard_audit;
 mod last_error;
+mod row_counts;
 mod series;
 mod slices;
 #[path = "util.rs"]
