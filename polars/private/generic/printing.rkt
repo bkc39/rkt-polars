@@ -152,9 +152,9 @@
     [(= count 1) (list #f)]
     [else (append-map (lambda (i) (zone-abbreviations s i 1)) (range start (+ start count)))]))
 
-(define (shown-abbreviations s dt len)
+(define (shown-abbreviations s dt len indices)
   (cond
-    [(not (zoned-datetime-dtype? dt)) (make-list len #f)]
+    [(not (zoned-datetime-dtype? dt)) (make-list (length indices) #f)]
     [(<= len 10) (zone-abbreviations s 0 len)]
     [else (append (zone-abbreviations s 0 5) (list #f) (zone-abbreviations s (- len 5) 5))]))
 
@@ -174,9 +174,10 @@
 (define (series->string s)
   (define len (series-len s))
   (define dt (series-dtype s))
+  (define indices (row-indices len))
   (define lines
-    (for/list ([i (in-list (row-indices len))]
-               [abbreviation (in-list (shown-abbreviations s dt len))])
+    (for/list ([i (in-list indices)]
+               [abbreviation (in-list (shown-abbreviations s dt len indices))])
       (string-append "\t" (cell s dt i abbreviation) "\n")))
   (string-append
    (format "shape: (~a,)\n" len)
