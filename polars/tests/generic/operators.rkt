@@ -2,7 +2,9 @@
 
 (module+ test
   (require rackunit
+           racket/runtime-path
            (only-in ffi/unsafe/atomic call-as-atomic)
+           (only-in racket/file file->value)
            (only-in gregor date)
            (only-in gregor/period hours minutes)
            (only-in gregor/time time)
@@ -319,4 +321,60 @@
                               (lambda ()
                                 (check-exn exn:fail:contract?
                                            (lambda () (p+ tens (sub1 (expt 2 63)))))))
-                (drops-during series-drop-count (lambda () (series-drop (p+ tens 300))))))
+                (drops-during series-drop-count (lambda () (series-drop (p+ tens 300)))))
+
+  (define-runtime-path division-expected-path "division-expected.rktd")
+  (match-define `((python-polars ,_) (rows ,division-rows ...)) (file->value division-expected-path))
+  (define division-values
+    (hash 'left (hash 'signed '(10 -7 null) 'unsigned '(10 7 null) 'boolean '(#t #f null)
+                      'null '(null null null) 'float '(10.0 -7.0 null))
+          'right (hash 'signed '(3 -2 0) 'unsigned '(3 2 0) 'boolean '(#t #t #f)
+                       'null '(null null null) 'float '(3.0 -2.0 0.0))))
+  (define (division-kind dt)
+    (match dt
+      [(or 'int64 'int32) 'signed]
+      [(or 'uint8 'uint64) 'unsigned]
+      [(or 'boolean 'null) dt]
+      ['float64 'float]))
+  (define (division-column side name dt)
+    (series (for/list ([v (hash-ref (hash-ref division-values side) (division-kind dt))])
+              (if (eq? v 'null) polars-null v))
+            #:name name #:dtype dt))
+  (define (division-outcome thunk)
+    (with-handlers ([exn:fail? (lambda (e)
+                                 (list 'raises (if (exn:fail:contract? e) 'contract 'polars)))])
+      (define got (thunk))
+      (list 'series (series-name got) (dtype got)
+            (for/list ([v (series->list got)]) (if (eq? v polars-null) 'null v)))))
+  (define (python-division-outcome out)
+    (match out
+      [(list 'raises (or 'TypeError 'ValueError 'OverflowError)) '(raises contract)]
+      [(list 'raises _) '(raises polars)]
+      [_ out]))
+  (for ([row (in-list division-rows)])
+    (match row
+      [(list 'series left right expected)
+       (check-equal? (division-outcome
+                      (lambda () (p/ (division-column 'left "a" left)
+                                     (division-column 'right "b" right))))
+                     (python-division-outcome expected)
+                     (format "~a / ~a" left right))]
+      [(list 'value left side v eager expression)
+       (define a (division-column 'left "a" left))
+       (define ours (division-outcome (lambda () (if (eq? side 'right) (p/ a v) (p/ v a)))))
+       (define accepted
+         (cond
+           [(and (equal? ours '(raises contract)) (exact-integer? v) (>= v (expt 2 63))) ours]
+           [(and (eq? (car eager) 'raises) (equal? ours (python-division-outcome expression)))
+            ours]
+           [else (python-division-outcome eager)]))
+       (check-equal? ours accepted (format "~a ~a ~a" left side v))]))
+  (define v-u64 (p/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64)))
+  (check-equal? (list (series-name v-u64) (dtype v-u64) (series->list v-u64))
+                '("v" float64 (3.0 -4.0)))
+  (define (division-drops divisor)
+    (drops-during series-drop-count
+                  (lambda () (series-drop (p/ (series '(10 -7) #:name "v") divisor)))))
+  (define u64-divisor (series '(3 2) #:dtype 'u64))
+  (define i64-divisor (series '(3 2)))
+  (check-equal? (division-drops u64-divisor) (add1 (division-drops i64-divisor))))

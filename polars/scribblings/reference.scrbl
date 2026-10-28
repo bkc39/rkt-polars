@@ -360,7 +360,13 @@ total
   infinity, with a null where the divisor is 0: @racket[(/ (col "v") 2)] gives
   -4 for -7, unlike @racket[quotient], and the one-argument reciprocal of an
   integer column is 1, -1, 0 or null. Python's @tt{/} gives floats there;
-  @racket[cast] an operand to @racket['f64] first for the same result.
+  @racket[cast] an operand to @racket['f64] first for the same result. A
+  signed integer series beside a @racket['uint64] one has no integer
+  supertype, so the quotient is @racket['float64], floored, as Python's
+  @tt{//} gives it. API gap: the expression form does not floor there yet, so
+  @racket[(/ (col "i") (col "u"))] of an Int64 and a UInt64 column, or of an
+  integer column and an integer from @racket[(expt 2 63)], is the unfloored
+  @racket['float64] quotient.
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -373,6 +379,7 @@ total
 (/ (series '(1 2 4)))
 (/ (series '(1 -1 2 -2 0)))
 (/ (series '(-7 7 1)) (series '(2 2 0)))
+(/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64))
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
 (+ (series '(1 2)) 2.5)
@@ -2216,7 +2223,9 @@ datetime series aside), a time in arithmetic, a date in @racket[mod] of a
 float series, a negative integer beside an unsigned series, or a value no
 literal takes. @racket[mod] refuses a temporal series, the left one when both
 are series, whatever the other operand, as Python's @tt{%} does. A
-@racket[/] of integer, boolean or null operands is integer division (two
+@racket[/] of integer, boolean or null operands is integer division (the
+floored @racket['float64] quotient for a signed integer series beside a
+UInt64 one; two
 Null operands aside, which give @racket['float64]); any other is Python's
 true division, which first casts an integer, boolean or null series, a
 Decimal series under a boolean or a temporal value on its left, and a series

@@ -27,7 +27,8 @@
          const-series
          expression-form-op
          operand-action
-         series-through-expr)
+         series-through-expr
+         series-through-expr/raw)
 
 (define (const-series who dt n value #:name [name ""])
   (wrap-series
@@ -277,6 +278,9 @@
   (call-with-lifted (logical-operand who s other) other proc))
 
 (define (series-through-expr who s build)
+  (wrap-series (series-through-expr/raw who s build)))
+
+(define (series-through-expr/raw who s build)
   (define name (series-name s))
   (define (collect plan)
     (call/foreign-error who (lambda () (lazyframe-collect/raw plan))))
@@ -288,7 +292,7 @@
                                       (lambda (source) (lazyframe-select source (list named)))
                                       collect)
                       dataframe-drop])
-    (wrap-series (dataframe-column out name))))
+    (dataframe-column out name)))
 
 (define (expression-form-op who expr-op a b)
   (define (literal s v side)

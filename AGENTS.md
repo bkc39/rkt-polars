@@ -341,6 +341,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   spellings (`'f64`, `'float64`) (#64); `dtype` returns the canonical one.
 - `/` on integer operands (integer, Boolean or Null) is integer division,
   unlike Python's `/` (#65), two Null operands aside, which give Float64.
+  On two series it is Python's `//`: a signed integer series beside a UInt64
+  one, whose supertype is Float64, gives the floored Float64 quotient
+  (`series-true-div` floors it through `expr-floor`). The expression form
+  (`expr_div`, `RustDivide`) still true-divides there, beside a UInt64
+  column or a literal from 2^63: a plan-time choice by the operands' dtypes
+  (`DataTypeExpr::matches` in a `when`) fails on a regex selector, which may
+  not expand inside a dtype expression, and keeps its dead `floor_div`
+  branch live when an operand is not elementwise (a `sum`), where it raises
+  on Decimal and Null.
   Any other `/` divides as Python's does: an integer, Boolean or Null series
   is cast to Float64 first, and so is the series under a plain number on the
   left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a
