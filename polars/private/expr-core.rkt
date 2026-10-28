@@ -15,12 +15,12 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
-                  allocator/or-fail call/foreign-error check-enum-categories
+                  allocator/or-fail call/foreign-error
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/resource _str _str-list _string-list)
+         (only-in polars/private/resource _str _str-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)]
@@ -239,10 +239,8 @@
                       (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
 
 (define-compat expr-dtype-col-enum/raw
-  (_fun (categories : _string-list)
-        (_size = (length categories))
-        -> _Expr-ptr/null)
-  #:c-id expr_dtype_col_enum
+  (_fun _str-list -> _Expr-ptr/null)
+  #:c-id expr_dtype_col_enum_v2
   #:wrap (allocator expr-drop))
 
 (define-compat expr-dtype-col-datetime-tz/raw
@@ -256,7 +254,6 @@
 (define (dtype-col who dtype)
   (match dtype
     [(? enum-dtype?)
-     (check-enum-categories who dtype)
      (call/foreign-error who
                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
                          "cannot select ~v" dtype)]

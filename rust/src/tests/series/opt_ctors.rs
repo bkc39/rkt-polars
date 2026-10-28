@@ -44,9 +44,9 @@ fn opt_f64_mixed_valid_round_trips() {
 fn opt_str_mixed_valid_round_trips() {
     let s = make_opt_str("ws", &[Some("hi"), None, Some("there")]);
     assert_eq!(series_null_count(s), 1);
-    assert_eq!(take_cstring(series_ref_str(s, 0)), "hi");
-    assert!(series_ref_str(s, 1).is_null());
-    assert_eq!(take_cstring(series_ref_str(s, 2)), "there");
+    assert_eq!(ref_str(s, 0).as_deref(), Some("hi"));
+    assert_eq!(ref_str(s, 1), None);
+    assert_eq!(ref_str(s, 2).as_deref(), Some("there"));
     series_drop(s);
 }
 

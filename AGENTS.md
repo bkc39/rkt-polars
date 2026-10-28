@@ -168,11 +168,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`foreign.rkt`) read a block by length, so a NUL in a name, a reason or
   printed text survives. They free it at once through `str_block_drop`, in
   atomic mode, so a thread killed during the read is killed after the free.
-  NULL reads as `#f`. `str_block_drop_count` counts the releases. Only
-  `series_ref_str` still returns a C string: `_c-string-result` copies it and
-  frees it through `string_drop`, until #165's categorical leg retires both.
-  `rust/src/tests/c_strings.rs`, on the guard audit's walk, fails on any
-  other export that returns one.
+  NULL reads as `#f`. `str_block_drop_count` counts the releases. No export
+  returns a C string: `rust/src/tests/c_strings.rs`, on the guard audit's
+  walk, fails on one.
 - **Failure reasons travel out of band** (#45): an entry point that can fail
   calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
@@ -198,8 +196,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `dataframe_drop_columns_v2`, `dataframe_rename_v2`, `dataframe_column_v2`,
   the five `dataframe_group_by_*_v2`, `lazyframe_sort_with_options_v2`,
   `lazyframe_join_v2`, `expr_col_v2`, `expr_lit_str_v2`, `expr_alias_v2`,
-  `expr_exclude_v2`), the three Enum entry points (`series_cast_enum`,
-  `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
+  `expr_exclude_v2`), the three Enum entry points (`series_cast_enum_v2`,
+  `expr_cast_enum_v2`, `expr_dtype_col_enum_v2`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
   `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
@@ -323,19 +321,18 @@ it. Racket side: `define-compat` with `#:c-id`.
     the block could be freed by a collection during a `#:blocking?` call or a
     callback.
   - `_string-list`, a `const char **` table and its NUL-terminated strings in
-    one block, is left only where Enum categories and the IO readers'
-    keywords still cross as C strings. A test in `polars/tests/resource.rkt`
-    names those seven bindings and fails on any other `define-compat`,
-    `define-syntax-parse-rule` or `define-syntax-parser` that uses it, at any
-    depth (inside a `begin` or another definer).
+    one block, is left only where the IO readers' keywords still cross as C
+    strings. A test in `polars/tests/resource.rkt` names those four bindings
+    and fails on any other `define-compat`, `define-syntax-parse-rule` or
+    `define-syntax-parser` that uses it, at any depth (inside a `begin` or
+    another definer).
   - `series-ref` reads a String value by length, through `series_copy_str`,
-    since a C string ends at a NUL the value may hold.
-  - Categorical and Enum values are still read as C strings, and Enum
-    categories cross as one, so `series` refuses a NUL in a categorical or
-    Enum value, and `series`, `cast`, `col`, `series-cast`, `expr-cast` and
-    `expr-dtype-col` refuse one in an Enum category (`check-enum-categories`);
-    `define-enum` refuses it at compile time. Formats, zones and
-    categoricals cast from a String series still stop at a NUL (#165).
+    and a Categorical or Enum value as one block, through `series_ref_cat`,
+    so a NUL a value holds survives. An Enum's categories are read in one
+    `series_copy_str` over the categories series.
+  - Enum categories cross as one `_str-list` block, so a categorical or Enum
+    value or category may hold a NUL, as in Python. Formats and zones still
+    stop at a NUL (#165).
   - A C string still crossing is `_c-string` / `_c-string/null`
     (`foreign.rkt`), which refuse a NUL.
   - A test in `polars/tests/resource.rkt` reads every module under
@@ -348,7 +345,8 @@ it. Racket side: `define-compat` with `#:c-id`.
     or in `define-series-constructors`. It also fails on a `define-compat` in
     `polars/private` whose result is `_string`, `_string/utf-8` or
     `_string*/utf-8`, and on a `_fun` or a `define-series-constructors` there
-    naming `_rsstring`.
+    naming `_rsstring` or `_c-string-result`, the C-string result type #165
+    retired.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by

@@ -6,18 +6,6 @@ pub(super) fn cstr(s: &str) -> CString {
     CString::new(s).expect("test cstring must not contain a nul byte")
 }
 
-/// Materialize a `*const c_char` that an FFI extern returned into
-/// an owned `String`, freeing the underlying CString.
-pub(super) fn take_cstring(p: *const c_char) -> String {
-    assert!(!p.is_null(), "expected a non-null CString pointer");
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_str()
-        .expect("FFI string must be valid UTF-8")
-        .to_owned();
-    unsafe { drop(CString::from_raw(p as *mut c_char)) };
-    s
-}
-
 fn words(bytes: &[u8]) -> Vec<u64> {
     bytes
         .chunks(8)
@@ -182,17 +170,25 @@ pub(super) fn read_column_names(df: *mut DataFrame) -> Vec<String> {
     take_strs(dataframe_column_names(df))
 }
 
+/// Row `index` of a String, Categorical or Enum series, read in Rust.
+pub(super) fn ref_str(s: *const Series, index: usize) -> Option<String> {
+    let s = unsafe { s.as_ref() }.expect("a series");
+    s.get(index)
+        .expect("an index in range")
+        .get_str()
+        .map(str::to_owned)
+}
+
 /// Pull a string column out by name and materialize it as a
-/// `Vec<String>`. Each element is freed via `take_cstring`.
+/// `Vec<String>`.
 pub(super) fn read_str_col(df: *mut DataFrame, name: &str) -> Vec<String> {
     let n = str_block(name);
     let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name,);
     let out: Vec<String> = (0..series_len(s))
         .map(|i| {
-            let p = series_ref_str(s, i);
-            assert!(!p.is_null(), "unexpected null at {}/{}", name, i);
-            take_cstring(p)
+            ref_str(s, i)
+                .unwrap_or_else(|| panic!("unexpected null at {}/{}", name, i))
         })
         .collect();
     series_drop(s);

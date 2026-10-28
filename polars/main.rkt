@@ -34,18 +34,18 @@
   expr-name-keep index-list/c lit/who lazyframe-collect/raw membership-list/c null-behavior/c
   rank-method/c]
  [polars/private/foreign
-  allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
+  allocator/or-fail call/foreign-error call/polars-reason
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
-  _c-string _c-string/null _c-string-result _rsstr _rsstr-list str-block-drop
+  _c-string _c-string/null _rsstr _rsstr-list str-block-drop
   str-block-drop-count
   owned-cpointer-types owned-pointer-accessor owned-pointer-arg
   owned-pointer? prop:owned-pointer raise-dropped release-owned
   series-drop-count series-drop/raw series-dropped write-owned
   dataframe-sort/raw frame-sort/c series-binary-byte-len series-copy-binary
-  series-copy-decimal series-copy-str series-ref-bytes
+  series-copy-decimal series-copy-str series-ref-bytes series-ref-str
   series-new-str/raw series-sort/raw series-str-byte-len sort-flags
-  sort-flags/c sort-flags-mismatch string-has-nul?
+  sort-flags/c sort-flags-mismatch
   dtype-short-names
   series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
   series-dt-convert-time-zone series-dt-convert-time-zone/raw
