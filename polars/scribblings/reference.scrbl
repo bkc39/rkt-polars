@@ -1600,7 +1600,10 @@ stations
   A null is never a member, so a null element of @racket[x] gives null.
   Its integers all fit Int64 or all lie from 0 to @racket[(sub1 (expt 2 64))]
   (UInt64); any other, such as a negative integer beside one past Int64,
-  which Python reads as Int128, is a contract error. Its datetimes share one zone, or
+  which Python reads as Int128, is a contract error. Integers and floats do not
+  mix: a list holding an exact integer and a flonum (or an exact non-integer) is
+  a contract error, as Python's @tt{is_in} raises a @tt{TypeError}; write the
+  integers as floats (@racket[3.0]). Its datetimes share one zone, or
   none: a list that mixes naive datetimes and moments, or moments in two
   zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
   a column from the same list.
@@ -1612,6 +1615,8 @@ stations
 (~> gappy (select (is-in "x" '())))
 (~> gappy (select (is-in "x" (list (expt 2 63) 3))))
 (eval:error (~> gappy (select (is-in "x" (list -1 (expt 2 63))))))
+(~> gappy (select (is-in "x" (list 1.0 2.5))))
+(eval:error (~> gappy (select (is-in "x" (list 1 2.5)))))
 (~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]

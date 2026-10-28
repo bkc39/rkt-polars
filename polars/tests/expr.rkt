@@ -908,6 +908,8 @@
   (check-equal? (for/list ([i (in-range 7)]) (series-ref (dataframe-column none-in "in") i))
                 '(#f #f #f #f #f #f #f))
   (check-exn exn:fail? (lambda () (expr-is-between (col "x") 2 5 #:closed 'wat)))
+  (check-exn #rx"^expr-is-in: the list mixes integers and floats"
+             (lambda () (expr-is-in (col "x") (list 1 2.5))))
 
   ;; --- cumulative + shift / diff ---
   (define df-c (dataframe-new (list (series-new-i64 "x" '(1 2 3 4 5)))))

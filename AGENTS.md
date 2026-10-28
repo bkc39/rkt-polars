@@ -576,7 +576,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
   elements only. `is-in` reads a list the same way, so `(list polars-null)`
   is a Null literal, and an empty list is a member of nothing (`#f`, null for
-  a null), as Python's `is_in([])` is. `(lit polars-null)` is
+  a null), as Python's `is_in([])` is; a list holding an exact integer and
+  a flonum or exact non-integer is a contract error naming one of each, in
+  either order, as Python's `is_in([1, 2.5])` raises a `TypeError`.
+  `(lit polars-null)` is
   `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
   comparison with it is null on every row and arithmetic keeps a numeric
   operand's dtype; with a temporal operand (date, datetime, zoned, time,

@@ -358,6 +358,12 @@
          [(andmap uint64/c vals) (series-new-u64 "" rhs)]
          [(andmap exact-integer? vals)
           (raise-argument-error who (format "~s" membership-integers/c) rhs)]
+         [(and (ormap exact-integer? vals)
+               (findf (lambda (v) (and (real? v) (not (exact-integer? v)))) vals))
+          => (lambda (f)
+               (raise-arguments-error
+                who "the list mixes integers and floats, which have no common dtype"
+                "integer" (findf exact-integer? vals) "float" f))]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
          [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
