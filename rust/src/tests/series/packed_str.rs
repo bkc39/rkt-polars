@@ -40,7 +40,7 @@ fn packed_rows_round_trip_with_nulls_and_non_ascii() {
         Some("東京"),
     ];
     let s = make_opt_str("words", &rows);
-    assert_eq!(take_cstring(series_name(s)), "words");
+    assert_eq!(take_str(series_name_v2(s)), "words");
     assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
     assert_eq!(series_null_count(s), 2);
     let expected: Vec<Option<String>> =
@@ -66,7 +66,7 @@ fn packed_without_validity_has_no_nulls() {
 fn packed_null_name_is_empty() {
     let s = packed(ptr::null(), b"ab", &[0, 1, 2], None);
     assert!(!s.is_null());
-    assert_eq!(take_cstring(series_name(s)), "");
+    assert_eq!(take_str(series_name_v2(s)), "");
     series_drop(s);
 }
 
@@ -90,7 +90,7 @@ fn packed_zero_rows_is_empty() {
         assert!(!s.is_null());
         assert_eq!(series_len(s), 0);
         assert_dtype(s, CompatDTypeTag::String, CompatTimeUnit::None);
-        assert_eq!(take_cstring(series_name(s)), "xs");
+        assert_eq!(take_str(series_name_v2(s)), "xs");
         series_drop(s);
     }
 }

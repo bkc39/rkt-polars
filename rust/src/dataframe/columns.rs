@@ -88,18 +88,25 @@ pub extern "C" fn dataframe_with_column(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_column_name(
-    df_ptr: *mut DataFrame,
+pub extern "C" fn dataframe_column_name_v2(
+    df_ptr: *const DataFrame,
     index: usize,
-) -> *const c_char {
-    if df_ptr.is_null() {
-        return ptr::null();
+) -> StrOut {
+    match unsafe { df_ptr.as_ref() }
+        .and_then(|df| df.get_column_names().get(index).map(|n| str_out(n)))
+    {
+        Some(name) => name,
+        None => ptr::null_mut(),
     }
-    let df = unsafe { &*df_ptr };
-    let names = df.get_column_names();
-    match names.get(index) {
-        Some(name) => rust_string_to_ptr(*name),
-        None => ptr::null(),
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_column_names(
+    df_ptr: *const DataFrame,
+) -> StrListOut {
+    match unsafe { df_ptr.as_ref() } {
+        Some(df) => str_list_out(df.get_column_names()),
+        None => ptr::null_mut(),
     }
 }
 

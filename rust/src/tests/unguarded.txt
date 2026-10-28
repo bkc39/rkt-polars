@@ -1,5 +1,5 @@
 dataframe_column accessor
-dataframe_column_name accessor
+dataframe_column_name_v2 accessor
 dataframe_drop drop
 dataframe_drop_columns todo-129
 dataframe_drop_count count
@@ -72,8 +72,7 @@ expr_lit_temporal builder
 expr_lit_u64 builder
 expr_log builder
 expr_meta_eq accessor
-expr_meta_root_name accessor
-expr_meta_root_names_len accessor
+expr_meta_root_names accessor
 expr_multi_column builder
 expr_over builder
 expr_rank builder
@@ -112,7 +111,7 @@ expr_str_to_time builder
 expr_str_to_uppercase builder
 expr_tail builder
 expr_when_then builder
-last_error_message error
+last_error_message_v2 error
 lazyframe_drop drop
 lazyframe_drop_count count
 lazyframe_drop_nulls builder
@@ -152,7 +151,7 @@ series_mean_i32 todo-129
 series_min_f64 todo-129
 series_min_i32 todo-129
 series_n_unique todo-129
-series_name accessor
+series_name_v2 accessor
 series_ne_str todo-129
 series_new_bool constructor
 series_new_f32 constructor
@@ -195,7 +194,7 @@ series_str_byte_len accessor
 series_sum_f64 todo-129
 series_sum_i32 todo-129
 series_tail todo-129
-series_time_zone accessor
+series_time_zone_v2 accessor
 series_unique todo-129
 series_var todo-129
 string_drop drop
@@ -352,3 +351,6 @@ series_sum_f32 todo-129
 series_min_f32 todo-129
 series_max_f32 todo-129
 series_mean_f32 todo-129
+dataframe_column_names accessor
+str_block_drop drop
+str_block_drop_count count

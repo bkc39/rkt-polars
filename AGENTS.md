@@ -158,8 +158,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   any atomic region, so a drop must not run while another thread uses the
   same value: a drop between the conversion and the native call frees memory
   the call then reads.
-- Strings from Rust are allocated with `rust_string_to_ptr`, marshalled by the
-  `_rsstring` ctype (NULL → `#f`, finalizer frees via `string_drop`).
+- Strings from Rust come back as a block (`str_out` / `str_list_out`,
+  `rust/src/ffi/strings.rs`: native-endian 64-bit words, word 0 the block's
+  size in words, word 1 a single string's UTF-8 length or a list's count,
+  then the bytes, or a list's `count + 1` offsets and then the bytes), read
+  by `_rsstr` / `_rsstr-list` (`foreign.rkt`), which copy by length and free
+  at once through `str_block_drop` (NULL is `#f`), so a NUL in a name, a
+  reason or printed text survives; `str_block_drop_count` counts the
+  releases. No export returns a C string but `series_ref_str`, whose
+  `_c-string-result` copies and frees it through `string_drop` until #165's
+  categorical leg retires both; `rust/src/tests/c_strings.rs`, on the guard
+  audit's walk, fails on any other.
 - **Failure reasons travel out of band** (#45): an entry point that can fail
   calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
@@ -171,8 +180,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   the series operators): the slot is per OS thread and every Racket thread in a
   place shares one. Only wrap an entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
-  `scan_*` family, `lazyframe_collect`, `lazyframe_explain`,
-  `dataframe_to_string`, `expr_to_string`, `series_cast`,
+  `scan_*` family, `lazyframe_collect`, `lazyframe_explain_v2`,
+  `dataframe_to_string_v2`, `expr_to_string_v2`, `series_cast`,
   `dataframe_pivot`, `dataframe_unpivot`,
   `dataframe_sort_with_options`, `series_sort_with_options`,
   `series_new_str_packed`, the series-by-series operators (`series_add`,
@@ -297,7 +306,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   `make-ctype`) as the element of a `_list` / `_vector` / `_ptr` in mode `i`
   or `io`, of an `_array`, `_array/list`, `_array/vector`, `_box` or
   `_list-struct`, as a `define-cstruct` field, or in
-  `define-series-constructors`.
+  `define-series-constructors`. Argument blocks in the result blocks' layout
+  are `_str`, `_str/null` and `_str-list` (`resource.rkt`), fun syntaxes in
+  `_string-list`'s shape whose `'atomic-interior` block holds no address;
+  each element must be `utf-8-name/c`, refused under the syntax's name
+  before any call, and Rust's `str_arg` / `str_list_arg` check every bound
+  against the block's size and every element's UTF-8, recording the cause.
+  A C string still crossing is `_c-string` / `_c-string/null`
+  (`foreign.rkt`), which refuse a NUL. The same test fails on a `_fun` or a
+  `define-series-constructors` in `polars/private` naming `_rsstring`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -572,6 +589,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   into the per-row set only after its evaluation in `polars-expr` has been
   checked.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
+- A column name, a frame's, an expression's or a plan's text and a failure
+  reason come back from Rust with any NUL they hold, and print it raw, as
+  Python's `str(df)` does (#165).
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix
@@ -739,7 +759,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
   `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no
   name, so the zone crosses as a string through its own exports
-  (`series_time_zone`, the `_datetime_tz` cast / selector / literal entry
+  (`series_time_zone_v2`, the `_datetime_tz` cast / selector / literal entry
   points, `series_dt_*` / `expr_dt_*` convert and replace,
   `expr_str_to_datetime_tz`); each that takes a zone canonicalises it with
   polars' `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`), validates

@@ -2,7 +2,7 @@
 
 (module+ test
   (require rackunit
-           (only-in ffi/unsafe _int64 ptr-add)
+           (only-in ffi/unsafe _fun _int64 _pointer _string/utf-8 _void cast function-ptr ptr-add)
            (only-in gregor
                     ->datetime/local ->posix ->tzid ->utc-offset date datetime iso8601->time
                     moment posix->datetime)
@@ -44,7 +44,9 @@
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
-                    series-xor string-has-nul? zoned-datetime-dtype?)
+                    series-xor str-block-drop-count string-has-nul? zoned-datetime-dtype?
+                    _c-string _c-string/null)
+           (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
            (only-in (submod polars/private/foreign internal)
                     dataframe-drop dataframe-head dataframe-hstack dataframe-join
@@ -1379,4 +1381,35 @@
           (refusal 'series-lt-i32 int32/c (expt 2 31)
                    (contracted:series-lt-i32 range-series (expt 2 31)))))
    '())
-  (check-not-exn (lambda () (contracted:series-std range-series #:ddof 255))))
+  (check-not-exn (lambda () (contracted:series-std range-series #:ddof 255)))
+
+  (define (block-releases thunk)
+    (define before (str-block-drop-count))
+    (define result (thunk))
+    (list result (- (str-block-drop-count) before)))
+  (define wide (dataframe-new (for/list ([i (in-range 1000)]) (series-new-i32 (format "c~a" i) '(1)))))
+  (check-equal? (block-releases (lambda () (length (dataframe-column-names wide)))) '(1000 1))
+  (check-equal? (block-releases (lambda () (dataframe-column-name wide 999))) '("c999" 1))
+  (check-equal? (block-releases (lambda () (dataframe-column-name wide 1000))) '(#f 0))
+  (check-equal? (block-releases (lambda () (series-name (series-new-i32 "x" '(1))))) '("x" 1))
+  (check-equal? (block-releases (lambda () (expr-meta-output-name/raw (col 'float64)))) '(#f 0))
+  (check-equal? (block-releases (lambda () (expr-meta-root-names (col 'float64)))) '(() 1))
+  (check-equal? (block-releases (lambda () (series-time-zone (series-new-i32 "x" '(1))))) '(#f 0))
+  (check-equal? (block-releases (lambda () (dataframe-column-names (dataframe-empty)))) '(() 1))
+
+  (define c-strings '())
+  (define c-string-pointer
+    (function-ptr (lambda (p) (set! c-strings (cons (and p (cast p _pointer _string/utf-8)) c-strings)))
+                  (_fun _pointer -> _void)))
+  (define call-with-c-string (cast c-string-pointer _pointer (_fun _c-string -> _void)))
+  (define call-with-c-string/null (cast c-string-pointer _pointer (_fun _c-string/null -> _void)))
+  (call-with-c-string "UTC")
+  (call-with-c-string/null #f)
+  (call-with-c-string/null "東京")
+  (check-equal? (reverse c-strings) '("UTC" #f "東京"))
+  (for* ([call (list call-with-c-string call-with-c-string/null)]
+         [bad (list "UTC\u0000x" "\u0000" #"UTC" 'b)])
+    (check-exn #rx"^_c-string: contract violation\n  expected: a string without a NUL"
+               (lambda () (call bad))))
+  (check-exn #rx"^_c-string: contract violation" (lambda () (call-with-c-string #f)))
+  (check-equal? (length c-strings) 3))

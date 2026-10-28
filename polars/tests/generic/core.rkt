@@ -9,16 +9,18 @@
            (only-in racket/match match match-define)
            (only-in racket/port port->string)
            (only-in racket/sequence sequence->list)
+           (only-in racket/string string-contains?)
            (only-in threading ~>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign
-                    polars-null series-cast series-drop-count series-dtype series-len series-name
-                    series-new-i64 series-new-str)
+                    dataframe->string polars-null series-cast series-drop-count series-dtype
+                    series-len series-name series-new-i64 series-new-str)
            (only-in polars/private/generic/core
                     column-name column-names dataframe? dtype height len null-count ref series
                     series? shape shape/values width wrap-series)
            (only-in (submod polars/private/generic/core internal) dataframe)
            (only-in polars/private/generic/printing series->string)
+           (only-in polars/tests/generic/test-fixtures nul-frame nul-names)
            (only-in polars/tests/test-helpers settle!))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
@@ -312,4 +314,23 @@
   (for ([probe (in-list past-chrono-probes)]
         [result (in-list past-chrono-results)])
     (match-define (list form expected) probe)
-    (check-regexp-match expected result (format "~s gave ~s" form result))))
+    (check-regexp-match expected result (format "~s gave ~s" form result)))
+
+  (define (shown-unwrapped nul n)
+    (define table-width (getenv "POLARS_TABLE_WIDTH"))
+    (dynamic-wind
+     (lambda () (putenv "POLARS_TABLE_WIDTH" "200"))
+     (lambda ()
+       (list (format "~a" nul) (dataframe->string nul)
+             (format "~a" (dataframe (list (series (list n) #:name "v"))))))
+     (lambda ()
+       (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
+                                   (and table-width (string->bytes/utf-8 table-width))))))
+  (for ([n (in-list nul-names)])
+    (define nul (nul-frame n))
+    (check-equal? (column-names nul) (list "id" n))
+    (check-equal? (column-name nul 0) "id")
+    (check-equal? (column-name nul 1) n)
+    (for ([shown (in-list (shown-unwrapped nul n))])
+      (check-true (string-contains? shown n) shown)
+      (check-false (string-contains? shown "cannot print") shown))))

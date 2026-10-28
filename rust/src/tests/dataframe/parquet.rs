@@ -459,11 +459,11 @@ fn new_entry_points_clear_a_stale_reason() {
     assert_eq!(recorded_error(), None);
 
     set_last_error("stale");
-    let plan = lazyframe_explain(lf, true, false);
-    assert!(take_cstring(plan).contains("Parquet SCAN"));
+    let plan = lazyframe_explain_v2(lf, true, false);
+    assert!(take_str(plan).contains("Parquet SCAN"));
     assert_eq!(recorded_error(), None);
 
-    assert!(lazyframe_explain(ptr::null_mut(), true, false).is_null());
+    assert!(lazyframe_explain_v2(ptr::null_mut(), true, false).is_null());
     assert_eq!(recorded_error().as_deref(), Some("lazyframe is null"));
 
     lazyframe_drop(lf);
@@ -479,7 +479,7 @@ fn explain_reports_a_plan_that_cannot_resolve() {
     for (optimized, tree) in
         [(true, false), (false, false), (true, true), (false, true)]
     {
-        assert!(lazyframe_explain(bad, optimized, tree).is_null());
+        assert!(lazyframe_explain_v2(bad, optimized, tree).is_null());
         let message = recorded_error().expect("a reason");
         assert!(
             message.contains("unable to find column \"nope\""),
@@ -487,8 +487,8 @@ fn explain_reports_a_plan_that_cannot_resolve() {
             message
         );
     }
-    let plain = take_cstring(lazyframe_explain(lf, false, false));
-    let tree = take_cstring(lazyframe_explain(lf, false, true));
+    let plain = take_str(lazyframe_explain_v2(lf, false, false));
+    let tree = take_str(lazyframe_explain_v2(lf, false, true));
     assert_ne!(plain, tree);
     lazyframe_drop(bad);
     lazyframe_drop(lf);

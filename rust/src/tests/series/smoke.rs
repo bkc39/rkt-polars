@@ -1,24 +1,18 @@
+use super::test_util::take_str;
 use super::*;
 use std::ptr;
 
 #[test]
 fn test_series_name_non_null() {
     let series = series_make();
-    let name_ptr = series_name(series);
-    assert!(!name_ptr.is_null());
-
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let name = c_str.to_str().unwrap();
-    assert_eq!(name, "example");
-
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "example");
 
     series_drop(series);
 }
 
 #[test]
 fn test_series_name_null() {
-    let name_ptr = series_name(ptr::null_mut());
+    let name_ptr = series_name_v2(ptr::null_mut());
     assert!(name_ptr.is_null());
 }
 
@@ -45,15 +39,7 @@ fn free_null_series() {
 #[test]
 fn test_empty_series_name() {
     let series = series_empty();
-    let name_ptr = series_name(series);
-    assert!(!name_ptr.is_null());
-
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let name = c_str.to_str().unwrap();
-    assert_eq!(name, "");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "");
 
     series_drop(series);
 }
@@ -67,15 +53,7 @@ fn test_rename_series_non_null() {
 
     series_rename(series, new_name_ptr);
 
-    let name_ptr = series_name(series);
-    assert!(!name_ptr.is_null());
-
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let name = c_str.to_str().unwrap();
-    assert_eq!(name, "new_name");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "new_name");
 
     series_drop(series);
 }
@@ -89,15 +67,7 @@ fn test_rename_series_with_empty_string() {
 
     series_rename(series, new_name_ptr);
 
-    let name_ptr = series_name(series);
-    assert!(!name_ptr.is_null());
-
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let name = c_str.to_str().unwrap();
-    assert_eq!(name, "");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "");
 
     series_drop(series);
 }
@@ -117,15 +87,7 @@ fn test_rename_series_null_new_name_pointer() {
     series_rename(series, ptr::null());
 
     // Ensure the original name remains unchanged
-    let name_ptr = series_name(series);
-    assert!(!name_ptr.is_null());
-
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let name = c_str.to_str().unwrap();
-    assert_eq!(name, "example");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "example");
 
     series_drop(series);
 }

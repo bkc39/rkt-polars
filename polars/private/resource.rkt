@@ -1,15 +1,18 @@
 #lang racket/base
 
 (require (only-in ffi/unsafe
-                  _byte _gcpointer _pointer ctype-sizeof define-fun-syntax free malloc memcpy
-                  ptr-add ptr-set!)
+                  _byte _gcpointer _int64 _pointer ctype-sizeof define-fun-syntax free malloc
+                  memcpy ptr-add ptr-ref ptr-set!)
          (only-in ffi/unsafe/alloc allocator deallocator)
          (only-in racket/contract/base and/c flat-named-contract listof or/c)
          (only-in racket/match match)
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
-(provide _string-list
+(provide _str
+         _str-list
+         _str/null
+         _string-list
          utf-8-name->string
          utf-8-name/c
          utf-8-names/c
@@ -140,5 +143,79 @@
      [_:id #'(type: _gcpointer
               pre: (strings => (and (pair? strings) (strings->c-array strings))))])))
 
+(define word-size (ctype-sizeof _int64))
+
+(define (padded-words byte-count)
+  (quotient (+ byte-count word-size -1) word-size))
+
+(define (name-bytes who v)
+  (cond
+    [(string? v) (string->bytes/utf-8 v)]
+    [(and (or (bytes? v) (path? v)) (utf-8-name->string v)) (c-string-bytes v)]
+    [else (raise-argument-error who "utf-8-name/c" v)]))
+
+(define (str-block words second)
+  (define block (malloc (* words word-size) 'atomic-interior))
+  (ptr-set! block _int64 0 words)
+  (ptr-set! block _int64 1 second)
+  block)
+
+(define (string->str-block v)
+  (define utf-8 (name-bytes '_str v))
+  (define len (bytes-length utf-8))
+  (define block (str-block (+ 2 (padded-words len)) len))
+  (memcpy block (* 2 word-size) utf-8 len)
+  block)
+
+(define (strings->str-block vs)
+  (define encoded
+    (cond
+      [(list? vs) (for/list ([v (in-list vs)]) (name-bytes '_str-list v))]
+      [else (raise-argument-error '_str-list "(listof utf-8-name/c)" vs)]))
+  (define count (length encoded))
+  (define data (+ 3 count))
+  (define total (for/sum ([utf-8 (in-list encoded)]) (bytes-length utf-8)))
+  (define block (str-block (+ data (padded-words total)) count))
+  (ptr-set! block _int64 2 0)
+  (for/fold ([at 0]) ([utf-8 (in-list encoded)] [i (in-naturals 3)])
+    (define end (+ at (bytes-length utf-8)))
+    (memcpy block (+ (* data word-size) at) utf-8 (bytes-length utf-8))
+    (ptr-set! block _int64 i end)
+    end)
+  block)
+
+(define (str-block->string block)
+  (define len (ptr-ref block _int64 1))
+  (define utf-8 (make-bytes len))
+  (memcpy utf-8 0 block (* 2 word-size) len)
+  (bytes->string/utf-8 utf-8))
+
+(define (str-block->strings block)
+  (define count (ptr-ref block _int64 1))
+  (define offsets (for/list ([i (in-range 2 (+ 3 count))]) (ptr-ref block _int64 i)))
+  (define utf-8 (make-bytes (list-ref offsets count)))
+  (memcpy utf-8 0 block (* (+ 3 count) word-size) (bytes-length utf-8))
+  (for/list ([start (in-list offsets)] [end (in-list (cdr offsets))])
+    (bytes->string/utf-8 utf-8 #f start end)))
+
+(define-fun-syntax _str
+  (make-set!-transformer
+   (syntax-parser
+     [_:id #'(type: _gcpointer pre: (v => (string->str-block v)))])))
+
+(define-fun-syntax _str/null
+  (make-set!-transformer
+   (syntax-parser
+     [_:id #'(type: _gcpointer pre: (v => (and v (string->str-block v))))])))
+
+(define-fun-syntax _str-list
+  (make-set!-transformer
+   (syntax-parser
+     [_:id #'(type: _gcpointer pre: (vs => (and (not (null? vs)) (strings->str-block vs))))])))
+
 (module+ internal
-  (provide strings->c-array))
+  (provide str-block->string
+           str-block->strings
+           string->str-block
+           strings->c-array
+           strings->str-block))
