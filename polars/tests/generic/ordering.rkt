@@ -42,14 +42,12 @@
   (define gathered (select df (alias (contracted:gather "x" '(0 2 4)) "xg")))
   (check-equal? (for/list ([i (in-range 3)]) (ref (ref gathered #:columns "xg") i))
                 '(30 50 40))
-  (for ([indices (list (list 1 2.5) (list (expt 2 70)) (list -1 (expt 2 63)))])
+  (for ([indices (list (list 1 2.5) (list (expt 2 70)) (list -1 (expt 2 63)) (list (expt 2 63)))])
     (check-exn (regexp (string-append
                         "^gather: contract violation\n"
-                        "  expected: [(]or/c Expr-ptr[?] series[?] [(]or/c"
+                        "  expected: [(]or/c Expr-ptr[?] series[?]"
                         " [(]listof [(]or/c [(]integer-in -9223372036854775808 9223372036854775807[)]"
-                        " polars-null[?][)][)]"
-                        " [(]listof [(]or/c [(]integer-in 0 18446744073709551615[)] polars-null[?][)][)]"
-                        "[)][)]\n"))
+                        " polars-null[?][)][)][)]\n"))
                (lambda () (contracted:gather "x" indices))
                (format "~a" indices)))
   (let ()

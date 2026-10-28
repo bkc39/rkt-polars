@@ -402,8 +402,7 @@
 (define membership-list/c
   (flat-contract-with-explanation membership-explanation #:name 'membership-list/c))
 
-(define index-list/c
-  (or/c (listof (or/c int64/c polars-null?)) (listof (or/c uint64/c polars-null?))))
+(define index-list/c (listof (or/c int64/c polars-null?)))
 
 (define (map-non-null f xs)
   (for/list ([x (in-list xs)])
@@ -499,9 +498,7 @@
   (cond
     [(Expr-ptr? indices) indices]
     [(Series-ptr? indices) (expr-lit-series indices)]
-    [(andmap int64/c (filter-not polars-null? indices))
-     (expr-lit-series (series-new-i64 "" indices))]
-    [else (expr-lit-series (series-new-u64 "" indices))]))
+    [else (expr-lit-series (series-new-i64 "" indices))]))
 
 (define-compat expr-sort-by/raw
   (_fun _Expr-ptr

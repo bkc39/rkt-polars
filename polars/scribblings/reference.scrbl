@@ -1426,8 +1426,7 @@ stations
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
                                [indices (or/c Expr-ptr? series?
-                                              (listof (or/c int64/c polars-null?))
-                                              (listof (or/c uint64/c polars-null?)))])
+                                              (listof (or/c int64/c polars-null?)))])
                        Expr-ptr?])]{
   Ordering within a column (@tt{.rank}, @tt{.gather}); @racket[sort-by] is
   documented with the other sorts. @racket[rank] numbers each
