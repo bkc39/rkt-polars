@@ -1425,13 +1425,16 @@ stations
                              [#:seed seed (or/c uint64/c #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
-                               [indices (or/c Expr-ptr? series? (listof exact-integer?))])
+                               [indices (or/c Expr-ptr? series?
+                                              (listof (or/c int64/c polars-null?))
+                                              (listof (or/c uint64/c polars-null?)))])
                        Expr-ptr?])]{
   Ordering within a column (@tt{.rank}, @tt{.gather}); @racket[sort-by] is
   documented with the other sorts. @racket[rank] numbers each
   value by its place in the sorted order, ties resolved by
   @racket[#:method]; the result is @racket['uint32], or @racket['float64]
-  for @racket['average]. @racket[gather] picks values by position. Each
+  for @racket['average]. @racket[gather] picks values by position, and a
+  @racket[polars-null] position gives a null. Each
   lifts a column name with @racket[col], and each is computed per group
   under @racket[over].
 
@@ -1442,6 +1445,7 @@ stations
     (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
 (~> scores (select (gather "name" '(3 0))))
+(~> scores (select (gather "score" (list 0 polars-null))))
 (eval:error (rank "score" #:method 'first))]}
 
 @deftogether[(@defproc[(shift [x (or/c Expr-ptr? string?)]

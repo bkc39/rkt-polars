@@ -8,7 +8,8 @@
          (only-in polars/tests/generic/operand-audit-table
                   eager-outcome fixture-outcome python-alternatives python-outcome row-operand
                   row-series)
-         (only-in polars/private/generic/operands operand-action))
+         (only-in polars/private/generic/operands operand-action)
+         (only-in (submod polars/private/generic/operands internal) expression-action?))
 
 (provide (contract-out
           [operand-deviation-classes (listof (list/c symbol? string?))]
@@ -76,9 +77,7 @@
 (define (rule-expression? row)
   (match row
     [(list (and op (not (or 'and 'or 'xor 'not))) _ (and side (or 'left 'right)) _ _ ...)
-     (and (memq (operand-action op (series-dtype (row-series row)) (row-operand row) side)
-                '(expression integer-expression checked-expression checked-quotient))
-          #t)]
+     (expression-action? (operand-action op (series-dtype (row-series row)) (row-operand row) side))]
     [_ #f]))
 
 (define (racket-logical row)

@@ -6,16 +6,16 @@
 ;; an Expr or a bare column-name string (auto-lifted via col).
 
 (require polars/private/expr
+         (only-in polars/private/generic/core series?)
          polars/private/generic/expr-util
-         (only-in racket/contract/base ->* any/c contract-out or/c))
+         (only-in racket/contract/base -> ->* and/c any/c contract-out or/c))
 
-(provide is-in
-         (contract-out
+(provide (contract-out
+          [is-in (-> col-expr/c (and/c (or/c Expr-ptr? series? list?) membership-list/c) Expr-ptr?)]
           [is-between (->* (col-expr/c any/c any/c) (#:closed (or/c 'both 'left 'right 'none))
                            Expr-ptr?)])
          is-unique is-duplicated is-first-distinct is-last-distinct)
 
-;; is-in: membership against a homogeneous Racket list, a Series, or an Expr.
 (define (is-in x rhs) (expr-is-in (->col-expr 'is-in x) rhs #:who 'is-in))
 ;; is-between: lower..upper, #:closed 'both | 'left | 'right | 'none.
 (define (is-between x lower upper #:closed [closed 'both])
