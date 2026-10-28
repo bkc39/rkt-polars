@@ -136,12 +136,22 @@ fn a_defect_displays_its_cause_alone() {
     assert_eq!(StrError::NotUtf8.to_string(), "a string is not valid UTF-8");
 }
 
+/// Other tests drop blocks concurrently, so some attempt must see exactly
+/// `releases` new drops.
+fn counts_exactly(releases: usize, drop: impl Fn()) -> bool {
+    (0..1000).any(|_| {
+        let before = str_block_drop_count();
+        drop();
+        str_block_drop_count() - before == releases
+    })
+}
+
 #[test]
-fn dropping_a_block_counts_one_release() {
-    let before = str_block_drop_count();
-    str_block_drop(str_out("a\0b"));
-    str_block_drop(ptr::null_mut());
-    assert!(str_block_drop_count() > before);
+fn a_block_drop_counts_one_release_and_a_null_drop_none() {
+    assert!(counts_exactly(1, || str_block_drop(str_out("a\0b"))));
+    let list = || str_list_out(["a", "b"]);
+    assert!(counts_exactly(1, || str_block_drop(list())));
+    assert!(counts_exactly(0, || str_block_drop(ptr::null_mut())));
 }
 
 #[test]

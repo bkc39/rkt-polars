@@ -34,10 +34,7 @@ pub extern "C" fn series_drop(s_ptr: *mut Series) {
 
 #[no_mangle]
 pub extern "C" fn series_name_v2(s_ptr: *const Series) -> StrOut {
-    match unsafe { s_ptr.as_ref() } {
-        Some(s) => str_out(s.name()),
-        None => ptr::null_mut(),
-    }
+    unsafe { s_ptr.as_ref() }.map_or(ptr::null_mut(), |s| str_out(s.name()))
 }
 
 #[no_mangle]

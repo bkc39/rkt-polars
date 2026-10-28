@@ -159,16 +159,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   same value: a drop between the conversion and the native call frees memory
   the call then reads.
 - Strings from Rust come back as a block (`str_out` / `str_list_out`,
-  `rust/src/ffi/strings.rs`: native-endian 64-bit words, word 0 the block's
-  size in words, word 1 a single string's UTF-8 length or a list's count,
-  then the bytes, or a list's `count + 1` offsets and then the bytes), read
-  by `_rsstr` / `_rsstr-list` (`foreign.rkt`), which copy by length and free
-  at once through `str_block_drop` (NULL is `#f`), so a NUL in a name, a
-  reason or printed text survives; `str_block_drop_count` counts the
-  releases. No export returns a C string but `series_ref_str`, whose
-  `_c-string-result` copies and frees it through `string_drop` until #165's
-  categorical leg retires both; `rust/src/tests/c_strings.rs`, on the guard
-  audit's walk, fails on any other.
+  `rust/src/ffi/strings.rs`). A block is native-endian 64-bit words, and
+  word 0 is its size in words. A single string has its UTF-8 length in word
+  1 and its bytes from word 2. A list has its count in word 1, `count + 1`
+  offsets from word 2, and then the bytes. `_rsstr` and `_rsstr-list`
+  (`foreign.rkt`) read a block by length, so a NUL in a name, a reason or
+  printed text survives. They free it at once through `str_block_drop`, in
+  atomic mode, so a thread killed during the read is killed after the free.
+  NULL reads as `#f`. `str_block_drop_count` counts the releases. Only
+  `series_ref_str` still returns a C string: `_c-string-result` copies it and
+  frees it through `string_drop`, until #165's categorical leg retires both.
+  `rust/src/tests/c_strings.rs`, on the guard audit's walk, fails on any
+  other export that returns one.
 - **Failure reasons travel out of band** (#45): an entry point that can fail
   calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
@@ -306,15 +308,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   `make-ctype`) as the element of a `_list` / `_vector` / `_ptr` in mode `i`
   or `io`, of an `_array`, `_array/list`, `_array/vector`, `_box` or
   `_list-struct`, as a `define-cstruct` field, or in
-  `define-series-constructors`. Argument blocks in the result blocks' layout
-  are `_str`, `_str/null` and `_str-list` (`resource.rkt`), fun syntaxes in
-  `_string-list`'s shape whose `'atomic-interior` block holds no address;
-  each element must be `utf-8-name/c`, refused under the syntax's name
-  before any call, and Rust's `str_arg` / `str_list_arg` check every bound
-  against the block's size and every element's UTF-8, recording the cause.
-  A C string still crossing is `_c-string` / `_c-string/null`
-  (`foreign.rkt`), which refuse a NUL. The same test fails on a `_fun` or a
-  `define-series-constructors` in `polars/private` naming `_rsstring`.
+  `define-series-constructors`. The same file's audit fails on a
+  `define-compat` in `polars/private` whose result is `_string`,
+  `_string/utf-8` or `_string*/utf-8`, and on a `_fun` or a
+  `define-series-constructors` there naming `_rsstring`. `resource.rkt` also
+  defines `_str`, `_str/null` and `_str-list`, fun syntaxes in
+  `_string-list`'s shape that write one block in the result blocks' layout,
+  holding no address. Each element must be `utf-8-name/c`; any other is
+  refused under the syntax's name before the call. In Rust, `str_arg` and
+  `str_list_arg` read such a block: they check every bound against the
+  block's size and every element's UTF-8, and return the cause of a refusal.
+  `foreign.rkt` defines `_c-string` and `_c-string/null`, C-string arguments
+  that refuse a NUL. No binding uses these five or the two readers yet
+  (#165).
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -589,9 +595,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   into the per-row set only after its evaluation in `polars-expr` has been
   checked.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
-- A column name, a frame's, an expression's or a plan's text and a failure
-  reason come back from Rust with any NUL they hold, and print it raw, as
-  Python's `str(df)` does (#165).
+- Column names, failure reasons and the text of a frame, an expression or a
+  plan come back from Rust with any NUL they hold. Printed, the NUL shows
+  raw, as in Python's `str(df)` (#165).
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix

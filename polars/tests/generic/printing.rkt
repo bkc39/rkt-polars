@@ -10,7 +10,7 @@
                     series-new-null series-new-str series-slice polars-null)
            (only-in polars/private/generic/printing series->printed series->string)
            (only-in (submod polars/private/generic/printing internal) cell)
-           (only-in polars/tests/test-helpers settle!)
+           (only-in polars/tests/test-helpers settle! with-environment-variable)
            (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
   (check-equal? (series->string (series-new-null "nothing" 3))
@@ -141,15 +141,9 @@
                 '("b\"0\"" "b\"1\"" "b\"2\"" "b\"3\"" "b\"4\"" "…"
                   "b\"7\"" "b\"8\"" "b\"9\"" "b\"10\"" "b\"11\"" "]"))
   (test-case "a binary cell does not follow POLARS_TABLE_WIDTH, as round 1's renderer did"
-    (define table-width (getenv "POLARS_TABLE_WIDTH"))
-    (dynamic-wind
-     (lambda () (putenv "POLARS_TABLE_WIDTH" "8"))
-     (lambda ()
-       (check-equal? (binary-cells (list (xs 61) polars-null))
-                     (list (string-append "b\"" (xs 60) "\"…") "null" "]")))
-     (lambda ()
-       (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
-                                   (and table-width (string->bytes/utf-8 table-width))))))
+    (with-environment-variable #"POLARS_TABLE_WIDTH" #"8"
+      (check-equal? (binary-cells (list (xs 61) polars-null))
+                    (list (string-append "b\"" (xs 60) "\"…") "null" "]"))))
   (define twelve-blobs
     (~> (series-new-str "b" (for/list ([i (in-range 12)])
                               (case i

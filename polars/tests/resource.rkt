@@ -18,7 +18,7 @@
            (only-in polars/tests/gc-pressure call-with-collections)
            (only-in polars/tests/generic/test-fixtures nul-names)
            (only-in polars/tests/test-helpers
-                    polars-dir polars-sources read-source with-planted-sources))
+                    module-text polars-dir polars-sources read-source with-planted-sources))
 
   (define released '())
   (define (release! tag) (set! released (cons tag released)))
@@ -209,8 +209,13 @@
   (for ([xs (in-list str-lists)])
     (call-with-str-list xs)
     (for-each call-with-str xs))
+  (define (list-block-read xs)
+    (match xs
+      ['() #f]
+      [_ xs]))
   (check-equal? (reverse called-back)
-                (for*/list ([xs (in-list str-lists)] [read (in-list (cons (and (pair? xs) xs) xs))])
+                (for*/list ([xs (in-list str-lists)]
+                            [read (in-list (cons (list-block-read xs) xs))])
                   read))
   (set! called-back '())
   (call-with-str-list (list #"bytes" (string->path "a/path") "東京"))
@@ -315,29 +320,45 @@
                 '()
                 "a string or Racket object stored by address in Racket memory: use _string-list")
 
-  (define forbidden-c-string-types '(_rsstring))
+  (define (mentions? form type)
+    (for/or ([inner (in-list (forms-in form))]) (memq type inner)))
+  (define (fun-result type)
+    (match (member '-> type)
+      [(list* '-> (list _ ': result) _) result]
+      [(list* '-> result _) result]
+      [_ #f]))
+  (define (c-string-crossing form)
+    (match form
+      [(list* (or '_fun 'define-series-constructors) _) #:when (mentions? form '_rsstring)
+       '_rsstring]
+      [(list* 'define-compat _ (? list? type) _)
+       (define result (fun-result type))
+       (and (memq result '(_string _string/utf-8 _string*/utf-8)) result)]
+      [_ #f]))
   (define (c-string-crossings file-forms)
     (for*/list ([file+forms (in-list file-forms)]
                 [form (in-list (cdr file+forms))]
-                #:when (match form
-                         [(list* (or '_fun 'define-series-constructors) _) #t]
-                         [_ #f])
-                [type (in-list forbidden-c-string-types)]
-                #:when (for/or ([inner (in-list (forms-in form))]) (memq type inner)))
+                [type (in-value (c-string-crossing form))]
+                #:when type)
       (list (car file+forms) type)))
   (check-equal? (c-string-crossings (source-forms (polars-sources #:dirs '("private"))))
                 '()
                 "a C string crosses the boundary: use _str, _str-list, _rsstr or _rsstr-list")
   (with-planted-sources (root ["private/planted.rkt"
-                               (format "#lang racket/base\n~s\n~s\n~s\n~s"
-                                       '(define-compat x (_fun _pointer -> _rsstring))
-                                       '(define-compat y (_fun _pointer -> (r : _rsstring) -> r))
-                                       '(define-series-constructors s _rsstring "")
-                                       ''(_fun -> _rsstring))])
+                               (module-text
+                                '(define-compat x (_fun _pointer -> _rsstring))
+                                '(define-compat y (_fun _pointer -> (r : _rsstring) -> r))
+                                '(define-series-constructors s _rsstring "")
+                                ''(_fun -> _rsstring)
+                                '(define-compat z (_fun _pointer -> _string))
+                                '(define-compat w (_fun _string -> (r : _string/utf-8) -> r))
+                                '(define-compat v (_fun -> _string*/utf-8) #:c-id v)
+                                '(define-compat kept (_fun _string -> _void)))])
     (define planted (simplify-path (build-path root "private" "planted.rkt")))
     (check-equal? (c-string-crossings (source-forms (polars-sources root #:dirs '("private"))))
-                  (list (list planted '_rsstring) (list planted '_rsstring)
-                        (list planted '_rsstring))))
+                  (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
+                                     _string*/utf-8)])
+                    (list planted type))))
 
   (define planted-text
     (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"

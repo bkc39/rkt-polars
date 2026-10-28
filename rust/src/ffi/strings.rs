@@ -1,9 +1,5 @@
-//! Strings cross the boundary as one self-describing block of native-endian
-//! 64-bit words: word 0 is the block's size in words, header included; a
-//! single string has its UTF-8 length in word 1 and its bytes from word 2; a
-//! list has its count in word 1, `count + 1` offsets from word 2 (the first
-//! 0, nondecreasing), then the bytes.  Racket writes argument blocks; Rust
-//! writes result blocks, which `str_block_drop` frees.
+//! `polars/private/resource.rkt` writes and reads the same layout.  Word 0
+//! is a result block's length in words, which `str_block_drop` frees by.
 
 use crate::prelude::*;
 use std::fmt;
@@ -41,16 +37,20 @@ impl fmt::Display for StrError {
     }
 }
 
+/// # Safety
+/// `p` points to at least `i + 1` words.
 unsafe fn word(p: *const u64, i: usize) -> u64 {
-    unsafe { ptr::read_unaligned(p.add(i)) }
+    ptr::read_unaligned(p.add(i))
 }
 
 fn index(value: u64) -> Result<usize, StrError> {
     usize::try_from(value).map_err(|_| StrError::Truncated)
 }
 
+/// # Safety
+/// `p` points to a block's first word.
 unsafe fn block_words(p: *const u64) -> Result<usize, StrError> {
-    let words = index(unsafe { word(p, 0) })?;
+    let words = index(word(p, 0))?;
     if words < 2 {
         return Err(StrError::Truncated);
     }
@@ -58,17 +58,22 @@ unsafe fn block_words(p: *const u64) -> Result<usize, StrError> {
     Ok(words)
 }
 
+/// # Safety
+/// `start <= end` and `base` points to at least `end` bytes that outlive `'a`.
 unsafe fn utf8<'a>(
     base: *const u8,
     start: usize,
     end: usize,
 ) -> Result<&'a str, StrError> {
-    let bytes =
-        unsafe { std::slice::from_raw_parts(base.add(start), end - start) };
+    let bytes = std::slice::from_raw_parts(base.add(start), end - start);
     std::str::from_utf8(bytes).map_err(|_| StrError::NotUtf8)
 }
 
 /// The string a single block holds; `None` for NULL.
+///
+/// # Safety
+/// A non-NULL `p` points to as many words as its word 0 says, which outlive
+/// `'a`; every other bound is checked.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) unsafe fn str_arg<'a>(
     p: StrArg,
@@ -76,16 +81,18 @@ pub(crate) unsafe fn str_arg<'a>(
     if p.is_null() {
         return Ok(None);
     }
-    let words = unsafe { block_words(p) }?;
-    let len = index(unsafe { word(p, 1) })?;
+    let words = block_words(p)?;
+    let len = index(word(p, 1))?;
     if len > (words - 2) * WORD {
         return Err(StrError::Truncated);
     }
-    let base = unsafe { p.add(2) } as *const u8;
-    unsafe { utf8(base, 0, len) }.map(Some)
+    utf8(p.add(2) as *const u8, 0, len).map(Some)
 }
 
 /// The strings a list block holds; empty for NULL.
+///
+/// # Safety
+/// As for `str_arg`.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) unsafe fn str_list_arg<'a>(
     p: StrListArg,
@@ -93,17 +100,15 @@ pub(crate) unsafe fn str_list_arg<'a>(
     if p.is_null() {
         return Ok(Vec::new());
     }
-    let words = unsafe { block_words(p) }?;
-    let count = index(unsafe { word(p, 1) })?;
+    let words = block_words(p)?;
+    let count = index(word(p, 1))?;
     let data = count
         .checked_add(3)
         .filter(|header| *header <= words)
         .ok_or(StrError::Truncated)?;
     let room = (words - data) * WORD;
     let offsets = (0..=count)
-        .map(|i| {
-            index(unsafe { word(p, 2 + i) }).map_err(|_| StrError::PastEnd)
-        })
+        .map(|i| index(word(p, 2 + i)).map_err(|_| StrError::PastEnd))
         .collect::<Result<Vec<usize>, StrError>>()?;
     if offsets[0] != 0 {
         return Err(StrError::FirstOffset);
@@ -114,10 +119,10 @@ pub(crate) unsafe fn str_list_arg<'a>(
     if offsets[count] > room {
         return Err(StrError::PastEnd);
     }
-    let base = unsafe { p.add(data) } as *const u8;
+    let base = p.add(data) as *const u8;
     offsets
         .windows(2)
-        .map(|pair| unsafe { utf8(base, pair[0], pair[1]) })
+        .map(|pair| utf8(base, pair[0], pair[1]))
         .collect()
 }
 

@@ -13,10 +13,9 @@ pub extern "C" fn expr_meta_output_name_v2(e: *const Expr) -> StrOut {
 
 #[no_mangle]
 pub extern "C" fn expr_meta_root_names(e: *const Expr) -> StrListOut {
-    match unsafe { e.as_ref() } {
-        Some(expr) => str_list_out(expr.clone().meta().root_names()),
-        None => ptr::null_mut(),
-    }
+    unsafe { e.as_ref() }.map_or(ptr::null_mut(), |expr| {
+        str_list_out(expr.clone().meta().root_names())
+    })
 }
 
 #[no_mangle]

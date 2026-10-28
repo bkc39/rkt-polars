@@ -2,7 +2,8 @@
 
 (module+ test
   (require rackunit
-           (only-in ffi/unsafe _fun _int64 _pointer _string/utf-8 _void cast function-ptr ptr-add)
+           (only-in ffi/unsafe
+                    _fun _int64 _pointer _string/utf-8 _void cast function-ptr make-ctype ptr-add)
            (only-in gregor
                     ->datetime/local ->posix ->tzid ->utc-offset date datetime iso8601->time
                     moment posix->datetime)
@@ -10,7 +11,8 @@
            (only-in racket/match == match match-define)
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
            (only-in polars/private/foreign
-                    ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS?
+                    ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS? _Series-ptr
+                    define-compat
                     copy-zoned-datetimes dataframe-column dataframe-column-name
                     dataframe-column-names dataframe-drop-columns dataframe-drop-count
                     dataframe-drop-nulls dataframe-empty dataframe-filter
@@ -49,7 +51,7 @@
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
            (only-in (submod polars/private/foreign internal)
-                    dataframe-drop dataframe-head dataframe-hstack dataframe-join
+                    block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-join
                     dataframe-join-asof dataframe-slice dataframe-sort dataframe-tail
                     dataframe-vstack series-add-i32 series-add-i64 series-add-u32 series-add-u64
                     series-div-i32 series-div-i64 series-div-u32 series-div-u64 series-drop
@@ -60,6 +62,7 @@
                     series-sub-i32 series-sub-i64 series-sub-u32 series-sub-u64 series-tail
                     series-var)
            (only-in polars/private/resource with-raw-buffer)
+           (only-in (submod polars/private/resource internal) str-block->string)
            (only-in racket/string string-join)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: polars/private/foreign)
@@ -1396,6 +1399,16 @@
   (check-equal? (block-releases (lambda () (expr-meta-root-names (col 'float64)))) '(() 1))
   (check-equal? (block-releases (lambda () (series-time-zone (series-new-i32 "x" '(1))))) '(#f 0))
   (check-equal? (block-releases (lambda () (dataframe-column-names (dataframe-empty)))) '(() 1))
+  (define (read-killed block)
+    (kill-thread (current-thread))
+    (str-block->string block))
+  (define _killed-name (make-ctype _pointer #f (block-reader read-killed)))
+  (define-compat series-name/killed
+    (_fun _Series-ptr -> _killed-name)
+    #:c-id series_name_v2)
+  (define (name-in-killed-thread)
+    (thread-wait (thread (lambda () (series-name/killed (series-new-i32 "x" '(1)))))))
+  (check-equal? (block-releases name-in-killed-thread) (list (void) 1))
 
   (define c-strings '())
   (define c-string-pointer

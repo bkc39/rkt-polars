@@ -21,7 +21,7 @@
            (only-in (submod polars/private/generic/core internal) dataframe)
            (only-in polars/private/generic/printing series->string)
            (only-in polars/tests/generic/test-fixtures nul-frame nul-names)
-           (only-in polars/tests/test-helpers settle!))
+           (only-in polars/tests/test-helpers settle! with-environment-variable))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -317,15 +317,9 @@
     (check-regexp-match expected result (format "~s gave ~s" form result)))
 
   (define (shown-unwrapped nul n)
-    (define table-width (getenv "POLARS_TABLE_WIDTH"))
-    (dynamic-wind
-     (lambda () (putenv "POLARS_TABLE_WIDTH" "200"))
-     (lambda ()
-       (list (format "~a" nul) (dataframe->string nul)
-             (format "~a" (dataframe (list (series (list n) #:name "v"))))))
-     (lambda ()
-       (environment-variables-set! (current-environment-variables) #"POLARS_TABLE_WIDTH"
-                                   (and table-width (string->bytes/utf-8 table-width))))))
+    (with-environment-variable #"POLARS_TABLE_WIDTH" #"200"
+      (list (format "~a" nul) (dataframe->string nul)
+            (format "~a" (dataframe (list (series (list n) #:name "v")))))))
   (for ([n (in-list nul-names)])
     (define nul (nul-frame n))
     (check-equal? (column-names nul) (list "id" n))

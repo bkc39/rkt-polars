@@ -32,8 +32,8 @@
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
-                     define-frame-op/reason define-reasoned block-reader c-string-encoder
-                     result-only
+                     define-frame-op/reason define-reasoned block-reader c-string-argument
+                     c-string/null-argument result-only
                      series-std series-var series-new-null
                      series-head series-tail series-slice
                      dataframe-head dataframe-tail dataframe-slice
@@ -93,8 +93,11 @@
 (define ((result-only who) v)
   (raise-argument-error who "a result, never an argument" v))
 
+;; Atomic, so a thread killed in the conversion, which skips with-release's
+;; post thunk, is killed only after the drop.
 (define ((block-reader read) p)
-  (with-release ([block p str-block-drop]) (and block (read block))))
+  (call-as-atomic
+   (lambda () (with-release ([block p str-block-drop]) (and block (read block))))))
 
 (define _rsstr
   (make-ctype _pointer (result-only '_rsstr) (block-reader str-block->string)))
@@ -108,15 +111,17 @@
               (lambda (p)
                 (with-release ([c p string-drop]) (and c (cast c _pointer _string/utf-8))))))
 
-(define ((c-string-encoder nullable?) v)
-  (cond
-    [(and nullable? (not v)) #f]
-    [(and (string? v) (not (regexp-match? #rx"\0" v))) v]
-    [else (raise-argument-error '_c-string "a string without a NUL" v)]))
+(define (c-string-argument v)
+  (match v
+    [(and (? string?) (not (? string-has-nul?))) v]
+    [_ (raise-argument-error '_c-string "a string without a NUL" v)]))
 
-(define _c-string (make-ctype _string/utf-8 (c-string-encoder #f) #f))
+(define (c-string/null-argument v)
+  (and v (c-string-argument v)))
 
-(define _c-string/null (make-ctype _string/utf-8 (c-string-encoder #t) #f))
+(define _c-string (make-ctype _string/utf-8 c-string-argument #f))
+
+(define _c-string/null (make-ctype _string/utf-8 c-string/null-argument #f))
 
 (define-compat last-error-message
   (_fun -> _rsstr)
@@ -1787,7 +1792,7 @@
   (newline out))
 
 (module+ internal
-  (provide dataframe-drop dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
+  (provide block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
            dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-slice
            dataframe-sort dataframe-sort/who dataframe-tail dataframe-vstack
            dataframe-vstack/who series-add-i32 series-add-i64 series-add-u32 series-add-u64

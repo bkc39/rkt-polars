@@ -92,22 +92,17 @@ pub extern "C" fn dataframe_column_name_v2(
     df_ptr: *const DataFrame,
     index: usize,
 ) -> StrOut {
-    match unsafe { df_ptr.as_ref() }
-        .and_then(|df| df.get_column_names().get(index).map(|n| str_out(n)))
-    {
-        Some(name) => name,
-        None => ptr::null_mut(),
-    }
+    unsafe { df_ptr.as_ref() }
+        .and_then(|df| df.get_column_names().get(index).copied())
+        .map_or(ptr::null_mut(), |name| str_out(name))
 }
 
 #[no_mangle]
 pub extern "C" fn dataframe_column_names(
     df_ptr: *const DataFrame,
 ) -> StrListOut {
-    match unsafe { df_ptr.as_ref() } {
-        Some(df) => str_list_out(df.get_column_names()),
-        None => ptr::null_mut(),
-    }
+    unsafe { df_ptr.as_ref() }
+        .map_or(ptr::null_mut(), |df| str_list_out(df.get_column_names()))
 }
 
 #[no_mangle]

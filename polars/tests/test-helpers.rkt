@@ -10,14 +10,15 @@
                   delete-directory/files display-to-file file->bytes make-temporary-directory)
          (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
+         (only-in racket/port with-output-to-string)
          (only-in racket/runtime-path define-runtime-path)
          (only-in racket/string string-contains? string-prefix?)
          syntax/parse/define)
 
 (provide apply-keywords contains-all? contract-violation-of drops-during
-         drops-once gzip-file keyword-rejected? message-of not-utf-8-expected not-utf-8-names
-         polars-dir polars-sources read-source refusal refusal-misses refused scratch-file settle!
-         staging-files with-planted-sources)
+         drops-once gzip-file keyword-rejected? message-of module-text not-utf-8-expected
+         not-utf-8-names polars-dir polars-sources read-source refusal refusal-misses refused
+         scratch-file settle! staging-files with-environment-variable with-planted-sources)
 
 (define-runtime-path polars-dir "..")
 
@@ -43,6 +44,24 @@
        (display-to-file (cdr file) (build-path root (car file))))
      (proc root))
    (lambda () (delete-directory/files root))))
+
+(define (call-with-environment-variable name value thunk)
+  (define env (current-environment-variables))
+  (define before (environment-variables-ref env name))
+  (dynamic-wind (lambda () (environment-variables-set! env name value))
+                thunk
+                (lambda () (environment-variables-set! env name before))))
+
+(define-syntax-parser with-environment-variable
+  [(_ name:expr value:expr body:expr ...+)
+   (syntax/loc this-syntax
+     (call-with-environment-variable name value (lambda () body ...)))])
+
+(define (module-text . forms)
+  (with-output-to-string
+    (lambda ()
+      (displayln "#lang racket/base")
+      (for-each writeln forms))))
 
 (define-syntax-parser with-planted-sources
   [(_ (root:id [path:expr text:expr] ...) body:expr ...+)
