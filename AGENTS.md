@@ -184,14 +184,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain_v2`,
   `dataframe_to_string_v2`, `expr_to_string_v2`, `series_cast`,
-  `dataframe_pivot`, `dataframe_unpivot`,
-  `dataframe_sort_with_options`, `series_sort_with_options`,
+  `dataframe_pivot_v2`, `dataframe_unpivot_v2`,
+  `dataframe_sort_with_options_v2`, `series_sort_with_options`,
   `series_new_str_packed`, the series-by-series operators (`series_add`,
   `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
   `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
   `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
-  `dataframe_hstack`, `dataframe_join`, `dataframe_join_asof`,
-  `dataframe_join_asof_options`, the three Enum entry points (`series_cast_enum`,
+  `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
+  `dataframe_join_asof_options_v2`, every other entry point that takes a
+  `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,
+  `dataframe_drop_columns_v2`, `dataframe_rename_v2`, `dataframe_column_v2`,
+  the five `dataframe_group_by_*_v2`, `lazyframe_sort_with_options_v2`,
+  `lazyframe_join_v2`, `expr_col_v2`, `expr_lit_str_v2`, `expr_alias_v2`,
+  `expr_exclude_v2`), the three Enum entry points (`series_cast_enum`,
   `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
@@ -282,45 +287,51 @@ it. Racket side: `define-compat` with `#:c-id`.
   passes one UTF-8 byte string, row offsets in a `with-raw-buffer` and a
   validity byte string to `series_new_str_packed`, which checks every offset
   against the buffer and a character boundary. The byte strings may move, so
-  the binding is never `#:blocking?`. A list of names (`by`, `on`,
-  `categories`, ...) is a `_string-list` argument (`resource.rkt`): the
-  `const char **` table and every NUL-terminated string share one
-  `'atomic-interior` block, which the collector never moves. Its elements are
-  what `_string` took: a string (as UTF-8), a byte string, or a path. A
-  name a verb passes to a `_string-list` has the contract `utf-8-name/c`
-  (`resource.rkt`): the same, but not a byte string or path that is not
-  UTF-8 (#248).
-  `_string-list` is a `_fun` argument syntax, not a ctype, because a callout
-  retains the values it is given and not what a ctype converts them to: as a
-  ctype the block could be freed by a collection during a `#:blocking?` call
-  or a callback. `series-ref` reads a String value by length, through
-  `series_copy_str`, since a C string ends at a NUL the value may hold.
-  Categorical and Enum values are still read as C strings, and Enum categories
-  cross as one, so `series` refuses a NUL in a categorical or Enum value, and
-  `series`, `cast`, `col`, `series-cast`, `expr-cast` and `expr-dtype-col`
-  refuse one in an Enum category (`check-enum-categories`); `define-enum`
-  refuses it at compile time. Names, single string arguments and categoricals
-  cast from a String series still stop at a NUL (#165). A test in
-  `polars/tests/resource.rkt` reads every module under `polars/private` and
-  `polars/tests` as data and fails on a pointer-holding ctype (`_string`,
-  `_bytes`, `_path`, `_file`, `_symbol`, `_gcpointer`, `_racket`, their `/`
-  and `*` variants, or a name `define`d as one, directly or through
-  `make-ctype`) as the element of a `_list` / `_vector` / `_ptr` in mode `i`
-  or `io`, of an `_array`, `_array/list`, `_array/vector`, `_box` or
-  `_list-struct`, as a `define-cstruct` field, or in
-  `define-series-constructors`. The same file's audit fails on a
-  `define-compat` in `polars/private` whose result is `_string`,
+  the binding is never `#:blocking?`. A name, a list of names (`by`, `on`,
+  `#:columns` of `dataframe-select`, ...) and a string literal (`lit`,
+  `series-eq-str`) cross as an argument block in the result blocks' layout:
+  `_str`, `_str/null` and `_str-list` (`resource.rkt`), whose
+  `'atomic-interior` block holds no address, so a NUL in a name survives
+  every lookup (`ref`, `col`, `select`, `drop`, `sort`, `join`, `pivot`, ...)
+  and a name read back finds its own column, never one named by its prefix
+  (#165). Each element is `utf-8-name/c` (`resource.rkt`): a string (as
+  UTF-8), or a byte string or path that is UTF-8 (#248), refused under the
+  syntax's name before any call; `_str-list` passes NULL for `'()`. Rust's
+  `str_arg` / `str_list_arg` check every bound against the block's size, the
+  offsets' order and every element's UTF-8, and the v2 entry points that take
+  them record the cause and fail, so a malformed block is an error, never a
+  read past the block. The born-guarded ones and their reasons share
+  `boxed_result` / `scalar_result` (`rust/src/ffi/results.rs`); a builder or
+  accessor that runs no polars code on caller data uses `boxed_unguarded`.
+  The `series-new-*` constructors keep their C symbols: each is called with
+  the constant empty name and the wrapper renames the fresh series with
+  `series_rename_v2`. These are `_fun` argument syntaxes, not ctypes, because
+  a callout retains the values it is given and not what a ctype converts them
+  to: as a ctype the block could be freed by a collection during a
+  `#:blocking?` call or a callback. `_string-list`, a `const char **` table
+  and its NUL-terminated strings in one block, is left only where Enum
+  categories and the IO readers' keywords still cross as C strings; a test in
+  `polars/tests/resource.rkt` names those seven bindings and fails on any
+  other `define-compat` or `define-syntax-parse-rule` that uses it.
+  `series-ref` reads a String value by length, through `series_copy_str`,
+  since a C string ends at a NUL the value may hold. Categorical and Enum
+  values are still read as C strings, and Enum categories cross as one, so
+  `series` refuses a NUL in a categorical or Enum value, and `series`, `cast`,
+  `col`, `series-cast`, `expr-cast` and `expr-dtype-col` refuse one in an Enum
+  category (`check-enum-categories`); `define-enum` refuses it at compile
+  time. Formats, zones and categoricals cast from a String series still stop
+  at a NUL (#165). A test in `polars/tests/resource.rkt` reads every module
+  under `polars/private` and `polars/tests` as data and fails on a
+  pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`, `_symbol`,
+  `_gcpointer`, `_racket`, their `/` and `*` variants, or a name `define`d as
+  one, directly or through `make-ctype`) as the element of a `_list` /
+  `_vector` / `_ptr` in mode `i` or `io`, of an `_array`, `_array/list`,
+  `_array/vector`, `_box` or `_list-struct`, as a `define-cstruct` field, or
+  in `define-series-constructors`. A C string still crossing is `_c-string` /
+  `_c-string/null` (`foreign.rkt`), which refuse a NUL. The same test fails
+  on a `define-compat` in `polars/private` whose result is `_string`,
   `_string/utf-8` or `_string*/utf-8`, and on a `_fun` or a
-  `define-series-constructors` there naming `_rsstring`. `resource.rkt` also
-  defines `_str`, `_str/null` and `_str-list`, fun syntaxes in
-  `_string-list`'s shape that write one block in the result blocks' layout,
-  holding no address. Each element must be `utf-8-name/c`; any other is
-  refused under the syntax's name before the call. In Rust, `str_arg` and
-  `str_list_arg` read such a block: they check every bound against the
-  block's size and every element's UTF-8, and return the cause of a refusal.
-  `foreign.rkt` defines `_c-string` and `_c-string/null`, C-string arguments
-  that refuse a NUL. No binding uses these five or the two readers yet
-  (#165).
+  `define-series-constructors` there naming `_rsstring`.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -595,9 +606,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   into the per-row set only after its evaluation in `polars-expr` has been
   checked.
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
-- Column names, failure reasons and the text of a frame, an expression or a
-  plan come back from Rust with any NUL they hold. Printed, the NUL shows
-  raw, as in Python's `str(df)` (#165).
+- A column name, a frame's, an expression's or a plan's text and a failure
+  reason come back from Rust with any NUL they hold, and print it raw, as
+  Python's `str(df)` does (#165). A name or a string literal given to a verb
+  keeps its NUL too, as in Python: `series #:name`, `rename`, `ref`,
+  `col`, `alias`, `exclude`, `lit` and every verb that names a column, so a
+  frame may hold both `"a"` and `"a\u0000b"` and each finds its own.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix

@@ -1541,6 +1541,7 @@ stations
   are equivalent. @racket[alias] names a result, matching Polars' @tt{.alias}:
   @racket[(alias (sum (col "value")) "total")]. @racket[std] and @racket[var]
   take a @racket[#:ddof] degrees-of-freedom adjustment, defaulting to 1.
+  An @racket[alias] name may hold any character, a NUL included, as in Python.
   On a series, @racket[n-unique], @racket[std] and @racket[var] reduce at
   once, as in Python Polars, with every null one unique value. The
   @racket[std] and @racket[var] of fewer than @racket[(+ ddof 1)] values
@@ -1551,7 +1552,8 @@ stations
 (list (std nothing) (var nothing) (n-unique nothing))
 (list (std (series '(5))) (std (series '(#t #f))) (n-unique (series (list 1 polars-null))))
 (eval:error (var (series '("a" "b"))))
-(~> (dataframe (list nothing)) (select (count "n")))]}
+(~> (dataframe (list nothing)) (select (count "n")))
+(~> (dataframe (list (series '(1) #:name "a"))) (select (alias (col "a") "a\u0000b")) column-names)]}
 
 @deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
               @defproc[(last  [x (or/c string? pair? any/c)]) any/c])]{
@@ -1826,9 +1828,11 @@ an implementation detail and not part of the public series API.)
   datetime or duration column is microseconds, or nanoseconds when a value
   carries a sub-microsecond part and a nanosecond column holds every value,
   and moments make a zoned datetime column (@secref["ref-temporal-values"]).
+  A name may hold any character, a NUL included, as in Python.
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
+(column-names (dataframe (list (series '(1) #:name "a") (series '(2) #:name "a\u0000b"))))
 (series '())
 (series (list polars-null polars-null))
 (series '() #:name "empty" #:dtype 'f64)
