@@ -17,7 +17,8 @@
 (provide (except-out (all-defined-out) dataframe series)
          (contract-out
           [dataframe (-> (listof Series-ptr?) dataframe?)]
-          [series (->* ((or/c list? vector?)) (#:name utf-8-name/c #:dtype any/c) series?)]))
+          [series (->* ((or/c list? vector?)) (#:name utf-8-name/c #:dtype datetime-zone/c)
+                       series?)]))
 
 (define unset (gensym 'unset))
 

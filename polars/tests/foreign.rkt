@@ -643,7 +643,7 @@
   (check-exn (regexp (string-append "^series-cast: cannot convert to '\\(datetime microseconds"
                                     " \"Mars/Base\"\\): unable to parse time zone: 'Mars/Base'"))
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
-  (check-exn #rx"unsupported cast target '\\(datetime microseconds \"\"\\)"
+  (check-exn #rx"^series-cast: contract violation\n  expected: time-zone-name/c\n  given: \"\"\n"
              (lambda () (series-cast stamps '(datetime microseconds ""))))
   (check-exn #rx"^->compat-dtype: unsupported cast target '\\(datetime microseconds \"UTC\"\\)"
              (lambda () (->compat-dtype '(datetime microseconds "UTC"))))
@@ -1502,7 +1502,7 @@
           (dataframe-sort (list n))))
     (check-equal? (dataframe-column-names summed) (list n "a_sum"))
     (check-equal? (series-ref (dataframe-column summed "a_sum") 0) 4))
-  (for ([row (in-list nul-expected)] #:when (memq (car row) '(eq ne)))
+  (for ([row (in-list (nul-expected 'values))] #:when (memq (car row) '(eq ne)))
     (match row
       [(list 'eq xs v expected)
        (check-equal? (~> (series-new-str "s" xs) (series-eq-str v) series->list) expected)]

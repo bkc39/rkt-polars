@@ -415,10 +415,10 @@ fn an_offset_parses_to_utc() {
         Some(utc_us(2021, 3, 27, 23, 0)),
         Some(utc_us(2021, 3, 28, 22, 0)),
     ];
-    let format = cstr("%Y-%m-%dT%H:%M:%S%z");
+    let format = str_block("%Y-%m-%dT%H:%M:%S%z");
     let s = column("s");
     let parsed =
-        take_expr(expr_str_to_datetime(s, format.as_ptr(), 1, US, 1, 1, 1));
+        take_expr(expr_str_to_datetime_v2(s, format.as_ptr(), US, 1, 1, 1));
     let out = evaluate(vec![data.clone()], parsed).unwrap();
     assert_eq!(
         out.dtype(),
@@ -427,18 +427,17 @@ fn an_offset_parses_to_utc() {
     assert_eq!(physical(&out), instants);
 
     let inferred =
-        take_expr(expr_str_to_datetime(s, ptr::null(), 0, US, 1, 1, 1));
+        take_expr(expr_str_to_datetime_v2(s, ptr::null(), US, 1, 1, 1));
     let err = evaluate(vec![data.clone()], inferred)
         .unwrap_err()
         .to_string();
     assert!(err.contains("a time zone is part of the data"), "{err}");
 
     let (tokyo, raise) = (cstr("Asia/Tokyo"), cstr("raise"));
-    for (format, has_format) in [(format.as_ptr(), 1), (ptr::null(), 0)] {
-        let parsed = take_expr(expr_str_to_datetime_tz(
+    for format in [format.as_ptr(), ptr::null()] {
+        let parsed = take_expr(expr_str_to_datetime_tz_v2(
             s,
             format,
-            has_format,
             US,
             tokyo.as_ptr(),
             raise.as_ptr(),
@@ -467,10 +466,9 @@ fn a_naive_string_parses_into_a_zone() {
     let brussels = cstr("Europe/Brussels");
     let parse = |ambiguous: &str, strict: u8| {
         let a = cstr(ambiguous);
-        let e = expr_str_to_datetime_tz(
+        let e = expr_str_to_datetime_tz_v2(
             s,
             ptr::null(),
-            0,
             US,
             brussels.as_ptr(),
             a.as_ptr(),
@@ -498,10 +496,9 @@ fn a_naive_string_parses_into_a_zone() {
 
     let (unknown, bogus, raise) =
         (cstr("Mars/Base"), cstr("bogus"), cstr("raise"));
-    assert!(expr_str_to_datetime_tz(
+    assert!(expr_str_to_datetime_tz_v2(
         s,
         ptr::null(),
-        0,
         US,
         unknown.as_ptr(),
         raise.as_ptr(),
@@ -511,10 +508,9 @@ fn a_naive_string_parses_into_a_zone() {
     )
     .is_null());
     assert!(recorded_error().unwrap().contains("'Mars/Base'"));
-    assert!(expr_str_to_datetime_tz(
+    assert!(expr_str_to_datetime_tz_v2(
         s,
         ptr::null(),
-        0,
         US,
         brussels.as_ptr(),
         bogus.as_ptr(),

@@ -8,13 +8,14 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-named-contract
-                  listof non-empty-listof or/c rename-contract)
+                  [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-contract-predicate
+                  flat-named-contract listof non-empty-listof not/c or/c rename-contract)
+         (only-in racket/contract flat-contract-with-explanation raise-blame-error)
          (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
          (only-in racket/list check-duplicates)
-         (only-in racket/string string-replace)
+         (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
@@ -33,7 +34,7 @@
                      series-strings
                      strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
-                     series-date-ref series-index/c series-ref-bytes
+                     series-cast series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
@@ -71,7 +72,8 @@
           [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-new-null (->/c utf-8-name/c size/c Series-ptr?)]
-          [series-ref-str series-index/c]))
+          [series-ref-str series-index/c]
+          [series-cast (->/c any/c datetime-zone/c Series-ptr?)]))
 
 (define-syntax-parse-rule (provide-series-constructors [from-list:id from-vector:id] ...)
   (provide (contract-out [from-list (->/c utf-8-name/c list? Series-ptr?)] ...
@@ -324,6 +326,20 @@
   (match v
     [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
     [_ #f]))
+
+(define time-zone-name/c
+  (flat-named-contract 'time-zone-name/c (and/c non-empty-string? (not/c #rx"\0"))))
+
+(define datetime-zone/c
+  (flat-contract-with-explanation
+   (lambda (v)
+     (match v
+       [(list 'datetime _ (and (? string?) (not (? (flat-contract-predicate time-zone-name/c)))
+                               zone))
+        (lambda (blame)
+          (raise-blame-error blame zone '(expected: "time-zone-name/c" given: "~e") zone))]
+       [_ #t]))
+   #:name 'datetime-zone/c))
 
 (define (zoned-datetime-dtype? v)
   (match v
@@ -1262,7 +1278,7 @@
                       "cannot convert to ~v" dtype))
 
 (define-compat series-cast-datetime-tz/raw
-  (_fun _Series-ptr _int32 _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _int32 _c-string -> _Series-ptr/null)
   #:c-id series_cast_datetime_tz
   #:wrap (allocator series-drop))
 
@@ -1284,7 +1300,7 @@
   (series-cast-to 'series-cast s dtype))
 
 (define-compat series-dt-convert-time-zone/raw
-  (_fun _Series-ptr _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _c-string -> _Series-ptr/null)
   #:c-id series_dt_convert_time_zone
   #:wrap (allocator series-drop))
 
@@ -1294,7 +1310,7 @@
                       "cannot convert to the time zone ~s" zone))
 
 (define-compat series-dt-replace-time-zone/raw
-  (_fun _Series-ptr _string/utf-8 _string/utf-8 _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _c-string/null _c-string _c-string -> _Series-ptr/null)
   #:c-id series_dt_replace_time_zone
   #:wrap (allocator series-drop))
 

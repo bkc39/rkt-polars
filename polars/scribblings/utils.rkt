@@ -44,9 +44,8 @@
 (require (for-label polars
                     ffi/vector
                     (only-in racket/contract/base
-                             -> and/c any/c cons/c hash/c integer-in listof non-empty-listof
-                             or/c)
-                    (only-in racket/string non-empty-string?)
+                             -> and/c any/c cons/c flat-contract? hash/c integer-in listof
+                             non-empty-listof or/c)
                     (only-in threading ~> ~>>)
                     (except-in racket/base
                                min max sort filter reverse and or not when
@@ -54,8 +53,7 @@
 
 (provide (all-from-out scribble/manual)
          (all-from-out scribble/example)
-         (for-label (all-from-out polars ffi/vector racket/contract/base racket/string threading
-                                  racket/base))
+         (for-label (all-from-out polars ffi/vector racket/contract/base threading racket/base))
          make-polars-eval
          see-reference
          exnraise

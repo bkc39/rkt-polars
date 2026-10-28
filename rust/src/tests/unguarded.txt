@@ -43,7 +43,7 @@ expr_dt_ordinal_day builder
 expr_dt_quarter builder
 expr_dt_replace_time_zone builder
 expr_dt_second builder
-expr_dt_strftime builder
+expr_dt_strftime_v2 builder
 expr_dt_time builder
 expr_dt_timestamp builder
 expr_dt_truncate builder
@@ -100,11 +100,11 @@ expr_str_strip_chars_whitespace builder
 expr_str_strip_prefix builder
 expr_str_strip_suffix builder
 expr_str_tail builder
-expr_str_to_date builder
-expr_str_to_datetime builder
-expr_str_to_datetime_tz builder
+expr_str_to_date_v2 builder
+expr_str_to_datetime_tz_v2 builder
+expr_str_to_datetime_v2 builder
 expr_str_to_lowercase builder
-expr_str_to_time builder
+expr_str_to_time_v2 builder
 expr_str_to_uppercase builder
 expr_tail builder
 expr_when_then builder

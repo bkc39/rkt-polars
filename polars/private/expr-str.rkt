@@ -7,7 +7,9 @@
          (only-in polars/private/c-integer size/c)
          (only-in racket/contract/base ->* any/c contract-out)
          polars/private/expr-core
-         (only-in polars/private/foreign call/foreign-error polars-null))
+         (only-in polars/private/foreign
+                  _c-string call/foreign-error call/polars-reason polars-null)
+         (only-in polars/private/resource _str/null))
 
 (provide expr-str-contains expr-str-starts-with expr-str-ends-with
          expr-str-to-lowercase expr-str-to-uppercase
@@ -212,6 +214,8 @@
                  "unknown time unit ~v (expected 'nanoseconds, 'microseconds, or 'milliseconds)"
                  unit)]))
 
+(define (flag b) (if b 1 0))
+
 (define (check-strptime-options who format strict exact cache)
   (when (and format (not (string? format)))
     (error who "format must be a string or #f, got ~v" format))
@@ -223,8 +227,8 @@
     (error who "cache must be a boolean, got ~v" cache)))
 
 (define-compat expr-str->date/raw
-  (_fun _Expr-ptr _string _uint8 _uint8 _uint8 _uint8 -> _Expr-ptr)
-  #:c-id expr_str_to_date
+  (_fun _Expr-ptr _str/null _uint8 _uint8 _uint8 -> _Expr-ptr/null)
+  #:c-id expr_str_to_date_v2
   #:wrap (allocator expr-drop))
 
 (define (expr-str->date e
@@ -233,22 +237,18 @@
                         #:exact [exact #t]
                         #:cache [cache #t])
   (check-strptime-options 'expr-str->date format strict exact cache)
-  (expr-str->date/raw e
-                      (or format "")
-                      (if format 1 0)
-                      (if strict 1 0)
-                      (if exact 1 0)
-                      (if cache 1 0)))
+  (call/polars-reason 'expr-str->date
+                      (lambda ()
+                        (expr-str->date/raw e format (flag strict) (flag exact) (flag cache)))))
 
 (define-compat expr-str->datetime/raw
-  (_fun _Expr-ptr _string _uint8 _int32 _uint8 _uint8 _uint8 -> _Expr-ptr)
-  #:c-id expr_str_to_datetime
+  (_fun _Expr-ptr _str/null _int32 _uint8 _uint8 _uint8 -> _Expr-ptr/null)
+  #:c-id expr_str_to_datetime_v2
   #:wrap (allocator expr-drop))
 
 (define-compat expr-str->datetime-tz/raw
-  (_fun _Expr-ptr _string _uint8 _int32 _string/utf-8 _string/utf-8 _uint8 _uint8 _uint8
-        -> _Expr-ptr/null)
-  #:c-id expr_str_to_datetime_tz
+  (_fun _Expr-ptr _str/null _int32 _c-string _c-string _uint8 _uint8 _uint8 -> _Expr-ptr/null)
+  #:c-id expr_str_to_datetime_tz_v2
   #:wrap (allocator expr-drop))
 
 (define (expr-str->datetime e
@@ -262,20 +262,21 @@
 (define (parse-datetime who e format unit time-zone ambiguous strict exact cache)
   (check-strptime-options who format strict exact cache)
   (define code (time-unit-symbol->code who unit))
-  (define (flag b) (if b 1 0))
   (if time-zone
       (call/foreign-error who
                           (lambda ()
-                            (expr-str->datetime-tz/raw e (or format "") (flag format) code
+                            (expr-str->datetime-tz/raw e format code
                                                        time-zone (symbol->string ambiguous)
                                                        (flag strict) (flag exact) (flag cache)))
                           "cannot parse into the time zone ~s" time-zone)
-      (expr-str->datetime/raw e (or format "") (flag format) code
-                              (flag strict) (flag exact) (flag cache))))
+      (call/polars-reason who
+                          (lambda ()
+                            (expr-str->datetime/raw e format code
+                                                    (flag strict) (flag exact) (flag cache))))))
 
 (define-compat expr-str->time/raw
-  (_fun _Expr-ptr _string _uint8 _uint8 _uint8 _uint8 -> _Expr-ptr)
-  #:c-id expr_str_to_time
+  (_fun _Expr-ptr _str/null _uint8 _uint8 _uint8 -> _Expr-ptr/null)
+  #:c-id expr_str_to_time_v2
   #:wrap (allocator expr-drop))
 
 (define (expr-str->time e
@@ -284,9 +285,9 @@
                         #:exact [exact #t]
                         #:cache [cache #t])
   (check-strptime-options 'expr-str->time format strict exact cache)
-  (expr-str->time/raw e
-                      (or format "")
-                      (if format 1 0)
-                      (if strict 1 0)
-                      (if exact 1 0)
-                      (if cache 1 0)))
+  (call/polars-reason 'expr-str->time
+                      (lambda ()
+                        (expr-str->time/raw e format (flag strict) (flag exact) (flag cache)))))
+
+(module+ internal
+  (provide expr-str->datetime-tz/raw))
