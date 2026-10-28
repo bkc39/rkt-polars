@@ -764,8 +764,8 @@ by-quarter
 
   A @racket[csv-char/c] is one ASCII character other than newline or
   return; the integer contracts are @tech{integer ranges}. A
-  @racket[c-string/c] is a string without a NUL, and so is a
-  @racket[column-name/c].
+  @racket[column-name/c] is a string. A name, a marker or a comment prefix
+  may hold any character, a NUL included, as in Python.
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
   differ from it, and @racket[#:quote-char #f] turns quoting off. An
   @racket[eol-char/c] is any ASCII character; @racket[eol-char] ends a line
@@ -1217,8 +1217,8 @@ stations
   column the file lacks reads as nulls. @racket[schema-overrides] retypes
   columns of the file or of @racket[schema]; naming any other column is an
   error. A @racket[json-schema/c] is a list of @racket[(cons name dtype)]
-  pairs with distinct names, a name a string without a NUL
-  (@racket[column-name/c]) and a dtype any @racket[series]
+  pairs with distinct names, a name any string (@racket[column-name/c]),
+  a NUL included, and a dtype any @racket[series]
   @racket[#:dtype] spelling but an Enum. A string reads as the date,
   datetime or time the schema asks for, and as null where it does not
   parse.
