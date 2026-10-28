@@ -605,7 +605,12 @@
                    (list 2 (sub1 (expt 2 64)) 4))])
     (match-define (list offset length height) row)
     (check-equal? (lazy-height (lambda (lf) (lazyframe-slice lf offset length))) height
-                  (format "slice ~a ~a" offset length)))
+                  (format "slice ~a ~a" offset length))
+    (check-equal? (lazy-height
+                   (lambda (lf)
+                     (lazyframe-select lf (list (contracted:expr-slice (col "x") offset length)))))
+                  height
+                  (format "expr-slice ~a ~a" offset length)))
   (check-equal? (series-sum-i32 (dataframe-column mid "x")) 12) ;; 3+4+5
 
   ;; pipeline: filter then take first two — no intermediate collect.
@@ -1088,8 +1093,10 @@
           (refusal 'expr-shift int64/c (expt 2 63) (contracted:expr-shift v #:n (expt 2 63)))
           (refusal 'expr-diff int64/c (expt 2 63) (contracted:expr-diff v #:n (expt 2 63)))
           (refusal 'expr-diff null-behavior/c 'keep (contracted:expr-diff v #:null-behavior 'keep))
-          (refusal 'expr-slice int64/c (expt 2 63) (contracted:expr-slice v 0 (expt 2 63)))
-          (refusal 'expr-slice int64/c 1.5 (contracted:expr-slice v 0 1.5))
+          (refusal 'expr-slice size/c (expt 2 64) (contracted:expr-slice v 0 (expt 2 64)))
+          (refusal 'expr-slice size/c -1 (contracted:expr-slice v 0 -1))
+          (refusal 'expr-slice int64/c (expt 2 63) (contracted:expr-slice v (expt 2 63) 1))
+          (refusal 'expr-slice size/c 1.5 (contracted:expr-slice v 0 1.5))
           (refusal 'expr-str-extract size/c (expt 2 64)
                    (contracted:expr-str-extract v "(a)" #:group-index (expt 2 64)))
           (refusal 'expr-lit-i32 int32/c (expt 2 31) (contracted:expr-lit-i32 (expt 2 31)))

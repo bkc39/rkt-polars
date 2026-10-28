@@ -98,7 +98,7 @@
                           Expr-ptr?)]
           [expr-head (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
           [expr-tail (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
-          [expr-slice (->/c Expr-ptr? int64/c int64/c Expr-ptr?)]
+          [expr-slice (->/c Expr-ptr? int64/c size/c Expr-ptr?)]
           [expr-std (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [expr-var (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [lazyframe-explain (explain/c LazyFrame-ptr?)]
@@ -525,7 +525,8 @@
   (expr-tail/raw e (if n 1 0) (or n 0)))
 
 (define-compat expr-slice
-  (_fun _Expr-ptr _int64 _int64 -> _Expr-ptr)
+  (_fun _Expr-ptr _int64 _size -> _Expr-ptr)
+  #:c-id expr_slice_v2
   #:wrap (allocator expr-drop))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---

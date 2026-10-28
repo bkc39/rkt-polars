@@ -613,6 +613,7 @@ far-zoned
 (head nums 2)
 (tail nums 2)
 (slice nums -2 (expt 2 40))
+(~> nums (select (slice (col "v") (- (expt 2 63)) (sub1 (expt 2 64)))))
 (eval:error (head nums -1))]}
 
 @deftogether[(@defproc[(unique [x (or/c series? dataframe?)]) (or/c series? dataframe?)]

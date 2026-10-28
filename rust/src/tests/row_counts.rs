@@ -54,7 +54,7 @@ fn selected(build: impl FnOnce(*const Expr) -> *mut Expr) -> Vec<Option<i32>> {
 
 #[test]
 fn a_count_past_the_index_type_saturates() {
-    let cases: [(&str, fn(usize) -> Vec<Option<i32>>, usize); 6] = [
+    let cases: [(&str, fn(usize) -> Vec<Option<i32>>, usize); 7] = [
         (
             "lazyframe_head",
             |n| collected(|lf| lazyframe_head(lf, n)),
@@ -77,6 +77,11 @@ fn a_count_past_the_index_type_saturates() {
         ),
         ("expr_head", |n| selected(|x| expr_head(x, 1, n)), 0),
         ("expr_tail", |n| selected(|x| expr_tail(x, 1, n)), 0),
+        (
+            "expr_slice_v2 1",
+            |n| selected(|x| expr_slice_v2(x, 1, n)),
+            1,
+        ),
     ];
     for (name, rows, from) in cases {
         for n in COUNTS {
@@ -85,16 +90,28 @@ fn a_count_past_the_index_type_saturates() {
     }
 }
 
+const OFFSET_WINDOWS: [(i64, usize, usize, usize); 5] = [
+    (-(1 << 33), (1 << 33) + 2, 0, 5),
+    (-(1 << 33), (1 << 33) - 2, 0, 3),
+    (-(1 << 33), 1 << 32, 0, 0),
+    (i64::MIN, usize::MAX, 0, 5),
+    (i64::MIN, (1 << 63) - 4, 0, 1),
+];
+
+#[test]
+fn expr_slice_v2_keeps_the_window_of_any_offset_and_length() {
+    for (offset, length, from, to) in OFFSET_WINDOWS {
+        assert_eq!(
+            selected(|x| expr_slice_v2(x, offset, length)),
+            kept(from, to),
+            "{offset} {length}"
+        );
+    }
+}
+
 #[test]
 fn lazyframe_slice_keeps_the_window_of_an_offset_past_the_index_type() {
-    let cases: [(i64, usize, usize, usize); 5] = [
-        (-(1 << 33), (1 << 33) + 2, 0, 5),
-        (-(1 << 33), (1 << 33) - 2, 0, 3),
-        (-(1 << 33), 1 << 32, 0, 0),
-        (i64::MIN, usize::MAX, 0, 5),
-        (i64::MIN, (1 << 63) - 4, 0, 1),
-    ];
-    for (offset, length, from, to) in cases {
+    for (offset, length, from, to) in OFFSET_WINDOWS {
         assert_eq!(
             collected(|lf| lazyframe_slice(lf, offset, length)),
             kept(from, to),
