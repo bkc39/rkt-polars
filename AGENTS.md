@@ -93,9 +93,11 @@ and `define-math-unop` generate the two common unary shapes. A new name is
 added to **both** the module's `provide` and the list in `generic.rkt`, and it
 gets a `@defproc` with a live example in `polars/scribblings/reference.scrbl`,
 guide coverage and a numbered example in the same change (see
-Documentation). Tests go in the module's `(module+ test ...)`. Contracts go
-in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt` is
-the shape; the older modules predate it and still rely on `->col-expr`'s `error`.
+Documentation). Tests go in the module's file under `polars/tests/`, or its
+inline `test` submodule until #256 moves it (see Verification). Contracts go
+in the module's `contract-out`, never as `unless`+`error`: `generic/meta.rkt`
+is the shape; the older modules predate it and still rely on `->col-expr`'s
+`error`.
 
 ### Macros
 
@@ -788,12 +790,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:hidden` for setup. A broken example fails the build, on the package
   server too.
 - **Every guide or reference example is a test case.** The PR that adds or
-  changes an example adds a test in the module's `test` submodule asserting
-  the same result, or, for an `eval:error`, the failure and its `who:` (#152
-  will run the examples themselves under `raco test`). An `eval:error` shows
-  a failure that is the behaviour being documented, with a message that names
-  the function the reader called; an example that errors because of a gap,
-  or blames an internal binding, is a bug (#151).
+  changes an example adds a test in the module's file under `polars/tests/`
+  (or its inline `test` submodule until #256 moves it) asserting the same
+  result, or, for an `eval:error`, the failure and its `who:` (#152 will run
+  the examples themselves under `raco test`). An `eval:error` shows a failure
+  that is the behaviour being documented, with a message that names the
+  function the reader called; an example that errors because of a gap, or
+  blames an internal binding, is a bug (#151).
 - Every `@section` has an explicit `#:tag`. Guide chapters mirror the upstream
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
@@ -859,9 +862,24 @@ it. Racket side: `define-compat` with `#:c-id`.
   and replaces a differing one by a rename, never in place, so a racket in
   another shell that has the old one mapped keeps running (#265); the
   `install-native-libs` gate and flake check hold it there.
-- Racket tests live in `(module+ test ...)` submodules, which **merge per
-  file** — a definition name used in one test block collides with the same
-  name in another. Rust tests live in `rust/src/tests/`.
+- The library's module tests live in `polars/tests/`, in the file at the
+  module's path under `polars/private/` (`tests/generic/csv.rkt` tests
+  `private/generic/csv.rkt`; `tests/generic/csv-options.rkt`, which has no
+  counterpart, tests it too), or inline until #256 moves them. The guide's
+  `*-test.rkt`, `bench/` and `lint/` keep theirs. A test file is `#lang
+  racket/base` whose body is one `(module+ test ...)`, so `raco test -x` runs
+  it, with every require in one `require` at its head. That `require` takes
+  every project module through `only-in` or `prefix-in`, never bare:
+  `(prefix-in contracted: polars/private/<path>)` for the contracted exports,
+  `only-in` for the plain ones, and `(only-in (submod polars/private/<path>
+  internal) ...)` for a binding the module does not export or a test calls
+  uncontracted. The module's last form, `(module+ internal (provide ...))`,
+  provides those, only what a test uses; never `require/expose`. The
+  test-only helpers live there too: `test-helpers.rkt`, `gc-pressure.rkt` and
+  `generic/test-fixtures.rkt`, whose `test` submodule holds the reader
+  checks. A module's inline `test` blocks **merge**: a definition name used
+  in one block collides with the same name in another. Rust tests live in
+  `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).

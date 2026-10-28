@@ -17,7 +17,7 @@
            polars/private/generic/operators
            polars/private/generic/reductions
            polars/private/generic/reshape
-           polars/private/generic/test-fixtures)
+           polars/tests/generic/test-fixtures)
   (define total (~> (col "value") sum (over "group") (alias "group_total")))
   (check-pred Expr-ptr? total)
   (define df (with-columns ops-df total))

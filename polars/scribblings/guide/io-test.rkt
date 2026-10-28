@@ -13,7 +13,7 @@
                     nested-flow-blocks
                     paragraph-content
                     table-blockss)
-           (only-in polars/private/test-helpers scratch-file)
+           (only-in polars/tests/test-helpers scratch-file)
            "../utils.rkt")
 
   (define-runtime-path data-dir "../data")

@@ -1,7 +1,7 @@
 #lang racket/base
 
-;; No polars dependency, so a module below generic/core (csv.rkt, parquet.rkt)
-;; can use these without a module cycle.
+;; Requires no polars module: the test submodules of foreign.rkt, expr.rkt and
+;; generic/core.rkt require this one, which would otherwise be a module cycle.
 
 (require (for-syntax racket/base)
          (only-in file/gzip gzip-through-ports)

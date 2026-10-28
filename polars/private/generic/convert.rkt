@@ -60,7 +60,7 @@
            (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/combine vstack)
            (only-in polars/private/generic/reshape cast head lazy rename slice unique)
-           (only-in polars/private/generic/test-fixtures frame produce-parquet settle! withnull)
+           (only-in polars/tests/generic/test-fixtures frame produce-parquet settle! withnull)
            (only-in threading ~>))
 
   (random-seed 88)

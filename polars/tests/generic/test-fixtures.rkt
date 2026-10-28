@@ -1,13 +1,12 @@
 #lang racket/base
 
-;; Shared fixtures for the polars/private/generic/* test submodules.  Requires
-;; the wrapper core directly (not the aggregator) so a test submodule can depend
-;; on it without a module cycle; re-exports the handful of low-level names the
-;; tests reach for (col / Expr-ptr? / expr-add / polars-null? / datetime).
-
 (require racket/runtime-path
-         polars/private/generic/core
-         polars/private/test-helpers
+         (only-in polars/private/generic/core
+                  column-names dataframe dtype len ref series wrap-series)
+         (only-in polars/tests/test-helpers
+                  apply-keywords contains-all? contract-violation-of drops-during drops-once
+                  gzip-file keyword-rejected? message-of not-utf-8-expected not-utf-8-names
+                  refusal refusal-misses refused scratch-file settle! staging-files)
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign
                   dataframe-column polars-null polars-null? series-cast series-new-i32
@@ -16,7 +15,7 @@
          (only-in gregor datetime))
 
 (provide (all-defined-out)
-         (all-from-out polars/private/test-helpers)
+         (all-from-out polars/tests/test-helpers)
          col Expr-ptr? expr-add polars-null polars-null? datetime)
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
@@ -85,6 +84,7 @@
            (only-in racket/match match match* match-define)
            (only-in racket/port copy-port)
            (only-in racket/string string-join)
+           (only-in polars/private/generic/core shape)
            (only-in polars/private/io-contracts size-max))
 
   (provide call-in-child check-readers-agree check-reads-like-every check-staged-write

@@ -194,7 +194,7 @@
            (only-in polars/private/foreign
                     series-cast series-new-i32 series-new-i64 series-new-null series-new-str
                     series-slice polars-null)
-           (only-in polars/private/test-helpers settle!)
+           (only-in polars/tests/test-helpers settle!)
            (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
   (check-equal? (series->string (series-new-null "nothing" 3))

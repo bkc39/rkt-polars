@@ -243,7 +243,7 @@
            (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/foreign dataframe-sort)
            polars/private/generic/reductions
-           polars/private/generic/test-fixtures
+           polars/tests/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
 
   (define (sorted-by d key) (wrap-dataframe (dataframe-sort d (list key))))

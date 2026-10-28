@@ -47,7 +47,7 @@
            (only-in polars/private/bulk series->list)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/operators [= p=] p+)
-           (only-in polars/private/generic/test-fixtures series-shape))
+           (only-in polars/tests/generic/test-fixtures series-shape))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
                      (series (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:name "y"))))
@@ -141,7 +141,7 @@
                 (list '(1 1 1 4) (list 1 1 polars-null 4) '(1 4 4 4))))
 
 (module+ test
-  (require (only-in polars/private/test-helpers contract-violation-of)
+  (require (only-in polars/tests/test-helpers contract-violation-of)
            (prefix-in contracted: (submod "..")))
   (check-exn (contract-violation-of 'forward-fill)
              (lambda () (contracted:forward-fill "v" #:limit -1))))

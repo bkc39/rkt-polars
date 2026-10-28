@@ -316,7 +316,7 @@
   (check-true (regexp-match? #rx"shape: \\(3, 3\\)" (format "~a" frame))))
 
 (module+ test
-  (require (only-in polars/private/test-helpers settle!))
+  (require (only-in polars/tests/test-helpers settle!))
   (define (drops-while-raising thunk)
     (settle!)
     (define before (series-drop-count))
@@ -483,7 +483,7 @@
               (with-handlers ([exn:fail? exn-message]) (format "~a" (probe))))))
   (define-values (past-chrono-child child-out child-in child-err)
     (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "racket/file" "-l" "polars"
-                "-l" "polars/private/generic/test-fixtures"
+                "-l" "polars/tests/generic/test-fixtures"
                 "-e" (format "~s" past-chrono-program)))
   (close-output-port child-in)
   (define (drained port)

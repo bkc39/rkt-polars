@@ -161,7 +161,7 @@
            (only-in polars/private/generic/operators p+)
            (only-in polars/private/generic/strings str-to-uppercase)
            (only-in polars/private/generic/window over)
-           polars/private/generic/test-fixtures)
+           polars/tests/generic/test-fixtures)
 
   (define (frame-rows d)
     (define cols (for/list ([name (in-list (column-names d))])

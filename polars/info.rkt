@@ -24,4 +24,4 @@
 
 (define test-timeouts
   '(("private/generic/core.rkt" 600)
-    ("private/generic/csv-options.rkt" 900)))
+    ("tests/generic/csv-options.rkt" 900)))

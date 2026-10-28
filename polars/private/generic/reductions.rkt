@@ -139,7 +139,7 @@
            (only-in gregor/time time)
            (only-in gregor/period microseconds)
            (only-in polars/private/expr-core expr-drop-count)
-           polars/private/generic/test-fixtures
+           polars/tests/generic/test-fixtures
            (prefix-in contracted: (submod "..")))
   (define small (series '(1 2 3) #:dtype 'i8))
   (define flags (series '(#t #f #t)))
