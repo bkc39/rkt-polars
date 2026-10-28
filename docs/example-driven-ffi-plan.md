@@ -389,8 +389,8 @@ Expr cumulative is shipped:
 
 Expr sort/select is shipped:
 - `expr-reverse` (`expr_unop!`), `expr-filter` / `expr-gather` (`expr_binop!`;
-  `expr-gather` reuses `->membership-expr` so an int list becomes an i64
-  index Series)
+  `expr-gather` lifts an int list to an i64 index Series with its own
+  `->index-expr`)
 - `expr-sort-by` (`expr_sort_by`: parallel `by` Expr array + `descending`
   u8 array; uses `SortMultipleOptions::default().with_order_descending_multi`)
 - `expr-rank` (`expr_rank(e, method: u8, descending: u8, has_seed: u8,

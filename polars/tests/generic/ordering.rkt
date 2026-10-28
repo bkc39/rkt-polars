@@ -23,11 +23,11 @@
                     agg cast collect filter group-by head lazy select with-columns)
            (only-in polars/private/generic/strings str-to-uppercase)
            (only-in polars/private/generic/window over)
-           (only-in polars/private/generic/ordering gather)
            (prefix-in contracted: polars/private/generic/ordering)
            (only-in (submod polars/private/generic/ordering internal) rank sort sort-by)
            (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col column datetime ops-df polars-null polars-null? series-cells v64))
+                    Expr-ptr? col column datetime ops-df polars-null polars-null? series-cells
+                    series-shape v64))
   (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
                               (series '("b" "a" "b" "a" "b") #:name "g"))))
   ;; rank is length-preserving -> with-columns
@@ -39,9 +39,30 @@
   (define sorted (select df (alias (sort-by "x" #:by "x") "xs")))
   (check-equal? (for/list ([i (in-range 5)]) (ref (ref sorted #:columns "xs") i))
                 '(10 20 30 40 50))
-  (define gathered (select df (alias (gather "x" '(0 2 4)) "xg")))
+  (define gathered (select df (alias (contracted:gather "x" '(0 2 4)) "xg")))
   (check-equal? (for/list ([i (in-range 3)]) (ref (ref gathered #:columns "xg") i))
                 '(30 50 40))
+  (for ([indices (list (list 1 2.5) (list (expt 2 70)) (list -1 (expt 2 63)) (list (expt 2 63)))])
+    (check-exn (regexp (string-append
+                        "^gather: contract violation\n"
+                        "  expected: [(]or/c Expr-ptr[?] series[?]"
+                        " [(]listof [(]or/c [(]integer-in -9223372036854775808 9223372036854775807[)]"
+                        " polars-null[?][)][)][)]\n"))
+               (lambda () (contracted:gather "x" indices))
+               (format "~a" indices)))
+  (let ()
+    (define (gathered indices)
+      (~> df (select (contracted:gather "x" indices)) (ref #:columns "x") series-shape))
+    (check-equal? (gathered (list 0 polars-null)) (list 'int64 (list 30 polars-null)))
+    (check-equal? (gathered (list polars-null)) (list 'int64 (list polars-null)))
+    (check-equal? (gathered '()) '(int64 ())))
+  (let ([scores (dataframe (list (series '("a" "b" "c" "d") #:name "name")
+                                 (series '(30 10 30 20) #:name "score")))])
+    (check-equal? (~> scores (select (contracted:gather "name" '(3 0))) (column "name"))
+                  '("d" "a"))
+    (check-equal? (~> scores (select (contracted:gather "score" (list 0 polars-null)))
+                      (column "score"))
+                  (list 30 polars-null)))
 
   (check-equal? (contracted:sort '(3 1 2) <) '(1 2 3))
   (check-equal? (contracted:sort '(3 1 2) < #:descending #t) '(3 2 1))

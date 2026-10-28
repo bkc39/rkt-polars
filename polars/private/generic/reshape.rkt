@@ -14,7 +14,7 @@
          (only-in polars/private/resource utf-8-name->string utf-8-name/c utf-8-names/c with-release)
          (only-in polars/private/expr-core explain/c lazyframe-explainer)
          polars/private/generic/core
-         (only-in polars/private/c-integer int64-max int64/c size/c)
+         (only-in polars/private/c-integer int64/c size/c)
          (only-in polars/private/generic/dtype dtype-spec?)
          (only-in polars/private/generic/expr-util col-expr/c))
 
@@ -46,12 +46,6 @@
 (define cast-target/c (or/c dtype-spec? 'binary 'duration))
 
 (define rows-source/c (or/c series? dataframe? lazyframe? Expr-ptr?))
-
-(define expr-rows-max int64-max)
-
-(define (expr-window offset length)
-  (define start (max offset (- expr-rows-max)))
-  (values start (min expr-rows-max (max 0 (- length (- start offset))))))
 
 (define (column-height-problem d s)
   (define height (dataframe-height d))
@@ -98,9 +92,7 @@
   (cond [(series? x)    (wrap-series    (series-slice x offset length))]
         [(dataframe? x) (wrap-dataframe (dataframe-slice x offset length))]
         [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
-        [else
-         (define-values (start rows) (expr-window offset length))
-         (expr-slice x start rows)]))
+        [else           (expr-slice x offset length)]))
 
 (define (unique x)
   (cond [(series? x)    (wrap-series    (series-unique x))]

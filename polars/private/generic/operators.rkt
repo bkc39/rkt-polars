@@ -83,7 +83,12 @@
                          [_ (integer-like? b-dtype)])))
   (with-release ([a* (if cast-a? (series-cast a 'float64) a) (if cast-a? series-drop void)]
                  [b* (if cast-b? (series-cast b 'float64) b) (if cast-b? series-drop void)])
-    (series-div/who who a* b*)))
+    (define q (series-div/who who a* b*))
+    (cond
+      [(and floor? (eq? (series-dtype q) 'float64))
+       (with-release ([unfloored q series-drop])
+         (series-through-expr/raw who unfloored expr-floor))]
+      [else q])))
 
 (define (series-negate s)
   (match (series-dtype s)
