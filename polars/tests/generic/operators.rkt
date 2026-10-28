@@ -6,7 +6,7 @@
            (only-in gregor date)
            (only-in gregor/period hours minutes)
            (only-in gregor/time time)
-           (only-in racket/match match-define)
+           (only-in racket/match match match-define)
            (prefix-in base: (only-in racket/base - /))
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr
@@ -19,6 +19,7 @@
            (only-in polars/private/resource with-release)
            (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
+           (only-in polars/private/generic/reshape select)
            (only-in polars/private/generic/operators
                     != < <= = > >= else-when mod otherwise p* p+ p- p-when p/ then when-pending)
            (only-in polars/tests/generic/test-fixtures
@@ -251,4 +252,71 @@
                   (otherwise 0)))
   (check-exn exn:fail? (lambda () (else-when (when-pending '() #t) #t)))
   (check-equal? (let ([acc 0]) (p-when #t (set! acc 1)) acc) 1)
-  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0))
+  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0)
+
+  (define tens (series '(10 20) #:dtype 'i8 #:name "n"))
+  (check-exn (regexp (string-append "^[+]: the result does not fit its dtype\n"
+                                    "  value: 9223372036854775807\n"
+                                    "  series dtype: 'int8\n  result dtype: 'int64"))
+             (lambda () (p+ tens (sub1 (expt 2 63)))))
+  (check-exn #rx"^-: the result does not fit its dtype\n  value: 300\n  series dtype: 'uint8\n"
+             (lambda () (p- (series '(1 2) #:dtype 'u8) 300)))
+  (define result-ranges
+    (hash 'int16 '(-32768 . 32767) 'int64 (cons (- (expt 2 63)) (sub1 (expt 2 63)))
+          'uint16 '(0 . 65535) 'uint64 (cons 0 (sub1 (expt 2 64)))))
+  (for ([row (list (list 'i8 p+ + 'right 300 'fits)
+                   (list 'i8 p+ + 'left (sub1 (expt 2 63)) 'overflows)
+                   (list 'i8 p- - 'right 300 'fits)
+                   (list 'i8 p- - 'left (- (sub1 (expt 2 63))) 'overflows)
+                   (list 'i8 p* * 'right -300 'fits)
+                   (list 'i8 p* * 'left (expt 2 62) 'overflows)
+                   (list 'i32 p+ + 'right (expt 2 40) 'fits)
+                   (list 'i32 p+ + 'right (sub1 (expt 2 63)) 'overflows)
+                   (list 'i32 p- - 'left (expt 2 40) 'fits)
+                   (list 'i32 p- - 'right (- (sub1 (expt 2 63))) 'overflows)
+                   (list 'i32 p* * 'right (- (expt 2 40)) 'fits)
+                   (list 'i32 p* * 'right (- (expt 2 62)) 'overflows)
+                   (list 'u8 p+ + 'right 300 'fits)
+                   (list 'u8 p- - 'right 300 'overflows)
+                   (list 'u8 p- - 'left 300 'fits)
+                   (list 'u8 p- - 'right (expt 2 40) 'overflows)
+                   (list 'u8 p* * 'left (expt 2 40) 'fits)
+                   (list 'u8 p* * 'right (expt 2 62) 'overflows)
+                   (list 'u32 p+ + 'right (expt 2 40) 'fits)
+                   (list 'u32 p- - 'right (expt 2 40) 'overflows)
+                   (list 'u32 p* * 'right (expt 2 40) 'fits)
+                   (list 'u32 p* * 'left (expt 2 62) 'overflows))])
+    (match-define (list dt op exact side v tag) row)
+    (define s (series '(10 20) #:dtype dt #:name "n"))
+    (define (apply-op x y) (if (eq? side 'right) (op x y) (op y x)))
+    (define result-dtype
+      (~> (dataframe (list s)) (select (expr-alias (apply-op (col "n") v) "n")) (ref "n") dtype))
+    (define exact-values
+      (for/list ([x '(10 20)]) (if (eq? side 'right) (exact x v) (exact v x))))
+    (match-define (cons low high) (hash-ref result-ranges result-dtype))
+    (define label (format "~a ~a ~a ~a" dt (object-name op) side v))
+    (check-equal? (if (andmap (lambda (r) (<= low r high)) exact-values) 'fits 'overflows) tag
+                  label)
+    (match tag
+      ['fits
+       (define got (apply-op s v))
+       (check-equal? (list (series-name got) (dtype got) (series->list got))
+                     (list "n" result-dtype exact-values)
+                     label)]
+      ['overflows
+       (check-exn (lambda (e)
+                    (and (exn:fail:contract? e)
+                         (regexp-match?
+                          (format (string-append "^~a: the result does not fit its dtype\n"
+                                                 "  value: ~a\n  series dtype: '~a\n"
+                                                 "  result dtype: '~a$")
+                                  (regexp-quote (symbol->string (object-name exact))) v
+                                  (dtype s) result-dtype)
+                          (exn-message e))))
+                  (lambda () (apply-op s v))
+                  label)]))
+  (check-equal? (drops-during series-drop-count
+                              (lambda ()
+                                (check-exn exn:fail:contract?
+                                           (lambda () (p+ tens (sub1 (expt 2 63)))))))
+                (drops-during series-drop-count (lambda () (series-drop (p+ tens 300))))))

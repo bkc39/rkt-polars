@@ -2194,7 +2194,10 @@ a @racket['null] series (where Python's eager operators raise) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
-an integer series an integer within Int64 past the dtype's range, in
+an integer series an integer within Int64 past the dtype's range (unless a
+row's exact result falls outside the dtype that form gives, which raises
+@racket[exn:fail:contract] naming the value, as Python's eager operator raises
+an @tt{OverflowError} for any such integer), in
 @racket[/] a negative integer beside an unsigned series, and beside a
 @racket['boolean] series an integer in @racket[/]. An integer from
 @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
@@ -2227,6 +2230,8 @@ where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(eval:error (+ (series '(10 20) #:dtype 'i8) (sub1 (expt 2 63))))
+(eval:error (- (series '(1 2) #:dtype 'u8) 300))
 (+ (series '(1 2) #:dtype 'u64) (expt 2 63))
 (eval:error (+ (series '(1 2)) (expt 2 63)))
 (+ (series '(1 2)) "x")

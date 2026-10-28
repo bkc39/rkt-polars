@@ -6,7 +6,10 @@
          (only-in racket/math infinite? nan?)
          (only-in polars/private/foreign
                   call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
-                  polars-null? series-drop series-dtype series-len series-name)
+                  polars-null? series-drop series-dtype series-len series-max-i16 series-max-i32
+                  series-max-i64 series-max-i8 series-max-u16 series-max-u32 series-max-u64
+                  series-max-u8 series-min-i16 series-min-i32 series-min-i64 series-min-i8
+                  series-min-u16 series-min-u32 series-min-u64 series-min-u8 series-name)
          (only-in polars/private/expr
                   expr-alias expr-all expr-drop lazyframe-collect/raw lazyframe-select lit/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
@@ -40,6 +43,16 @@
             (match kind
               ['int (cons (- (quotient limit 2)) (sub1 (quotient limit 2)))]
               ['uint (cons 0 (sub1 limit))]))))
+
+(define integer-extremes
+  (hasheq 'int8 (cons series-min-i8 series-max-i8)
+          'int16 (cons series-min-i16 series-max-i16)
+          'int32 (cons series-min-i32 series-max-i32)
+          'int64 (cons series-min-i64 series-max-i64)
+          'uint8 (cons series-min-u8 series-max-u8)
+          'uint16 (cons series-min-u16 series-max-u16)
+          'uint32 (cons series-min-u32 series-max-u32)
+          'uint64 (cons series-min-u64 series-max-u64)))
 
 (define (operator-classes who)
   (match who
@@ -286,11 +299,32 @@
   (match* ((literal a b 'right) (literal b a 'left))
     [((list value) _)
      (with-release ([v (lit/who who value) expr-drop])
-       (series-through-expr who a (lambda (e) (expr-op e v))))]
+       (fitting-result who a value 'right
+                       (series-through-expr who a (lambda (e) (expr-op e v)))))]
     [(_ (list value))
      (with-release ([v (lit/who who value) expr-drop])
-       (series-through-expr who b (lambda (e) (expr-op v e))))]
+       (fitting-result who b value 'left
+                       (series-through-expr who b (lambda (e) (expr-op v e)))))]
     [(_ _) #f]))
+
+(define (fitting-result who s value side out)
+  (define dt (series-dtype s))
+  (define op (match who ['+ +] ['- -] ['* *] [_ #f]))
+  (define extremes
+    (and op (eq? (operand-class dt value) 'wide-integer) (hash-ref integer-extremes dt)))
+  (define lo (and extremes ((car extremes) s)))
+  (define hi (and extremes ((cdr extremes) s)))
+  (define bounds (hash-ref integer-ranges (series-dtype out) #f))
+  (define (fits? x)
+    (define r (match side ['right (op x value)] ['left (op value x)]))
+    (<= (car bounds) r (cdr bounds)))
+  (cond
+    [(or (not lo) (not bounds) (and (fits? lo) (fits? hi))) out]
+    [else
+     (define result-dtype (series-dtype out))
+     (series-drop out)
+     (raise-arguments-error who "the result does not fit its dtype"
+                            "value" value "series dtype" dt "result dtype" result-dtype)]))
 
 (module+ internal
   (provide python-str))

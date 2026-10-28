@@ -618,8 +618,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   Decimal series a real or a boolean (compared as 1 or 0), beside a
   duration series a number in `*`, a string before a series in `+`, beside
   an integer series an Int64 integer past the dtype's range (`(+ u8 300)`
-  is UInt16), in `/` a negative integer beside an unsigned series
-  (integer division, `(/ u8 -1)` is Int16), and beside a Boolean series an
+  is UInt16; in `+`, `-` and `*`, a row whose exact result, read from the
+  series' typed min and max, falls outside the result's dtype is a contract
+  error naming the value and both dtypes, never a wrapped series), in `/`
+  a negative integer beside an unsigned series (integer division,
+  `(/ u8 -1)` is Int16), and beside a Boolean series an
   integer in `/`. `lit` takes an integer from
   2^63 to 2^64 − 1 as `expr_lit_u64`, a dynamic integer that materialises
   as UInt64, as `pl.lit(2**63)` does, and below 2^63 as `expr_lit_i32` /

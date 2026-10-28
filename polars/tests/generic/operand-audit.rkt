@@ -154,7 +154,10 @@
                    (list decimals u64-max '(decimal 38 2)))])
     (match-define (list s v expected) row)
     (for ([op (list p+ p- >)])
-      (check-expression-form s op s v (op (col "n") v))
+      (cond
+        [(and (eq? op p-) (eq? s u8))
+         (check-exn #rx"^-: the result does not fit its dtype" (lambda () (p- s v)))]
+        [else (check-expression-form s op s v (op (col "n") v))])
       (check-expression-form s op v s (op v (col "n"))))
     (check-equal? (dtype (p+ s v)) expected (format "~a + ~v" (dtype s) v)))
   (for* ([s (list i8 (series '(1 2) #:dtype 'i16 #:name "n") i32 i64 u8)]
