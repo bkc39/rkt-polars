@@ -330,21 +330,22 @@
   (define (c-string-crossing form)
     (match form
       [(list* (or '_fun 'define-series-constructors) _)
-       (for/first ([type (in-list '(_rsstring _c-string-result))] #:when (mentions? form type))
+       (for/list ([type (in-list '(_rsstring _c-string-result _string _string/utf-8 _string*/utf-8
+                                  _path _symbol))]
+                  #:when (mentions? form type))
          type)]
-      [(list* 'define-compat _ (? list? type) _)
+      [(list* 'define-compat _ (and (cons (not '_fun) _) type) _)
        (define result (fun-result type))
-       (and (memq result '(_string _string/utf-8 _string*/utf-8)) result)]
-      [_ #f]))
+       (if (memq result '(_string _string/utf-8 _string*/utf-8)) (list result) '())]
+      [_ '()]))
   (define (c-string-crossings file-forms)
     (for*/list ([file+forms (in-list file-forms)]
                 [form (in-list (cdr file+forms))]
-                [type (in-value (c-string-crossing form))]
-                #:when type)
+                [type (in-list (c-string-crossing form))])
       (list (car file+forms) type)))
   (check-equal? (c-string-crossings (source-forms (polars-sources #:dirs '("private"))))
                 '()
-                "a C string crosses the boundary: use _str, _str-list, _rsstr or _rsstr-list")
+                "a C string crosses the boundary: use _str, _str-list, _rsstr, _rsstr-list or _c-string")
   (with-planted-sources (root ["private/planted.rkt"
                                (module-text
                                 '(define-compat x (_fun _pointer -> _rsstring))
@@ -352,18 +353,24 @@
                                 '(define-series-constructors s _rsstring "")
                                 ''(_fun -> _rsstring)
                                 '(define-compat z (_fun _pointer -> _string))
-                                '(define-compat w (_fun _string -> (r : _string/utf-8) -> r))
+                                '(define-compat w (_fun _pointer -> (r : _string/utf-8) -> r))
                                 '(define-compat v (_fun -> _string*/utf-8) #:c-id v)
                                 '(define-compat u (_fun _Series-ptr _size -> _c-string-result))
-                                '(define-compat kept (_fun _string -> _void)))])
+                                '(define-compat t (_csv-fun -> _string/utf-8))
+                                '(define-compat a (_fun _string -> _void))
+                                '(define-syntax-parse-rule (_planted-fun)
+                                   (_fun _c-string (n : _string/utf-8) -> _void))
+                                '(define-compat c (_fun _string*/utf-8 _path -> _void))
+                                '(define-series-constructors t _symbol "")
+                                '(define-compat kept (_fun _c-string _c-string/null _str -> _void)))])
     (define planted (simplify-path (build-path root "private" "planted.rkt")))
     (check-equal? (c-string-crossings (source-forms (polars-sources root #:dirs '("private"))))
                   (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
-                                     _string*/utf-8 _c-string-result)])
+                                     _string*/utf-8 _c-string-result _string/utf-8 _string
+                                     _string/utf-8 _string*/utf-8 _path _symbol)])
                     (list planted type))))
 
-  (define string-list-holders
-    '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw))
+  (define string-list-holders '())
   (define string-list-definers '(define-compat define-syntax-parse-rule define-syntax-parser))
   (define (string-list-users file-forms)
     (sort (for*/list ([file+forms (in-list file-forms)]

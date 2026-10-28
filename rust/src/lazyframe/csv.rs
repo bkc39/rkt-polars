@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    collect_c_strings, is_pattern, offset_frame_rows, offset_rows,
-    polars_dtype_from_compat, read_path, require_path, scan, zero_based,
-    CompatCsvOptions, CompatDType, PathRules,
+    is_pattern, offset_frame_rows, offset_rows, polars_dtype_from_compat,
+    read_path, require_path, scan, str_arg, str_list_arg, zero_based,
+    CompatCsvOptions, CompatDType, PathRules, StrArg, StrListArg,
 };
 use polars::io::path_utils::{decode_file_uri_paths, expand_paths};
 use polars::io::utils::compression::SupportedCompression;
@@ -17,64 +17,41 @@ use std::pin::pin;
 use std::task::{Context, Poll, Waker};
 
 struct CsvArrays {
-    comment_prefix: *const c_char,
-    row_index_name: *const c_char,
-    null_values: *const *const c_char,
-    null_values_len: usize,
-    null_columns: *const *const c_char,
-    null_markers: *const *const c_char,
-    named_nulls_len: usize,
-    override_names: *const *const c_char,
+    comment_prefix: StrArg,
+    row_index_name: StrArg,
+    null_values: StrListArg,
+    null_columns: StrListArg,
+    null_markers: StrListArg,
+    override_names: StrListArg,
     override_dtypes: *const CompatDType,
     overrides_len: usize,
-    new_columns: *const *const c_char,
-    new_columns_len: usize,
-    columns: *const *const c_char,
-    columns_len: usize,
+    new_columns: StrListArg,
+    columns: StrListArg,
     projection: *const usize,
     projection_len: usize,
 }
 
-fn decode_string(
-    ptr: *const c_char,
-    what: &str,
-) -> PolarsResult<Option<String>> {
-    if ptr.is_null() {
-        return Ok(None);
-    }
-    let text = unsafe { CStr::from_ptr(ptr) }.to_str().map_err(
-        |err| polars_err!(ComputeError: "{} is not valid UTF-8: {}", what, err),
-    )?;
-    Ok(Some(text.to_string()))
+fn decode_string(p: StrArg) -> PolarsResult<Option<String>> {
+    Ok(unsafe { str_arg(p) }?.map(str::to_string))
 }
 
-fn decode_strings(
-    ptrs: *const *const c_char,
-    len: usize,
-    what: &str,
-) -> PolarsResult<Vec<PlSmallStr>> {
-    let strings = unsafe { collect_c_strings(ptrs, len) }.ok_or_else(
-        || polars_err!(ComputeError: "{} are not valid UTF-8 strings", what),
-    )?;
-    Ok(strings.into_iter().map(PlSmallStr::from).collect())
+fn decode_strings(p: StrListArg) -> PolarsResult<Vec<PlSmallStr>> {
+    Ok(unsafe { str_list_arg(p) }?
+        .into_iter()
+        .map(PlSmallStr::from)
+        .collect())
 }
 
 fn decode_null_values(arrays: &CsvArrays) -> PolarsResult<Option<NullValues>> {
-    let every = decode_strings(
-        arrays.null_values,
-        arrays.null_values_len,
-        "null values",
-    )?;
-    let columns = decode_strings(
-        arrays.null_columns,
-        arrays.named_nulls_len,
-        "null value columns",
-    )?;
-    let markers = decode_strings(
-        arrays.null_markers,
-        arrays.named_nulls_len,
-        "null values",
-    )?;
+    let every = decode_strings(arrays.null_values)?;
+    let columns = decode_strings(arrays.null_columns)?;
+    let markers = decode_strings(arrays.null_markers)?;
+    polars_ensure!(
+        columns.len() == markers.len(),
+        ComputeError: "{} null value columns are given for {} null values",
+        columns.len(),
+        markers.len()
+    );
     polars_ensure!(
         every.is_empty() || columns.is_empty(),
         ComputeError: "null values are given both for every column and by column"
@@ -89,14 +66,20 @@ fn decode_null_values(arrays: &CsvArrays) -> PolarsResult<Option<NullValues>> {
 }
 
 fn decode_overrides(
-    names: *const *const c_char,
+    names: StrListArg,
     dtypes: *const CompatDType,
     len: usize,
 ) -> PolarsResult<Option<SchemaRef>> {
+    let names = decode_strings(names)?;
+    polars_ensure!(
+        names.len() == len,
+        ComputeError: "{} override names are given for {} dtypes",
+        names.len(),
+        len
+    );
     if len == 0 {
         return Ok(None);
     }
-    let names = decode_strings(names, len, "override names")?;
     polars_ensure!(
         !dtypes.is_null(),
         ComputeError: "override dtypes are null"
@@ -124,7 +107,7 @@ enum Selection {
 }
 
 fn decode_selection(arrays: &CsvArrays) -> PolarsResult<Selection> {
-    let names = decode_strings(arrays.columns, arrays.columns_len, "columns")?;
+    let names = decode_strings(arrays.columns)?;
     let indices = match arrays.projection_len {
         0 => Vec::new(),
         len => {
@@ -285,25 +268,19 @@ fn decode(
             },
             || most_rows(path, options.glob),
         ),
-        comment_prefix: decode_string(arrays.comment_prefix, "comment prefix")?
+        comment_prefix: decode_string(arrays.comment_prefix)?
             .map(comment_prefix),
-        row_index: decode_string(arrays.row_index_name, "row index name")?.map(
-            |name| RowIndex {
-                name: name.into(),
-                offset: options.row_index_offset as IdxSize,
-            },
-        ),
+        row_index: decode_string(arrays.row_index_name)?.map(|name| RowIndex {
+            name: name.into(),
+            offset: options.row_index_offset as IdxSize,
+        }),
         null_values: decode_null_values(arrays)?,
         overrides: decode_overrides(
             arrays.override_names,
             arrays.override_dtypes,
             arrays.overrides_len,
         )?,
-        new_columns: decode_strings(
-            arrays.new_columns,
-            arrays.new_columns_len,
-            "new column names",
-        )?,
+        new_columns: decode_strings(arrays.new_columns)?,
         selection: decode_selection(arrays)?,
     })
 }
@@ -705,20 +682,16 @@ macro_rules! csv_entry {
         pub extern "C" fn $name(
             $path: *const c_char,
             $options: CompatCsvOptions,
-            comment_prefix: *const c_char,
-            row_index_name: *const c_char,
-            null_values: *const *const c_char,
-            null_values_len: usize,
-            null_columns: *const *const c_char,
-            null_markers: *const *const c_char,
-            named_nulls_len: usize,
-            override_names: *const *const c_char,
+            comment_prefix: StrArg,
+            row_index_name: StrArg,
+            null_values: StrListArg,
+            null_columns: StrListArg,
+            null_markers: StrListArg,
+            override_names: StrListArg,
             override_dtypes: *const CompatDType,
             overrides_len: usize,
-            new_columns: *const *const c_char,
-            new_columns_len: usize,
-            columns: *const *const c_char,
-            columns_len: usize,
+            new_columns: StrListArg,
+            columns: StrListArg,
             projection: *const usize,
             projection_len: usize,
         ) -> *mut $out {
@@ -726,17 +699,13 @@ macro_rules! csv_entry {
                 comment_prefix,
                 row_index_name,
                 null_values,
-                null_values_len,
                 null_columns,
                 null_markers,
-                named_nulls_len,
                 override_names,
                 override_dtypes,
                 overrides_len,
                 new_columns,
-                new_columns_len,
                 columns,
-                columns_len,
                 projection,
                 projection_len,
             };
@@ -745,11 +714,11 @@ macro_rules! csv_entry {
     };
 }
 
-csv_entry!(lazyframe_scan_csv_v2 -> LazyFrame, |path, options, arrays| {
+csv_entry!(lazyframe_scan_csv_v3 -> LazyFrame, |path, options, arrays| {
     scan(path, |path| csv_scan(path, &options, &arrays))
 });
 
-csv_entry!(dataframe_read_csv_v2 -> DataFrame, |path, options, arrays| {
+csv_entry!(dataframe_read_csv_v3 -> DataFrame, |path, options, arrays| {
     read_path(
         path,
         PathRules {

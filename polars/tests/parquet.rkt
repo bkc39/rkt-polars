@@ -207,9 +207,7 @@
                    '((#:row-index-name . a)) '((#:row-index-offset . -1))
                    `((#:row-index-offset . ,(expt 2 32)))
                    '((#:parallel . row_groups)) '((#:use-statistics . 1)) '((#:glob . "no"))
-                   '((#:missing-columns . ignore)) '((#:include-file-paths . #t))
-                   '((#:columns . ("a\u0000zz"))) '((#:row-index-name . "i\u0000j"))
-                   '((#:include-file-paths . "f\u0000g")))])
+                   '((#:missing-columns . ignore)) '((#:include-file-paths . #t)))])
     (check-exn (contract-violation-of 'dataframe-read-parquet)
                (lambda () (apply-keywords contracted:dataframe-read-parquet kvs
                                           numbers-parquet))

@@ -43,10 +43,8 @@
   (define unwritable (build-path "/" "rkt-polars-no-such-directory-45" "out.csv"))
   (check-exn #rx"^dataframe-write-csv: failed to write csv to .*: cannot create file: "
              (lambda () (dataframe-write-csv cities unwritable)))
-  (for ([kv '((#:quote-style . sometimes) (#:line-terminator . "\r\u0000X")
-               (#:null-value . "N\u0000A") (#:date-format . "%Y\u0000")
-               (#:time-format . "\u0000") (#:datetime-format . "%F\u0000%T")
-               (#:float-precision . 65536))])
+  (for ([kv '((#:quote-style . sometimes) (#:line-terminator . #\newline) (#:null-value . #f)
+               (#:date-format . date) (#:float-precision . 65536))])
     (check-exn (contract-violation-of 'dataframe-write-csv)
                (lambda () (apply-keywords contracted:dataframe-write-csv (list kv)
                                           cities semicolons))

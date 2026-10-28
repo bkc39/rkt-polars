@@ -24,7 +24,7 @@
                     collect explain lazy select [filter frame-filter])
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? dtypes-of frame frame=? keyword-rejected?
-                    message-of polars-null)
+                    message-of nul-names polars-null)
            (only-in (submod polars/tests/generic/test-fixtures test) check-staged-write))
 
   (define-runtime-path data-dir "../../scribblings/data")
@@ -297,5 +297,20 @@
   (check-true (frame=? (read-parquet brussels-parquet) brussels))
   (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
                 '(datetime microseconds "Europe/Brussels"))
+
+  (define nul-parquet (build-path scratch "nul.parquet"))
+  (define nul-plain (build-path scratch "nul-plain.parquet"))
+  (write-parquet (dataframe (list (series '("x" "y") #:name "s"))) nul-plain)
+  (for ([n (in-list nul-names)])
+    (define label (format "~s" n))
+    (write-parquet (dataframe (list (series '(1 2) #:name n) (series '("x" "y") #:name "s")))
+                   nul-parquet)
+    (check-equal? (column-names (read-parquet nul-parquet)) (list n "s") label)
+    (check-equal? (column (read-parquet nul-parquet #:columns (list n)) n) '(1 2) label)
+    (check-equal? (column-names (read-parquet nul-parquet #:columns (list n))) (list n) label)
+    (for ([read (list (lambda (kvs) (apply-keywords read-parquet kvs nul-plain))
+                      (lambda (kvs) (collect (apply-keywords scan-parquet kvs nul-plain))))])
+      (check-equal? (column-names (read `((#:row-index-name . ,n)))) (list n "s") label)
+      (check-equal? (column-names (read `((#:include-file-paths . ,n)))) (list "s" n) label)))
 
   (delete-directory/files scratch))

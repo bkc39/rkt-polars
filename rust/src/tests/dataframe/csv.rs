@@ -5,101 +5,100 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Default)]
 struct Csv {
     options: CompatCsvOptions,
-    comment_prefix: Option<CString>,
-    row_index_name: Option<CString>,
-    null_values: Vec<CString>,
-    named_nulls: Vec<(CString, CString)>,
-    overrides: Vec<(CString, CompatDType)>,
-    new_columns: Vec<CString>,
-    columns: Vec<CString>,
+    comment_prefix: Option<Vec<u8>>,
+    row_index_name: Option<Vec<u8>>,
+    null_values: Vec<Vec<u8>>,
+    named_nulls: Vec<(Vec<u8>, Vec<u8>)>,
+    overrides: Vec<(Vec<u8>, CompatDType)>,
+    new_columns: Vec<Vec<u8>>,
+    columns: Vec<Vec<u8>>,
     projection: Vec<usize>,
 }
 
 type CsvEntry<T> = extern "C" fn(
     *const c_char,
     CompatCsvOptions,
-    *const c_char,
-    *const c_char,
-    *const *const c_char,
-    usize,
-    *const *const c_char,
-    *const *const c_char,
-    usize,
-    *const *const c_char,
+    StrArg,
+    StrArg,
+    StrListArg,
+    StrListArg,
+    StrListArg,
+    StrListArg,
     *const CompatDType,
     usize,
-    *const *const c_char,
-    usize,
-    *const *const c_char,
-    usize,
+    StrListArg,
+    StrListArg,
     *const usize,
     usize,
 ) -> *mut T;
 
-fn pointers(strings: &[CString]) -> Vec<*const c_char> {
-    strings.iter().map(|s| s.as_ptr()).collect()
+fn bytes_of(s: &str) -> Vec<u8> {
+    s.as_bytes().to_vec()
 }
 
-fn optional(string: &Option<CString>) -> *const c_char {
-    string.as_ref().map_or(ptr::null(), |s| s.as_ptr())
+fn optional(block: &Option<Vec<u64>>) -> StrArg {
+    block.as_ref().map_or(ptr::null(), |b| b.as_ptr())
 }
 
 impl Csv {
     fn call<T>(&self, path: &Path, entry: CsvEntry<T>) -> *mut T {
         let p = cstr(path.to_str().unwrap());
-        let nulls = pointers(&self.null_values);
-        let null_columns: Vec<*const c_char> =
-            self.named_nulls.iter().map(|(c, _)| c.as_ptr()).collect();
-        let null_markers: Vec<*const c_char> =
-            self.named_nulls.iter().map(|(_, m)| m.as_ptr()).collect();
-        let names: Vec<*const c_char> =
-            self.overrides.iter().map(|(n, _)| n.as_ptr()).collect();
+        let comment = self.comment_prefix.as_deref().map(bytes_block);
+        let row_index = self.row_index_name.as_deref().map(bytes_block);
+        let nulls = bytes_list_block(&self.null_values);
+        let null_columns: Vec<&[u8]> =
+            self.named_nulls.iter().map(|(c, _)| c.as_slice()).collect();
+        let null_markers: Vec<&[u8]> =
+            self.named_nulls.iter().map(|(_, m)| m.as_slice()).collect();
+        let (null_columns, null_markers) = (
+            bytes_list_block(&null_columns),
+            bytes_list_block(&null_markers),
+        );
+        let names: Vec<&[u8]> =
+            self.overrides.iter().map(|(n, _)| n.as_slice()).collect();
+        let names = bytes_list_block(&names);
         let dtypes: Vec<CompatDType> =
             self.overrides.iter().map(|(_, d)| *d).collect();
-        let new_columns = pointers(&self.new_columns);
-        let columns = pointers(&self.columns);
+        let new_columns = bytes_list_block(&self.new_columns);
+        let columns = bytes_list_block(&self.columns);
         entry(
             p.as_ptr(),
             self.options,
-            optional(&self.comment_prefix),
-            optional(&self.row_index_name),
+            optional(&comment),
+            optional(&row_index),
             nulls.as_ptr(),
-            nulls.len(),
             null_columns.as_ptr(),
             null_markers.as_ptr(),
-            null_columns.len(),
             names.as_ptr(),
             dtypes.as_ptr(),
             dtypes.len(),
             new_columns.as_ptr(),
-            new_columns.len(),
             columns.as_ptr(),
-            columns.len(),
             self.projection.as_ptr(),
             self.projection.len(),
         )
     }
 
     fn read(&self, path: &Path) -> DataFrame {
-        let out = self.call(path, dataframe_read_csv_v2);
+        let out = self.call(path, dataframe_read_csv_v3);
         assert!(!out.is_null(), "read failed: {:?}", recorded_error());
         unsafe { *Box::from_raw(out) }
     }
 
     fn read_err(&self, path: &Path) -> String {
-        let out = self.call(path, dataframe_read_csv_v2);
+        let out = self.call(path, dataframe_read_csv_v3);
         assert!(out.is_null(), "read unexpectedly succeeded");
         recorded_error().expect("a reason")
     }
 
     fn scan_err(&self, path: &Path) -> String {
-        let out = self.call(path, lazyframe_scan_csv_v2);
+        let out = self.call(path, lazyframe_scan_csv_v3);
         assert!(out.is_null(), "scan unexpectedly succeeded");
         recorded_error().expect("a reason")
     }
 
     fn scan_collect(&self, path: &Path) -> DataFrame {
-        let lf = self.call(path, lazyframe_scan_csv_v2);
+        let lf = self.call(path, lazyframe_scan_csv_v3);
         assert!(!lf.is_null(), "scan failed: {:?}", recorded_error());
         let lf = unsafe { *Box::from_raw(lf) };
         lf.collect().expect("collect")
@@ -194,7 +193,7 @@ type Outcome = Result<DataFrame, String>;
 
 impl Csv {
     fn read_outcome(&self, path: &Path) -> Outcome {
-        let out = self.call(path, dataframe_read_csv_v2);
+        let out = self.call(path, dataframe_read_csv_v3);
         if out.is_null() {
             return Err(recorded_error().expect("a reason"));
         }
@@ -202,7 +201,7 @@ impl Csv {
     }
 
     fn scan_outcome(&self, path: &Path) -> Outcome {
-        let lf = self.call(path, lazyframe_scan_csv_v2);
+        let lf = self.call(path, lazyframe_scan_csv_v3);
         if lf.is_null() {
             return Err(recorded_error().expect("a reason"));
         }
@@ -250,6 +249,7 @@ const OPTION_FIXTURES: &[(&str, &[u8])] = &[
         b"junk \"quoted\nstill junk\na,b\n1,x\n2,y\n3,z\n",
     ),
     ("missing.csv", b"a,b\n1,\n,x\n"),
+    ("nul.csv", b"a\0b,c\n1,N\0A\n#\0 note\n2,x\n"),
 ];
 
 fn option_cases() -> Vec<(&'static str, Csv)> {
@@ -268,8 +268,8 @@ fn option_cases() -> Vec<(&'static str, Csv)> {
         case("separator tab", |c| c.options.separator = b'\t'),
         case("quote '", |c| c.options.quote_char = b'\''),
         case("no quoting", |c| c.options.has_quote_char = false),
-        case("comment #", |c| c.comment_prefix = Some(cstr("#"))),
-        case("comment //", |c| c.comment_prefix = Some(cstr("//"))),
+        case("comment #", |c| c.comment_prefix = Some(bytes_of("#"))),
+        case("comment //", |c| c.comment_prefix = Some(bytes_of("//"))),
         case("skip rows", |c| c.options.skip_rows = 1),
         case("n rows 2", |c| {
             c.options.has_n_rows = true;
@@ -279,9 +279,9 @@ fn option_cases() -> Vec<(&'static str, Csv)> {
             c.options.has_n_rows = true;
             c.options.n_rows = 0;
         }),
-        case("null NA", |c| c.null_values = vec![cstr("NA")]),
+        case("null NA", |c| c.null_values = vec![bytes_of("NA")]),
         case("null NA and -", |c| {
-            c.null_values = vec![cstr("NA"), cstr("-")]
+            c.null_values = vec![bytes_of("NA"), bytes_of("-")]
         }),
         case("infer every row", |c| {
             c.options.has_infer_schema_length = false
@@ -295,10 +295,10 @@ fn option_cases() -> Vec<(&'static str, Csv)> {
         case("; ' # together", |c| {
             c.options.separator = b';';
             c.options.quote_char = b'\'';
-            c.comment_prefix = Some(cstr("#"));
+            c.comment_prefix = Some(bytes_of("#"));
         }),
         case("NA, skip and n rows together", |c| {
-            c.null_values = vec![cstr("NA"), cstr("-")];
+            c.null_values = vec![bytes_of("NA"), bytes_of("-")];
             c.options.skip_rows = 1;
             c.options.has_header = false;
             c.options.has_n_rows = true;
@@ -322,85 +322,108 @@ fn option_cases() -> Vec<(&'static str, Csv)> {
             c.options.missing_utf8_is_empty_string = true
         }),
         case("row index i from 10", |c| {
-            c.row_index_name = Some(cstr("i"));
+            c.row_index_name = Some(bytes_of("i"));
             c.options.row_index_offset = 10;
         }),
-        case("row index a", |c| c.row_index_name = Some(cstr("a"))),
+        case("row index a", |c| c.row_index_name = Some(bytes_of("a"))),
         case("row index, n rows, skip after header", |c| {
-            c.row_index_name = Some(cstr("i"));
+            c.row_index_name = Some(bytes_of("i"));
             c.options.has_n_rows = true;
             c.options.n_rows = 1;
             c.options.skip_rows_after_header = 1;
         }),
         case("null NA in a", |c| {
-            c.named_nulls = vec![(cstr("a"), cstr("NA"))]
+            c.named_nulls = vec![(bytes_of("a"), bytes_of("NA"))]
         }),
         case("null in a and b", |c| {
-            c.named_nulls =
-                vec![(cstr("a"), cstr("-")), (cstr("b"), cstr("NA"))]
+            c.named_nulls = vec![
+                (bytes_of("a"), bytes_of("-")),
+                (bytes_of("b"), bytes_of("NA")),
+            ]
         }),
         case("null in an absent column", |c| {
-            c.named_nulls = vec![(cstr("zzz"), cstr("NA"))]
+            c.named_nulls = vec![(bytes_of("zzz"), bytes_of("NA"))]
         }),
-        case("new columns x", |c| c.new_columns = vec![cstr("x")]),
+        case("new columns x", |c| c.new_columns = vec![bytes_of("x")]),
         case("new columns x y z w v", |c| {
-            c.new_columns = ["x", "y", "z", "w", "v"].map(cstr).to_vec()
+            c.new_columns = ["x", "y", "z", "w", "v"].map(bytes_of).to_vec()
         }),
-        case("new columns b", |c| c.new_columns = vec![cstr("b")]),
+        case("new columns b", |c| c.new_columns = vec![bytes_of("b")]),
         case("new columns, no header", |c| {
             c.options.has_header = false;
-            c.new_columns = vec![cstr("x"), cstr("y")];
+            c.new_columns = vec![bytes_of("x"), bytes_of("y")];
         }),
         case("new columns, override and null by new name", |c| {
-            c.new_columns = vec![cstr("x")];
+            c.new_columns = vec![bytes_of("x")];
             c.overrides = vec![(
-                cstr("x"),
+                bytes_of("x"),
                 dtype(CompatDTypeTag::String, CompatTimeUnit::None),
             )];
-            c.named_nulls = vec![(cstr("x"), cstr("-"))];
+            c.named_nulls = vec![(bytes_of("x"), bytes_of("-"))];
         }),
         case("new columns, override by old name", |c| {
-            c.new_columns = vec![cstr("x")];
+            c.new_columns = vec![bytes_of("x")];
             c.overrides = vec![(
-                cstr("a"),
+                bytes_of("a"),
                 dtype(CompatDTypeTag::String, CompatTimeUnit::None),
             )];
         }),
         case("new columns and row index x", |c| {
-            c.new_columns = vec![cstr("x")];
-            c.row_index_name = Some(cstr("x"));
+            c.new_columns = vec![bytes_of("x")];
+            c.row_index_name = Some(bytes_of("x"));
         }),
         case("new columns and row index i", |c| {
-            c.new_columns = vec![cstr("x")];
-            c.row_index_name = Some(cstr("i"));
+            c.new_columns = vec![bytes_of("x")];
+            c.row_index_name = Some(bytes_of("i"));
         }),
-        case("columns b a", |c| c.columns = vec![cstr("b"), cstr("a")]),
-        case("columns zzz", |c| c.columns = vec![cstr("zzz")]),
+        case("columns b a", |c| {
+            c.columns = vec![bytes_of("b"), bytes_of("a")]
+        }),
+        case("columns zzz", |c| c.columns = vec![bytes_of("zzz")]),
         case("columns 1 0", |c| c.projection = vec![1, 0]),
         case("columns 7", |c| c.projection = vec![7]),
         case("columns, row index and new columns", |c| {
-            c.columns = vec![cstr("x")];
-            c.new_columns = vec![cstr("x")];
-            c.row_index_name = Some(cstr("i"));
+            c.columns = vec![bytes_of("x")];
+            c.new_columns = vec![bytes_of("x")];
+            c.row_index_name = Some(bytes_of("i"));
         }),
         case("columns 0 and row index", |c| {
             c.projection = vec![0];
-            c.row_index_name = Some(cstr("i"));
+            c.row_index_name = Some(bytes_of("i"));
         }),
         case("columns and n rows", |c| {
             c.projection = vec![0];
             c.options.has_n_rows = true;
             c.options.n_rows = 1;
         }),
+        case("comment #\\0", |c| c.comment_prefix = Some(bytes_of("#\0"))),
+        case("null N\\0A", |c| c.null_values = vec![bytes_of("N\0A")]),
+        case("null N\\0A in c", |c| {
+            c.named_nulls = vec![(bytes_of("c"), bytes_of("N\0A"))]
+        }),
+        case("null 1 in a\\0b", |c| {
+            c.named_nulls = vec![(bytes_of("a\0b"), bytes_of("1"))]
+        }),
+        case("row index i\\0", |c| {
+            c.row_index_name = Some(bytes_of("i\0"))
+        }),
+        case("new columns x\\0y", |c| {
+            c.new_columns = vec![bytes_of("x\0y")]
+        }),
+        case("columns a\\0b", |c| c.columns = vec![bytes_of("a\0b")]),
     ];
     for (label, overrides) in [
-        ("override a int32", vec![(cstr("a"), int32)]),
-        ("override a float64", vec![(cstr("a"), float64)]),
+        ("override a int32", vec![(bytes_of("a"), int32)]),
+        ("override a float64", vec![(bytes_of("a"), float64)]),
         (
             "override a and t time",
-            vec![(cstr("a"), float64), (cstr("t"), time)],
+            vec![(bytes_of("a"), float64), (bytes_of("t"), time)],
         ),
-        ("override an absent column", vec![(cstr("zzz"), float64)]),
+        (
+            "override an absent column",
+            vec![(bytes_of("zzz"), float64)],
+        ),
+        ("override a\\0b float64", vec![(bytes_of("a\0b"), float64)]),
     ] {
         cases.push((
             label,
@@ -474,6 +497,55 @@ fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
     assert!(outcomes.0 > 300 && outcomes.1 > 50, "{:?}", outcomes);
 }
 
+fn column_names(df: &DataFrame) -> Vec<&str> {
+    df.get_column_names().iter().map(|n| n.as_str()).collect()
+}
+
+#[test]
+fn a_keyword_holding_a_nul_keeps_it_on_every_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "nul.csv", b"a\0b,c\n1,N\0A\n#\0 note\n2,x\n");
+    let float64 = dtype(CompatDTypeTag::Float64, CompatTimeUnit::None);
+    let both = |csv: &Csv| {
+        let eager = csv.read(&path);
+        assert!(same_outcome(&Ok(eager.clone()), &csv.scan_outcome(&path)));
+        eager
+    };
+    let commented = Csv {
+        comment_prefix: Some(bytes_of("#\0")),
+        ..Default::default()
+    };
+    assert_eq!(both(&commented).column("c").unwrap().null_count(), 0);
+    assert_eq!(both(&commented).height(), 2);
+    let nulled = Csv {
+        comment_prefix: Some(bytes_of("#\0")),
+        null_values: vec![bytes_of("N\0A")],
+        ..Default::default()
+    };
+    assert_eq!(both(&nulled).column("c").unwrap().null_count(), 1);
+    let named = Csv {
+        comment_prefix: Some(bytes_of("#\0")),
+        named_nulls: vec![(bytes_of("a\0b"), bytes_of("1"))],
+        ..Default::default()
+    };
+    assert_eq!(both(&named).column("a\0b").unwrap().null_count(), 1);
+    let renamed = Csv {
+        comment_prefix: Some(bytes_of("#\0")),
+        new_columns: vec![bytes_of("x\0y")],
+        row_index_name: Some(bytes_of("i\0")),
+        overrides: vec![(bytes_of("x\0y"), float64)],
+        ..Default::default()
+    };
+    let df = both(&renamed);
+    assert_eq!(column_names(&df), ["i\0", "x\0y", "c"], "{:?}", df);
+    assert_eq!(df.column("x\0y").unwrap().dtype(), &DataType::Float64);
+    let selected = Csv {
+        columns: vec![bytes_of("a\0b")],
+        ..Default::default()
+    };
+    assert_eq!(column_names(&selected.read(&path)), ["a\0b"]);
+}
+
 #[test]
 fn null_values_turn_a_late_marker_into_a_null() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -483,7 +555,7 @@ fn null_values_turn_a_late_marker_into_a_null() {
     assert!(msg.contains("NA"), "{:?}", msg);
 
     let csv = Csv {
-        null_values: vec![cstr("NA")],
+        null_values: vec![bytes_of("NA")],
         ..Default::default()
     };
     let df = csv.read(&path);
@@ -501,7 +573,7 @@ fn several_null_values_all_count() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "n.csv", b"x\n1\nNA\n-\n4\n");
     let csv = Csv {
-        null_values: vec![cstr("NA"), cstr("-")],
+        null_values: vec![bytes_of("NA"), bytes_of("-")],
         ..Default::default()
     };
     let x = csv.read(&path).column("x").unwrap().clone();
@@ -537,10 +609,13 @@ fn schema_overrides_set_the_named_columns_only() {
     let csv = Csv {
         overrides: vec![
             (
-                cstr("a"),
+                bytes_of("a"),
                 dtype(CompatDTypeTag::Int32, CompatTimeUnit::None),
             ),
-            (cstr("b"), dtype(CompatDTypeTag::Date, CompatTimeUnit::None)),
+            (
+                bytes_of("b"),
+                dtype(CompatDTypeTag::Date, CompatTimeUnit::None),
+            ),
         ],
         ..Default::default()
     };
@@ -556,7 +631,7 @@ fn a_time_override_parses_times_of_day() {
     let path = write(dir.path(), "t.csv", b"t,d\n05:00:00,1h\n06:30:15,2h\n");
     let time = Csv {
         overrides: vec![(
-            cstr("t"),
+            bytes_of("t"),
             dtype(CompatDTypeTag::Time, CompatTimeUnit::None),
         )],
         ..Default::default()
@@ -573,7 +648,7 @@ fn a_time_override_parses_times_of_day() {
 
     let duration = Csv {
         overrides: vec![(
-            cstr("d"),
+            bytes_of("d"),
             dtype(CompatDTypeTag::Duration, CompatTimeUnit::Microseconds),
         )],
         ..Default::default()
@@ -588,7 +663,7 @@ fn an_unsupported_override_names_its_column() {
     let path = write(dir.path(), "o.csv", b"a\n1\n");
     let csv = Csv {
         overrides: vec![(
-            cstr("a"),
+            bytes_of("a"),
             dtype(CompatDTypeTag::List, CompatTimeUnit::None),
         )],
         ..Default::default()
@@ -618,7 +693,7 @@ fn separator_quote_and_comment_options_apply() {
         b"# a comment\na;b\n'x;y';1\n# another\nz;2\n",
     );
     let mut csv = Csv {
-        comment_prefix: Some(cstr("#")),
+        comment_prefix: Some(bytes_of("#")),
         ..Default::default()
     };
     csv.options.separator = b';';
@@ -637,7 +712,7 @@ fn a_multi_character_comment_prefix_works() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "c.csv", b"x\n//skip\n1\n2\n");
     let csv = Csv {
-        comment_prefix: Some(cstr("//")),
+        comment_prefix: Some(bytes_of("//")),
         ..Default::default()
     };
     assert_eq!(csv.read(&path).height(), 2);
@@ -743,7 +818,7 @@ fn a_glob_matching_nothing_says_so_at_collect() {
     let pattern = dir.path().join("*.csv");
     let msg = Csv::default().read_err(&pattern);
     assert!(empty_expansion(&msg), "{:?}", msg);
-    let lf = Csv::default().call(&pattern, lazyframe_scan_csv_v2);
+    let lf = Csv::default().call(&pattern, lazyframe_scan_csv_v3);
     assert!(!lf.is_null(), "{:?}", recorded_error());
     assert!(lazyframe_collect(lf).is_null());
     let msg = recorded_error().expect("a reason");
@@ -794,11 +869,11 @@ fn an_override_for_an_absent_column_is_an_error() {
     let csv = Csv {
         overrides: vec![
             (
-                cstr("a"),
+                bytes_of("a"),
                 dtype(CompatDTypeTag::Int64, CompatTimeUnit::None),
             ),
             (
-                cstr("zzz"),
+                bytes_of("zzz"),
                 dtype(CompatDTypeTag::Float32, CompatTimeUnit::None),
             ),
         ],
@@ -910,25 +985,23 @@ fn an_eager_read_of_a_directory_is_refused() {
 fn undecodable_null_values_are_reported() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "x.csv", b"x\n1\n");
-    let bad = || CString::new(vec![0xffu8]).unwrap();
+    let bad = || vec![0xffu8];
     let every = Csv {
         null_values: vec![bad()],
         ..Default::default()
     };
-    let msg = every.read_err(&path);
-    assert!(msg.contains("null values"), "{:?}", msg);
+    let not_utf8 = StrError::NotUtf8.to_string();
+    assert_eq!(every.read_err(&path), not_utf8);
     let named = Csv {
-        named_nulls: vec![(cstr("x"), bad())],
+        named_nulls: vec![(bytes_of("x"), bad())],
         ..Default::default()
     };
-    let msg = named.read_err(&path);
-    assert!(msg.contains("null values"), "{:?}", msg);
+    assert_eq!(named.read_err(&path), not_utf8);
     let renamed = Csv {
         new_columns: vec![bad()],
         ..Default::default()
     };
-    let msg = renamed.read_err(&path);
-    assert!(msg.contains("new column names"), "{:?}", msg);
+    assert_eq!(renamed.read_err(&path), not_utf8);
 }
 
 #[test]
@@ -936,7 +1009,7 @@ fn a_named_null_value_applies_to_its_column_only() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "n.csv", b"a,b\n1,-\n-,x\n3,y\n");
     let csv = Csv {
-        named_nulls: vec![(cstr("a"), cstr("-"))],
+        named_nulls: vec![(bytes_of("a"), bytes_of("-"))],
         ..Default::default()
     };
     let df = csv.read(&path);
@@ -946,15 +1019,15 @@ fn a_named_null_value_applies_to_its_column_only() {
     assert!(df.equals_missing(&csv.scan_collect(&path)));
 
     let absent = Csv {
-        named_nulls: vec![(cstr("zzz"), cstr("-"))],
+        named_nulls: vec![(bytes_of("zzz"), bytes_of("-"))],
         ..Default::default()
     };
     let msg = absent.read_err(&path);
     assert!(msg.contains("unable to find column \"zzz\""), "{:?}", msg);
 
     let both = Csv {
-        null_values: vec![cstr("x")],
-        named_nulls: vec![(cstr("a"), cstr("-"))],
+        null_values: vec![bytes_of("x")],
+        named_nulls: vec![(bytes_of("a"), bytes_of("-"))],
         ..Default::default()
     };
     let msg = both.read_err(&path);
@@ -970,13 +1043,13 @@ fn new_columns_rename_before_the_other_keywords_name_columns() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "r.csv", b"a,b,c\n1,-,x\n2,3,y\n");
     let csv = Csv {
-        new_columns: vec![cstr("p"), cstr("q")],
-        named_nulls: vec![(cstr("q"), cstr("-"))],
+        new_columns: vec![bytes_of("p"), bytes_of("q")],
+        named_nulls: vec![(bytes_of("q"), bytes_of("-"))],
         overrides: vec![(
-            cstr("q"),
+            bytes_of("q"),
             dtype(CompatDTypeTag::Float64, CompatTimeUnit::None),
         )],
-        columns: vec![cstr("q"), cstr("p")],
+        columns: vec![bytes_of("q"), bytes_of("p")],
         ..Default::default()
     };
     let df = csv.read(&path);
@@ -996,12 +1069,12 @@ fn a_null_value_named_after_a_rename_counts_when_types_are_inferred() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "n.csv", b"a,b\n1,x\nNA,y\n3,z\n");
     let renamed = Csv {
-        new_columns: vec![cstr("p")],
-        named_nulls: vec![(cstr("p"), cstr("NA"))],
+        new_columns: vec![bytes_of("p")],
+        named_nulls: vec![(bytes_of("p"), bytes_of("NA"))],
         ..Default::default()
     };
     let plain = Csv {
-        named_nulls: vec![(cstr("a"), cstr("NA"))],
+        named_nulls: vec![(bytes_of("a"), bytes_of("NA"))],
         ..Default::default()
     };
     let df = renamed.read(&path);
@@ -1025,8 +1098,8 @@ fn a_rename_matches_the_plain_read_renamed_afterwards() {
         b"a,b,c\n1,2024-01-02,x\n,2024-01-03,y\n3,,z\n",
     );
     let mut renamed = Csv {
-        new_columns: vec![cstr("c"), cstr("a")],
-        row_index_name: Some(cstr("b")),
+        new_columns: vec![bytes_of("c"), bytes_of("a")],
+        row_index_name: Some(bytes_of("b")),
         ..Default::default()
     };
     renamed.options.try_parse_dates = true;
@@ -1039,7 +1112,7 @@ fn a_rename_matches_the_plain_read_renamed_afterwards() {
         msg,
         "duplicate: column with name 'c' has more than one occurrence"
     );
-    renamed.new_columns = vec![cstr("c"), cstr("a"), cstr("b2")];
+    renamed.new_columns = vec![bytes_of("c"), bytes_of("a"), bytes_of("b2")];
     expected.set_column_names(&["c", "a", "b2"]).expect("names");
     let expected = expected
         .with_row_index("b".into(), Some(5))
@@ -1055,13 +1128,13 @@ fn a_selection_keeps_the_file_order_and_the_row_index() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "s.csv", b"a,b,c\n1,2,3\n4,5,6\n");
     let by_name = Csv {
-        columns: vec![cstr("c"), cstr("a")],
-        row_index_name: Some(cstr("i")),
+        columns: vec![bytes_of("c"), bytes_of("a")],
+        row_index_name: Some(bytes_of("i")),
         ..Default::default()
     };
     let by_index = Csv {
         projection: vec![2, 0],
-        row_index_name: Some(cstr("i")),
+        row_index_name: Some(bytes_of("i")),
         ..Default::default()
     };
     for csv in [&by_name, &by_index] {
@@ -1070,7 +1143,7 @@ fn a_selection_keeps_the_file_order_and_the_row_index() {
         assert!(df.equals_missing(&csv.scan_collect(&path)));
     }
     let both = Csv {
-        columns: vec![cstr("a")],
+        columns: vec![bytes_of("a")],
         projection: vec![0],
         ..Default::default()
     };
@@ -1085,15 +1158,15 @@ fn a_row_index_that_takes_a_column_name_is_refused_on_every_path() {
     let expected =
         "duplicate: cannot add row_index with name 'a': column already exists in file.";
     let csv = Csv {
-        row_index_name: Some(cstr("a")),
+        row_index_name: Some(bytes_of("a")),
         ..Default::default()
     };
     assert_eq!(csv.read_err(&path), expected);
     assert_eq!(csv.read_outcome(&path).unwrap_err(), expected);
     assert_eq!(csv.scan_outcome(&path).unwrap_err(), expected);
     let renamed = Csv {
-        row_index_name: Some(cstr("x")),
-        new_columns: vec![cstr("x")],
+        row_index_name: Some(bytes_of("x")),
+        new_columns: vec![bytes_of("x")],
         ..Default::default()
     };
     let expected =
@@ -1187,7 +1260,7 @@ fn a_float_precision_past_u16_is_refused() {
     options.float_precision += 1;
     let dir = tempfile::tempdir().expect("tempdir");
     let p = cstr(dir.path().join("p.csv").to_str().unwrap());
-    let status = dataframe_write_csv_with_options(
+    let status = dataframe_write_csv_with_options_v2(
         &mut df,
         p.as_ptr(),
         options,
@@ -1208,10 +1281,10 @@ fn written(df: &mut DataFrame, options: CompatCsvWriteOptions) -> String {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("w.csv");
     let p = cstr(path.to_str().unwrap());
-    let crlf = cstr("\r\n");
-    let na = cstr("NA");
-    let date = cstr("%d.%m.%Y");
-    let status = dataframe_write_csv_with_options(
+    let crlf = str_block("\r\n");
+    let na = str_block("NA");
+    let date = str_block("%d.%m.%Y");
+    let status = dataframe_write_csv_with_options_v2(
         df,
         p.as_ptr(),
         options,
@@ -1257,7 +1330,7 @@ fn the_writer_applies_every_option() {
     bad.quote_style = 9;
     let dir = tempfile::tempdir().expect("tempdir");
     let p = cstr(dir.path().join("bad.csv").to_str().unwrap());
-    let status = dataframe_write_csv_with_options(
+    let status = dataframe_write_csv_with_options_v2(
         &mut df,
         p.as_ptr(),
         bad,
@@ -1534,7 +1607,7 @@ fn a_huge_infer_schema_length_reads_like_every_row() {
     );
     let mut headless_every = every.clone();
     headless_every.options.has_header = false;
-    headless_every.new_columns = vec![cstr("a"), cstr("b")];
+    headless_every.new_columns = vec![bytes_of("a"), bytes_of("b")];
     let whole_dir_expected = every.scan_collect(dir.path());
     for n in [NEVER_RESERVED, 1 << 62, usize::MAX] {
         let mut huge = Csv::default();

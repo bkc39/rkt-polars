@@ -6,15 +6,15 @@ use std::sync::Mutex;
 use crate::prelude::*;
 use crate::{
     clear_last_error, decode_path, decode_schema, guard_panic, record,
-    write_checked_frame, CompatDType, CompatJsonOptions,
+    write_checked_frame, CompatDType, CompatJsonOptions, StrListArg,
 };
 use polars::prelude::file::Writable;
 use polars::prelude::{SerReader, SerWriter};
 
 struct JsonArrays {
-    schema_names: *const *const c_char,
+    schema_names: StrListArg,
     schema_dtypes: *const CompatDType,
-    override_names: *const *const c_char,
+    override_names: StrListArg,
     override_dtypes: *const CompatDType,
 }
 
@@ -96,12 +96,12 @@ fn json_read(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_read_json_with_options(
+pub extern "C" fn dataframe_read_json_with_options_v2(
     path: *const c_char,
     options: CompatJsonOptions,
-    schema_names: *const *const c_char,
+    schema_names: StrListArg,
     schema_dtypes: *const CompatDType,
-    override_names: *const *const c_char,
+    override_names: StrListArg,
     override_dtypes: *const CompatDType,
 ) -> *mut DataFrame {
     let arrays = JsonArrays {

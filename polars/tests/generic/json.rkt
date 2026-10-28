@@ -16,7 +16,7 @@
            (only-in polars/private/generic/reshape cast collect filter select)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords col column contract-violation-of dtypes-of frame frame=?
-                    gzip-file message-of polars-null scratch-file staging-files)
+                    gzip-file message-of nul-names polars-null scratch-file staging-files)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     check-reads-like-every check-staged-write))
 
@@ -186,7 +186,6 @@
     `((#:schema . (("a" . (enum x y)))) (#:schema . (("a" . bogus))) (#:schema . ((a . i32)))
       (#:schema . (("a" . i32) ("a" . f64))) (#:schema . ,(hash "a" 'i32))
       (#:schema-overrides . #f) (#:schema-overrides . (("a" . (enum x))))
-      (#:schema . (("a\u0000b" . i64))) (#:schema-overrides . (("day\u0000x" . date)))
       (#:infer-schema-length . 0) (#:infer-schema-length . -1) (#:infer-schema-length . 1.5)
       (#:infer-schema-length . ,(expt 2 64))))
   (for ([kv (in-list bad-keywords)])
@@ -409,9 +408,7 @@
       (#:low-memory . 1) (#:rechunk . "yes") (#:ignore-errors . 1)
       (#:row-index-name . row) (#:row-index-offset . -1) (#:row-index-offset . 4294967296)
       (#:include-file-paths . file) (#:n-rows . ,(expt 2 64)) (#:n-rows . ,(+ 2 (expt 2 64)))
-      (#:infer-schema-length . ,(expt 2 64)) (#:batch-size . ,(expt 2 64))
-      (#:schema . (("a\u0000zzz" . i64))) (#:row-index-name . "i\u0000x")
-      (#:include-file-paths . "p\u0000x")))
+      (#:infer-schema-length . ,(expt 2 64)) (#:batch-size . ,(expt 2 64))))
   (for* ([reader (in-list (list contracted:read-ndjson contracted:scan-ndjson))]
          [kv (in-list nd-bad)])
     (check-exn (contract-violation-of (object-name reader))
@@ -420,9 +417,6 @@
   (check-exn #rx"#:row-index-name and #:include-file-paths must name different columns"
              (lambda () (contracted:read-ndjson stations-nd #:row-index-name "x"
                                                 #:include-file-paths "x")))
-  (check-exn (contract-violation-of 'read-ndjson)
-             (lambda () (contracted:read-ndjson stations-nd #:row-index-name "p\u0000x"
-                                                #:include-file-paths "p\u0000y")))
   (check-exn (contract-violation-of 'write-ndjson)
              (lambda () (contracted:write-ndjson guide-df guide-nd #:check-extension 1)))
   (for ([kvs (in-list '(((#:compression . brotli)) ((#:compression-level . 3))
@@ -449,5 +443,36 @@
   (check-equal? (file->string brussels-ndjson)
                 (string-append "{\"t\":\"2021-03-27T12:00:00.500+01:00\"}\n{\"t\":null}\n"
                                "{\"t\":\"2021-07-01T00:00:00+02:00\"}\n"))
+
+  (define nul-json (build-path scratch "nul.json"))
+  (define nul-ndjson (build-path scratch "nul.ndjson"))
+  (define nul-plain (build-path scratch "nul-plain.ndjson"))
+  (write-ndjson (dataframe (list (series '("x" "y") #:name "s"))) nul-plain)
+  (for ([n (in-list nul-names)])
+    (define label (format "~s" n))
+    (define named (dataframe (list (series '(1 2) #:name n) (series '("x" "y") #:name "s"))))
+    (write-json named nul-json)
+    (write-ndjson named nul-ndjson)
+    (check-equal? (column-names (read-json nul-json)) (list n "s") label)
+    (check-equal? (dtype (ref (read-json nul-json #:schema-overrides `((,n . f64))) n)) 'float64
+                  label)
+    (check-equal? (column (read-json nul-json #:schema `((,n . i32) ("s" . str))) n) '(1 2) label)
+    (for ([reader (list (cons 'read (lambda (path kvs) (apply-keywords read-ndjson kvs path)))
+                        (cons 'scan (lambda (path kvs)
+                                      (collect (apply-keywords scan-ndjson kvs path)))))])
+      (define (read path kvs) ((cdr reader) path kvs))
+      (define label (format "~a ~s" (car reader) n))
+      (define n2 (string-append n "\u0000"))
+      (check-equal? (column-names (read nul-ndjson '())) (list n "s") label)
+      (check-equal? (dtype (ref (read nul-ndjson `((#:schema-overrides . ((,n . f64))))) n))
+                    'float64 label)
+      (check-equal? (column (read nul-ndjson `((#:schema . ((,n . i32) ("s" . str))))) n) '(1 2)
+                    label)
+      (check-equal? (column-names (read nul-plain `((#:row-index-name . ,n)))) (list n "s") label)
+      (check-equal? (column-names (read nul-plain `((#:include-file-paths . ,n)))) (list "s" n)
+                    label)
+      (check-equal? (column-names (read nul-plain `((#:row-index-name . ,n)
+                                                    (#:include-file-paths . ,n2))))
+                    (list n "s" n2) label)))
 
   (delete-directory/files scratch))

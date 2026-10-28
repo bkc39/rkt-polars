@@ -537,7 +537,7 @@ fn csv_writes_the_local_time_and_its_offset() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t.csv");
     let p = cstr(path.to_str().unwrap());
-    let status = dataframe_write_csv_with_options(
+    let status = dataframe_write_csv_with_options_v2(
         df,
         p.as_ptr(),
         CompatCsvWriteOptions::default(),
@@ -568,7 +568,7 @@ fn parquet_keeps_the_zone() {
         CompatParquetWriteOptions::default(),
     );
     assert_eq!(status, 0);
-    let back = dataframe_read_parquet_with_options(
+    let back = dataframe_read_parquet_with_options_v2(
         p.as_ptr(),
         CompatParquetReadOptions::default(),
         ptr::null(),

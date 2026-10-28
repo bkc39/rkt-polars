@@ -28,6 +28,7 @@ pub(super) struct Function {
     pub(super) name: String,
     pub(super) entry: bool,
     pub(super) output: syn::ReturnType,
+    pub(super) inputs: Vec<syn::FnArg>,
     block: Block,
 }
 
@@ -377,6 +378,7 @@ impl Walker<'_> {
             name,
             entry: export.is_some() && foreign,
             output: sig.output.clone(),
+            inputs: sig.inputs.iter().cloned().collect(),
             block: block.clone(),
         });
     }
@@ -703,8 +705,8 @@ fn the_audit_reads_every_entry_point() {
     for name in [
         "dataframe_to_string_v2",
         "lazyframe_collect",
-        "dataframe_write_csv_with_options",
-        "dataframe_read_csv_v2",
+        "dataframe_write_csv_with_options_v2",
+        "dataframe_read_csv_v3",
         "series_cast",
     ] {
         assert!(

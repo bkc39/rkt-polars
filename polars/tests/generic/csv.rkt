@@ -5,7 +5,7 @@
            racket/file
            racket/runtime-path
            (only-in racket/list filter-map range remove-duplicates second)
-           (only-in racket/match match match-lambda)
+           (only-in racket/match match match-define match-lambda)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains? string-join)
            (only-in polars/private/bulk in-series series->list)
@@ -20,7 +20,8 @@
            (only-in polars/private/generic/reshape collect)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
-                    frame=? gzip-file keyword-rejected? message-of polars-null scratch-file)
+                    frame=? gzip-file keyword-rejected? message-of nul-expected nul-names
+                    polars-null scratch-file)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     check-readers-agree eager-reader glob-reader outcome-difference scan-reader))
 
@@ -61,11 +62,7 @@
       (#:row-index-name . i) (#:row-index-offset . -1) (#:row-index-offset . ,(expt 2 32))
       (#:skip-lines . -1) (#:skip-rows-after-header . 1.5) (#:infer-schema . 0)
       (#:raise-if-empty . 1) (#:missing-utf8-is-empty-string . "yes")
-      (#:truncate-ragged-lines . 1) (#:decimal-comma . 1)
-      (#:new-columns . ("a\u0000b")) (#:null-values . "N\u0000A")
-      (#:null-values . ("NA" "N\u0000A")) (#:null-values . (("a\u0000b" . "NA")))
-      (#:null-values . (("a" . "N\u0000A"))) (#:schema-overrides . (("a\u0000b" . f64)))
-      (#:comment-prefix . "#\u0000") (#:row-index-name . "i\u0000")))
+      (#:truncate-ragged-lines . 1) (#:decimal-comma . 1)))
   (define bad-together
     '(((#:quote-char . #\,))
       ((#:separator . #\;) (#:quote-char . #\;))
@@ -77,7 +74,7 @@
       ((#:skip-rows . 1) (#:skip-lines . 1))))
   (define bad-columns
     '((#:columns . ("a" "a")) (#:columns . (0 0)) (#:columns . ("a" 0)) (#:columns . (-1))
-      (#:columns . "a") (#:columns . ("a\u0000junk"))))
+      (#:columns . "a")))
   (for ([reader (in-list csv-readers)]
         [name '(read-csv scan-csv dataframe-read-csv lazyframe-scan-csv)])
     (check-exn (contract-violation-of name) (lambda () (reader 'sym)))
@@ -433,5 +430,34 @@
     (check-equal? (column parsed "t")
                   (list (moment 2021 3 26 23 #:tz "UTC") (moment 2021 3 28 22 #:tz "UTC")))
     (check-equal? (dtype (ref parsed "u")) '(datetime microseconds #f)))
+
+  (define nul-plain (scratch-file scratch "nul-plain.csv" "s,t\n1,2\n"))
+  (define nul-named (build-path scratch "nul-named.csv"))
+  (for ([n (in-list nul-names)])
+    (write-csv (dataframe (list (series '(1 2) #:name n) (series '("x" "y") #:name "s"))) nul-named)
+    (check-equal? (column-names (read-csv nul-named #:columns (list n))) (list n) (format "~s" n))
+    (for ([reader (in-list eager-and-scan)])
+      (define (read path kvs) ((cdr reader) path kvs))
+      (define label (format "~a ~s" (car reader) n))
+      (check-equal? (column-names (read nul-named '())) (list n "s") label)
+      (check-equal? (dtype (ref (read nul-named `((#:schema-overrides . ((,n . f64))))) n))
+                    'float64 label)
+      (check-equal? (column (read nul-named `((#:null-values . ((,n . "2"))))) n)
+                    (list 1 polars-null) label)
+      (check-equal? (column-names (read nul-plain `((#:new-columns . (,n "t"))))) (list n "t")
+                    label)
+      (check-equal? (column-names (read nul-plain `((#:row-index-name . ,n)))) (list n "s" "t")
+                    label)))
+  (for ([row (in-list (nul-expected 'io-reads))])
+    (match-define (list name text marker expected) row)
+    (define path (scratch-file scratch "nul-keyword.csv" text))
+    (define kvs
+      (match name
+        ['null-values `((#:null-values . ,marker))]
+        ['named-null-values `((#:null-values . (("s" . ,marker))))]
+        ['comment-prefix `((#:comment-prefix . ,marker))]))
+    (for ([reader (in-list eager-and-scan)])
+      (check-equal? (column ((cdr reader) path kvs) "s") expected
+                    (format "~a ~s" (car reader) row))))
 
   (delete-directory/files scratch))
