@@ -15,7 +15,7 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
-                  _c-string allocator/or-fail call/foreign-error check-time-zone-name
+                  _c-string allocator/or-fail call/foreign-error datetime-zone/c
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
@@ -43,9 +43,9 @@
           [expr-lit-i64 (->/c int64/c Expr-ptr?)]
           [expr-lit-u64 (->/c uint64/c Expr-ptr?)]
           [lit (->/c lit-value/c Expr-ptr?)]
-          [col (->/c col-spec/c Expr-ptr?)]
+          [col (->/c (and/c datetime-zone/c col-spec/c) Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
-          [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
+          [expr-dtype-col (->/c (and/c datetime-zone/c dtype-spec?) Expr-ptr?)]
           [expr-exclude (->/c multi-column-expr? (non-empty-listof column-pattern/c) Expr-ptr?)]
           [multi-column-expr? (->/c any/c boolean?)]))
 
@@ -258,7 +258,6 @@
                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
                          "cannot select ~v" dtype)]
     [(? zoned-datetime-dtype? (list _ unit zone))
-     (check-time-zone-name who zone)
      (define code (time-unit-symbol->code unit))
      (call/foreign-error who
                          (lambda () (expr-dtype-col-datetime-tz/raw code zone))
@@ -297,5 +296,6 @@
    name))
 
 (module+ internal
-  (provide col expr->string expr-all expr-drop expr-dtype-col expr-dtype-col-datetime-tz/raw
-           expr-exclude expr-lit-datetime-tz/raw lit lit-value/c multi-column-expr?))
+  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
+           multi-column-expr?
+           expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw))

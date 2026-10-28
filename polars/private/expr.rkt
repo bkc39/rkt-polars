@@ -32,7 +32,7 @@
                   series-new-null
                   dataframe-drop
                   frame-sort/c provide-row-windows sort-flags
-                  _c-string _CompatDType ->compat-dtype check-time-zone-name enum-dtype?
+                  _c-string _CompatDType ->compat-dtype datetime-zone/c enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
@@ -113,7 +113,7 @@
           [lazyframe-explain (explain/c LazyFrame-ptr?)]
           [lazyframe-join (frame-join/c LazyFrame-ptr? (lambda (_) LazyFrame-ptr?)
                                         (lambda (_) LazyFrame-ptr?) 'lazyframe-join/c)])
-         expr-cast expr-cast-to
+         expr-cast-to
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
          expr-meta-output-name expr-meta-output-name/raw expr-meta-root-names expr-meta-eq?
@@ -121,7 +121,8 @@
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
           [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]
           [lazyframe-sort (frame-sort/c LazyFrame-ptr? 'lazyframe-sort/c)]
-          [dataframe-sort-exprs (frame-sort/c DataFrame-ptr? 'dataframe-sort-exprs/c)]))
+          [dataframe-sort-exprs (frame-sort/c DataFrame-ptr? 'dataframe-sort-exprs/c)]
+          [expr-cast (->/c Expr-ptr? datetime-zone/c Expr-ptr?)]))
 
 (define-compat expr-meta-output-name/raw
   (_fun _Expr-ptr -> _rsstr)
@@ -811,7 +812,6 @@
                          "cannot convert to ~v" dtype)]
     [(zoned-datetime-dtype? dtype)
      (match-define (list _ unit zone) dtype)
-     (check-time-zone-name who zone)
      (call/foreign-error who
                          (lambda ()
                            (expr-cast-datetime-tz/raw e (time-unit-symbol->code unit) zone))
@@ -819,8 +819,8 @@
     [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ internal
-  (provide call-with-plan collect-plan/who expr-cast-datetime-tz/raw expr-diff expr-forward-fill
-           expr-head expr-rank expr-round expr-shift expr-slice expr-sort expr-sort-by expr-std
-           expr-tail expr-var
+  (provide call-with-plan collect-plan/who expr-diff expr-forward-fill expr-head expr-rank
+           expr-round expr-shift expr-slice expr-sort expr-sort-by expr-std expr-tail expr-var
            lazyframe-collect/who lazyframe-explain lazyframe-head lazyframe-join lazyframe-slice
-           lazyframe-sort lazyframe-tail rank-methods))
+           lazyframe-sort lazyframe-tail rank-methods
+           expr-cast-datetime-tz/raw))

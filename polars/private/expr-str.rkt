@@ -214,6 +214,8 @@
                  "unknown time unit ~v (expected 'nanoseconds, 'microseconds, or 'milliseconds)"
                  unit)]))
 
+(define (flag b) (if b 1 0))
+
 (define (check-strptime-options who format strict exact cache)
   (when (and format (not (string? format)))
     (error who "format must be a string or #f, got ~v" format))
@@ -237,11 +239,7 @@
   (check-strptime-options 'expr-str->date format strict exact cache)
   (call/polars-reason 'expr-str->date
                       (lambda ()
-                        (expr-str->date/raw e
-                                            format
-                                            (if strict 1 0)
-                                            (if exact 1 0)
-                                            (if cache 1 0)))))
+                        (expr-str->date/raw e format (flag strict) (flag exact) (flag cache)))))
 
 (define-compat expr-str->datetime/raw
   (_fun _Expr-ptr _str/null _int32 _uint8 _uint8 _uint8 -> _Expr-ptr/null)
@@ -264,7 +262,6 @@
 (define (parse-datetime who e format unit time-zone ambiguous strict exact cache)
   (check-strptime-options who format strict exact cache)
   (define code (time-unit-symbol->code who unit))
-  (define (flag b) (if b 1 0))
   (if time-zone
       (call/foreign-error who
                           (lambda ()
@@ -290,11 +287,7 @@
   (check-strptime-options 'expr-str->time format strict exact cache)
   (call/polars-reason 'expr-str->time
                       (lambda ()
-                        (expr-str->time/raw e
-                                            format
-                                            (if strict 1 0)
-                                            (if exact 1 0)
-                                            (if cache 1 0)))))
+                        (expr-str->time/raw e format (flag strict) (flag exact) (flag cache)))))
 
 (module+ internal
   (provide expr-str->datetime-tz/raw))

@@ -33,7 +33,7 @@
            (only-in (submod polars/private/generic/datetime internal)
                     dt-convert-time-zone dt-replace-time-zone)
            (only-in polars/tests/generic/test-fixtures nul-expected)
-           (only-in polars/tests/test-helpers drops-during))
+           (only-in polars/tests/test-helpers drops-during with-environment-variable))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
   (define out
@@ -552,29 +552,22 @@
              (lambda () (dt-replace-time-zone (col "t") "Mars/Base")))
   ;; polars' opt_try_new accepts any name under this variable; the binding's
   ;; entry points still refuse one chrono-tz does not know
-  (define (with-environment name value thunk)
-    (define env (current-environment-variables))
-    (define before (environment-variables-ref env name))
-    (dynamic-wind (lambda () (environment-variables-set! env name value))
-                  thunk
-                  (lambda () (environment-variables-set! env name before))))
-  (with-environment
+  (with-environment-variable
    #"POLARS_IGNORE_TIMEZONE_PARSE_ERROR" #"1"
-   (lambda ()
-     (define mars '(datetime microseconds "Mars/Base"))
-     (define frame (dataframe (list (series '("2021-03-27 03:00") #:name "s"))))
-     (for ([attempt (list (lambda () (cast wall mars))
-                          (lambda () (cast "t" mars))
-                          (lambda () (col mars))
-                          (lambda () (lit (make-moment (datetime 2021 3 27) 0 "Mars/Base")))
-                          (lambda () (dt-convert-time-zone wall "Mars/Base"))
-                          (lambda () (dt-replace-time-zone wall "Mars/Base"))
-                          (lambda () (dt-convert-time-zone "t" "Mars/Base"))
-                          (lambda () (dt-replace-time-zone "t" "Mars/Base"))
-                          (lambda () (str->datetime "s" #:time-zone "Mars/Base")))])
-       (check-exn #rx"unable to parse time zone: 'Mars/Base'" attempt))
-     (check-equal? (dtype (ref (select frame (str->datetime "s" #:time-zone "Asia/Tokyo")) "s"))
-                   '(datetime microseconds "Asia/Tokyo"))))
+   (define mars '(datetime microseconds "Mars/Base"))
+   (define frame (dataframe (list (series '("2021-03-27 03:00") #:name "s"))))
+   (for ([attempt (list (lambda () (cast wall mars))
+                        (lambda () (cast "t" mars))
+                        (lambda () (col mars))
+                        (lambda () (lit (make-moment (datetime 2021 3 27) 0 "Mars/Base")))
+                        (lambda () (dt-convert-time-zone wall "Mars/Base"))
+                        (lambda () (dt-replace-time-zone wall "Mars/Base"))
+                        (lambda () (dt-convert-time-zone "t" "Mars/Base"))
+                        (lambda () (dt-replace-time-zone "t" "Mars/Base"))
+                        (lambda () (str->datetime "s" #:time-zone "Mars/Base")))])
+     (check-exn #rx"unable to parse time zone: 'Mars/Base'" attempt))
+   (check-equal? (dtype (ref (select frame (str->datetime "s" #:time-zone "Asia/Tokyo")) "s"))
+                 '(datetime microseconds "Asia/Tokyo")))
   (check-exn #rx"^dt-convert-time-zone: cannot convert to .* \"UTC\": expected Datetime, got date$"
              (lambda () (dt-convert-time-zone (series (list (date 2021 3 27))) "UTC")))
   (check-exn #rx"^dt-replace-time-zone: cannot unset the time zone: expected Datetime, got str$"
@@ -594,11 +587,20 @@
                                " [datetime[us, Asia/Kathmandu]]\n[\n"
                                "\t2021-03-27 08:45:00 +0545\n\t2021-03-28 08:45:00 +0545\n]"))
 
-  (check-equal? (~> (dataframe (list (series (list "2020\u000001\u000002") #:name "d")))
+  (define nul "\u0000")
+  (check-equal? (~> (dataframe (list (series (list (string-append "2020" nul "01" nul "02"))
+                                             #:name "d")))
                     (select (str->date "d" #:format "%Y\u0000%m\u0000%d" #:strict #t))
                     (ref "d")
                     series->list)
                 (list (date 2020 1 2)))
+  (check-equal? (~> (dataframe (list (series (list (string-append "2020" nul "01" nul "02 03:04"))
+                                             #:name "s")))
+                    (select (str->datetime "s" #:format "%Y\u0000%m\u0000%d %H:%M"
+                                           #:time-zone "UTC"))
+                    (ref "s")
+                    series->list)
+                (list (moment 2020 1 2 3 4 #:tz "UTC")))
   (define (formatted xs make)
     (~> (dataframe (list (series xs #:name "s")))
         (select (alias (make "s") "s"))

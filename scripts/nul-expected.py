@@ -14,7 +14,7 @@ import sys
 import polars as pl
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from rktd import datum
+from rktd import datum, outcome
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "polars" / "scribblings" / "data" / "nul-expected.rktd"
@@ -69,11 +69,7 @@ ZONES = [
 
 
 def zone_row(name, f, tz="UTC\0x"):
-    try:
-        got = datum(f(tz).to_list())
-    except Exception:
-        got = "error"
-    return f"  ({name} {datum(tz)} {got})"
+    return f"  ({name} {datum(tz)} {datum(outcome(lambda: f(tz)))})"
 
 
 def row(name, args, f):

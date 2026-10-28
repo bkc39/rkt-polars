@@ -34,7 +34,7 @@
   expr-name-keep index-list/c lit/who lazyframe-collect/raw membership-list/c null-behavior/c
   rank-method/c]
  [polars/private/foreign
-  allocator/or-fail call/foreign-error call/polars-reason check-time-zone-name
+  allocator/or-fail call/foreign-error call/polars-reason datetime-zone/c
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
   _c-string _c-string/null _rsstr _rsstr-list str-block-drop

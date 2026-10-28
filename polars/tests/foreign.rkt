@@ -643,7 +643,7 @@
   (check-exn (regexp (string-append "^series-cast: cannot convert to '\\(datetime microseconds"
                                     " \"Mars/Base\"\\): unable to parse time zone: 'Mars/Base'"))
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
-  (check-exn #rx"unsupported cast target '\\(datetime microseconds \"\"\\)"
+  (check-exn #rx"^series-cast: contract violation\n  expected: time-zone-name/c\n  given: \"\"\n"
              (lambda () (series-cast stamps '(datetime microseconds ""))))
   (check-exn #rx"^->compat-dtype: unsupported cast target '\\(datetime microseconds \"UTC\"\\)"
              (lambda () (->compat-dtype '(datetime microseconds "UTC"))))

@@ -199,13 +199,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_exclude_v2`, `expr_str_to_date_v2`, `expr_str_to_datetime_v2`,
   `expr_str_to_time_v2`, `expr_dt_strftime_v2`), the three Enum entry points
   (`series_cast_enum_v2`, `expr_cast_enum_v2`, `expr_dtype_col_enum_v2`) and
-  the nine that take a time
-  zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
-  `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
-  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
-  `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
-  `expr_str_to_datetime_tz_v2`) — or it attaches a stale reason from an unrelated
-  call. `call/foreign-error`
+  the nine that take a time zone's name (`series_cast_datetime_tz`,
+  `expr_cast_datetime_tz`, `expr_dtype_col_datetime_tz`,
+  `expr_lit_datetime_tz`, `series_dt_convert_time_zone`,
+  `series_dt_replace_time_zone`, `expr_dt_convert_time_zone`,
+  `expr_dt_replace_time_zone`, `expr_str_to_datetime_tz_v2`) — or it
+  attaches a stale reason from an unrelated call. `call/foreign-error`
   also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, `missing_columns='insert'` →
   `#:missing-columns 'insert`, `ambiguous` → `#:ambiguous`, ...;
@@ -336,8 +335,9 @@ it. Racket side: `define-compat` with `#:c-id`.
     value or category may hold a NUL, as in Python.
   - A `strptime` or `strftime` format (`str->date`, `str->datetime`,
     `str->time`, `dt-strftime`) crosses as a `_str/null` or `_str` block, so
-    it keeps a NUL, as in Python. A zone's name with a NUL is a contract
-    error (see the zoned datetime fact).
+    it keeps a NUL, as in Python; `write-csv`'s `#:date-format`,
+    `#:datetime-format` and `#:time-format` still refuse one (#165). A zone's
+    name with a NUL is a contract error (see the zoned datetime fact).
   - A C string still crossing is `_c-string` / `_c-string/null`
     (`foreign.rkt`), which refuse a NUL.
   - A test in `polars/tests/resource.rkt` reads every module under
@@ -632,9 +632,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   keeps its NUL too, as in Python: `series #:name`, `rename`, `ref`,
   `col`, `alias`, `exclude`, `lit` and every verb that names a column, so a
   frame may hold both `"a"` and `"a\u0000b"` and each finds its own. A
-  format keeps its NUL as well, which matches a NUL in the text, as in
-  Python; a time zone's name with a NUL is a contract error (see the zoned
-  datetime fact).
+  `strptime` or `strftime` format keeps its NUL as well, which matches a NUL
+  in the text, as in Python.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix
@@ -806,14 +805,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   points, `series_dt_*` / `expr_dt_*` convert and replace,
   `expr_str_to_datetime_tz_v2`) as a `_c-string`. A zone's name is
   `time-zone-name/c` (`foreign.rkt`, public): a non-empty string without a
-  NUL, as every tz database name is. `dt-convert-time-zone`,
-  `dt-replace-time-zone` and `str->datetime #:time-zone` take it in their
-  contracts, and `check-time-zone-name` refuses a zoned dtype datum whose
-  zone holds a NUL under the verb's name (`cast`, `series #:dtype`, `col`,
-  `series-cast`, `expr-cast`, `expr-dtype-col`), where Python raises a
-  `ComputeError` (the `zones` section of `scripts/nul-expected.py`'s
-  record). Each export that takes a zone canonicalises it with
-  polars' `TimeZone::opt_try_new` (`+01:00` becomes `Etc/GMT-1`), validates
+  NUL. `dt-convert-time-zone`, `dt-replace-time-zone` and `str->datetime
+  #:time-zone` take it in their contracts. `datetime-zone/c`, in the dtype
+  contracts of `cast`, `series #:dtype`, `col`, `series-cast`, `expr-cast`
+  and `expr-dtype-col`, refuses a zoned dtype datum whose zone is not one,
+  naming the verb. Python raises a `ComputeError` there; the `zones` section
+  of `scripts/nul-expected.py`'s record holds it. Each export that takes a
+  zone canonicalises it with polars' `TimeZone::opt_try_new` (`+01:00`
+  becomes `Etc/GMT-1`), validates
   it with `TimeZone::validate_time_zone` (which, unlike `opt_try_new`, ignores
   `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`) and records why it fails;
   `->compat-dtype` refuses a zoned datum. A list of moments settles

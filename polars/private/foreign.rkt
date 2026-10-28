@@ -8,8 +8,9 @@
          gregor
          gregor/period
          (only-in racket/contract/base
-                  [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-named-contract
-                  listof non-empty-listof or/c rename-contract)
+                  [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-contract-predicate
+                  flat-named-contract listof non-empty-listof not/c or/c rename-contract)
+         (only-in racket/contract flat-contract-with-explanation raise-blame-error)
          (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
@@ -33,7 +34,7 @@
                      series-strings
                      strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
-                     series-date-ref series-index/c series-ref-bytes time-zone-name?
+                     series-cast series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
@@ -71,7 +72,8 @@
           [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-new-null (->/c utf-8-name/c size/c Series-ptr?)]
-          [series-ref-str series-index/c]))
+          [series-ref-str series-index/c]
+          [series-cast (->/c any/c datetime-zone/c Series-ptr?)]))
 
 (define-syntax-parse-rule (provide-series-constructors [from-list:id from-vector:id] ...)
   (provide (contract-out [from-list (->/c utf-8-name/c list? Series-ptr?)] ...
@@ -325,14 +327,19 @@
     [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
     [_ #f]))
 
-(define (time-zone-name? v)
-  (and (non-empty-string? v) (not (regexp-match? #rx"\0" v))))
+(define time-zone-name/c
+  (flat-named-contract 'time-zone-name/c (and/c non-empty-string? (not/c #rx"\0"))))
 
-(define time-zone-name/c (flat-named-contract 'time-zone-name/c time-zone-name?))
-
-(define (check-time-zone-name who zone)
-  (unless (time-zone-name? zone)
-    (raise-argument-error who "time-zone-name/c" zone)))
+(define datetime-zone/c
+  (flat-contract-with-explanation
+   (lambda (v)
+     (match v
+       [(list 'datetime _ (and (? string?) (not (? (flat-contract-predicate time-zone-name/c)))
+                               zone))
+        (lambda (blame)
+          (raise-blame-error blame zone '(expected: "time-zone-name/c" given: "~e") zone))]
+       [_ #t]))
+   #:name 'datetime-zone/c))
 
 (define (zoned-datetime-dtype? v)
   (match v
@@ -1277,7 +1284,6 @@
 
 (define (series-cast-datetime-tz who s dtype)
   (match-define (list _ unit zone) dtype)
-  (check-time-zone-name who zone)
   (call/foreign-error who
                       (lambda ()
                         (series-cast-datetime-tz/raw s (time-unit-symbol->code unit) zone))

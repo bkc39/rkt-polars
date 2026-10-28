@@ -1718,7 +1718,8 @@ stations
 (select (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock")))
         (~> (str->datetime "clock")
             (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
-(~> (dataframe (list (series (list "2020\u000001\u000002") #:name "d")))
+(~> (dataframe (list (series (list (string-append "2020" "\u0000" "01" "\u0000" "02"))
+                             #:name "d")))
     (select (str->date "d" #:format "%Y\u0000%m\u0000%d")))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 
@@ -1731,8 +1732,7 @@ stations
                                               (or/c 'raise 'earliest 'latest 'null) 'raise]
                                              [#:non-existent non-existent (or/c 'raise 'null)
                                               'raise])
-                       (or/c series? Expr-ptr?)]
-              @defthing[time-zone-name/c flat-contract?])]{
+                       (or/c series? Expr-ptr?)])]{
   Move a datetime series, or the datetime column an expression or a column
   name gives, between zones (@tt{.dt.convert_time_zone},
   @tt{.dt.replace_time_zone}). @racket[dt-convert-time-zone] keeps each
@@ -1751,9 +1751,7 @@ stations
   @racket[#:non-existent] @racket['null] gives null for a time that does not
   exist. Both default to @racket['raise], as Python's do. Zones are named as
   the tz database names them; a zone polars does not know raises, with the
-  nearest name it does. A @racket[time-zone-name/c] is a non-empty string
-  without a NUL, as every tz database name is; Python refuses one with a
-  NUL too. On an expression, an ambiguous or non-existent time
+  nearest name it does. On an expression, an ambiguous or non-existent time
   is reported when the plan runs. API gap: Python's @tt{ambiguous} may also
   be an expression, resolving each row its own way; here it is one symbol
   for the whole column (#171).
@@ -1774,7 +1772,12 @@ stations
                         #:name "clock"))
 (dt-replace-time-zone skipped "Europe/Brussels" #:non-existent 'null)
 (eval:error (dt-replace-time-zone skipped "Europe/Brussels"))
-(eval:error (dt-convert-time-zone "clock" "Asia/Kathmando"))
+(eval:error (dt-convert-time-zone "clock" "Asia/Kathmando"))]}
+
+@defthing[time-zone-name/c flat-contract?]{
+  A @racket[time-zone-name/c] is a non-empty string without a NUL.
+
+@examples[#:eval ev #:label #f
 (eval:error (dt-convert-time-zone (ref clocks "clock") "UTC\u0000x"))]}
 
 @subsection[#:tag "fluent-shadowing"]{Shadowed bindings}

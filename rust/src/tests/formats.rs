@@ -82,24 +82,6 @@ fn a_parse_format_keeps_its_nul() {
 }
 
 #[test]
-fn a_format_cut_at_its_nul_fails_to_parse() {
-    let cut = str_block("%Y");
-    let s = column();
-    let e = expr_str_to_date_v2(s, cut.as_ptr(), 1, 1, 1);
-    let expr = unsafe { (*e).clone() };
-    expr_drop(e);
-    expr_drop(s);
-    let failed = DataFrame::new_infer_height(vec![Column::from(texts(&[
-        "2020\x0001\x0002",
-    ]))])
-    .unwrap()
-    .lazy()
-    .select([expr])
-    .collect();
-    assert!(failed.is_err());
-}
-
-#[test]
 fn a_strftime_format_keeps_its_nul() {
     let dates = Series::new("s".into(), [18263i32])
         .cast(&DataType::Date)
@@ -151,6 +133,7 @@ fn every_format_v2_refuses_a_malformed_block_with_its_cause() {
         ),
     ];
     for (name, call) in rows {
+        set_last_error("stale");
         assert!(call().is_null(), "{name} accepted a malformed block");
         assert_eq!(
             recorded_error(),

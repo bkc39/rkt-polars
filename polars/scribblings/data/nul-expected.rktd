@@ -17,6 +17,6 @@
   (to-time "%H\u0000%M" ("03\u000004") ((time 3 4 0 0)))
   (strftime-date "%Y\u0000%m" ((date 2020 1 2)) ("2020\u000001")))
  (zones
-  (cast "UTC\u0000x" error)
-  (replace "UTC\u0000x" error)
-  (convert "UTC\u0000x" error)))
+  (cast "UTC\u0000x" (raises ComputeError))
+  (replace "UTC\u0000x" (raises ComputeError))
+  (convert "UTC\u0000x" (raises ComputeError))))
