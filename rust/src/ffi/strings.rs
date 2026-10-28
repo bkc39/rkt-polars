@@ -37,6 +37,24 @@ impl fmt::Display for StrError {
     }
 }
 
+impl From<StrError> for PolarsError {
+    fn from(err: StrError) -> Self {
+        polars_err!(ComputeError: "{}", err)
+    }
+}
+
+/// The string a single block holds; NULL is an error naming `what`.
+///
+/// # Safety
+/// As for `str_arg`.
+pub(crate) unsafe fn name_arg<'a>(
+    p: StrArg,
+    what: &str,
+) -> PolarsResult<&'a str> {
+    unsafe { str_arg(p) }?
+        .ok_or_else(|| polars_err!(ComputeError: "{} is null", what))
+}
+
 /// # Safety
 /// `p` points to at least `i + 1` words.
 unsafe fn word(p: *const u64, i: usize) -> u64 {
@@ -74,7 +92,6 @@ unsafe fn utf8<'a>(
 /// # Safety
 /// A non-NULL `p` points to as many words as its word 0 says, which outlive
 /// `'a`; every other bound is checked.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) unsafe fn str_arg<'a>(
     p: StrArg,
 ) -> Result<Option<&'a str>, StrError> {
@@ -93,7 +110,6 @@ pub(crate) unsafe fn str_arg<'a>(
 ///
 /// # Safety
 /// As for `str_arg`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) unsafe fn str_list_arg<'a>(
     p: StrListArg,
 ) -> Result<Vec<&'a str>, StrError> {

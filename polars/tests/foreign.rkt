@@ -67,7 +67,9 @@
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: polars/private/foreign)
            (only-in polars/tests/test-helpers
-                    polars-sources read-source refusal refusal-misses settle! with-planted-sources))
+                    drops-during polars-sources read-source refusal refusal-misses settle!
+                    with-planted-sources)
+           (only-in polars/tests/generic/test-fixtures nul-expected nul-names))
 
   (define empty-series-ptr
     (series-empty))
@@ -179,7 +181,7 @@
   (check-false
    (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))) ;; wrong dtype
   (check-exn
-   #rx"^series-new-i32: operation failed$"
+   #rx"^_str: contract violation\n  expected: utf-8-name/c\n  given: #f"
    (lambda ()
      (series-new-i32 #f '(1))))
 
@@ -212,7 +214,7 @@
    (series-max-f64 (series-new-f64 "" '(1.5 2.0 4.25 8.0)))
    8.0)
   (check-exn
-   #rx"^series-new-f64: operation failed$"
+   #rx"^_str: contract violation\n  expected: utf-8-name/c\n  given: #f"
    (lambda ()
      (series-new-f64 #f '(1.0))))
   (check-exn
@@ -256,7 +258,7 @@
     (check-equal? (list (series-name nulls) (series-len nulls) (series-dtype nulls)
                         (series-null-count nulls))
                   (list "nothing" n 'null n)))
-  (check-exn #rx"^series-new-null: operation failed$" (lambda () (series-new-null #f 0)))
+  (check-exn #rx"^_str: contract violation" (lambda () (series-new-null #f 0)))
   (check-pred Series-ptr? (series-new-bool "" '(#t #f #t)))
   (check-equal? (series-len (series-new-bool "x" '(#t #f))) 2)
   (check-equal? (series-dtype (series-new-bool "x" '(#t #f))) 'boolean)
@@ -1277,13 +1279,14 @@
   (check-exn #rx"^series-and: invalid series dtype: expected `Boolean`, got `i32`"
              (lambda () (series-and owned-i32 owned-bool)))
   (check-exn #rx"^series-lt-i32: operation failed$" (lambda () (series-lt-i32 owned-f64 1)))
-  (check-exn #rx"^series-eq-str: operation failed$" (lambda () (series-eq-str owned-i32 "a")))
+  (check-exn #rx"^series-eq-str: cannot compare string with numeric type \\(i32\\)$"
+             (lambda () (series-eq-str owned-i32 "a")))
   (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
-  (check-exn #rx"^series-new-i32/vec: operation failed$"
+  (check-exn #rx"^_str: contract violation"
              (lambda () (series-new-i32/vec #f (vector 1))))
   (check-exn #rx"^dataframe-new: operation failed$"
              (lambda () (dataframe-new (list owned-i32 (series-head owned-i32 2)))))
-  (check-exn #rx"^dataframe-drop-columns: operation failed$"
+  (check-exn #rx"^dataframe-drop-columns: [^\n]*\"nope\""
              (lambda () (dataframe-drop-columns owned-frame '("nope"))))
   (check-exn #rx"^dataframe-vstack: [^\n]*unable to append to a DataFrame of shape"
              (lambda () (dataframe-vstack owned-frame (dataframe-select owned-frame '("x")))))
@@ -1425,4 +1428,36 @@
     (check-exn #rx"^_c-string: contract violation\n  expected: a string without a NUL"
                (lambda () (call bad))))
   (check-exn #rx"^_c-string: contract violation" (lambda () (call-with-c-string #f)))
-  (check-equal? (length c-strings) 3))
+  (check-equal? (length c-strings) 3)
+
+  (for ([n (in-list nul-names)])
+    (for ([make (in-list (list (lambda (n) (series-new-i32 n '(1)))
+                               (lambda (n) (series-new-i64/vec n (vector 1)))
+                               (lambda (n) (series-new-f64 n '(1.0)))
+                               (lambda (n) (series-new-bool n '(#t)))
+                               (lambda (n) (series-new-bool/vec n (vector #t)))
+                               (lambda (n) (series-new-str n '("x")))
+                               (lambda (n) (series-new-null n 1))
+                               (lambda (n) (series-new-ymdhms n ex0))))])
+      (check-equal? (series-name (make n)) n))
+    (check-equal? (drops-during series-drop-count
+                                (lambda () (series-drop (series-new-i64 n '(1)))))
+                  1)
+    (define keyed (dataframe-new (list (series-new-str n '("x" "y" "x"))
+                                       (series-new-i32 "a" '(1 2 3)))))
+    (define summed (dataframe-group-by-sum keyed #:by (list n) #:agg '("a")))
+    (check-equal? (dataframe-column-names (dataframe-sort summed (list n))) (list n "a_sum"))
+    (check-equal? (series-ref (dataframe-column (dataframe-sort summed (list n)) "a_sum") 0) 4))
+  (for ([row (in-list (nul-expected 'values))])
+    (match row
+      [(list (and op (or 'eq 'ne)) xs v expected)
+       (define compared ((if (eq? op 'eq) series-eq-str series-ne-str) (series-new-str "s" xs) v))
+       (check-equal? (for/list ([i (in-range (length xs))]) (series-ref compared i)) expected)]
+      [_ (void)]))
+  (define empty-and-nul
+    (dataframe-new (list (series-new-i32 "a\u0000b" '(1)) (series-new-i32 "" '(2))
+                         (series-new-i32 "a" '(3)))))
+  (check-equal? (dataframe-column-names (dataframe-select empty-and-nul '("" "a\u0000b")))
+                '("" "a\u0000b"))
+  (check-equal? (dataframe-column-names (dataframe-drop-columns empty-and-nul '("a\u0000b" "")))
+                '("a")))

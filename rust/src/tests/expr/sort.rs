@@ -142,11 +142,11 @@ fn expr_sort_of_one_value_is_the_input() {
     let v = column("v");
     let total = expr_sum(v);
     let one = expr_lit_i32(1);
-    let word = cstr("x");
+    let word = str_block("x");
     let above = expr_gt(total, one);
     let cases = [
         aliased(total, "s"),
-        expr_lit_str(word.as_ptr()),
+        expr_lit_str_v2(word.as_ptr()),
         expr_add(total, one),
         boxed(len()),
         expr_cast(total, float64()),
@@ -243,9 +243,8 @@ fn agg_by_g(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
     let lf = dataframe_lazy(df);
     let grouped =
         lazyframe_group_by_agg(lf, keys.as_ptr(), 1, aggs.as_ptr(), 1);
-    let g_name = cstr("g");
-    let by: [*const c_char; 1] = [g_name.as_ptr()];
-    let out = collect_plan(lazyframe_sort_with_options(
+    let by = str_list_block(&["g"]);
+    let out = collect_plan(lazyframe_sort_with_options_v2(
         grouped,
         by.as_ptr(),
         [0].as_ptr(),
@@ -383,10 +382,9 @@ fn expr_sort_by_without_keys_returns_null() {
 #[test]
 fn lazyframe_sort_places_nulls_per_key() {
     let (df, cols) = frame();
-    let (na, nb) = (cstr("a"), cstr("b"));
-    let names: [*const c_char; 2] = [na.as_ptr(), nb.as_ptr()];
+    let names = str_list_block(&["a", "b"]);
     let lf = dataframe_lazy(df);
-    let sorted = lazyframe_sort_with_options(
+    let sorted = lazyframe_sort_with_options_v2(
         lf,
         names.as_ptr(),
         [0, 1].as_ptr(),
@@ -433,10 +431,9 @@ fn expr_sort_of_booleans_places_nulls_by_flag() {
 fn expr_sort_of_a_sorted_column_honours_nulls_last() {
     let x = make_opt_i32("x", &[Some(3), None, Some(1), None, Some(2)]);
     let df = make_df(&[x]);
-    let key = cstr("x");
-    let names: [*const c_char; 1] = [key.as_ptr()];
+    let names = str_list_block(&["x"]);
     let lf = dataframe_lazy(df);
-    let once = collect_plan(lazyframe_sort_with_options(
+    let once = collect_plan(lazyframe_sort_with_options_v2(
         lf,
         names.as_ptr(),
         [0].as_ptr(),
@@ -463,10 +460,9 @@ fn lazy_sort_then_projection_handles_booleans() {
     let a = make_i32("a", &[2, 1, 2]);
     let b = make_opt_bool("b", &[Some(true), None, Some(false)]);
     let df = make_df(&[a, b]);
-    let key = cstr("b");
-    let names: [*const c_char; 1] = [key.as_ptr()];
+    let names = str_list_block(&["b"]);
     let lf = dataframe_lazy(df);
-    let sorted = lazyframe_sort_with_options(
+    let sorted = lazyframe_sort_with_options_v2(
         lf,
         names.as_ptr(),
         [0].as_ptr(),

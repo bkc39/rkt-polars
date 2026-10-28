@@ -7,7 +7,11 @@
            (only-in gregor date datetime moment resolve-offset/post resolve-offset/pre)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c nonnegative-int64/c)
-           (only-in polars/private/expr col)
+           (only-in racket/match match)
+           (only-in polars/private/expr col lit)
+           (only-in polars/private/generic/nullable fill-null)
+           (only-in polars/private/generic/operators [= p=] [!= p!=])
+           (only-in polars/tests/generic/test-fixtures nul-expected)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
@@ -187,4 +191,30 @@
                    (lambda () (contracted:str->datetime "clock" #:ambiguous 'first))
                    (lambda () (contracted:str->datetime "clock" #:unit 'seconds))
                    (lambda () (contracted:str->datetime "clock" #:strict 1)))])
-    (check-exn exn:fail:contract:blame? bad)))
+    (check-exn exn:fail:contract:blame? bad))
+  (define (strings-through xs make)
+    (~> (dataframe (list (series xs #:name "s" #:dtype 'string)))
+        (select (alias (make "s") "s"))
+        (ref "s")
+        series->list))
+  (for ([row (in-list (nul-expected 'values))])
+    (define-values (got expected)
+      (match row
+        [(list 'lit v expected) (values (strings-through '("x") (lambda (_) (lit v))) expected)]
+        [(list 'fill-null xs v expected)
+         (values (strings-through xs (lambda (c) (fill-null c v))) expected)]
+        [(list 'strip-chars xs v expected)
+         (values (strings-through xs (lambda (c) (str-strip-chars c v))) expected)]
+        [(list 'replace-literal xs v by expected)
+         (values (strings-through xs (lambda (c) (str-replace c v by #:literal #t))) expected)]
+        [(list 'contains-literal xs v expected)
+         (values (strings-through xs (lambda (c) (str-contains c v))) expected)]
+        [(list 'starts-with xs v expected)
+         (values (strings-through xs (lambda (c) (str-starts-with c v))) expected)]
+        [(list 'eq xs v expected)
+         (check-equal? (series->list (p= (series xs) v)) expected)
+         (values (strings-through xs (lambda (c) (p= (col c) v))) expected)]
+        [(list 'ne xs v expected)
+         (check-equal? (series->list (p!= (series xs) v)) expected)
+         (values (strings-through xs (lambda (c) (p!= (col c) v))) expected)]))
+    (check-equal? got expected (format "~s" row))))

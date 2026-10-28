@@ -26,29 +26,28 @@ pub extern "C" fn expr_multi_column(e: *const Expr) -> u8 {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_exclude(
+pub extern "C" fn expr_exclude_v2(
     e: *const Expr,
-    names: *const *const c_char,
-    n: usize,
+    names: StrListArg,
 ) -> *mut Expr {
-    if e.is_null() || n == 0 {
-        return ptr::null_mut();
-    }
-    let names = match unsafe { collect_c_strings(names, n) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let ee = unsafe { (*e).clone() };
-    if !is_multi_column(&ee) {
-        return ptr::null_mut();
-    }
-    let out = ee.map_expr(|x| match x {
-        Expr::Selector(s) => {
-            Expr::Selector(s - by_name(names.clone(), false, true))
-        }
-        other => other,
-    });
-    Box::into_raw(Box::new(out))
+    boxed_unguarded(|| {
+        let e = unsafe { deref_arg(e, "expression") }?;
+        let names: Vec<PlSmallStr> = unsafe { str_list_arg(names) }?
+            .into_iter()
+            .map(PlSmallStr::from)
+            .collect();
+        polars_ensure!(!names.is_empty(), ComputeError: "exclude needs a name");
+        polars_ensure!(
+            is_multi_column(e),
+            ComputeError: "exclude needs a multi-column expression"
+        );
+        Ok(e.clone().map_expr(|x| match x {
+            Expr::Selector(s) => {
+                Expr::Selector(s - by_name(names.clone(), false, true))
+            }
+            other => other,
+        }))
+    })
 }
 
 #[no_mangle]

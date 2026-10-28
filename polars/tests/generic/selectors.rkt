@@ -12,7 +12,8 @@
            (only-in polars/private/generic/reductions alias sum)
            (only-in polars/private/generic/reshape
                     agg cast collect drop filter group-by lazy select with-columns)
-           (only-in polars/tests/generic/test-fixtures col datetime ops-df polars-null))
+           (only-in polars/tests/generic/test-fixtures
+                    col datetime named-frame nul-names ops-df polars-null))
 
   (define people
     (dataframe
@@ -164,4 +165,8 @@
              (lambda () (contracted:exclude (all) 'a)))
   (check-exn exn:fail:contract:arity? (lambda () (contracted:exclude (all))))
   (check-exn exn:fail:contract:arity? (lambda () (contracted:all 1)))
-  (check-exn #rx"^col: contract violation" (lambda () (col 'nope))))
+  (check-exn #rx"^col: contract violation" (lambda () (col 'nope)))
+  (for ([n (in-list nul-names)])
+    (define named (named-frame n))
+    (check-equal? (column-names (select named (exclude (all) n))) '("a"))
+    (check-equal? (column-names (select named (exclude (all) "a"))) (list n))))

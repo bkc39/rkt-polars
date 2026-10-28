@@ -36,7 +36,8 @@
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
-         (only-in polars/private/resource _string-list with-release)
+         (only-in polars/private/resource _str-list _string-list with-release)
+
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
@@ -710,13 +711,13 @@
 
 (define-compat lazyframe-sort/raw
   (_fun _LazyFrame-ptr
-        (names : _string-list)
+        (names : _str-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
         (maintain-order : _stdbool)
         -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_sort_with_options
+  #:c-id lazyframe_sort_with_options_v2
   #:wrap (allocator lazyframe-drop))
 
 (define (lazyframe-sort lf names
@@ -770,14 +771,8 @@
 ;; --- Phase A8: lazy join ---
 
 (define-compat lazyframe-join/c
-  (_fun _LazyFrame-ptr _LazyFrame-ptr
-        (left-on : _string-list)
-        (_size = (length left-on))
-        (right-on : _string-list)
-        (_size = (length right-on))
-        _int32
-        -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_join
+  (_fun _LazyFrame-ptr _LazyFrame-ptr _str-list _str-list _int32 -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_join_v2
   #:wrap (allocator/or-fail lazyframe-drop 'lazyframe-join))
 
 (define (lazyframe-join left right

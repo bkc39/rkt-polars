@@ -102,8 +102,8 @@ fn an_unnamed_expression_over_a_date_past_chrono_has_no_output_name() {
 #[test]
 fn printing_an_expression_over_a_date_past_chrono_records_the_panic() {
     let dates = past_chrono_date();
-    let name = cstr("x");
-    let column = expr_col(name.as_ptr());
+    let name = str_block("x");
+    let column = expr_col_v2(name.as_ptr());
     let values = expr_lit_series(dates);
     let member = expr_is_in(column, values);
     assert!(expr_to_string_v2(member).is_null());
@@ -133,11 +133,9 @@ fn casting_a_value_past_chrono_to_a_string_records_the_panic() {
 
 #[test]
 fn pivoting_on_a_date_past_chrono_records_the_panic() {
-    let on = cstr("d");
-    let index = cstr("k");
-    let values = cstr("x");
-    let (on, index, values) =
-        ([on.as_ptr()], [index.as_ptr()], [values.as_ptr()]);
+    let on = str_list_block(&["d"]);
+    let index = str_list_block(&["k"]);
+    let values = str_list_block(&["x"]);
     assert_frame_refused(
         &[
             past_chrono_date(),
@@ -146,14 +144,11 @@ fn pivoting_on_a_date_past_chrono_records_the_panic() {
         ],
         DATE_CAUSE,
         |df| {
-            dataframe_pivot(
+            dataframe_pivot_v2(
                 df,
                 on.as_ptr(),
-                1,
                 index.as_ptr(),
-                1,
                 values.as_ptr(),
-                1,
                 CompatPivotAgg::First as i32,
             )
             .is_null()
@@ -163,10 +158,8 @@ fn pivoting_on_a_date_past_chrono_records_the_panic() {
 
 #[test]
 fn unpivoting_a_date_past_chrono_into_strings_records_the_panic() {
-    let d = cstr("d");
-    let k = cstr("k");
-    let i = cstr("i");
-    let (on, index) = ([d.as_ptr(), k.as_ptr()], [i.as_ptr()]);
+    let on = str_list_block(&["d", "k"]);
+    let index = str_list_block(&["i"]);
     assert_frame_refused(
         &[
             past_chrono_date(),
@@ -174,7 +167,7 @@ fn unpivoting_a_date_past_chrono_into_strings_records_the_panic() {
             make_i32("i", &[1, 2]),
         ],
         DATE_CAUSE,
-        |df| dataframe_unpivot(df, on.as_ptr(), 2, index.as_ptr(), 1).is_null(),
+        |df| dataframe_unpivot_v2(df, on.as_ptr(), index.as_ptr()).is_null(),
     );
 }
 

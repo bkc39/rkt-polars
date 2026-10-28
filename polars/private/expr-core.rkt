@@ -20,7 +20,7 @@
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
-         (only-in polars/private/resource _string-list)
+         (only-in polars/private/resource _str _str-list _string-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)]
@@ -112,8 +112,9 @@
    who))
 
 (define-compat expr-col
-  (_fun _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
+  (_fun _str -> _Expr-ptr/null)
+  #:c-id expr_col_v2
+  #:wrap (allocator/or-fail expr-drop 'expr-col))
 
 (define-compat expr-lit-i32
   (_fun _int32 -> _Expr-ptr)
@@ -140,16 +141,18 @@
   (expr-lit-bool/raw (if b 1 0)))
 
 (define-compat expr-lit-str
-  (_fun _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
+  (_fun _str -> _Expr-ptr/null)
+  #:c-id expr_lit_str_v2
+  #:wrap (allocator/or-fail expr-drop 'expr-lit-str))
 
 (define-compat expr-lit-null
   (_fun -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
 (define-compat expr-alias
-  (_fun _Expr-ptr _string -> _Expr-ptr)
-  #:wrap (allocator expr-drop))
+  (_fun _Expr-ptr _str -> _Expr-ptr/null)
+  #:c-id expr_alias_v2
+  #:wrap (allocator/or-fail expr-drop 'expr-alias))
 
 (define-compat expr-lit-temporal
   (_fun _int64 _CompatDType -> _Expr-ptr/null)
@@ -213,11 +216,8 @@
   (and (Expr-ptr? v) (= 1 (expr-multi-column/raw v))))
 
 (define-compat expr-exclude/raw
-  (_fun _Expr-ptr
-        (names : _string-list)
-        (_size = (length names))
-        -> _Expr-ptr/null)
-  #:c-id expr_exclude
+  (_fun _Expr-ptr _str-list -> _Expr-ptr/null)
+  #:c-id expr_exclude_v2
   #:wrap (allocator expr-drop))
 
 (define-compat expr-dtype-col/raw
@@ -226,8 +226,8 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-exclude e names)
-  (or (expr-exclude/raw e (map ->column-pattern names))
-      (error 'expr-exclude "operation failed")))
+  (call/foreign-error 'expr-exclude (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
+
 
 (define-compat expr-dtype-col-enum/raw
   (_fun (categories : _string-list)

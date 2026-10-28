@@ -13,7 +13,9 @@
            (only-in (submod polars/private/expr-core internal)
                     col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit
                     lit-value/c multi-column-expr?)
-           (only-in polars/private/foreign polars-null))
+           (only-in racket/string string-contains?)
+           (only-in polars/private/foreign polars-null)
+           (only-in polars/tests/generic/test-fixtures nul-names))
 
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
@@ -101,4 +103,8 @@
   (for ([_ (in-range 10)])
     (collect-garbage)
     (sleep 0.01))
-  (check-true (>= (- (expr-drop-count) drop-before) 200)))
+  (check-true (>= (- (expr-drop-count) drop-before) 200))
+  (for ([n (in-list nul-names)])
+    (check-true (string-contains? (expr->string (col n)) n))
+    (check-true (string-contains? (expr->string (expr-alias (col "a") n)) n))
+    (check-true (string-contains? (expr->string (lit n)) n))))

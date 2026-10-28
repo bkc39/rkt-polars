@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/runtime-path
+         (only-in racket/file file->value)
          (only-in polars/private/generic/core
                   column-names dataframe dtype len ref series wrap-series)
          (only-in polars/tests/test-helpers
@@ -27,6 +28,9 @@
                           (series '(3 4) #:name "v")))
          #:on '("k") #:index '("id") #:values '("v")))
 
+(define (named-frame n)
+  (dataframe (list (series '(1 2) #:name n) (series '(3 4) #:name "a"))))
+
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
 (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
@@ -50,6 +54,17 @@
                    (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
+
+(define-runtime-path nul-expected-file "../../scribblings/data/nul-expected.rktd")
+
+(define (nul-expected section)
+  (define (decode v)
+    (cond
+      [(eq? v 'null) polars-null]
+      [(list? v) (map decode v)]
+      [else v]))
+  (for/list ([row (in-list (cdr (assq section (file->value nul-expected-file))))])
+    (cons (car row) (map decode (cdr row)))))
 
 (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
 

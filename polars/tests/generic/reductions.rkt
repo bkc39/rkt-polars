@@ -15,12 +15,13 @@
            (only-in polars/private/foreign
                     dataframe-drop-count series-drop-count series-head series-min-f64
                     series-slice series-sum-f64)
-           (only-in polars/private/generic/core dtype series wrap-series)
-           (only-in polars/private/generic/reductions first last max mean min sum)
+           (only-in polars/private/generic/core column-names dataframe dtype series wrap-series)
+           (only-in polars/private/generic/reshape select)
+           (only-in polars/private/generic/reductions alias first last max mean min sum)
            (only-in (submod polars/private/generic/reductions internal) n-unique std var)
            (only-in polars/tests/generic/test-fixtures
                     Expr-ptr? col datetime floats ints past-chrono-zoned polars-null prices
-                    series-cells settle!)
+                    nul-names series-cells settle!)
            (prefix-in contracted: polars/private/generic/reductions))
   (define small (series '(1 2 3) #:dtype 'i8))
   (define flags (series '(#t #f #t)))
@@ -148,4 +149,8 @@
                          decimal-table)
   (for ([single (in-list singles)])
     (match-define (list op dt rows ddof expected) single)
-    (check-reduction op (series (map decode rows) #:dtype dt) expected #:ddof ddof)))
+    (check-reduction op (series (map decode rows) #:dtype dt) expected #:ddof ddof))
+  (for ([n (in-list nul-names)])
+    (define named (dataframe (list (series '(1 2) #:name "a"))))
+    (check-equal? (column-names (select named (alias (col "a") n))) (list n))
+    (check-equal? (column-names (select named (alias (sum "a") n))) (list n))))

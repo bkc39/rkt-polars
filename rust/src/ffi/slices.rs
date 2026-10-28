@@ -79,3 +79,12 @@ pub(crate) unsafe fn sort_multiple_options(
         .with_nulls_last_multi(nulls_last)
         .with_maintain_order(maintain_order != 0))
 }
+
+/// The sort keys, checked against the flags' count.
+pub(crate) fn sort_keys(names: Vec<&str>, n: usize) -> PolarsResult<Vec<&str>> {
+    polars_ensure!(
+        names.len() == n,
+        ComputeError: "{} sort keys but {} flags", names.len(), n
+    );
+    Ok(names)
+}

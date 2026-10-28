@@ -5,7 +5,7 @@
            (for-syntax racket/base)
            racket/match
            (only-in racket/file file->string)
-           (only-in racket/list append-map)
+           (only-in racket/list append-map flatten)
            (only-in ffi/unsafe
                     _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
                     ptr-set!)
@@ -359,6 +359,29 @@
                   (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
                                      _string*/utf-8)])
                     (list planted type))))
+
+  (define string-list-holders
+    '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw
+      expr-cast-enum/raw expr-dtype-col-enum/raw series-cast-enum/raw))
+  (define (string-list-users file-forms)
+    (sort (for*/list ([file+forms (in-list file-forms)]
+                      [form (in-list (cdr file+forms))]
+                      #:when (match form
+                               [(list* (or 'define-compat 'define-syntax-parse-rule) _ _) #t]
+                               [_ #f])
+                      #:when (memq '_string-list (flatten form)))
+            (match form
+              [(list* _ (cons name _) _) name]
+              [(list* _ name _) name]))
+          symbol<?))
+  (check-equal? (string-list-users (source-forms (polars-sources #:dirs '("private"))))
+                string-list-holders
+                "a name list crosses as C strings: use _str-list")
+  (with-planted-sources (root ["private/planted.rkt"
+                               (format "#lang racket/base\n~s"
+                                       '(define-compat planted (_fun _string-list -> _void)))])
+    (check-equal? (string-list-users (source-forms (polars-sources root #:dirs '("private"))))
+                  '(planted)))
 
   (define planted-text
     (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"

@@ -22,33 +22,21 @@ pub extern "C" fn dataframe_filter(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_sort_with_options(
-    df_ptr: *mut DataFrame,
-    by_ptrs: *const *const c_char,
+pub extern "C" fn dataframe_sort_with_options_v2(
+    df_ptr: *const DataFrame,
+    by: StrListArg,
     descending: *const u8,
     nulls_last: *const u8,
     n: usize,
     maintain_order: u8,
 ) -> *mut DataFrame {
-    clear_last_error();
-    if df_ptr.is_null() {
-        set_last_error("dataframe is null");
-        return ptr::null_mut();
-    }
-    let opts = match record(unsafe {
-        sort_multiple_options(descending, nulls_last, n, maintain_order)
-    }) {
-        Some(o) => o,
-        None => return ptr::null_mut(),
-    };
-    let names = match unsafe { collect_c_strings(by_ptrs, n) } {
-        Some(v) => v,
-        None => {
-            set_last_error("sort keys are not valid strings");
-            return ptr::null_mut();
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let opts = unsafe {
+            sort_multiple_options(descending, nulls_last, n, maintain_order)
         }
-    };
-    let df = unsafe { &*df_ptr };
-    guard_panic(|| record(df.sort(names, opts)))
-        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
+        .map_err(|cause| polars_err!(ComputeError: "{}", cause))?;
+        let names = sort_keys(unsafe { str_list_arg(by) }?, n)?;
+        df.sort(names, opts)
+    })
 }
