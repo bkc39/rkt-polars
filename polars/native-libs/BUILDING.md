@@ -3,7 +3,9 @@
 `rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
 host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
 prebuilt binary per platform, and the pre-installer
-(`polars/private/install-compat.rkt`) copies it into place:
+(`polars/private/install-compat.rkt`) copies it into place. It leaves an
+identical library alone and replaces a differing one by a rename, as
+`scripts/install-native-libs.sh` does (#267):
 
 | Platform | Committed file | Installed on |
 |----------|----------------|--------------|

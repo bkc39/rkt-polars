@@ -1,6 +1,7 @@
 #lang racket/base
 
-(require racket/file)
+(require (only-in racket/file
+                  delete-directory/files make-directory* make-temporary-file))
 
 (provide pre-installer)
 
@@ -10,15 +11,47 @@
 (define (preinstall-error . args)
   (apply error 'pre-installer args))
 
+(define block-size 65536)
+
+(define (same-contents? in-a in-b)
+  (define a (read-bytes block-size in-a))
+  (define b (read-bytes block-size in-b))
+  (cond
+    [(eof-object? a) (eof-object? b)]
+    [(equal? a b) (same-contents? in-a in-b)]
+    [else #f]))
+
+(define (same-bytes? src dst)
+  (and (file-exists? src)
+       (file-exists? dst)
+       (= (file-size src) (file-size dst))
+       (call-with-input-file* src
+         (lambda (in-src)
+           (call-with-input-file* dst
+             (lambda (in-dst) (same-contents? in-src in-dst)))))))
+
+(define (install-by-rename! src dst dest-dir f)
+  (define staged
+    (make-temporary-file (string-append "." (path->string f) ".~a") #:base-dir dest-dir))
+  (define installed? #f)
+  (dynamic-wind
+   void
+   (lambda ()
+     (copy-file src staged #:exists-ok? #t #:permissions #o755)
+     (rename-file-or-directory staged dst #t)
+     (set! installed? #t))
+   (lambda ()
+     (unless installed?
+       (delete-directory/files staged #:must-exist? #f)))))
+
 (define (copy-native-libs! dest-dir source-dir pattern)
   (make-directory* dest-dir)
   (for ([f (in-list (directory-list source-dir))]
         #:when (regexp-match? pattern (path->string f)))
     (define src (build-path source-dir f))
     (define dst (build-path dest-dir f))
-    (when (file-exists? dst)
-      (delete-file dst))
-    (copy-file src dst)))
+    (unless (same-bytes? src dst)
+      (install-by-rename! src dst dest-dir f))))
 
 (define (has-matching-files? dir pattern)
   (and (directory-exists? dir)

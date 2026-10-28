@@ -868,7 +868,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `scripts/install-native-libs.sh`, which leaves an identical library alone
   and replaces a differing one by a rename, never in place, so a racket in
   another shell that has the old one mapped keeps running (#265); the
-  `install-native-libs` gate and flake check hold it there.
+  `install-native-libs` gate and flake check hold it there. The
+  pre-installer (`polars/private/install-compat.rkt`) does the same on every
+  `raco setup`, installing at mode `0755` (#267).
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:
