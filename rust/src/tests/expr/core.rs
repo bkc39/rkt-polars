@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn to_string_col_prints_plan() {
     let x = column("x");
-    assert_eq!(take_cstring(expr_to_string(x)), "col(\"x\")");
+    assert_eq!(take_str(expr_to_string_v2(x)), "col(\"x\")");
     expr_drop(x);
 }
 
@@ -14,7 +14,7 @@ fn to_string_binary_prints_bracketed_tree() {
     let b = column("b");
     let sum = expr_add(a, b);
     assert_eq!(
-        take_cstring(expr_to_string(sum)),
+        take_str(expr_to_string_v2(sum)),
         "[(col(\"a\")) + (col(\"b\"))]"
     );
     expr_drop(sum);
@@ -26,7 +26,7 @@ fn to_string_binary_prints_bracketed_tree() {
 fn to_string_alias_prints_alias_suffix() {
     let a = column("a");
     let b = aliased(a, "b");
-    assert_eq!(take_cstring(expr_to_string(b)), "col(\"a\").alias(\"b\")");
+    assert_eq!(take_str(expr_to_string_v2(b)), "col(\"a\").alias(\"b\")");
     expr_drop(b);
     expr_drop(a);
 }
@@ -37,7 +37,7 @@ fn to_string_int_literal_prints_value() {
     let ten = expr_lit_i32(10);
     let scaled = expr_mul(v, ten);
     assert_eq!(
-        take_cstring(expr_to_string(scaled)),
+        take_str(expr_to_string_v2(scaled)),
         "[(col(\"v\")) * (dyn int: 10)]"
     );
     expr_drop(scaled);
@@ -47,7 +47,7 @@ fn to_string_int_literal_prints_value() {
 
 #[test]
 fn to_string_null_expr_returns_null() {
-    assert!(expr_to_string(ptr::null()).is_null());
+    assert!(expr_to_string_v2(ptr::null()).is_null());
 }
 
 #[test]

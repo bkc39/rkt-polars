@@ -1,3 +1,4 @@
+use super::test_util::take_str;
 use super::*;
 use std::ptr;
 
@@ -18,13 +19,7 @@ fn test_series_new_i32_valid() {
     let null_count = series_null_count(series);
     assert_eq!(null_count, 0);
 
-    let name_ptr = series_name(series);
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let series_name = c_str.to_str().unwrap();
-    assert_eq!(series_name, "i32_series");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "i32_series");
 
     series_drop(series);
 }
@@ -64,13 +59,7 @@ fn test_series_new_i32_empty_data() {
     let null_count = series_null_count(series);
     assert_eq!(null_count, 0);
 
-    let name_ptr = series_name(series);
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let series_name = c_str.to_str().unwrap();
-    assert_eq!(series_name, "i32_series");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "i32_series");
 
     series_drop(series);
 }
@@ -106,13 +95,7 @@ fn test_series_new_f64_valid() {
     let null_count = series_null_count(series);
     assert_eq!(null_count, 0);
 
-    let name_ptr = series_name(series);
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let series_name = c_str.to_str().unwrap();
-    assert_eq!(series_name, "f64_series");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "f64_series");
 
     series_drop(series);
 }
@@ -151,13 +134,7 @@ fn test_series_new_ymdhms_valid() {
     let null_count = series_null_count(series);
     assert_eq!(null_count, 0);
 
-    let name_ptr = series_name(series);
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let series_name = c_str.to_str().unwrap();
-    assert_eq!(series_name, "ymdhms_series");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "ymdhms_series");
 
     series_drop(series);
 }
@@ -214,13 +191,7 @@ fn test_series_new_ymdhms_empty_data() {
     let null_count = series_null_count(series);
     assert_eq!(null_count, 0);
 
-    let name_ptr = series_name(series);
-    let c_str = unsafe { CStr::from_ptr(name_ptr) };
-    let series_name = c_str.to_str().unwrap();
-    assert_eq!(series_name, "ymdhms_series");
-
-    // Free the CString allocated by series_name
-    unsafe { drop(CString::from_raw(name_ptr as *mut c_char)) };
+    assert_eq!(take_str(series_name_v2(series)), "ymdhms_series");
 
     series_drop(series);
 }

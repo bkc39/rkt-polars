@@ -1,7 +1,7 @@
 use crate::prelude::*;
 use crate::{
-    clear_last_error, guard_panic, record, rust_string_to_ptr, set_last_error,
-    without_plan,
+    clear_last_error, guard_panic, record, set_last_error, str_out,
+    without_plan, StrOut,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -51,15 +51,15 @@ pub extern "C" fn lazyframe_collect(lf: *mut LazyFrame) -> *mut DataFrame {
 }
 
 #[no_mangle]
-pub extern "C" fn lazyframe_explain(
-    lf: *mut LazyFrame,
+pub extern "C" fn lazyframe_explain_v2(
+    lf: *const LazyFrame,
     optimized: bool,
     tree: bool,
-) -> *const c_char {
+) -> StrOut {
     clear_last_error();
     if lf.is_null() {
         set_last_error("lazyframe is null");
-        return ptr::null();
+        return ptr::null_mut();
     }
     let lf = unsafe { &*lf };
     guard_panic(|| {
@@ -70,11 +70,5 @@ pub extern "C" fn lazyframe_explain(
             (false, true) => lf.describe_plan_tree(),
         })
     })
-    .map_or(ptr::null(), |plan| {
-        let text = rust_string_to_ptr(plan);
-        if text.is_null() {
-            set_last_error("the plan's text holds a NUL character");
-        }
-        text
-    })
+    .map_or(ptr::null_mut(), |plan| str_out(&plan))
 }

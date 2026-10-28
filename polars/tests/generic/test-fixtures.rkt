@@ -12,11 +12,20 @@
                   dataframe-column polars-null polars-null? series-cast series-new-i32
                   series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
+         (only-in polars/private/generic/reshape pivot)
          (only-in gregor datetime))
 
 (provide (all-defined-out)
          (all-from-out polars/tests/test-helpers)
          col Expr-ptr? expr-add polars-null polars-null? datetime)
+
+(define nul-names
+  '("\u0000" "a\u0000b" "a\u0000" "\u0000a" "\u0000\u0000" "東京\u0000😀" "a\u0000\u0000b"))
+
+(define (nul-frame n)
+  (pivot (dataframe (list (series '(1 2) #:name "id") (series (list n n) #:name "k")
+                          (series '(3 4) #:name "v")))
+         #:on '("k") #:index '("id") #:values '("v")))
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))

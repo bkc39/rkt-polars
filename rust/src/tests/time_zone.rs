@@ -91,12 +91,12 @@ fn replace(
 #[test]
 fn series_time_zone_names_only_a_zoned_datetime() {
     let brussels = boxed(zoned(&[Some(0)], "Europe/Brussels"));
-    assert_eq!(take_cstring(series_time_zone(brussels)), "Europe/Brussels");
+    assert_eq!(take_str(series_time_zone_v2(brussels)), "Europe/Brussels");
     let plain = boxed(naive(&[Some(0)]));
-    assert!(series_time_zone(plain).is_null());
+    assert!(series_time_zone_v2(plain).is_null());
     let ints = make_i64("i", &[1]);
-    assert!(series_time_zone(ints).is_null());
-    assert!(series_time_zone(ptr::null()).is_null());
+    assert!(series_time_zone_v2(ints).is_null());
+    assert!(series_time_zone_v2(ptr::null()).is_null());
     for p in [brussels, plain, ints] {
         series_drop(p);
     }
@@ -144,7 +144,7 @@ fn a_zone_is_canonical_and_checked() {
     ] {
         let tz = cstr(given);
         let out = series_cast_datetime_tz(p, US, tz.as_ptr());
-        assert_eq!(take_cstring(series_time_zone(out)), canonical);
+        assert_eq!(take_str(series_time_zone_v2(out)), canonical);
         series_drop(out);
     }
     for (given, reason) in [

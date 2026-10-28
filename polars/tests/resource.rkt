@@ -10,11 +10,15 @@
                     _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
                     ptr-set!)
            (only-in polars/private/resource
-                    _string-list with-raw-buffer with-release with-release-pool with-releases)
-           (only-in (submod polars/private/resource internal) strings->c-array)
+                    _str _str-list _str/null _string-list with-raw-buffer with-release
+                    with-release-pool with-releases)
+           (only-in (submod polars/private/resource internal)
+                    str-block->string str-block->strings string->str-block strings->c-array
+                    strings->str-block)
            (only-in polars/tests/gc-pressure call-with-collections)
+           (only-in polars/tests/generic/test-fixtures nul-names)
            (only-in polars/tests/test-helpers
-                    polars-dir polars-sources read-source with-planted-sources))
+                    module-text polars-dir polars-sources read-source with-planted-sources))
 
   (define released '())
   (define (release! tag) (set! released (cons tag released)))
@@ -179,6 +183,55 @@
   (check-exn #rx"^_string-list: contract violation\n  expected: \\(or/c string\\? bytes\\? path\\?\\)\n  given: 'b"
              (lambda () (strings->c-array '("a" b))))
 
+  (define str-lists
+    (list '() '("") nul-names '("é" "東京 😀" "" "abcdefgh" "abcdefghi")
+          (for/list ([i (in-range 300)]) (format "column ~a é 東京 😀" i))))
+  (define-values (str-blocks block-collections)
+    (call-with-collections
+     (lambda ()
+       (for*/list ([_ (in-range 200)] [xs (in-list str-lists)])
+         (cons (strings->str-block xs) (map string->str-block xs))))))
+  (check > block-collections 0)
+  (collect-garbage)
+  (check-equal? (for/list ([built (in-list str-blocks)])
+                  (cons (str-block->strings (car built)) (map str-block->string (cdr built))))
+                (for*/list ([_ (in-range 200)] [xs (in-list str-lists)]) (cons xs xs)))
+
+  (define called-back '())
+  (define ((call-back read) block)
+    (collect-garbage)
+    (set! called-back (cons (and block (read block)) called-back)))
+  (define read-strings (function-ptr (call-back str-block->strings) (_fun _pointer -> _void)))
+  (define read-string (function-ptr (call-back str-block->string) (_fun _pointer -> _void)))
+  (define call-with-str-list (cast read-strings _pointer (_fun _str-list -> _void)))
+  (define call-with-str (cast read-string _pointer (_fun _str -> _void)))
+  (define call-with-str/null (cast read-string _pointer (_fun _str/null -> _void)))
+  (for ([xs (in-list str-lists)])
+    (call-with-str-list xs)
+    (for-each call-with-str xs))
+  (define (list-block-read xs)
+    (match xs
+      ['() #f]
+      [_ xs]))
+  (check-equal? (reverse called-back)
+                (for*/list ([xs (in-list str-lists)]
+                            [read (in-list (cons (list-block-read xs) xs))])
+                  read))
+  (set! called-back '())
+  (call-with-str-list (list #"bytes" (string->path "a/path") "東京"))
+  (call-with-str #"a\0b")
+  (call-with-str/null #f)
+  (call-with-str/null "x")
+  (check-equal? (reverse called-back) '(("bytes" "a/path" "東京") "a\0b" #f "x"))
+  (check-exn #rx"^_str-list: contract violation\n  expected: utf-8-name/c\n  given: 'b"
+             (lambda () (call-with-str-list '("a" b))))
+  (check-exn #rx"^_str-list: contract violation\n  expected: \\(listof utf-8-name/c\\)"
+             (lambda () (call-with-str-list 'b)))
+  (check-exn #rx"^_str: contract violation\n  expected: utf-8-name/c\n  given: #\"\\\\377\""
+             (lambda () (call-with-str #"\377")))
+  (check-exn #rx"^_str: contract violation" (lambda () (call-with-str/null 'b)))
+  (check-equal? (reverse called-back) '(("bytes" "a/path" "東京") "a\0b" #f "x"))
+
   (define resource-module (simplify-path (build-path polars-dir "private" "resource.rkt")))
   (define raw-allocation #px"\\((?:malloc|free)\\s")
   (define (offenders pattern sources)
@@ -266,6 +319,46 @@
   (check-equal? (pointer-store-offenders polars-forms)
                 '()
                 "a string or Racket object stored by address in Racket memory: use _string-list")
+
+  (define (mentions? form type)
+    (for/or ([inner (in-list (forms-in form))]) (memq type inner)))
+  (define (fun-result type)
+    (match (member '-> type)
+      [(list* '-> (list _ ': result) _) result]
+      [(list* '-> result _) result]
+      [_ #f]))
+  (define (c-string-crossing form)
+    (match form
+      [(list* (or '_fun 'define-series-constructors) _) #:when (mentions? form '_rsstring)
+       '_rsstring]
+      [(list* 'define-compat _ (? list? type) _)
+       (define result (fun-result type))
+       (and (memq result '(_string _string/utf-8 _string*/utf-8)) result)]
+      [_ #f]))
+  (define (c-string-crossings file-forms)
+    (for*/list ([file+forms (in-list file-forms)]
+                [form (in-list (cdr file+forms))]
+                [type (in-value (c-string-crossing form))]
+                #:when type)
+      (list (car file+forms) type)))
+  (check-equal? (c-string-crossings (source-forms (polars-sources #:dirs '("private"))))
+                '()
+                "a C string crosses the boundary: use _str, _str-list, _rsstr or _rsstr-list")
+  (with-planted-sources (root ["private/planted.rkt"
+                               (module-text
+                                '(define-compat x (_fun _pointer -> _rsstring))
+                                '(define-compat y (_fun _pointer -> (r : _rsstring) -> r))
+                                '(define-series-constructors s _rsstring "")
+                                ''(_fun -> _rsstring)
+                                '(define-compat z (_fun _pointer -> _string))
+                                '(define-compat w (_fun _string -> (r : _string/utf-8) -> r))
+                                '(define-compat v (_fun -> _string*/utf-8) #:c-id v)
+                                '(define-compat kept (_fun _string -> _void)))])
+    (define planted (simplify-path (build-path root "private" "planted.rkt")))
+    (check-equal? (c-string-crossings (source-forms (polars-sources root #:dirs '("private"))))
+                  (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
+                                     _string*/utf-8)])
+                    (list planted type))))
 
   (define planted-text
     (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"

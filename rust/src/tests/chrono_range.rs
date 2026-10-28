@@ -61,14 +61,14 @@ fn assert_frame_refused(
 #[test]
 fn printing_a_frame_with_a_date_past_chrono_records_the_panic() {
     assert_frame_refused(&[past_chrono_date()], DATE_CAUSE, |df| {
-        dataframe_to_string(df).is_null()
+        dataframe_to_string_v2(df).is_null()
     });
 }
 
 #[test]
 fn printing_a_frame_with_a_datetime_past_chrono_records_the_panic() {
     assert_frame_refused(&[past_chrono_datetime()], DATETIME_CAUSE, |df| {
-        dataframe_to_string(df).is_null()
+        dataframe_to_string_v2(df).is_null()
     });
 }
 
@@ -77,7 +77,7 @@ fn printing_a_frame_in_range_clears_the_reason() {
     let dates = make_i32("d", &[0]);
     let df = make_df(&[dates]);
     set_last_error("stale");
-    let shown = take_cstring(dataframe_to_string(df));
+    let shown = take_str(dataframe_to_string_v2(df));
     assert!(shown.contains("shape: (1, 1)"), "{}", shown);
     assert_eq!(recorded_error(), None);
     dataframe_drop(df);
@@ -91,7 +91,7 @@ fn an_unnamed_expression_over_a_date_past_chrono_has_no_output_name() {
     let all = expr_all();
     let member = expr_is_in(all, values);
     set_last_error("stale");
-    assert!(expr_meta_output_name(member).is_null());
+    assert!(expr_meta_output_name_v2(member).is_null());
     assert_panic_reason(DATE_CAUSE);
     expr_drop(member);
     expr_drop(all);
@@ -106,10 +106,10 @@ fn printing_an_expression_over_a_date_past_chrono_records_the_panic() {
     let column = expr_col(name.as_ptr());
     let values = expr_lit_series(dates);
     let member = expr_is_in(column, values);
-    assert!(expr_to_string(member).is_null());
+    assert!(expr_to_string_v2(member).is_null());
     assert_panic_reason(DATE_CAUSE);
     set_last_error("stale");
-    assert_eq!(take_cstring(expr_to_string(column)), "col(\"x\")");
+    assert_eq!(take_str(expr_to_string_v2(column)), "col(\"x\")");
     assert_eq!(recorded_error(), None);
     expr_drop(member);
     expr_drop(values);

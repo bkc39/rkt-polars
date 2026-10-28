@@ -18,11 +18,34 @@ pub(super) fn take_cstring(p: *const c_char) -> String {
     s
 }
 
+/// The string a result block holds, the block freed.
+pub(super) fn take_str(p: StrOut) -> String {
+    assert!(!p.is_null(), "expected a non-null string block");
+    let s = unsafe { str_arg(p) }
+        .expect("a well-formed string block")
+        .expect("a string")
+        .to_owned();
+    str_block_drop(p);
+    s
+}
+
+/// The strings a result list block holds, the block freed.
+pub(super) fn take_strs(p: StrListOut) -> Vec<String> {
+    assert!(!p.is_null(), "expected a non-null string list block");
+    let strings = unsafe { str_list_arg(p) }
+        .expect("a well-formed string list block")
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    str_block_drop(p);
+    strings
+}
+
 /// The reason the last participating call recorded, freed; `None` if it
 /// recorded none.
 pub(super) fn recorded_error() -> Option<String> {
-    let p = last_error_message();
-    (!p.is_null()).then(|| take_cstring(p))
+    let p = last_error_message_v2();
+    (!p.is_null()).then(|| take_str(p))
 }
 
 pub(super) fn make_i32(name: &str, values: &[i32]) -> *mut Series {
@@ -122,9 +145,7 @@ pub(super) fn make_df(columns: &[*mut Series]) -> *mut DataFrame {
 
 /// Read every column name back through the FFI.
 pub(super) fn read_column_names(df: *mut DataFrame) -> Vec<String> {
-    (0..dataframe_width(df))
-        .map(|i| take_cstring(dataframe_column_name(df, i)))
-        .collect()
+    take_strs(dataframe_column_names(df))
 }
 
 /// Pull a string column out by name and materialize it as a
