@@ -18,8 +18,8 @@
            (only-in polars/private/foreign dataframe-select dataframe-sort series-name)
            (only-in polars/private/generic/reductions alias count mean n-unique sum)
            (only-in polars/tests/generic/test-fixtures
-                    col column expr-add frame named-frame nul-frame nul-names ops-df polars-null
-                    series-cells settle! v64)
+                    check-cells col column expr-add frame named-frame nul-frame nul-names ops-df
+                    polars-null series-cells settle! v64)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -190,11 +190,11 @@
   (define nul-flights (dataframe (list (series (list "IAH" "MI\u0000A" "JFK") #:name "dest"))))
   (define nul-cast (cast (ref nul-flights "dest") nul-dests))
   (check-equal? (dtype nul-cast) nul-dests)
-  (check-equal? (series-cells nul-cast) (list 'IAH nul-mia 'JFK))
-  (for ([target (list "dest" (col "dest"))])
+  (check-cells nul-cast (list 'IAH nul-mia 'JFK))
+  (for ([target (in-list (list "dest" (col "dest")))])
     (define nul-coded (with-columns nul-flights (cast target nul-dests)))
     (check-equal? (dtype (ref nul-coded "dest")) nul-dests)
-    (check-equal? (series-cells (ref nul-coded "dest")) (list 'IAH nul-mia 'JFK))
+    (check-cells (ref nul-coded "dest") (list 'IAH nul-mia 'JFK))
     (check-equal? (column-names (select nul-coded (col nul-dests))) '("dest")))
 
   ;; --- operators inside filter / select / when-then (integration) -----------

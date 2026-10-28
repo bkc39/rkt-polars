@@ -55,11 +55,10 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
    lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
    whole or a block of rows at a time, behind `series->list`,
-   `in-dataframe-rows` and their siblings; it binds the numeric and boolean
-   copies, and takes the String, Decimal and categorical ones,
-   `series-copy-str` / `series-str-byte-len`, `series-copy-decimal` and
-   `series-copy-cat`, from `foreign.rkt`, where `series-ref` reads through
-   them). `define-compat`
+   `in-dataframe-rows` and their siblings; it binds the numeric, boolean and
+   categorical copies, and takes the String and Decimal ones,
+   `series-copy-str` / `series-str-byte-len` and `series-copy-decimal`, from
+   `foreign.rkt`, where `series-ref` reads through them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name, except the
@@ -323,13 +322,14 @@ it. Racket side: `define-compat` with `#:c-id`.
     callback.
   - `_string-list`, a `const char **` table and its NUL-terminated strings in
     one block, is left only where the IO readers' keywords still cross as C
-    strings. A test in `polars/tests/resource.rkt` names those four bindings and fails on any other `define-compat`,
-    `define-syntax-parse-rule` or `define-syntax-parser` that uses it, at any
-    depth (inside a `begin` or another definer).
+    strings. A test in `polars/tests/resource.rkt` names those four bindings
+    and fails on any other `define-compat`, `define-syntax-parse-rule` or
+    `define-syntax-parser` that uses it, at any depth (inside a `begin` or
+    another definer).
   - `series-ref` reads a String value by length, through `series_copy_str`,
-    and a Categorical or Enum value through `series_copy_cat` with a count of
-    1, as `series->list` does, so a NUL a value holds survives and the two
-    cannot disagree.
+    and a Categorical or Enum value as one block, through `series_ref_cat`,
+    so a NUL a value holds survives. An Enum's categories are read in one
+    `series_copy_str` over the categories series.
   - Enum categories cross as one `_str-list` block, so a categorical or Enum
     value or category may hold a NUL, as in Python. Formats and zones still
     stop at a NUL (#165).
@@ -345,7 +345,8 @@ it. Racket side: `define-compat` with `#:c-id`.
     or in `define-series-constructors`. It also fails on a `define-compat` in
     `polars/private` whose result is `_string`, `_string/utf-8` or
     `_string*/utf-8`, and on a `_fun` or a `define-series-constructors` there
-    naming `_rsstring`.
+    naming `_rsstring` or `_c-string-result`, the C-string result type #165
+    retired.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by

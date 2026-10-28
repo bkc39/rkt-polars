@@ -92,7 +92,14 @@
   (check-equal? (drops-once lazyframe-drop-count lazyframe-drop
                             (lambda () (lazyframe-select (dataframe-lazy df) (list (col "x")))))
                 2)
-  (check-pred Expr-ptr? (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b"))))
+  (define nul-levels (list 'enum (string->symbol "a\u0000b") 'c))
+  (define nul-source (dataframe-new (list (series-new-str "x" '("c" "a\u0000b")))))
+  (define nul-cast
+    (dataframe-column (dataframe-select-exprs nul-source (list (expr-cast (col "x") nul-levels)))
+                      "x"))
+  (check-equal? (series-dtype nul-cast) nul-levels)
+  (check-equal? (for/list ([i (in-range 2)]) (series-ref nul-cast i))
+                (list 'c (string->symbol "a\u0000b")))
 
   (define tmp-scan-csv
     (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))

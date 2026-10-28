@@ -43,7 +43,7 @@
   owned-pointer? prop:owned-pointer raise-dropped release-owned
   series-drop-count series-drop/raw series-dropped write-owned
   dataframe-sort/raw frame-sort/c series-binary-byte-len series-copy-binary
-  series-copy-cat series-copy-decimal series-copy-str series-ref-bytes
+  series-copy-decimal series-copy-str series-ref-bytes series-ref-str
   series-new-str/raw series-sort/raw series-str-byte-len sort-flags
   sort-flags/c sort-flags-mismatch
   dtype-short-names

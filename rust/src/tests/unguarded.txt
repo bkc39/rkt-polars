@@ -166,6 +166,7 @@ series_new_ymdhms constructor
 series_null_count accessor
 series_quantile todo-129
 series_ref_bool accessor
+series_ref_cat accessor
 series_ref_date accessor
 series_ref_duration accessor
 series_ref_f32 accessor

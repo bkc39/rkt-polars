@@ -19,20 +19,32 @@ fn categorical_tag() -> CompatDType {
     }
 }
 
-struct Names(StrListOut);
-
-impl Drop for Names {
-    fn drop(&mut self) {
-        str_block_drop(self.0);
-    }
-}
-
-fn names(categories: &[&str]) -> Names {
-    Names(str_list_out(categories))
-}
-
 fn cast_enum(s: *mut Series, categories: &[&str]) -> *mut Series {
-    series_cast_enum_v2(s, names(categories).0)
+    let block = str_list_block(categories);
+    series_cast_enum_v2(s, block.as_ptr())
+}
+
+const NUL_CATEGORIES: [&str; 3] = ["c", "a\0b", "\0"];
+
+/// A String series holding a NUL, a null and a plain value, and its
+/// categorical and Enum casts.
+fn nul_series() -> [*mut Series; 3] {
+    let s = boxed(strings(&[Some("a\0b"), None, Some("c")]));
+    [
+        s,
+        series_cast(s, categorical_tag()),
+        cast_enum(s, &NUL_CATEGORIES),
+    ]
+}
+
+fn enum_categories(p: *mut Series) -> Vec<String> {
+    owned(series_enum_categories(p))
+        .str()
+        .unwrap()
+        .iter()
+        .flatten()
+        .map(str::to_owned)
+        .collect()
 }
 
 fn strings(values: &[Option<&str>]) -> Series {
@@ -133,43 +145,88 @@ fn duplicate_enum_categories_are_refused() {
     let reason = recorded_error().expect("a reason");
     assert!(reason.contains("duplicate"), "{}", reason);
     let e = expr_col_v2(str_block("s").as_ptr());
-    let twice = names(&["a", "a"]);
-    assert!(expr_cast_enum_v2(e, twice.0).is_null());
-    assert!(expr_dtype_col_enum_v2(twice.0).is_null());
+    let twice = str_list_block(&["a", "a"]);
+    assert!(expr_cast_enum_v2(e, twice.as_ptr()).is_null());
+    assert!(expr_dtype_col_enum_v2(twice.as_ptr()).is_null());
     expr_drop(e);
     series_drop(s);
 }
 
 #[test]
 fn categorical_and_enum_values_keep_a_nul() {
-    let s = boxed(strings(&[Some("a\0b"), None, Some("c")]));
-    let cat = series_cast(s, categorical_tag());
-    let e = cast_enum(s, &["c", "a\0b", "\0"]);
+    let [s, cat, e] = nul_series();
     let expected = vec![Some("a\0b".to_string()), None, Some("c".to_string())];
     for p in [cat, e] {
         assert_eq!(copy_cat(p, 0, 3), expected);
     }
-    let categories = owned(series_enum_categories(e));
-    assert_eq!(
-        categories
-            .str()
-            .unwrap()
-            .iter()
-            .flatten()
-            .collect::<Vec<_>>(),
-        vec!["c", "a\0b", "\0"]
-    );
+    for p in [s, cat, e] {
+        series_drop(p);
+    }
+}
+
+#[test]
+fn ref_cat_reads_a_nul_and_a_null() {
+    let [s, cat, e] = nul_series();
+    for p in [cat, e] {
+        assert_eq!(take_str(series_ref_cat(p, 0)), "a\0b");
+        assert!(series_ref_cat(p, 1).is_null());
+        assert_eq!(take_str(series_ref_cat(p, 2)), "c");
+        assert!(series_ref_cat(p, 3).is_null());
+    }
+    assert!(series_ref_cat(s, 0).is_null());
+    assert!(series_ref_cat(ptr::null_mut(), 0).is_null());
+    for p in [s, cat, e] {
+        series_drop(p);
+    }
+}
+
+#[test]
+fn enum_categories_keep_a_nul() {
+    let [s, cat, e] = nul_series();
+    assert_eq!(enum_categories(e), NUL_CATEGORIES);
+    for p in [s, cat, e] {
+        series_drop(p);
+    }
+}
+
+#[test]
+fn an_enum_selector_matches_categories_with_a_nul() {
+    let [s, cat, e] = nul_series();
     let other = make_str("other", &["x", "y", "z"]);
     let df = make_df(&[other, e]);
-    let selector = expr_dtype_col_enum_v2(names(&["c", "a\0b", "\0"]).0);
+    let categories = str_list_block(&NUL_CATEGORIES);
+    let selector = expr_dtype_col_enum_v2(categories.as_ptr());
     assert!(!selector.is_null());
     let exprs = [selector as *const Expr];
     let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
     assert_eq!(read_column_names(lazyframe_collect(lf)), vec!["s"]);
-    let column = expr_col_v2(str_block("s").as_ptr());
-    let cast = expr_cast_enum_v2(column, names(&["a\0b", "c"]).0);
-    assert!(!cast.is_null());
     for p in [s, cat, e, other] {
+        series_drop(p);
+    }
+}
+
+#[test]
+fn an_enum_cast_expression_keeps_categories_with_a_nul() {
+    let [s, cat, e] = nul_series();
+    let df = make_df(&[s]);
+    let column = expr_col_v2(str_block("s").as_ptr());
+    let categories = str_list_block(&NUL_CATEGORIES);
+    let cast = expr_cast_enum_v2(column, categories.as_ptr());
+    assert!(!cast.is_null());
+    let exprs = [cast as *const Expr];
+    let out = lazyframe_collect(lazyframe_select(
+        dataframe_lazy(df),
+        exprs.as_ptr(),
+        1,
+    ));
+    assert!(!out.is_null());
+    let column_out = dataframe_column_v2(out, str_block("s").as_ptr());
+    assert_eq!(enum_categories(column_out), NUL_CATEGORIES);
+    assert_eq!(
+        copy_cat(column_out, 0, 3),
+        vec![Some("a\0b".to_string()), None, Some("c".to_string())]
+    );
+    for p in [s, cat, e, column_out] {
         series_drop(p);
     }
     expr_drop(column);
@@ -308,7 +365,8 @@ fn enum_dtype_col_selects_the_enum_column() {
     let e = cast_enum(s, &["debug", "info"]);
     let other = make_str("other", &["x"]);
     let df = make_df(&[other, e]);
-    let selector = expr_dtype_col_enum_v2(names(&["debug", "info"]).0);
+    let categories = str_list_block(&["debug", "info"]);
+    let selector = expr_dtype_col_enum_v2(categories.as_ptr());
     assert!(!selector.is_null());
     let lf = dataframe_lazy(df);
     let exprs = [selector as *const Expr];

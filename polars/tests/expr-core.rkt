@@ -14,7 +14,11 @@
                     col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit
                     lit-value/c multi-column-expr?)
            (only-in racket/string string-contains?)
-           (only-in polars/private/foreign call/foreign-error polars-null)
+           (only-in polars/private/expr dataframe-select-exprs)
+           (only-in polars/private/foreign
+                    call/foreign-error dataframe-column-names dataframe-new polars-null series-cast
+                    series-new-str)
+           (only-in threading ~>)
            (only-in polars/private/resource with-raw-buffer)
            (only-in polars/tests/generic/test-fixtures nul-names))
 
@@ -75,8 +79,12 @@
   (check-exn #rx"^expr-dtype-col: cannot select .*not a time zone: '\\*'"
              (lambda () (expr-dtype-col '(datetime microseconds "*"))))
   (define nul-enum (list 'enum 'a (string->symbol "b\u0000c")))
-  (check-pred multi-column-expr? (contracted:col nul-enum))
-  (check-pred multi-column-expr? (contracted:expr-dtype-col nul-enum))
+  (define nul-enum-frame
+    (dataframe-new (list (series-cast (series-new-str "a-b" '("a" "b")) '(enum a b))
+                         (series-cast (series-new-str "nul" (list "b\u0000c" "a")) nul-enum))))
+  (for ([selector (in-list (list (contracted:col nul-enum) (contracted:expr-dtype-col nul-enum)))])
+    (check-equal? (~> nul-enum-frame (dataframe-select-exprs (list selector)) dataframe-column-names)
+                  '("nul")))
 
   (define-compat expr-add
     (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)

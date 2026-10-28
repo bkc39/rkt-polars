@@ -1,7 +1,9 @@
 #lang racket/base
 
 (require racket/runtime-path
+         (only-in rackunit define-check fail-check with-check-info)
          (only-in racket/file file->value)
+         (only-in polars/private/bulk series->list)
          (only-in polars/private/generic/core
                   column-names dataframe dtype len ref series wrap-series)
          (only-in polars/tests/test-helpers
@@ -83,6 +85,13 @@
 
 (define (series-cells s)
   (for/list ([i (in-range (len s))]) (ref s i)))
+
+(define-check (check-cells s expected)
+  (define listed (series->list s))
+  (define refs (series-cells s))
+  (unless (equal? (list listed refs) (list expected expected))
+    (with-check-info (['series->list listed] ['ref refs] ['expected expected])
+      (fail-check))))
 
 (define (series-shape s)
   (list (dtype s) (series-cells s)))

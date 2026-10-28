@@ -57,6 +57,22 @@ series_ref!(
     s => s.time().map(|ca| ca.physical())
 );
 
+/// A categorical or Enum value as a block, read by length so a NUL it holds
+/// survives; NULL for a null, an index out of range or another dtype.
+#[no_mangle]
+pub extern "C" fn series_ref_cat(s_ptr: *mut Series, index: usize) -> StrOut {
+    let Some(s) = series_at(s_ptr, index) else {
+        return ptr::null_mut();
+    };
+    if !(s.dtype().is_categorical() || s.dtype().is_enum()) {
+        return ptr::null_mut();
+    }
+    match s.get(index) {
+        Ok(value) => value.get_str().map_or(ptr::null_mut(), str_out),
+        Err(_) => ptr::null_mut(),
+    }
+}
+
 pub(crate) fn date_days_to_ymd(days: i32) -> Option<YMD> {
     NaiveDate::from_ymd_opt(1970, 1, 1)
         .and_then(|epoch| {

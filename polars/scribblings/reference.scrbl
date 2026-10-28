@@ -2177,7 +2177,7 @@ come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
 (ref (ref logs "source") 1)
 (select logs (col 'categorical))
 (eval:error (select logs (> (col "level") 'fatal)))
-(series->list (series (list "api" "d\u0000b") #:dtype 'categorical))
+(map symbol->string (series->list (series (list "api" "d\u0000b") #:dtype 'categorical)))
 (define produce (read-parquet "produce.parquet"))
 (dtype (ref produce "price"))
 (for/sum ([price (ref produce "price")] #:unless (polars-null? price)) price)]
