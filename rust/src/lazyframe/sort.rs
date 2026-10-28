@@ -12,11 +12,9 @@ pub extern "C" fn lazyframe_sort_with_options_v2(
 ) -> *mut LazyFrame {
     boxed_unguarded(|| {
         let lf = unsafe { deref_arg(lf, "lazyframe") }?;
-        let opts = unsafe {
-            sort_multiple_options(descending, nulls_last, n, maintain_order)
-        }
-        .map_err(|cause| polars_err!(ComputeError: "{}", cause))?;
-        let names = sort_keys(unsafe { str_list_arg(by) }?, n)?;
+        let (names, opts) = unsafe {
+            named_sort(by, descending, nulls_last, n, maintain_order)
+        }?;
         let by_exprs: Vec<Expr> = names.into_iter().map(col).collect();
         Ok(lf.clone().sort_by_exprs(by_exprs, opts))
     })

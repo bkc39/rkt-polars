@@ -19,7 +19,7 @@
          (only-in polars/private/generic/expr-util col-expr/c))
 
 (provide (except-out (all-defined-out) cast explain head tail slice drop pivot unpivot
-                     group-by agg rename with-column)
+                     group-by agg rename rename! with-column)
          (contract-out
           [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
           [head (-> rows-source/c size/c any/c)]
@@ -33,6 +33,7 @@
                       dataframe?)]
           [unpivot (-> dataframe? #:on utf-8-names/c #:index utf-8-names/c dataframe?)]
           [with-column (-> dataframe? series? dataframe?)]
+          [rename! (-> series? utf-8-name/c void?)]
           [group-by (-> (or/c dataframe? lazyframe?) col-expr/c col-expr/c ... grouped?)]
           [agg (-> grouped? Expr-ptr? ... (or/c dataframe? lazyframe?))]
           (rename rename rename (->i ([x (or/c series? dataframe?)] [a utf-8-name/c])
@@ -208,11 +209,9 @@
     [(series? x) (series-clone x)]
     [else (error 'clone "expected a series, got ~v" x)]))
 
-;; mutating: renames in place, returns void.
-(define (rename! x new-name)
-  (cond
-    [(series? x) (series-rename x new-name)]
-    [else (error 'rename! "expected a series, got ~v" x)]))
+(define (rename! s new-name)
+  (series-rename s new-name)
+  (void))
 
 (define (rename x a [b unset])
   (define name (utf-8-name->string a))

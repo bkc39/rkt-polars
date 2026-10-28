@@ -180,4 +180,4 @@
                       (series->string (dataframe-column nested "v")))
   (check-regexp-match #rx"^#<series: cannot print: Series-ptr->C: " (series->printed 'not-a-series))
   (for ([n (in-list nul-names)])
-    (check-true (string-contains? (explain (select (lazy (named-frame n)) (col n))) n))))
+    (check-true (string-contains? (~> (named-frame n) lazy (select (col n)) explain) n))))

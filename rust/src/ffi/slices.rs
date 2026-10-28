@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+use super::strings::{str_list_arg, StrListArg};
+
 /// The `len` elements at `data`; `data` may be NULL only when `len` is 0.
 ///
 /// # Safety
@@ -80,11 +82,24 @@ pub(crate) unsafe fn sort_multiple_options(
         .with_maintain_order(maintain_order != 0))
 }
 
-/// The sort keys, checked against the flags' count.
-pub(crate) fn sort_keys(names: Vec<&str>, n: usize) -> PolarsResult<Vec<&str>> {
+/// The keys of a sort by name, checked against the flags' count, and its
+/// options.
+///
+/// # Safety
+/// As for `str_list_arg`; `descending` and `nulls_last` point to `n` flags.
+pub(crate) unsafe fn named_sort<'a>(
+    by: StrListArg,
+    descending: *const u8,
+    nulls_last: *const u8,
+    n: usize,
+    maintain_order: u8,
+) -> PolarsResult<(Vec<&'a str>, SortMultipleOptions)> {
+    let opts = sort_multiple_options(descending, nulls_last, n, maintain_order)
+        .map_err(|cause| polars_err!(ComputeError: "{}", cause))?;
+    let names = str_list_arg(by)?;
     polars_ensure!(
         names.len() == n,
         ComputeError: "{} sort keys but {} flags", names.len(), n
     );
-    Ok(names)
+    Ok((names, opts))
 }

@@ -54,8 +54,7 @@ pub extern "C" fn series_dtype(s_ptr: *mut Series) -> CompatDType {
 #[no_mangle]
 pub extern "C" fn series_rename_v2(s_ptr: *mut Series, name: StrArg) -> i32 {
     scalar_result(-1, || {
-        let s = unsafe { s_ptr.as_mut() }
-            .ok_or_else(|| polars_err!(ComputeError: "series is null"))?;
+        let s = unsafe { deref_mut_arg(s_ptr, "series") }?;
         s.rename(unsafe { name_arg(name, "the name") }?.into());
         Ok(0)
     })

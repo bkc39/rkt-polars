@@ -11,11 +11,11 @@ pub(crate) use self::errors::{
 #[cfg(test)]
 pub(crate) use self::errors::{on_polars_worker, panic_is_quiet};
 pub(crate) use self::results::{
-    boxed_result, boxed_unguarded, deref_arg, scalar_result,
+    boxed_result, boxed_unguarded, deref_arg, deref_mut_arg, scalar_result,
 };
 pub(crate) use self::schema::decode_schema;
 pub(crate) use self::slices::{
-    collect_c_strings, collect_exprs, slice_or_empty, sort_keys,
+    collect_c_strings, collect_exprs, named_sort, slice_or_empty,
     sort_multiple_options,
 };
 #[cfg(test)]

@@ -14,7 +14,10 @@
                   series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
          (only-in polars/private/generic/reshape pivot)
-         (only-in gregor datetime))
+         (only-in gregor date datetime)
+         (only-in gregor/period microseconds)
+         (only-in gregor/time time)
+         (only-in racket/match match))
 
 (provide (all-defined-out)
          (all-from-out polars/tests/test-helpers)
@@ -28,8 +31,8 @@
                           (series '(3 4) #:name "v")))
          #:on '("k") #:index '("id") #:values '("v")))
 
-(define (named-frame n)
-  (dataframe (list (series '(1 2) #:name n) (series '(3 4) #:name "a"))))
+(define (named-frame n [keys '(1 2)] [other "a"] [others '(3 4)])
+  (dataframe (list (series keys #:name n) (series others #:name other))))
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
@@ -57,14 +60,21 @@
 
 (define-runtime-path nul-expected-file "../../scribblings/data/nul-expected.rktd")
 
-(define (nul-expected section)
-  (define (decode v)
-    (cond
-      [(eq? v 'null) polars-null]
-      [(list? v) (map decode v)]
-      [else v]))
-  (for/list ([row (in-list (cdr (assq section (file->value nul-expected-file))))])
-    (cons (car row) (map decode (cdr row)))))
+(define (rktd-value v)
+  (match v
+    ['null polars-null]
+    [(list 'date y m d) (date y m d)]
+    [(list 'datetime y mo d h mi s ns) (datetime y mo d h mi s ns)]
+    [(list 'time h m s ns) (time h m s ns)]
+    [(list 'duration-us n) (microseconds n)]
+    [(list 'category name) (string->symbol name)]
+    [(list 'decimal digits) (string->number digits 10 'number-or-false 'decimal-as-exact)]
+    [(? list?) (map rktd-value v)]
+    [_ v]))
+
+(define nul-expected
+  (for/list ([row (in-list (file->value nul-expected-file))])
+    (cons (car row) (map rktd-value (cdr row)))))
 
 (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
 

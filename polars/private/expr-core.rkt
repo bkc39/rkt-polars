@@ -111,10 +111,13 @@
                          "failed to explain the query"))
    who))
 
-(define-compat expr-col
+(define-compat expr-col/raw
   (_fun _str -> _Expr-ptr/null)
   #:c-id expr_col_v2
-  #:wrap (allocator/or-fail expr-drop 'expr-col))
+  #:wrap (allocator expr-drop))
+
+(define (expr-col name [who 'expr-col])
+  (call/foreign-error who (lambda () (expr-col/raw name))))
 
 (define-compat expr-lit-i32
   (_fun _int32 -> _Expr-ptr)
@@ -140,19 +143,25 @@
 (define (expr-lit-bool b)
   (expr-lit-bool/raw (if b 1 0)))
 
-(define-compat expr-lit-str
+(define-compat expr-lit-str/raw
   (_fun _str -> _Expr-ptr/null)
   #:c-id expr_lit_str_v2
-  #:wrap (allocator/or-fail expr-drop 'expr-lit-str))
+  #:wrap (allocator expr-drop))
+
+(define (expr-lit-str v [who 'expr-lit-str])
+  (call/foreign-error who (lambda () (expr-lit-str/raw v))))
 
 (define-compat expr-lit-null
   (_fun -> _Expr-ptr)
   #:wrap (allocator expr-drop))
 
-(define-compat expr-alias
+(define-compat expr-alias/raw
   (_fun _Expr-ptr _str -> _Expr-ptr/null)
   #:c-id expr_alias_v2
-  #:wrap (allocator/or-fail expr-drop 'expr-alias))
+  #:wrap (allocator expr-drop))
+
+(define (expr-alias e name [who 'expr-alias])
+  (call/foreign-error who (lambda () (expr-alias/raw e name))))
 
 (define-compat expr-lit-temporal
   (_fun _int64 _CompatDType -> _Expr-ptr/null)
@@ -193,8 +202,8 @@
     [(int64/c v) (expr-lit-i64 v)]
     [(uint64/c v) (expr-lit-u64 v)]
     [(and (real? v) (not (exact-integer? v))) (expr-lit-f64 (exact->inexact v))]
-    [(string? v) (expr-lit-str v)]
-    [(symbol? v) (expr-lit-str (symbol->string v))]
+    [(string? v) (expr-lit-str v who)]
+    [(symbol? v) (expr-lit-str (symbol->string v) who)]
     [(polars-null? v) (expr-lit-null)]
     [(temporal-value-dtype v) => (lambda (dtype) (temporal-lit who v dtype))]
     [else
@@ -226,8 +235,8 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-exclude e names)
-  (call/foreign-error 'expr-exclude (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
-
+  (call/foreign-error 'expr-exclude
+                      (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
 
 (define-compat expr-dtype-col-enum/raw
   (_fun (categories : _string-list)
@@ -262,7 +271,7 @@
 (define (col spec)
   (if (dtype-spec? spec)
       (dtype-col 'col spec)
-      (expr-col (->column-pattern spec))))
+      (expr-col (->column-pattern spec) 'col)))
 
 (define col-spec/c
   (column-spec-contract '(or/c string? regexp? dtype-spec?)

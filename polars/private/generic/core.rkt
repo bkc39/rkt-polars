@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require racket/generic
-         (only-in racket/contract/base -> contract-out listof)
+         (only-in racket/contract/base -> ->* any/c contract-out listof or/c)
          (only-in racket/list check-duplicates)
          (only-in racket/match match*)
          syntax/parse/define
@@ -10,12 +10,14 @@
          (only-in polars/private/bulk in-series)
          (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
+         (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/dtype
          polars/private/generic/printing)
 
-(provide (except-out (all-defined-out) dataframe)
+(provide (except-out (all-defined-out) dataframe series)
          (contract-out
-          [dataframe (-> (listof Series-ptr?) dataframe?)]))
+          [dataframe (-> (listof Series-ptr?) dataframe?)]
+          [series (->* ((or/c list? vector?)) (#:name utf-8-name/c #:dtype any/c) series?)]))
 
 (define unset (gensym 'unset))
 

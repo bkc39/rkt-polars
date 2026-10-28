@@ -22,7 +22,7 @@
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource
-                  _str _str-list _string-list with-raw-buffer with-release)
+                  _str _str-list _string-list utf-8-name/c with-raw-buffer with-release)
          (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
@@ -45,6 +45,9 @@
                      series-lt-i32 series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32
                      series-ne-i32
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
+                     (matching-identifiers-out
+                      #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
+                      (all-defined-out))
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
           [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
@@ -65,7 +68,19 @@
           [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]
           [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
-          [series-new-null (->/c any/c size/c Series-ptr?)]))
+          [series-new-null (->/c utf-8-name/c size/c Series-ptr?)]))
+
+(define-syntax-parse-rule (provide-series-constructors [from-list:id from-vector:id] ...)
+  (provide (contract-out [from-list (->/c utf-8-name/c list? Series-ptr?)] ...
+                         [from-vector (->/c utf-8-name/c vector? Series-ptr?)] ...)))
+
+(provide-series-constructors [series-new-i8 series-new-i8/vec] [series-new-i16 series-new-i16/vec]
+                             [series-new-i32 series-new-i32/vec] [series-new-i64 series-new-i64/vec]
+                             [series-new-u8 series-new-u8/vec] [series-new-u16 series-new-u16/vec]
+                             [series-new-u32 series-new-u32/vec] [series-new-u64 series-new-u64/vec]
+                             [series-new-f32 series-new-f32/vec] [series-new-f64 series-new-f64/vec]
+                             [series-new-bool series-new-bool/vec]
+                             [series-new-str series-new-str/vec])
 
 (define-syntax-parse-rule (provide-row-windows frame?:id head:id tail:id slice:id)
   (provide (contract-out [head (->/c frame? size/c frame?)]
@@ -1642,7 +1657,10 @@
                         #:maintain-order [maintain-order #f])
   (dataframe-sort/who 'dataframe-sort df names descending nulls-last maintain-order))
 
-(define-syntax-parse-rule (define-group-by-agg name:id raw:id rust-id:id)
+(define-syntax-parse-rule (define-group-by-agg agg:id)
+  #:with name (format-id #'agg "dataframe-group-by-~a" #'agg)
+  #:with raw (format-id #'agg "dataframe-group-by-~a/c" #'agg)
+  #:with rust-id (format-id #'agg "dataframe_group_by_~a_v2" #'agg)
   (begin
     (define-compat raw
       (_fun _DataFrame-ptr _str-list _str-list -> _DataFrame-ptr/null)
@@ -1651,11 +1669,11 @@
     (define (name df #:by by #:agg agg)
       (call/polars-reason 'name (lambda () (raw df by agg))))))
 
-(define-group-by-agg dataframe-group-by-sum   dataframe-group-by-sum/c   dataframe_group_by_sum_v2)
-(define-group-by-agg dataframe-group-by-mean  dataframe-group-by-mean/c  dataframe_group_by_mean_v2)
-(define-group-by-agg dataframe-group-by-min   dataframe-group-by-min/c   dataframe_group_by_min_v2)
-(define-group-by-agg dataframe-group-by-max   dataframe-group-by-max/c   dataframe_group_by_max_v2)
-(define-group-by-agg dataframe-group-by-count dataframe-group-by-count/c dataframe_group_by_count_v2)
+(define-group-by-agg sum)
+(define-group-by-agg mean)
+(define-group-by-agg min)
+(define-group-by-agg max)
+(define-group-by-agg count)
 
 (define-compat dataframe-unique
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
@@ -1757,7 +1775,6 @@
 (define-compat dataframe-unpivot/raw
   (_fun _DataFrame-ptr _str-list _str-list -> _DataFrame-ptr/null)
   #:c-id dataframe_unpivot_v2
-
   #:wrap (allocator dataframe-drop))
 
 (define (unpivot-frame who df on index)

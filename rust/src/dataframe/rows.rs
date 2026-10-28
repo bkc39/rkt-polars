@@ -32,11 +32,9 @@ pub extern "C" fn dataframe_sort_with_options_v2(
 ) -> *mut DataFrame {
     boxed_result(|| {
         let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
-        let opts = unsafe {
-            sort_multiple_options(descending, nulls_last, n, maintain_order)
-        }
-        .map_err(|cause| polars_err!(ComputeError: "{}", cause))?;
-        let names = sort_keys(unsafe { str_list_arg(by) }?, n)?;
+        let (names, opts) = unsafe {
+            named_sort(by, descending, nulls_last, n, maintain_order)
+        }?;
         df.sort(names, opts)
     })
 }

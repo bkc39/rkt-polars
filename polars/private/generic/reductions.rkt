@@ -128,7 +128,7 @@
     [(pair? x) (let loop ([l x]) (if (null? (cdr l)) (car l) (loop (cdr l))))]
     [else (error 'last "expected an Expr, column name, or non-empty list, got ~v" x)]))
 
-(define (alias e name) (expr-alias (->col-expr 'alias e) name))
+(define (alias e name) (expr-alias (->col-expr 'alias e) name 'alias))
 
 (module+ internal
   (provide n-unique std var))

@@ -37,3 +37,14 @@ pub(crate) unsafe fn deref_arg<'a, T>(
     unsafe { p.as_ref() }
         .ok_or_else(|| polars_err!(ComputeError: "{} is null", what))
 }
+
+/// # Safety
+/// A non-NULL `p` points to a live `T` that outlives `'a` and that nothing
+/// else reads or writes meanwhile.
+pub(crate) unsafe fn deref_mut_arg<'a, T>(
+    p: *mut T,
+    what: &str,
+) -> PolarsResult<&'a mut T> {
+    unsafe { p.as_mut() }
+        .ok_or_else(|| polars_err!(ComputeError: "{} is null", what))
+}

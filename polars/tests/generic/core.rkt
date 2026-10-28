@@ -201,6 +201,10 @@
                 (list '(duration milliseconds) (list (milliseconds 1500))))
   (check-equal? (round-trip (list polars-null) 'date) (list 'date (list polars-null)))
 
+  (for ([bad (list #f 'x #"\377")])
+    (check-exn #rx"^series: contract violation\n  expected: [^\n]*utf-8\\?[^\n]*"
+               (lambda () (series '(1) #:name bad))))
+  (check-equal? (series-name (series '(1) #:name #"q")) "q")
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (date 2024 1 2) (datetime 2024)))))
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (months 1)))))
   (check-equal? (round-trip (list (moment 2024 1 2 #:tz "Europe/Paris") polars-null))
@@ -341,7 +345,7 @@
     (check-equal? (series->list (ref named "a")) '(3 4))
     (check-equal? (series-name (ref named 0)) n)
     (check-equal? (for/list ([c (in-dataframe-columns named)]) (series->list c)) '((1 2) (3 4)))
-    (check-equal? (for/list ([r (in-dataframe-rows named)]) r) '(#(1 3) #(2 4)))
+    (check-equal? (sequence->list (in-dataframe-rows named)) '(#(1 3) #(2 4)))
     (check-equal? (column-names (select named (column-names named))) (list n "a"))
     (check-exn (regexp (regexp-quote n))
                (lambda () (dataframe (list (series '(1) #:name n) (series '(2) #:name n))))))
@@ -353,7 +357,7 @@
   (check-equal? (series->list (ref collided 2)) '(2))
   (check-equal? (series->list (ref collided "a\u0000b")) '(2))
   (check-equal? (for/list ([c (in-dataframe-columns collided)]) (series->list c)) '((0) (1) (2)))
-  (check-equal? (for/list ([r (in-dataframe-rows collided)]) r) '(#(0 1 2)))
+  (check-equal? (sequence->list (in-dataframe-rows collided)) '(#(0 1 2)))
   (check-equal? (column-names (select collided (column-names collided))) '("id" "a" "a\u0000b"))
   (check-equal? (column-names (dataframe (list (series '(1) #:name "a")
                                               (series '(2) #:name "a\u0000b"))))

@@ -1553,7 +1553,9 @@ stations
 (list (std (series '(5))) (std (series '(#t #f))) (n-unique (series (list 1 polars-null))))
 (eval:error (var (series '("a" "b"))))
 (~> (dataframe (list nothing)) (select (count "n")))
-(~> (dataframe (list (series '(1) #:name "a"))) (select (alias (col "a") "a\u0000b")) column-names)]}
+(~> (dataframe (list (series '(1) #:name "a")))
+    (select (alias (col "a") "a\u0000b"))
+    column-names)]}
 
 @deftogether[(@defproc[(first [x (or/c string? pair? any/c)]) any/c]
               @defproc[(last  [x (or/c string? pair? any/c)]) any/c])]{
@@ -1807,7 +1809,7 @@ an implementation detail and not part of the public series API.)
   Returns @racket[#t] if @racket[v] is a series.}
 
 @defproc[(series [elements (or/c list? vector?)]
-                 [#:name name string? ""]
+                 [#:name name utf-8-name/c ""]
                  [#:dtype dtype (or/c #f symbol? pair?) #f])
          series?]{
   Builds a series from a list or vector. When @racket[#:dtype] is omitted the
@@ -1828,11 +1830,13 @@ an implementation detail and not part of the public series API.)
   datetime or duration column is microseconds, or nanoseconds when a value
   carries a sub-microsecond part and a nanosecond column holds every value,
   and moments make a zoned datetime column (@secref["ref-temporal-values"]).
-  A name may hold any character, a NUL included, as in Python.
+  A name may hold any character, a NUL included, as in Python, and may be a
+  byte string or path whose bytes are UTF-8, as every @racket[utf-8-name/c] may.
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
 (column-names (dataframe (list (series '(1) #:name "a") (series '(2) #:name "a\u0000b"))))
+(eval:error (series '(1) #:name 'ints))
 (series '())
 (series (list polars-null polars-null))
 (series '() #:name "empty" #:dtype 'f64)
@@ -1888,7 +1892,7 @@ an implementation detail and not part of the public series API.)
               @defproc[#:link-target? #f
                        (rename [d dataframe?] [old utf-8-name/c] [new utf-8-name/c])
                        dataframe?]
-              @defproc[(rename! [s series?] [new-name string?]) void?]
+              @defproc[(rename! [s series?] [new-name utf-8-name/c]) void?]
               @defproc[(clone [s series?]) series?]
               @defproc[(series-clone [s series?]) series?])]{
   @racket[rename!] renames a series in place (matching Polars), returning
@@ -2307,18 +2311,18 @@ temps
 (eval:error (len temps))
 (eval:error (series-drop temps))]}
 
-@deftogether[(@defproc[(series-new-i8   [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-i16  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-i32  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-i64  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-u8   [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-u16  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-u32  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-u64  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-f32  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-f64  [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-bool [name string?] [values list?]) Series-ptr?]
-              @defproc[(series-new-str  [name string?] [values list?]) Series-ptr?])]{
+@deftogether[(@defproc[(series-new-i8   [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-i16  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-i32  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-i64  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-u8   [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-u16  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-u32  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-u64  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-f32  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-f64  [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-bool [name utf-8-name/c] [values list?]) Series-ptr?]
+              @defproc[(series-new-str  [name utf-8-name/c] [values list?]) Series-ptr?])]{
   Build a series of the dtype named by the suffix from a list of values.
   @racket[polars-null] among the values produces a null entry. Unlike
   @racket[series], no coercion happens: the integer constructors want exact
@@ -2328,7 +2332,7 @@ temps
   (@racketid[series-new-i32/vec], @racketid[series-new-f64/vec], …) that takes a
   vector instead of a list.}
 
-@defproc[(series-new-null [name string?] [length size/c]) Series-ptr?]{
+@defproc[(series-new-null [name utf-8-name/c] [length size/c]) Series-ptr?]{
   Builds a series of @racket[length] nulls of dtype @racket['null]. It is
   what @racket[(series '())] and @racket[series] with @racket[#:dtype 'null]
   build on.

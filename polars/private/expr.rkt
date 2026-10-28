@@ -37,7 +37,6 @@
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _str-list _string-list with-release)
-
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
@@ -773,7 +772,7 @@
 (define-compat lazyframe-join/c
   (_fun _LazyFrame-ptr _LazyFrame-ptr _str-list _str-list _int32 -> _LazyFrame-ptr/null)
   #:c-id lazyframe_join_v2
-  #:wrap (allocator/or-fail lazyframe-drop 'lazyframe-join))
+  #:wrap (allocator lazyframe-drop))
 
 (define (lazyframe-join left right
                         #:on [on #f]
@@ -781,7 +780,8 @@
                         #:right-on [right-on #f]
                         #:how [how 'inner])
   (define-values (lon ron) (join-keys how on left-on right-on))
-  (lazyframe-join/c left right lon ron (join-symbol->code how)))
+  (call/foreign-error 'lazyframe-join
+                      (lambda () (lazyframe-join/c left right lon ron (join-symbol->code how)))))
 
 ;; --- Phase A9: expr cast ---
 

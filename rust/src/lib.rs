@@ -28,10 +28,10 @@ pub use types::*;
 
 pub(crate) use ffi::{
     boxed_result, boxed_unguarded, clear_last_error, collect_c_strings,
-    collect_exprs, decode_path, decode_schema, deref_arg, guard_panic,
-    name_arg, record, rust_string_to_ptr, scalar_result, set_last_error,
-    slice_or_empty, sort_keys, sort_multiple_options, str_list_arg,
-    str_list_out, str_out,
+    collect_exprs, decode_path, decode_schema, deref_arg, deref_mut_arg,
+    guard_panic, name_arg, named_sort, record, rust_string_to_ptr,
+    scalar_result, set_last_error, slice_or_empty, sort_multiple_options,
+    str_list_arg, str_list_out, str_out,
 };
 #[cfg(test)]
 pub(crate) use ffi::{on_polars_worker, panic_is_quiet};

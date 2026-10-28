@@ -7,7 +7,7 @@
            (only-in gregor date datetime moment resolve-offset/post resolve-offset/pre)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c nonnegative-int64/c)
-           (only-in racket/match match)
+           (only-in racket/match match match-define)
            (only-in polars/private/expr col lit)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operators [= p=] [!= p!=])
@@ -197,24 +197,21 @@
         (select (alias (make "s") "s"))
         (ref "s")
         series->list))
-  (for ([row (in-list (nul-expected 'values))])
-    (define-values (got expected)
+  (for ([row (in-list nul-expected)])
+    (match-define (list op args ... expected) row)
+    (define xs (match op ['lit '("x")] [_ (car args)]))
+    (define make
       (match row
-        [(list 'lit v expected) (values (strings-through '("x") (lambda (_) (lit v))) expected)]
-        [(list 'fill-null xs v expected)
-         (values (strings-through xs (lambda (c) (fill-null c v))) expected)]
-        [(list 'strip-chars xs v expected)
-         (values (strings-through xs (lambda (c) (str-strip-chars c v))) expected)]
-        [(list 'replace-literal xs v by expected)
-         (values (strings-through xs (lambda (c) (str-replace c v by #:literal #t))) expected)]
-        [(list 'contains-literal xs v expected)
-         (values (strings-through xs (lambda (c) (str-contains c v))) expected)]
-        [(list 'starts-with xs v expected)
-         (values (strings-through xs (lambda (c) (str-starts-with c v))) expected)]
-        [(list 'eq xs v expected)
-         (check-equal? (series->list (p= (series xs) v)) expected)
-         (values (strings-through xs (lambda (c) (p= (col c) v))) expected)]
-        [(list 'ne xs v expected)
-         (check-equal? (series->list (p!= (series xs) v)) expected)
-         (values (strings-through xs (lambda (c) (p!= (col c) v))) expected)]))
-    (check-equal? got expected (format "~s" row))))
+        [(list 'lit v _) (lambda (_) (lit v))]
+        [(list 'fill-null _ v _) (lambda (c) (fill-null c v))]
+        [(list 'strip-chars _ v _) (lambda (c) (str-strip-chars c v))]
+        [(list 'replace-literal _ v by _) (lambda (c) (str-replace c v by #:literal #t))]
+        [(list 'contains _ v _) (lambda (c) (str-contains c v))]
+        [(list 'starts-with _ v _) (lambda (c) (str-starts-with c v))]
+        [(list 'eq _ v _) (lambda (c) (p= (col c) v))]
+        [(list 'ne _ v _) (lambda (c) (p!= (col c) v))]))
+    (check-equal? (strings-through xs make) expected (format "~s" row)))
+  (for ([row (in-list nul-expected)] #:when (memq (car row) '(eq ne)))
+    (match row
+      [(list 'eq xs v expected) (check-equal? (series->list (p= (series xs) v)) expected)]
+      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)])))

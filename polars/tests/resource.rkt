@@ -363,12 +363,11 @@
   (define string-list-holders
     '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw
       expr-cast-enum/raw expr-dtype-col-enum/raw series-cast-enum/raw))
+  (define string-list-definers '(define-compat define-syntax-parse-rule define-syntax-parser))
   (define (string-list-users file-forms)
     (sort (for*/list ([file+forms (in-list file-forms)]
                       [form (in-list (cdr file+forms))]
-                      #:when (match form
-                               [(list* (or 'define-compat 'define-syntax-parse-rule) _ _) #t]
-                               [_ #f])
+                      #:when (and (pair? form) (memq (car form) string-list-definers))
                       #:when (memq '_string-list (flatten form)))
             (match form
               [(list* _ (cons name _) _) name]
@@ -378,10 +377,18 @@
                 string-list-holders
                 "a name list crosses as C strings: use _str-list")
   (with-planted-sources (root ["private/planted.rkt"
-                               (format "#lang racket/base\n~s"
-                                       '(define-compat planted (_fun _string-list -> _void)))])
+                               (module-text
+                                '(define-compat planted (_fun _string-list -> _void))
+                                '(define-reasoned in-reasoned
+                                   (define-compat nested-reasoned (_fun _string-list -> _void)))
+                                '(begin (define-compat nested-begin (_fun _string-list -> _void)))
+                                '(define-frame-op/reason in-frame-op
+                                   (define-compat nested-frame-op (_fun _string-list -> _void)))
+                                '(define-syntax-parser nested-parser
+                                   [(_) #'(_fun _string-list -> _void)])
+                                '(define-compat kept (_fun _str-list -> _void)))])
     (check-equal? (string-list-users (source-forms (polars-sources root #:dirs '("private"))))
-                  '(planted)))
+                  '(nested-begin nested-frame-op nested-parser nested-reasoned planted)))
 
   (define planted-text
     (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"
