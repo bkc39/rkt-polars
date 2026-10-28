@@ -19,15 +19,20 @@ fn categorical_tag() -> CompatDType {
     }
 }
 
-fn names(categories: &[&str]) -> (Vec<CString>, Vec<*const c_char>) {
-    let owned: Vec<CString> = categories.iter().map(|c| cstr(c)).collect();
-    let ptrs = owned.iter().map(|c| c.as_ptr()).collect();
-    (owned, ptrs)
+struct Names(StrListOut);
+
+impl Drop for Names {
+    fn drop(&mut self) {
+        str_block_drop(self.0);
+    }
+}
+
+fn names(categories: &[&str]) -> Names {
+    Names(str_list_out(categories))
 }
 
 fn cast_enum(s: *mut Series, categories: &[&str]) -> *mut Series {
-    let (_owned, ptrs) = names(categories);
-    series_cast_enum(s, ptrs.as_ptr(), ptrs.len())
+    series_cast_enum_v2(s, names(categories).0)
 }
 
 fn strings(values: &[Option<&str>]) -> Series {
@@ -128,24 +133,63 @@ fn duplicate_enum_categories_are_refused() {
     let reason = recorded_error().expect("a reason");
     assert!(reason.contains("duplicate"), "{}", reason);
     let e = expr_col_v2(str_block("s").as_ptr());
-    let (_owned, ptrs) = names(&["a", "a"]);
-    assert!(expr_cast_enum(e, ptrs.as_ptr(), ptrs.len()).is_null());
-    assert!(expr_dtype_col_enum(ptrs.as_ptr(), ptrs.len()).is_null());
+    let twice = names(&["a", "a"]);
+    assert!(expr_cast_enum_v2(e, twice.0).is_null());
+    assert!(expr_dtype_col_enum_v2(twice.0).is_null());
     expr_drop(e);
     series_drop(s);
 }
 
 #[test]
-fn ref_str_reads_categorical_and_enum_values() {
-    let s = boxed(strings(&[Some("x"), None, Some("y")]));
+fn categorical_and_enum_values_keep_a_nul() {
+    let s = boxed(strings(&[Some("a\0b"), None, Some("c")]));
     let cat = series_cast(s, categorical_tag());
-    let e = cast_enum(s, &["y", "x"]);
-    for p in [s, cat, e] {
-        assert_eq!(take_cstring(series_ref_str(p, 0)), "x");
-        assert!(series_ref_str(p, 1).is_null());
-        assert_eq!(take_cstring(series_ref_str(p, 2)), "y");
+    let e = cast_enum(s, &["c", "a\0b", "\0"]);
+    let expected = vec![Some("a\0b".to_string()), None, Some("c".to_string())];
+    for p in [cat, e] {
+        assert_eq!(copy_cat(p, 0, 3), expected);
+    }
+    let categories = owned(series_enum_categories(e));
+    assert_eq!(
+        categories
+            .str()
+            .unwrap()
+            .iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+        vec!["c", "a\0b", "\0"]
+    );
+    let other = make_str("other", &["x", "y", "z"]);
+    let df = make_df(&[other, e]);
+    let selector = expr_dtype_col_enum_v2(names(&["c", "a\0b", "\0"]).0);
+    assert!(!selector.is_null());
+    let exprs = [selector as *const Expr];
+    let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
+    assert_eq!(read_column_names(lazyframe_collect(lf)), vec!["s"]);
+    let column = expr_col_v2(str_block("s").as_ptr());
+    let cast = expr_cast_enum_v2(column, names(&["a\0b", "c"]).0);
+    assert!(!cast.is_null());
+    for p in [s, cat, e, other] {
         series_drop(p);
     }
+    expr_drop(column);
+    expr_drop(cast);
+}
+
+#[test]
+fn a_malformed_category_block_is_a_recorded_reason() {
+    let short = [1u64, 0];
+    let s = make_str("s", &["a"]);
+    let e = expr_col_v2(str_block("s").as_ptr());
+    let cause = "a string block is shorter than its header says";
+    assert!(series_cast_enum_v2(s, short.as_ptr()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some(cause));
+    assert!(expr_cast_enum_v2(e, short.as_ptr()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some(cause));
+    assert!(expr_dtype_col_enum_v2(short.as_ptr()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some(cause));
+    expr_drop(e);
+    series_drop(s);
 }
 
 #[test]
@@ -264,8 +308,7 @@ fn enum_dtype_col_selects_the_enum_column() {
     let e = cast_enum(s, &["debug", "info"]);
     let other = make_str("other", &["x"]);
     let df = make_df(&[other, e]);
-    let (_owned, ptrs) = names(&["debug", "info"]);
-    let selector = expr_dtype_col_enum(ptrs.as_ptr(), ptrs.len());
+    let selector = expr_dtype_col_enum_v2(names(&["debug", "info"]).0);
     assert!(!selector.is_null());
     let lf = dataframe_lazy(df);
     let exprs = [selector as *const Expr];

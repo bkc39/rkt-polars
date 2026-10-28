@@ -22,14 +22,15 @@
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource
-                  _str _str-list _string-list utf-8-name/c with-raw-buffer with-release)
+                  _str _str-list utf-8-name/c with-raw-buffer with-release)
          (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax syntax/parse))
 
 (provide (except-out (all-defined-out)
-                     series-sort dataframe-sort series-ref-string strings->series series-drop
+                     series-sort dataframe-sort series-ref-category series-ref-string
+                     strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
@@ -121,15 +122,9 @@
 (define _rsstr-list
   (make-ctype _pointer (result-only '_rsstr-list) (block-reader str-block->strings)))
 
-(define _c-string-result
-  (make-ctype _pointer
-              (result-only '_c-string-result)
-              (lambda (p)
-                (with-release ([c p string-drop]) (and c (cast c _pointer _string/utf-8))))))
-
 (define (c-string-argument v)
   (match v
-    [(and (? string?) (not (? string-has-nul?))) v]
+    [(and (? string?) (not (regexp #rx"\0"))) v]
     [_ (raise-argument-error '_c-string "a string without a NUL" v)]))
 
 (define (c-string/null-argument v)
@@ -322,16 +317,6 @@
   (match v
     [(cons 'enum (and (list (? symbol?) ...) categories)) (not (check-duplicates categories))]
     [_ #f]))
-
-(define (string-has-nul? s)
-  (for/or ([c (in-string s)])
-    (char=? c #\nul)))
-
-;; Categories cross into Rust as C strings, which end at a NUL (#165).
-(define (check-enum-categories who dtype)
-  (for ([category (in-list (cdr dtype))]
-        #:when (string-has-nul? (symbol->string category)))
-    (raise-argument-error who "an enum category without a NUL character" category)))
 
 (define (decimal-dtype? v)
   (match v
@@ -556,7 +541,7 @@
 (define (series-enum-categories s)
   (define names (series-enum-categories/raw s))
   (begin0 (for/list ([i (in-range (series-len names))])
-            (string->symbol (series-ref-str/raw names i)))
+            (string->symbol (series-ref-string names i)))
           (series-drop names)))
 
 (define-compat series-time-zone
@@ -1020,7 +1005,6 @@
   [f32 _CompatOptF32]
   [f64 _CompatOptF64]
   [bool _CompatOptBool]
-  [str _c-string-result]
   [date _CompatOptYMD]
   [duration _CompatOptI64]
   [time _CompatOptI64])
@@ -1059,6 +1043,26 @@
      (with-raw-buffer ([offsets 2 _int64])
        (and (not (negative? (series-copy-str s index 1 buf size offsets 2 #f 0)))
             (bytes->string/utf-8 buf)))]))
+
+;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
+(define-compat series-copy-cat
+  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
+  #:wrap (allocator series-drop))
+
+(define (series-ref-category s index)
+  (with-raw-buffer ([code 1 _uint32])
+    (with-release ([table (series-copy-cat s index 1 code 1 #f 0) series-drop])
+      (and table (positive? (series-len table)) (series-ref-string table 0)))))
+
+(define (series-ref-str/raw s index)
+  (define dtype (compat-dtype->datum (series-dtype/raw s)))
+  (cond
+    [(eqv? (series-ref-is-null s index) 1) #f]
+    [(eq? dtype 'string) (series-ref-string s index)]
+    [(memq dtype '(categorical enum)) (series-ref-category s index)]
+    [else #f]))
+
+(provide (contract-out [series-ref-str/raw series-index/c]))
 
 (define-compat series-binary-byte-len
   (_fun _Series-ptr _size _size _size -> _int64))
@@ -1179,7 +1183,7 @@
         (compat-opt-bool->datum value)]
        [(string) (require-ref-value who dtype (series-ref-string s index))]
        [(categorical enum)
-        (string->symbol (require-ref-value who dtype (series-ref-str/raw s index)))]
+        (string->symbol (require-ref-value who dtype (series-ref-category s index)))]
        [(date) (require-ref-value who dtype (series-date-ref s index))]
        [(time)
         (define raw (compat-opt-i64->datum (series-ref-time/raw s index)))
@@ -1203,11 +1207,8 @@
   #:wrap (allocator series-drop))
 
 (define-compat series-cast-enum/raw
-  (_fun _Series-ptr
-        (categories : _string-list)
-        (_size = (length categories))
-        -> _Series-ptr/null)
-  #:c-id series_cast_enum
+  (_fun _Series-ptr _str-list -> _Series-ptr/null)
+  #:c-id series_cast_enum_v2
   #:wrap (allocator series-drop))
 
 (module enum-misses racket/base
@@ -1257,7 +1258,6 @@
              [else (enum-misses-message dtype (dataframe-height missed) (series-len present)
                                         named (series-len distinct))])))]
       [_ #f]))
-  (check-enum-categories who dtype)
   (call/foreign-error who
                       (lambda () (series-cast-enum/raw s categories))
                       #:explain misses

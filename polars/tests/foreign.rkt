@@ -46,7 +46,7 @@
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
-                    series-xor str-block-drop-count string-has-nul? zoned-datetime-dtype?
+                    series-xor str-block-drop-count zoned-datetime-dtype?
                     _c-string _c-string/null)
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
@@ -575,10 +575,19 @@
              (lambda () (series-cast bears '(enum "Polar"))))
   (check-true (enum-dtype? '(enum)))
   (check-false (enum-dtype? '(enum a . b)))
-  (check-true (string-has-nul? "a\u0000b"))
-  (check-false (string-has-nul? "東京 😀"))
-  (check-exn #rx"^series-cast: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (series-cast bears (list 'enum 'Brown (string->symbol "Po\u0000lar")))))
+  (define nul-polar (string->symbol "Po\u0000lar"))
+  (define nul-bears (series-new-str "bears" (list "Po\u0000lar" polars-null "Brown")))
+  (define nul-bears/enum (series-cast nul-bears (list 'enum 'Brown nul-polar)))
+  (check-equal? (series-dtype nul-bears/enum) (list 'enum 'Brown nul-polar))
+  (define nul-bears/cat (series-cast nul-bears 'categorical))
+  (for ([s (list nul-bears nul-bears/cat nul-bears/enum)])
+    (check-equal? (for/list ([i 3]) (contracted:series-ref-str/raw s i))
+                  (list "Po\u0000lar" #f "Brown")))
+  (for ([s (list nul-bears/cat nul-bears/enum)])
+    (check-equal? (for/list ([i 3]) (series-ref s i)) (list nul-polar polars-null 'Brown)))
+  (check-false (contracted:series-ref-str/raw (series-new-i64 "i" '(1)) 0))
+  (check-exn #rx"^series-ref-str/raw: contract violation"
+             (lambda () (contracted:series-ref-str/raw nul-bears 3)))
 
   (define stamps (series-new-i64 "t" (list 1616842800000000 polars-null -1)))
   (define brussels (series-cast stamps '(datetime microseconds "Europe/Brussels")))

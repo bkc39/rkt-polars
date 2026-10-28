@@ -21,7 +21,7 @@ pub(crate) use self::slices::{
 #[cfg(test)]
 pub(crate) use self::strings::StrError;
 pub(crate) use self::strings::{
-    name_arg, rust_string_to_ptr, str_arg, str_list_arg, str_list_out, str_out,
+    name_arg, str_arg, str_list_arg, str_list_out, str_out,
 };
 pub use self::strings::{
     str_block_drop, str_block_drop_count, string_drop, StrArg, StrListArg,

@@ -2132,9 +2132,8 @@ last one is dropped, so each conversion fetches the strings afresh.
     declared order of its categories.}
   @item{A value outside an Enum's categories raises, whether it is built,
     cast or compared; a categorical takes any string.}
-  @item{API gap: a categorical or Enum value that @racket[series] builds,
-    and an Enum category, cannot hold a NUL character (@racket[#\nul]): it
-    raises. A @racket['string] value can hold one.}
+  @item{A value or category may hold any character, a NUL included, as in
+    Python.}
   @item{Two categorical columns share one encoding, so they join, stack
     and compare without re-encoding; two Enums with the same categories
     are the same dtype.}
@@ -2147,8 +2146,7 @@ last one is dropped, so each conversion fetches the strings afresh.
   the datum @racket['(enum category ...)] that @racket[dtype] reports for
   such a column, so @racket[equal?] compares the two. A string category is
   the symbol of that string, for a name that is not an identifier. A
-  duplicate category, one holding a NUL character, or none, is a syntax
-  error. The datum itself is
+  duplicate category, or none, is a syntax error. The datum itself is
   accepted wherever a dtype is (@tt{pl.Enum([...])}).
 
   @examples[#:eval ev #:label #f
@@ -2179,7 +2177,7 @@ come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
 (ref (ref logs "source") 1)
 (select logs (col 'categorical))
 (eval:error (select logs (> (col "level") 'fatal)))
-(eval:error (series (list "api" "d\u0000b") #:dtype 'categorical))
+(series->list (series (list "api" "d\u0000b") #:dtype 'categorical))
 (define produce (read-parquet "produce.parquet"))
 (dtype (ref produce "price"))
 (for/sum ([price (ref produce "price")] #:unless (polars-null? price)) price)]

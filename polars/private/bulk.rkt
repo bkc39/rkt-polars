@@ -1,21 +1,20 @@
 #lang racket/base
 
 (require (only-in ffi/unsafe
-                  -> _byte _bytes _double _float _fun _int16 _int32 _int64 _int8 _pointer _size
+                  -> _byte _double _float _fun _int16 _int32 _int64 _int8 _size
                   _uint16 _uint32 _uint64 _uint8 ptr-add ptr-ref)
-         (only-in ffi/unsafe/alloc allocator)
          (only-in ffi/vector _f64vector f64vector-length make-f64vector)
          (only-in racket/match match)
          syntax/parse/define
          (only-in threading ~>>)
          (only-in polars/private/foreign
-                  _Series-ptr _Series-ptr/null copy-zoned-datetimes dataframe-column
-                  dataframe-column-names dataframe-height decimal-ref define-compat
-                  duration-value->period polars-null series-copy-bool series-copy-decimal
-                  series-copy-f32 series-copy-f64 series-copy-i16 series-copy-i32
-                  series-copy-i64 series-copy-i8 series-copy-str series-copy-u16
-                  series-copy-u32 series-copy-u64 series-copy-u8 series-drop series-dtype
-                  series-len series-name series-null-count series-str-byte-len)
+                  _Series-ptr copy-zoned-datetimes dataframe-column dataframe-column-names
+                  dataframe-height decimal-ref define-compat duration-value->period polars-null
+                  series-copy-bool series-copy-cat series-copy-decimal series-copy-f32
+                  series-copy-f64 series-copy-i16 series-copy-i32 series-copy-i64 series-copy-i8
+                  series-copy-str series-copy-u16 series-copy-u32 series-copy-u64 series-copy-u8
+                  series-drop series-dtype series-len series-name series-null-count
+                  series-str-byte-len)
          (only-in polars/private/resource with-raw-buffer with-release)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time))
@@ -30,11 +29,6 @@
          series->f64vector
          series->list
          series->vector)
-
-;; Validity and string buffers are GC memory the collector may move: never #:blocking?.
-(define-compat series-copy-cat
-  (_fun _Series-ptr _size _size _pointer _size _bytes _size -> _Series-ptr/null)
-  #:wrap (allocator series-drop))
 
 (define-compat series-copy-as-f64
   (_fun (s dst offset stride null-value) ::

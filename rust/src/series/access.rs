@@ -57,28 +57,6 @@ series_ref!(
     s => s.time().map(|ca| ca.physical())
 );
 
-#[no_mangle]
-pub extern "C" fn series_ref_str(
-    s_ptr: *mut Series,
-    index: usize,
-) -> *const c_char {
-    let Some(s) = series_at(s_ptr, index) else {
-        return ptr::null();
-    };
-    if s.dtype().is_categorical() || s.dtype().is_enum() {
-        return match s.get(index) {
-            Ok(value) => {
-                value.get_str().map_or(ptr::null(), rust_string_to_ptr)
-            }
-            Err(_) => ptr::null(),
-        };
-    }
-    match s.str() {
-        Ok(ca) => ca.get(index).map(rust_string_to_ptr).unwrap_or(ptr::null()),
-        Err(_) => ptr::null(),
-    }
-}
-
 pub(crate) fn date_days_to_ymd(days: i32) -> Option<YMD> {
     NaiveDate::from_ymd_opt(1970, 1, 1)
         .and_then(|epoch| {

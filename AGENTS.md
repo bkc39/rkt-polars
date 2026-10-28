@@ -55,10 +55,11 @@ docs.racket-lang.org/polars. The package build server rebuilds it from
    `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
    lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
    whole or a block of rows at a time, behind `series->list`,
-   `in-dataframe-rows` and their siblings; it binds the numeric, boolean and
-   categorical copies, and takes the String and Decimal ones,
-   `series-copy-str` / `series-str-byte-len` and `series-copy-decimal`, from
-   `foreign.rkt`, where `series-ref` reads through them). `define-compat`
+   `in-dataframe-rows` and their siblings; it binds the numeric and boolean
+   copies, and takes the String, Decimal and categorical ones,
+   `series-copy-str` / `series-str-byte-len`, `series-copy-decimal` and
+   `series-copy-cat`, from `foreign.rkt`, where `series-ref` reads through
+   them). `define-compat`
    binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
    `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name, except the
@@ -168,11 +169,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`foreign.rkt`) read a block by length, so a NUL in a name, a reason or
   printed text survives. They free it at once through `str_block_drop`, in
   atomic mode, so a thread killed during the read is killed after the free.
-  NULL reads as `#f`. `str_block_drop_count` counts the releases. Only
-  `series_ref_str` still returns a C string: `_c-string-result` copies it and
-  frees it through `string_drop`, until #165's categorical leg retires both.
-  `rust/src/tests/c_strings.rs`, on the guard audit's walk, fails on any
-  other export that returns one.
+  NULL reads as `#f`. `str_block_drop_count` counts the releases. No export
+  returns a C string: `rust/src/tests/c_strings.rs`, on the guard audit's
+  walk, fails on one.
 - **Failure reasons travel out of band** (#45): an entry point that can fail
   calls `clear_last_error()` on entry (the shared `write_frame`,
   `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
@@ -198,8 +197,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `dataframe_drop_columns_v2`, `dataframe_rename_v2`, `dataframe_column_v2`,
   the five `dataframe_group_by_*_v2`, `lazyframe_sort_with_options_v2`,
   `lazyframe_join_v2`, `expr_col_v2`, `expr_lit_str_v2`, `expr_alias_v2`,
-  `expr_exclude_v2`), the three Enum entry points (`series_cast_enum`,
-  `expr_cast_enum`, `expr_dtype_col_enum`) and the nine that take a time
+  `expr_exclude_v2`), the three Enum entry points (`series_cast_enum_v2`,
+  `expr_cast_enum_v2`, `expr_dtype_col_enum_v2`) and the nine that take a time
   zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
   `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
   `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
@@ -323,19 +322,17 @@ it. Racket side: `define-compat` with `#:c-id`.
     the block could be freed by a collection during a `#:blocking?` call or a
     callback.
   - `_string-list`, a `const char **` table and its NUL-terminated strings in
-    one block, is left only where Enum categories and the IO readers'
-    keywords still cross as C strings. A test in `polars/tests/resource.rkt`
-    names those seven bindings and fails on any other `define-compat`,
+    one block, is left only where the IO readers' keywords still cross as C
+    strings. A test in `polars/tests/resource.rkt` names those four bindings and fails on any other `define-compat`,
     `define-syntax-parse-rule` or `define-syntax-parser` that uses it, at any
     depth (inside a `begin` or another definer).
   - `series-ref` reads a String value by length, through `series_copy_str`,
-    since a C string ends at a NUL the value may hold.
-  - Categorical and Enum values are still read as C strings, and Enum
-    categories cross as one, so `series` refuses a NUL in a categorical or
-    Enum value, and `series`, `cast`, `col`, `series-cast`, `expr-cast` and
-    `expr-dtype-col` refuse one in an Enum category (`check-enum-categories`);
-    `define-enum` refuses it at compile time. Formats, zones and
-    categoricals cast from a String series still stop at a NUL (#165).
+    and a Categorical or Enum value through `series_copy_cat` with a count of
+    1, as `series->list` does, so a NUL a value holds survives and the two
+    cannot disagree.
+  - Enum categories cross as one `_str-list` block, so a categorical or Enum
+    value or category may hold a NUL, as in Python. Formats and zones still
+    stop at a NUL (#165).
   - A C string still crossing is `_c-string` / `_c-string/null`
     (`foreign.rkt`), which refuse a NUL.
   - A test in `polars/tests/resource.rkt` reads every module under

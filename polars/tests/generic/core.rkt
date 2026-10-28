@@ -83,13 +83,21 @@
   (check-exn #rx"unsupported dtype '\\(enum debug debug\\)"
              (lambda () (series '(debug) #:dtype '(enum debug debug))))
   (define held-nul (string->symbol "a\u0000b"))
-  (define nul-value #rx"^series: contract violation\n  expected: a categorical or enum value without")
   (for ([elements (list (list 'a held-nul) (vector 'a held-nul))])
-    (check-exn nul-value (lambda () (series elements)))
-    (check-exn nul-value (lambda () (series elements #:dtype '(enum a b)))))
-  (check-exn nul-value (lambda () (series (list "api" "d\u0000b") #:dtype 'categorical)))
-  (check-exn #rx"^series: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (series '(a) #:dtype (list 'enum 'a held-nul))))
+    (check-equal? (series->list (series elements)) (list 'a held-nul))
+    (check-equal? (series->list (series elements #:dtype (list 'enum held-nul 'a)))
+                  (list 'a held-nul)))
+  (check-equal? (series->list (series (list "api" "d\u0000b") #:dtype 'categorical))
+                (list 'api (string->symbol "d\u0000b")))
+  (for ([n (in-list nul-names)])
+    (define held (string->symbol n))
+    (define categories (series (list n "c" polars-null) #:dtype 'categorical))
+    (check-equal? (series->list categories) (list held 'c polars-null))
+    (check-equal? (ref categories 0) held)
+    (define levels (series (list n "c") #:dtype (list 'enum 'c held)))
+    (check-equal? (dtype levels) (list 'enum 'c held))
+    (check-equal? (series->list levels) (list held 'c))
+    (check-equal? (ref levels 0) held))
   (check-equal? (ref (series (list "a\u0000b")) 0) "a\u0000b")
 
   ;; ref on series and dataframe; df ref returns a wrapped series

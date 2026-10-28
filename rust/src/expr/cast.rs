@@ -15,17 +15,16 @@ pub extern "C" fn expr_cast(e: *mut Expr, target: CompatDType) -> *mut Expr {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_cast_enum(
+pub extern "C" fn expr_cast_enum_v2(
     e: *const Expr,
-    categories: *const *const c_char,
-    n: usize,
+    categories: StrListArg,
 ) -> *mut Expr {
     clear_last_error();
     let Some(e) = (unsafe { e.as_ref() }) else {
         set_last_error("expression is null");
         return ptr::null_mut();
     };
-    enum_dtype(categories, n).map_or(ptr::null_mut(), |dtype| {
+    enum_dtype(categories).map_or(ptr::null_mut(), |dtype| {
         Box::into_raw(Box::new(e.clone().strict_cast(dtype)))
     })
 }

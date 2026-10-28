@@ -92,8 +92,7 @@
   (check-equal? (drops-once lazyframe-drop-count lazyframe-drop
                             (lambda () (lazyframe-select (dataframe-lazy df) (list (col "x")))))
                 2)
-  (check-exn #rx"^expr-cast: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b")))))
+  (check-pred Expr-ptr? (expr-cast (col "x") (list 'enum (string->symbol "a\u0000b"))))
 
   (define tmp-scan-csv
     (build-path (find-system-path 'temp-dir) "rkt-polars-lazy-scan.csv"))

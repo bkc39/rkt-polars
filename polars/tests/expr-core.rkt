@@ -75,10 +75,8 @@
   (check-exn #rx"^expr-dtype-col: cannot select .*not a time zone: '\\*'"
              (lambda () (expr-dtype-col '(datetime microseconds "*"))))
   (define nul-enum (list 'enum 'a (string->symbol "b\u0000c")))
-  (check-exn #rx"^col: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (contracted:col nul-enum)))
-  (check-exn #rx"^expr-dtype-col: contract violation\n  expected: an enum category without a NUL"
-             (lambda () (contracted:expr-dtype-col nul-enum)))
+  (check-pred multi-column-expr? (contracted:col nul-enum))
+  (check-pred multi-column-expr? (contracted:expr-dtype-col nul-enum))
 
   (define-compat expr-add
     (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
