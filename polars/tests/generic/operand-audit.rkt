@@ -13,11 +13,18 @@
            (only-in polars/private/foreign
                     dataframe-column series-add series-add/who series-cast series-name
                     series-not series-rename series-slice)
-           polars/private/generic/core
-           polars/private/generic/operand-audit-classes
-           polars/private/generic/operand-audit-table
-           polars/private/generic/operators
-           polars/tests/generic/test-fixtures
+           (only-in polars/private/generic/core dataframe dtype series series? wrap-series)
+           (only-in polars/private/generic/operators
+                    != < <= = > >= mod otherwise p* p+ p- p-and p-not p-or p-when p-xor p/ then)
+           (only-in polars/tests/generic/operand-audit-classes
+                    classify-deviation operand-deviation-classes recorder-verdict
+                    unaccepted-report)
+           (only-in polars/tests/generic/operand-audit-table
+                    audit-fixtures audit-operators audit-row-key audit-rows audit-series-outcomes
+                    deviation-classes deviations eager-outcome expected-outcome fixture-outcome
+                    python-outcome python-polars-version run-row)
+           (only-in polars/tests/generic/test-fixtures
+                    col datetime ints polars-null prices series-shape)
            (only-in threading ~>))
 
   (define (raised thunk)

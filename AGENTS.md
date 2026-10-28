@@ -639,14 +639,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   `*` or `/` on a Decimal series, left of `*` on a Duration series, and for
   a string left of `+` (the `result-name` class).
   `scripts/operand-audit-expected.py` writes Python's outcome of every
-  (operator, dtype, operand) row to `generic/operand-audit.rktd`, with the
-  expression form's and, for `/`, `//`'s where they differ.
+  (operator, dtype, operand) row to `polars/tests/generic/operand-audit.rktd`,
+  with the expression form's and, for `/`, `//`'s where they differ.
   `scripts/operand-audit-deviations.rkt` records ours, for each row where it
-  differs, in `generic/operand-deviations.rktd`, under the first class of
-  `generic/operand-audit-classes.rkt` that holds. Each class is a predicate
-  on the row, Python's outcome (with its expression and `//` forms) and ours,
-  which says what kind of outcome the class admits; the record, not the
-  predicate, says which rows are in it. The recorder is a ratchet: a row that
+  differs, in `polars/tests/generic/operand-deviations.rktd`, under the first
+  class of `polars/tests/generic/operand-audit-classes.rkt` that holds;
+  `operand-audit-table.rkt` beside it reads both records, and the library
+  requires none of them. Each class is a predicate on the row, Python's
+  outcome (with its expression and `//` forms) and ours, which says what
+  kind of outcome the class admits; the record, not the predicate, says
+  which rows are in it. The recorder is a ratchet: a row that
   fits no class, or one not already recorded under its class with the same
   outcome (a new deviation, a changed outcome, a changed class), makes it
   print the row, ours and the record and exit 1 without writing. `--accept`
@@ -654,8 +656,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   that now gives Python's outcome counts as changed too, so undoing a
   documented deviation (`integer-division`, `racket-short-circuit`,
   `result-name`) also needs `--accept`, which drops the row from the record.
-  `generic/operand-audit.rkt` holds every row to Python's outcome or the
-  recorded one, name, dtype and values exactly, and reclassifies every
+  `polars/tests/generic/operand-audit.rkt` holds every row to Python's outcome
+  or the recorded one, name, dtype and values exactly, and reclassifies every
   recorded row, so a change to any row fails and names it. After a
   deliberate change, rerun the recorder. On an unclassified row, fix ours to
   Python's outcome, or add a class with its predicate and reason (and a
@@ -675,9 +677,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   Decimal reduces as Python's does, all through the expression engine. The
   expectations are `polars/scribblings/data/reductions-expected.rktd`,
   written by `scripts/reductions-expected.py` from Python on empty,
-  all-null and partly null series of each dtype; `generic/reductions.rkt`'s
-  tests read it. The typed low-level `series-sum-i32` and kin still return
-  `#f`.
+  all-null and partly null series of each dtype;
+  `polars/tests/generic/reductions.rkt` reads it. The typed low-level
+  `series-sum-i32` and kin still return `#f`.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.
@@ -864,21 +866,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `install-native-libs` gate and flake check hold it there.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
-  `private/generic/csv.rkt`; `tests/generic/csv-options.rkt`, which has no
-  counterpart, tests it too), or inline until #256 moves them. The guide's
-  `*-test.rkt`, `bench/` and `lint/` keep theirs. A test file is `#lang
-  racket/base` whose body is one `(module+ test ...)`, so `raco test -x` runs
-  it, with every require in one `require` at its head. That `require` takes
-  every project module through `only-in` or `prefix-in`, never bare:
-  `(prefix-in contracted: polars/private/<path>)` for the contracted exports,
-  `only-in` for the plain ones, and `(only-in (submod polars/private/<path>
-  internal) ...)` for a binding the module does not export or a test calls
-  uncontracted. The module's last form, `(module+ internal (provide ...))`,
-  provides those, only what a test uses; never `require/expose`. The
-  test-only helpers live there too: `test-helpers.rkt`, `gc-pressure.rkt` and
-  `generic/test-fixtures.rkt`, whose `test` submodule holds the reader
-  checks. A module's inline `test` blocks **merge**: a definition name used
-  in one block collides with the same name in another. Rust tests live in
+  `private/generic/csv.rkt`), or inline until #256 moves them. Three have no
+  library counterpart: `generic/csv-options.rkt`, `generic/verb-errors.rkt`
+  and `generic/operand-audit.rkt`. The guide's `*-test.rkt`, `bench/` and
+  `lint/` keep theirs. A test file is `#lang racket/base` whose body is one
+  `(module+ test ...)`, so `raco test -x` runs it, with every require in one
+  `require` at its head. That `require` takes every project module through
+  `only-in` or `prefix-in`, never bare: `(prefix-in contracted:
+  polars/private/<path>)` for the contracted exports, `only-in` for the plain
+  ones, and `(only-in (submod polars/private/<path> internal) ...)` for a
+  binding the module does not export or a test calls uncontracted. The
+  module's last form, `(module+ internal (provide ...))`, provides those, only
+  what a test uses; never `require/expose`. The test-only helpers, which test
+  no module, live there too: `test-helpers.rkt`, `gc-pressure.rkt`,
+  `generic/test-fixtures.rkt` (its `test` submodule holds the reader checks),
+  `generic/operand-audit-table.rkt` and `generic/operand-audit-classes.rkt`. A
+  module's inline `test` blocks **merge**: a definition name used in one block
+  collides with the same name in another. Rust tests live in
   `rust/src/tests/`.
 - `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
   paired scripts), `raco test -x bench` (strict mode's comparison),

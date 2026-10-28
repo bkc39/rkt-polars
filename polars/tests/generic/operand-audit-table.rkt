@@ -10,8 +10,9 @@
          (only-in gregor/time time time?)
          (only-in polars/private/foreign series-cast series-name series-rename series-slice)
          (only-in polars/private/temporal period->nanoseconds)
-         polars/private/generic/core
-         polars/private/generic/operators
+         (only-in polars/private/generic/core dtype series series? wrap-series)
+         (only-in polars/private/generic/operators
+                  != < <= = > >= mod p* p+ p- p-and p-not p-or p-xor p/)
          (only-in polars/tests/generic/test-fixtures polars-null polars-null? prices
                   series-cells))
 

@@ -5,7 +5,7 @@
          (only-in racket/string string-append*)
          (only-in racket/match == match match* match-define match-lambda)
          (only-in polars/private/foreign polars-null? series-dtype series-name)
-         (only-in polars/private/generic/operand-audit-table
+         (only-in polars/tests/generic/operand-audit-table
                   eager-outcome fixture-outcome python-alternatives python-outcome row-operand
                   row-series)
          (only-in polars/private/generic/operands operand-action))
