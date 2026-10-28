@@ -39,6 +39,9 @@
   ;; No define-syntax-rule or syntax-rules in the Racket sources.  A grep, so
   ;; no shell.
   (no-syntax-rule ("bash scripts/no-syntax-rule.sh" #:shell ""))
+  ;; No test submodule under polars/private: its tests live in the mirrored
+  ;; file under polars/tests.  A grep, so no shell.
+  (no-inline-tests ("bash scripts/no-inline-tests.sh" #:shell ""))
   ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
@@ -57,8 +60,8 @@
   (resyntax      "scripts/resyntax-lint.sh")
   (lint-test     "raco test lint")
   ;; The CI-equivalent: cargo tests, the Racket build with docs, rustfmt, the
-  ;; Racket version floor, no-syntax-rule, and the release rustc pin; not
-  ;; resyntax or lint-test.
+  ;; Racket version floor, no-syntax-rule, no-inline-tests, and the release
+  ;; rustc pin; not resyntax or lint-test.
   (check         "nix flake check")
   ;; The nycflights scoreboard and ratio table (#86).  Red only when the
   ;; harness itself breaks; a FAIL line or a slow ratio is the arc's to fix.
@@ -67,4 +70,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule rustls-only docs-check-test devshell-home install-native-libs compile test examples fmt)))
+ (push-gates (no-syntax-rule no-inline-tests rustls-only docs-check-test devshell-home install-native-libs compile test examples fmt)))

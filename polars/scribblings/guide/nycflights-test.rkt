@@ -1,7 +1,6 @@
 #lang racket/base
 
-;; The examples of nycflights.scrbl, on its fixture.  They need `polars`
-;; itself, which a generic module's test submodule cannot require (a cycle).
+;; The examples of nycflights.scrbl, on its fixture.
 
 (module+ test
   (require rackunit

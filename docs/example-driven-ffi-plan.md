@@ -50,29 +50,29 @@ first argument so code works naturally with Racket threading macros.
 
 | Batch | Racket module(s) | Rust example | Racket example | Racket tests |
 | --- | --- | --- | --- | --- |
-| Series batch 2 | `polars/private/foreign.rkt` | n/a | `examples/18-series-batch2.rkt` | `polars/private/foreign.rkt` |
-| Series scalar arithmetic | `polars/private/foreign.rkt` | `rust/examples/12_series_scalar_arithmetic.rs` | `examples/26-series-scalar-arithmetic.rkt` | `polars/private/foreign.rkt` |
-| Series typed reductions | `polars/private/foreign.rkt` | `rust/examples/13_series_typed_reductions.rs` | `examples/27-series-typed-reductions.rkt` | `polars/private/foreign.rkt` |
-| Series temporal refs | `polars/private/foreign.rkt` | `rust/examples/14_series_temporal_refs.rs` | `examples/28-series-temporal-ref.rkt` | `polars/private/foreign.rkt` |
-| Series primitive dtypes | `polars/private/foreign.rkt` | `rust/examples/16_series_primitive_dtypes.rs` | `examples/30-series-primitive-dtypes.rkt` | `polars/private/foreign.rkt` |
-| DataFrame batch 1 | `polars/private/foreign.rkt` | `rust/examples/05_dataframe_batch1.rs` | `examples/19-dataframe-batch1.rkt` | `polars/private/foreign.rkt` |
-| DataFrame batch 2 | `polars/private/foreign.rkt` | `rust/examples/06_dataframe_batch2.rs` | `examples/20-dataframe-batch2.rkt` | `polars/private/foreign.rkt` |
-| DataFrame asof options | `polars/private/foreign.rkt` | `rust/examples/15_dataframe_asof_options.rs` | `examples/29-dataframe-asof-options.rkt` | `polars/private/foreign.rkt` |
-| Lazy IO batch 1 | `polars/private/expr.rkt` | `rust/examples/07_lazy_io_batch1.rs` | `examples/21-lazy-io-batch1.rkt` | `polars/private/expr.rkt` |
-| Lazy scan options batch 1 | `polars/private/expr.rkt` | `rust/examples/11_lazy_scan_options_batch1.rs` | `examples/25-lazy-scan-options-batch1.rkt` | `polars/private/expr.rkt` |
-| Expr string batch 1 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/08_expr_string_batch1.rs` | `examples/22-expr-string-batch1.rkt` | `polars/private/expr.rkt` |
-| Expr datetime batch 1 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/09_expr_datetime_batch1.rs` | `examples/23-expr-datetime-batch1.rkt` | `polars/private/expr.rkt` |
-| Expr string batch 2 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/10_expr_string_batch2.rs` | `examples/24-expr-string-batch2.rkt` | `polars/private/expr.rkt` |
-| Expr string batch 3 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/17_expr_string_batch3.rs` | `examples/31-expr-string-batch3.rkt` | `polars/private/expr.rkt` |
-| Expr string-to-temporal | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/19_expr_string_to_temporal.rs` | `examples/33-expr-string-to-temporal.rkt` | `polars/private/expr.rkt` |
-| Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/private/expr.rkt` |
-| Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/private/expr.rkt` |
-| Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/private/expr.rkt` |
-| Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/private/expr.rkt` |
-| Expr predicates | `polars/private/expr.rkt` | `rust/examples/23_expr_predicates.rs` | `examples/37-expr-predicates.rkt` | `polars/private/expr.rkt` |
-| Expr cumulative | `polars/private/expr.rkt` | `rust/examples/24_expr_cumulative.rs` | `examples/38-expr-cumulative.rkt` | `polars/private/expr.rkt` |
-| Expr sort/select | `polars/private/expr.rkt` | `rust/examples/25_expr_sort_select.rs` | `examples/39-expr-sort-select.rkt` | `polars/private/expr.rkt` |
-| Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/private/expr.rkt` |
+| Series batch 2 | `polars/private/foreign.rkt` | n/a | `examples/18-series-batch2.rkt` | `polars/tests/foreign.rkt` |
+| Series scalar arithmetic | `polars/private/foreign.rkt` | `rust/examples/12_series_scalar_arithmetic.rs` | `examples/26-series-scalar-arithmetic.rkt` | `polars/tests/foreign.rkt` |
+| Series typed reductions | `polars/private/foreign.rkt` | `rust/examples/13_series_typed_reductions.rs` | `examples/27-series-typed-reductions.rkt` | `polars/tests/foreign.rkt` |
+| Series temporal refs | `polars/private/foreign.rkt` | `rust/examples/14_series_temporal_refs.rs` | `examples/28-series-temporal-ref.rkt` | `polars/tests/foreign.rkt` |
+| Series primitive dtypes | `polars/private/foreign.rkt` | `rust/examples/16_series_primitive_dtypes.rs` | `examples/30-series-primitive-dtypes.rkt` | `polars/tests/foreign.rkt` |
+| DataFrame batch 1 | `polars/private/foreign.rkt` | `rust/examples/05_dataframe_batch1.rs` | `examples/19-dataframe-batch1.rkt` | `polars/tests/foreign.rkt` |
+| DataFrame batch 2 | `polars/private/foreign.rkt` | `rust/examples/06_dataframe_batch2.rs` | `examples/20-dataframe-batch2.rkt` | `polars/tests/foreign.rkt` |
+| DataFrame asof options | `polars/private/foreign.rkt` | `rust/examples/15_dataframe_asof_options.rs` | `examples/29-dataframe-asof-options.rkt` | `polars/tests/foreign.rkt` |
+| Lazy IO batch 1 | `polars/private/expr.rkt` | `rust/examples/07_lazy_io_batch1.rs` | `examples/21-lazy-io-batch1.rkt` | `polars/tests/expr.rkt` |
+| Lazy scan options batch 1 | `polars/private/expr.rkt` | `rust/examples/11_lazy_scan_options_batch1.rs` | `examples/25-lazy-scan-options-batch1.rkt` | `polars/tests/expr.rkt` |
+| Expr string batch 1 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/08_expr_string_batch1.rs` | `examples/22-expr-string-batch1.rkt` | `polars/tests/expr.rkt` |
+| Expr datetime batch 1 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/09_expr_datetime_batch1.rs` | `examples/23-expr-datetime-batch1.rkt` | `polars/tests/expr.rkt` |
+| Expr string batch 2 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/10_expr_string_batch2.rs` | `examples/24-expr-string-batch2.rkt` | `polars/tests/expr.rkt` |
+| Expr string batch 3 | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/17_expr_string_batch3.rs` | `examples/31-expr-string-batch3.rkt` | `polars/tests/expr.rkt` |
+| Expr string-to-temporal | `polars/private/expr-str.rkt` via `expr.rkt` | `rust/examples/19_expr_string_to_temporal.rs` | `examples/33-expr-string-to-temporal.rkt` | `polars/tests/expr.rkt` |
+| Expr datetime batch 2 | `polars/private/expr-dt.rkt` via `expr.rkt` | `rust/examples/18_expr_datetime_batch2.rs` | `examples/32-expr-datetime-batch2.rkt` | `polars/tests/expr.rkt` |
+| Expr when/then | `polars/private/expr.rkt` | `rust/examples/20_expr_when_then.rs` | `examples/34-expr-when-then.rkt` | `polars/tests/expr.rkt` |
+| Expr null/NaN | `polars/private/expr.rkt` | `rust/examples/21_expr_null_nan.rs` | `examples/35-expr-null-nan.rkt` | `polars/tests/expr.rkt` |
+| Expr math | `polars/private/expr.rkt` | `rust/examples/22_expr_math.rs` | `examples/36-expr-math.rkt` | `polars/tests/expr.rkt` |
+| Expr predicates | `polars/private/expr.rkt` | `rust/examples/23_expr_predicates.rs` | `examples/37-expr-predicates.rkt` | `polars/tests/expr.rkt` |
+| Expr cumulative | `polars/private/expr.rkt` | `rust/examples/24_expr_cumulative.rs` | `examples/38-expr-cumulative.rkt` | `polars/tests/expr.rkt` |
+| Expr sort/select | `polars/private/expr.rkt` | `rust/examples/25_expr_sort_select.rs` | `examples/39-expr-sort-select.rkt` | `polars/tests/expr.rkt` |
+| Stabilization batch 1 | `expr-core.rkt`, `expr-str.rkt`, `expr-dt.rkt`, `expr.rkt` | no behavior change | public examples unchanged | direct module load plus `polars/tests/expr.rkt` |
 
 Expr / LazyFrame surface (Track A, re-exported from `polars/private/expr.rkt`):
 - Leaves: `col`, `lit` (dispatches on Racket type), `expr-lit-{i32,i64,f64,bool,str}`, `expr-alias`

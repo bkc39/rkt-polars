@@ -24,7 +24,7 @@ jobs:
         run: nix flake check --print-build-logs
 
   lint:
-    name: Lint (no-syntax-rule, resyntax)
+    name: Lint (no-syntax-rule, no-inline-tests, rustls-only, resyntax)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -32,6 +32,10 @@ jobs:
       # Also a flake check; run first here for a fast, annotated failure.
       - name: No define-syntax-rule
         run: scripts/no-syntax-rule.sh
+
+      - name: No inline tests under polars/private
+        if: ${{ !cancelled() }}
+        run: scripts/no-inline-tests.sh
 
       - name: TLS is rustls only
         if: ${{ !cancelled() }}
