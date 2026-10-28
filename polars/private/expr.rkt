@@ -9,6 +9,7 @@
          ffi/unsafe/alloc
          (only-in racket/contract/base [-> ->/c] ->* any/c contract-name contract-out or/c)
          (only-in racket/list filter-not index-of)
+         (only-in racket/match match-lambda)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          polars/private/expr-core
          polars/private/expr-dt
@@ -358,12 +359,12 @@
          [(andmap uint64/c vals) (series-new-u64 "" rhs)]
          [(andmap exact-integer? vals)
           (raise-argument-error who (format "~s" membership-integers/c) rhs)]
-         [(and (ormap exact-integer? vals)
-               (findf (lambda (v) (and (real? v) (not (exact-integer? v)))) vals))
-          => (lambda (f)
-               (raise-arguments-error
-                who "the list mixes integers and floats, which have no common dtype"
-                "integer" (findf exact-integer? vals) "float" f))]
+         [(integer-and-float vals)
+          => (match-lambda
+               [(list integer float)
+                (raise-arguments-error
+                 who "the list mixes integers and floats, which have no common dtype"
+                 "integer" integer "float" float)])]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
          [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
@@ -375,6 +376,12 @@
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
      (expr-lit-series s)]
     [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+
+(define (integer-and-float vals)
+  (for/fold ([integer #f] [float #f] #:result (and integer float (list integer float)))
+            ([v (in-list vals)])
+    (values (or integer (and (exact-integer? v) v))
+            (or float (and (real? v) (not (exact-integer? v)) v)))))
 
 (define membership-integers/c
   `(or/c (listof ,(contract-name int64/c)) (listof ,(contract-name uint64/c))))
@@ -467,8 +474,8 @@
   #:wrap (allocator expr-drop))
 
 ;; indices may be an Expr, a Series, or a Racket list of integers
-(define (expr-gather e indices)
-  (expr-gather/raw e (->membership-expr 'expr-gather indices)))
+(define (expr-gather e indices #:who [who 'expr-gather])
+  (expr-gather/raw e (->membership-expr who indices)))
 
 (define-compat expr-sort-by/raw
   (_fun _Expr-ptr

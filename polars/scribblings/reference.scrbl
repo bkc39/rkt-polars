@@ -366,7 +366,7 @@ total
   @tt{//} gives it. API gap: the expression form does not floor there yet, so
   @racket[(/ (col "i") (col "u"))] of an Int64 and a UInt64 column, or of an
   integer column and an integer from @racket[(expt 2 63)], is the unfloored
-  @racket['float64] quotient.
+  @racket['float64] quotient (#303).
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -1611,10 +1611,11 @@ stations
   which Python reads as Int128, is a contract error. Integers and floats do not
   mix: a list holding an exact integer and a flonum (or an exact non-integer) is
   a contract error, as Python's @tt{is_in} raises a @tt{TypeError}; write the
-  integers as floats (@racket[3.0]). Its datetimes share one zone, or
-  none: a list that mixes naive datetimes and moments, or moments in two
-  zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
-  a column from the same list.
+  integers as floats (@racket[3.0]). Python reads @tt{[2.5, 1]}, whose first
+  element is a float, as floats; either order is refused here. Its datetimes
+  share one zone, or none: a list that mixes naive datetimes and moments, or
+  moments in two zones, raises, as Python's @tt{is_in} does, although
+  @racket[series] builds a column from the same list.
 
   @examples[#:eval ev
 (define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))

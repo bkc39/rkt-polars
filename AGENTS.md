@@ -344,7 +344,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   On two series it is Python's `//`: a signed integer series beside a UInt64
   one, whose supertype is Float64, gives the floored Float64 quotient
   (`series-true-div` floors it through `expr-floor`). The expression form
-  (`expr_div`, `RustDivide`) still true-divides there, beside a UInt64
+  (`expr_div`, `RustDivide`) still true-divides there (#303), beside a UInt64
   column or a literal from 2^63: a plan-time choice by the operands' dtypes
   (`DataTypeExpr::matches` in a `when`) fails on a regex selector, which may
   not expand inside a dtype expression, and keeps its dead `floor_div`
@@ -587,7 +587,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   is a Null literal, and an empty list is a member of nothing (`#f`, null for
   a null), as Python's `is_in([])` is; a list holding an exact integer and
   a flonum or exact non-integer is a contract error naming one of each, in
-  either order, as Python's `is_in([1, 2.5])` raises a `TypeError`.
+  either order, as Python's `is_in([1, 2.5])` raises a `TypeError`
+  (Python reads a list whose first element is a float, `[2.5, 1]`, as
+  floats).
   `(lit polars-null)` is
   `expr_lit_null`, Python's `pl.lit(None)`: a null of dtype Null, so a
   comparison with it is null on every row and arithmetic keeps a numeric
@@ -627,9 +629,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   Decimal series a real or a boolean (compared as 1 or 0), beside a
   duration series a number in `*`, a string before a series in `+`, beside
   an integer series an Int64 integer past the dtype's range (`(+ u8 300)`
-  is UInt16; in `+`, `-` and `*`, a row whose exact result, read from the
-  series' typed min and max, falls outside the result's dtype is a contract
-  error naming the value and both dtypes, never a wrapped series), in `/`
+  is UInt16; a row whose exact result falls outside the result's dtype is
+  a contract error naming the value and both dtypes, never a wrapped
+  series: in `+`, `-` and `*` read from the series' min and max, in `/`
+  with the value on the left when it is the result dtype's minimum and the
+  series holds -1, the one quotient that overflows), in `/`
   a negative integer beside an unsigned series (integer division,
   `(/ u8 -1)` is Int16), and beside a Boolean series an
   integer in `/`. `lit` takes an integer from

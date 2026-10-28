@@ -86,8 +86,8 @@
     (define q (series-div/who who a* b*))
     (cond
       [(and floor? (eq? (series-dtype q) 'float64))
-       (with-release ([quotient q series-drop])
-         (series-through-expr/raw who quotient expr-floor))]
+       (with-release ([unfloored q series-drop])
+         (series-through-expr/raw who unfloored expr-floor))]
       [else q])))
 
 (define (series-negate s)

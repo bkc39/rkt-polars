@@ -23,7 +23,6 @@
                     agg cast collect filter group-by head lazy select with-columns)
            (only-in polars/private/generic/strings str-to-uppercase)
            (only-in polars/private/generic/window over)
-           (only-in polars/private/generic/ordering gather)
            (prefix-in contracted: polars/private/generic/ordering)
            (only-in (submod polars/private/generic/ordering internal) rank sort sort-by)
            (only-in polars/tests/generic/test-fixtures
@@ -39,9 +38,13 @@
   (define sorted (select df (alias (sort-by "x" #:by "x") "xs")))
   (check-equal? (for/list ([i (in-range 5)]) (ref (ref sorted #:columns "xs") i))
                 '(10 20 30 40 50))
-  (define gathered (select df (alias (gather "x" '(0 2 4)) "xg")))
+  (define gathered (select df (alias (contracted:gather "x" '(0 2 4)) "xg")))
   (check-equal? (for/list ([i (in-range 3)]) (ref (ref gathered #:columns "xg") i))
                 '(30 50 40))
+  (check-exn #rx"^gather: contract violation\n  expected: [(]or/c Expr-ptr[?] series[?] [(]listof"
+             (lambda () (contracted:gather "x" (list 1 2.5))))
+  (check-exn #rx"^gather: contract violation\n  expected: [(]or/c [(]listof [(]integer-in"
+             (lambda () (contracted:gather "x" (list (expt 2 70)))))
 
   (check-equal? (contracted:sort '(3 1 2) <) '(1 2 3))
   (check-equal? (contracted:sort '(3 1 2) < #:descending #t) '(3 2 1))

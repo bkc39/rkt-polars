@@ -77,7 +77,7 @@
   (match row
     [(list (and op (not (or 'and 'or 'xor 'not))) _ (and side (or 'left 'right)) _ _ ...)
      (and (memq (operand-action op (series-dtype (row-series row)) (row-operand row) side)
-                '(expression integer-expression))
+                '(expression integer-expression checked-expression checked-quotient))
           #t)]
     [_ #f]))
 

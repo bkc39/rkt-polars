@@ -2,7 +2,7 @@
 
 (require (prefix-in base: (only-in racket/base sort))
          (only-in racket/contract/base
-                  ->* ->i contract-out flat-named-contract
+                  -> ->* ->i contract-out flat-named-contract listof
                   non-empty-listof none/c or/c procedure-arity-includes/c
                   rename-contract the-unsupplied-arg unsupplied-arg?)
          (only-in polars/private/c-integer uint64/c)
@@ -21,8 +21,10 @@
                                   (#:method rank-method/c
                                    #:descending boolean?
                                    #:seed (or/c #f uint64/c))
-                                  Expr-ptr?)])
-         gather)
+                                  Expr-ptr?)]
+                       [gather (-> col-expr/c
+                                   (or/c Expr-ptr? series? (listof exact-integer?))
+                                   Expr-ptr?)]))
 
 (define (sort-frame? x) (or (dataframe? x) (lazyframe? x)))
 
@@ -104,7 +106,7 @@
 
 ;; gather: pick rows by position (an Expr, a Series, or a list of ints).
 (define (gather x indices)
-  (expr-gather (->col-expr 'gather x) indices))
+  (expr-gather (->col-expr 'gather x) indices #:who 'gather))
 
 (module+ internal
   (provide rank sort sort-by))

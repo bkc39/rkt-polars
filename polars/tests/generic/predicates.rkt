@@ -49,19 +49,19 @@
   (check-exn #rx"^is-in: the list mixes integers and floats"
              (lambda () (membership (list 1.0 polars-null 3))))
   (for ([rhs (list (list 1 2.5) (list 2.5 1) (list 1 1/2) (list (expt 2 63) 2.5) (list 1 +nan.0))])
+    (match-define (or (list (? exact-integer? integer) float) (list float integer)) rhs)
     (check-exn (lambda (e)
                  (and (exn:fail:contract? e)
                       (regexp-match?
                        (regexp (format (string-append "^is-in: the list mixes integers and floats, "
                                                       "which have no common dtype\n"
                                                       "  integer: ~a\n  float: ~a$")
-                                       (car (filter exact-integer? rhs))
-                                       (regexp-quote
-                                        (format "~a" (car (filter (lambda (v) (not (exact-integer? v)))
-                                                                  rhs))))))
+                                       integer
+                                       (regexp-quote (format "~a" float))))
                        (exn-message e))))
                (lambda () (membership rhs))
                (format "~a" rhs)))
+  (check-equal? (membership (list 1.0 2.5)) (list #t polars-null #f))
   (check-equal? (membership (list 1.0 polars-null 3.0)) (list #t polars-null #t))
   (check-equal? (~> (dataframe (list (series '(0.5 1.0) #:name "f")))
                     (select (is-in "f" (list 0.25 1/2)))
