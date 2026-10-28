@@ -1,7 +1,8 @@
 #lang racket/base
 
 (require (only-in racket/file
-                  delete-directory/files make-directory* make-temporary-file))
+                  delete-directory/files make-directory* make-temporary-file)
+         (only-in "resource.rkt" with-release))
 
 (provide pre-installer)
 
@@ -22,27 +23,22 @@
     [else #f]))
 
 (define (same-bytes? src dst)
-  (and (file-exists? src)
-       (file-exists? dst)
-       (= (file-size src) (file-size dst))
-       (call-with-input-file* src
-         (lambda (in-src)
-           (call-with-input-file* dst
-             (lambda (in-dst) (same-contents? in-src in-dst)))))))
+  (with-handlers ([exn:fail:filesystem? (lambda (_) #f)])
+    (and (file-exists? src)
+         (file-exists? dst)
+         (= (file-size src) (file-size dst))
+         (call-with-input-file* src
+           (lambda (in-src)
+             (call-with-input-file* dst
+               (lambda (in-dst) (same-contents? in-src in-dst))))))))
 
 (define (install-by-rename! src dst dest-dir f)
-  (define staged
-    (make-temporary-file (string-append "." (path->string f) ".~a") #:base-dir dest-dir))
-  (define installed? #f)
-  (dynamic-wind
-   void
-   (lambda ()
-     (copy-file src staged #:exists-ok? #t #:permissions #o755)
-     (rename-file-or-directory staged dst #t)
-     (set! installed? #t))
-   (lambda ()
-     (unless installed?
-       (delete-directory/files staged #:must-exist? #f)))))
+  (with-release ([staged
+                  (make-temporary-file (string-append "." (path->string f) ".~a")
+                                       #:base-dir dest-dir)
+                  (lambda (p) (delete-directory/files p #:must-exist? #f))])
+    (copy-file src staged #:exists-ok? #t #:permissions #o755)
+    (rename-file-or-directory staged dst #t)))
 
 (define (copy-native-libs! dest-dir source-dir pattern)
   (make-directory* dest-dir)

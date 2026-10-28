@@ -60,8 +60,25 @@
   (check-equal? released '(1 2))
 
   (set! released '())
-  (check-exn #rx"b"
+  (check-exn #rx"^test: b$"
              (lambda () (with-release ([a 'a release!] [b (error 'test "b") release!]) 'not-reached)))
+  (check-equal? released '(a))
+
+  (set! released '())
+  (define re-enter #f)
+  (check-equal? (call-with-continuation-prompt
+                 (lambda ()
+                   (with-release ([a 'a release!])
+                     (call-with-composable-continuation (lambda (k) (set! re-enter k)))
+                     a)))
+                'a)
+  (check-exn #rx"^with-release: cannot re-enter the extent after its release$"
+             (lambda () (call-with-continuation-prompt (lambda () (re-enter #f)))))
+  (check-equal? released '(a))
+
+  (set! released '())
+  (define escaped (with-release ([a 'a release!]) (lambda () a)))
+  (check-equal? (escaped) #f)
   (check-equal? released '(a))
 
   (set! released '())

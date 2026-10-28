@@ -236,10 +236,10 @@
 
 (define (check-same-zone who s o)
   (match* ((series-dtype s) (series-dtype o))
-    [((list 'datetime _ zone) (list 'datetime _ other-zone))
+    [((and dt (list 'datetime _ zone)) (and other-dt (list 'datetime _ other-zone)))
      #:when (not (equal? zone other-zone))
      (raise-arguments-error who "datetimes in different time zones"
-                            "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
+                            "series dtype" dt "other dtype" other-dt)]
     [(_ _) (void)]))
 
 (define (logical-operand who s other)

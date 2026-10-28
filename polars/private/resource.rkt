@@ -44,16 +44,25 @@
   [(_ () body:expr ...+)
    #'(let () body ...)]
   [(_ (first:release-clause more:release-clause ...) body:expr ...+)
-   #'(let ([held #f])
-       (dynamic-wind
-        (lambda () (set! held first.acquire))
-        (lambda () (let ([first.name held]) (with-release (more ...) body ...)))
-        (lambda ()
-          (define acquired held)
-          (set! held #f)
-          (when acquired
-            (let ([first.name acquired])
-              (first.release first.name))))))])
+   #'(let ([acquire (lambda () first.acquire)]
+           [held #f]
+           [entered? #f])
+       (let ([first.name #f])
+         (dynamic-wind
+          (lambda ()
+            (when entered?
+              (error 'with-release "cannot re-enter the extent after its release"))
+            (set! entered? #t)
+            (set! held (acquire))
+            (set! first.name held))
+          (lambda () (with-release (more ...) body ...))
+          (lambda ()
+            (define acquired held)
+            (set! held #f)
+            (set! first.name #f)
+            (when acquired
+              (let ([first.name acquired])
+                (first.release first.name)))))))])
 
 (define-syntax-parse-rule (with-releases ([name:id (clause:for-clause ...)
                                           acquire:expr release:expr])

@@ -10,6 +10,7 @@
            (only-in gregor/time time)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list make-list)
+           (only-in racket/match match-define)
            (only-in polars/private/bulk in-series series->list)
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign
@@ -439,10 +440,11 @@
   (define brussels-t (ref zoned-frame "t"))
   (define tokyo (moment 2021 5 1 #:tz "Asia/Tokyo"))
   (define naive (series (list (datetime 2021 5 1))))
-  (for ([op (list p:> p:= p:p- p:<)]
-        [who '(> = - <)]
-        [s (list brussels-t brussels-t brussels-t naive)]
-        [other (list tokyo (datetime 2021 5 1) tokyo brussels)])
+  (for ([row (list (list p:> '> brussels-t tokyo)
+                   (list p:= '= brussels-t (datetime 2021 5 1))
+                   (list p:p- '- brussels-t tokyo)
+                   (list p:< '< naive brussels))])
+    (match-define (list op who s other) row)
     (check-equal? (drops-during series-drop-count
                                 (lambda ()
                                   (check-exn #rx"datetimes in different time zones"
