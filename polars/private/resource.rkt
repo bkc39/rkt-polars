@@ -44,14 +44,16 @@
   [(_ () body:expr ...+)
    #'(let () body ...)]
   [(_ (first:release-clause more:release-clause ...) body:expr ...+)
-   #'(let ([first.name #f])
+   #'(let ([held #f])
        (dynamic-wind
-        (lambda () (set! first.name first.acquire))
-        (lambda () (with-release (more ...) body ...))
+        (lambda () (set! held first.acquire))
+        (lambda () (let ([first.name held]) (with-release (more ...) body ...)))
         (lambda ()
-          (when first.name
-            (first.release first.name)
-            (set! first.name #f)))))])
+          (define acquired held)
+          (set! held #f)
+          (when acquired
+            (let ([first.name acquired])
+              (first.release first.name))))))])
 
 (define-syntax-parse-rule (with-releases ([name:id (clause:for-clause ...)
                                           acquire:expr release:expr])

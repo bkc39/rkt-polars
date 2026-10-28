@@ -307,7 +307,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   part way through a `with-releases` loop releases what it acquired, and a
   release that raises does not stop the others, as with nested
   `with-release`s); the buffer's finalizer backs up a thread killed inside
-  the extent. A value that may or may not be owned (a variadic operator's
+  the extent. Each clause's acquire sees the bindings outside it, as `let*`
+  does; its release sees the name bound to what the acquire returned, and
+  that value is the one released. A value that may or may not be owned (a variadic operator's
   running result) is released with `drop-owned` (`expr-core.rkt`), which
   dispatches on the four pointer types' predicates and ignores any other
   value; a pointer already dropped raises under that type's drop name, as

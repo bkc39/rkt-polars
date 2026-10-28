@@ -38,6 +38,38 @@
   (check-equal? released '(b))
 
   (set! released '())
+  (check-equal? (let ([v 1]) (with-release ([v (add1 v) release!]) v)) 2)
+  (check-equal? released '(2))
+
+  (check-equal? (let ([words 3])
+                  (with-raw-buffer ([words words _int64])
+                    (ptr-set! words _int64 2 7)
+                    (ptr-ref words _int64 2)))
+                7)
+
+  (set! released '())
+  (check-equal? (with-release ([a 'a release!]) (set! a 'z) a) 'z)
+  (check-equal? released '(a))
+
+  (set! released '())
+  (check-equal? (with-release ([a 'a (lambda (v) (release! (list a v)))]) 'ok) 'ok)
+  (check-equal? released '((a a)))
+
+  (set! released '())
+  (check-equal? (with-release ([a 1 release!] [b (add1 a) release!]) b) 2)
+  (check-equal? released '(1 2))
+
+  (set! released '())
+  (check-exn #rx"b"
+             (lambda () (with-release ([a 'a release!] [b (error 'test "b") release!]) 'not-reached)))
+  (check-equal? released '(a))
+
+  (set! released '())
+  (check-equal? (let ([tags 10])
+                  (with-releases ([tags ([i (in-range 2)]) (+ tags i) release!]) tags))
+                '(10 11))
+
+  (set! released '())
   (check-equal? (with-releases ([tags ([i (in-range 3)]) (* 10 i) release!]) tags) '(0 10 20))
   (check-equal? released '(0 10 20))
 
