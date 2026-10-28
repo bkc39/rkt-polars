@@ -304,17 +304,19 @@
 
 (define (series-scalars who s reducers)
   (define names (for/list ([i (in-range (length reducers))]) (number->string i)))
-  (with-releases ([named ([reduce (in-list reducers)] [name (in-list names)])
-                         (expr-alias (reduce (expr-all)) name)
-                         expr-drop])
-    (with-release ([frame (dataframe-new (list s)) dataframe-drop]
-                   [out (call-with-plan frame
-                                        (lambda (source) (lazyframe-select source named))
-                                        (collect-for who))
-                        dataframe-drop])
-      (for/list ([name (in-list names)])
-        (with-release ([column (dataframe-column out name) series-drop])
-          (series-value who column 0))))))
+  (with-release ([all (expr-all) expr-drop])
+    (with-releases ([named ([reduce (in-list reducers)] [name (in-list names)])
+                           (with-release ([reduced (reduce all) expr-drop])
+                             (expr-alias reduced name))
+                           expr-drop])
+      (with-release ([frame (dataframe-new (list s)) dataframe-drop]
+                     [out (call-with-plan frame
+                                          (lambda (source) (lazyframe-select source named))
+                                          (collect-for who))
+                          dataframe-drop])
+        (for/list ([name (in-list names)])
+          (with-release ([column (dataframe-column out name) series-drop])
+            (series-value who column 0)))))))
 
 (define (on-side side op x value)
   (match side
@@ -340,8 +342,11 @@
   (series-scalars who s (list expr-min expr-max)))
 
 (define (holds-minus-one? who s)
-  (equal? (series-scalars who s (list (lambda (all) (expr-max (expr-eq all (lit/who who -1))))))
-          '(#t)))
+  (define (any-minus-one all)
+    (with-release ([minus-one (lit/who who -1) expr-drop]
+                   [is-minus-one (expr-eq all minus-one) expr-drop])
+      (expr-max is-minus-one)))
+  (equal? (series-scalars who s (list any-minus-one)) '(#t)))
 
 (define (fitting-result who s value action side out)
   (define result-dtype (series-dtype out))
