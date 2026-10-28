@@ -3,19 +3,30 @@
 (module+ test
   (require rackunit
            racket/match
+           (only-in gregor datetime)
            (prefix-in rkt: (only-in racket/base max min))
            (only-in racket/contract/base contract-name has-contract? or/c)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
            (only-in polars/private/expr-core lit-integer/c)
-           (only-in polars/private/foreign polars-null series-name)
+           (only-in polars/private/foreign
+                    last-error-message polars-null series-cast series-cast-datetime-tz/raw
+                    series-dt-convert-time-zone/raw series-dt-replace-time-zone/raw series-name
+                    time-unit-symbol->code)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
-                    dataframe-with-columns Expr-ptr? null-behavior/c)
+                    dataframe-with-columns expr-cast expr-dtype-col Expr-ptr? null-behavior/c)
+           (only-in (submod polars/private/expr internal) expr-cast-datetime-tz/raw)
+           (only-in (submod polars/private/expr-core internal)
+                    expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw)
+           (only-in (submod polars/private/expr-dt internal)
+                    expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw)
+           (only-in (submod polars/private/expr-str internal) expr-str->datetime-tz/raw)
            (only-in polars/private/generic/core
                     column-names dataframe dataframe? height lazyframe? ref series series? shape)
            (only-in polars/private/generic/cumulative diff shift)
-           (only-in polars/private/generic/datetime dt-truncate)
+           (only-in polars/private/generic/datetime
+                    dt-convert-time-zone dt-replace-time-zone dt-truncate)
            (only-in polars/private/generic/math clip pow round)
            (only-in polars/private/generic/nullable
                     backward-fill fill-nan fill-null forward-fill)
@@ -25,12 +36,13 @@
            (only-in polars/private/generic/predicates is-between)
            (only-in polars/private/generic/reductions alias count max min sum)
            (only-in polars/private/generic/reshape
-                    agg collect drop filter group-by head lazy pivot rename select slice tail
-                    unpivot with-column)
+                    agg cast collect drop filter group-by head lazy pivot rename select slice
+                    tail unpivot with-column)
            (only-in polars/private/generic/strings
-                    str-contains str-count-matches str-ends-with str-extract str-find
-                    str-find-literal str-head str-replace str-replace-all str-starts-with
-                    str-strip-chars str-strip-prefix str-strip-suffix str-tail)
+                    str->datetime str-contains str-count-matches str-ends-with str-extract
+                    str-find str-find-literal str-head str-replace str-replace-all
+                    str-starts-with str-strip-chars str-strip-prefix str-strip-suffix str-tail)
+           (only-in polars/tests/generic/test-fixtures nul-expected)
            (only-in polars/tests/test-helpers
                     not-utf-8-expected not-utf-8-names refusal refusal-misses refused))
 
@@ -345,4 +357,61 @@
                     (cons 'dataframe-group-by-agg
                           (lambda () (dataframe-group-by-agg frame (list "nope") (list (sum "v"))))))])
     (match-define (cons who thunk) call)
-    (check-raises 'polars (regexp (format "^~a: [^\n]*unable to find column \"nope\"" who)) thunk)))
+    (check-raises 'polars (regexp (format "^~a: [^\n]*unable to find column \"nope\"" who)) thunk))
+
+  (define nul-zone "UTC\u0000x")
+  (define nul-zoned `(datetime microseconds ,nul-zone))
+  (define wall (series (list (datetime 2020 1 2 3)) #:name "t"))
+  (define zone-name "time-zone-name/c")
+  (define optional-zone-name "(or/c #f time-zone-name/c)")
+  (for ([call (list (list 'dt-convert-time-zone zone-name
+                          (lambda () (dt-convert-time-zone wall nul-zone)))
+                    (list 'dt-convert-time-zone zone-name
+                          (lambda () (dt-convert-time-zone "t" nul-zone)))
+                    (list 'dt-replace-time-zone optional-zone-name
+                          (lambda () (dt-replace-time-zone wall nul-zone)))
+                    (list 'dt-replace-time-zone optional-zone-name
+                          (lambda () (dt-replace-time-zone "t" nul-zone)))
+                    (list 'str->datetime optional-zone-name
+                          (lambda () (str->datetime "t" #:time-zone nul-zone)))
+                    (list 'cast zone-name (lambda () (cast wall nul-zoned)))
+                    (list 'cast zone-name (lambda () (cast (col "t") nul-zoned)))
+                    (list 'cast zone-name (lambda () (cast "t" nul-zoned)))
+                    (list 'series zone-name
+                          (lambda () (series (list (datetime 2020 1 2 3)) #:dtype nul-zoned)))
+                    (list 'col zone-name (lambda () (col nul-zoned)))
+                    (list 'series-cast zone-name (lambda () (series-cast wall nul-zoned)))
+                    (list 'expr-cast zone-name (lambda () (expr-cast (col "t") nul-zoned)))
+                    (list 'expr-dtype-col zone-name (lambda () (expr-dtype-col nul-zoned))))])
+    (match-define (list who expected thunk) call)
+    (check-raises 'contract
+                  (regexp (format "^~a: contract violation\n  expected: ~a\n"
+                                  (regexp-quote (symbol->string who))
+                                  (regexp-quote expected)))
+                  thunk))
+  (for ([row (in-list (nul-expected 'zones))])
+    (check-equal? (caddr row) 'error (format "~s" row)))
+
+  (define micro (time-unit-symbol->code 'microseconds))
+  (define t (col "t"))
+  (define (failed-zone-reason)
+    (series-dt-convert-time-zone/raw wall "Mars/Base")
+    (last-error-message))
+  (for ([raw (list (lambda () (series-cast-datetime-tz/raw wall micro nul-zone))
+                   (lambda () (series-dt-convert-time-zone/raw wall nul-zone))
+                   (lambda () (series-dt-replace-time-zone/raw wall nul-zone "raise" "raise"))
+                   (lambda () (series-dt-replace-time-zone/raw wall "UTC" "ra\u0000ise" "raise"))
+                   (lambda () (series-dt-replace-time-zone/raw wall "UTC" "raise" "ra\u0000ise"))
+                   (lambda () (expr-cast-datetime-tz/raw t micro nul-zone))
+                   (lambda () (expr-dt-convert-time-zone/raw t nul-zone))
+                   (lambda () (expr-dt-replace-time-zone/raw t nul-zone "raise" "raise"))
+                   (lambda () (expr-dtype-col-datetime-tz/raw micro nul-zone))
+                   (lambda () (expr-lit-datetime-tz/raw 0 micro nul-zone))
+                   (lambda () (expr-str->datetime-tz/raw t #f micro nul-zone "raise" 1 1 1))
+                   (lambda () (expr-str->datetime-tz/raw t #f micro "UTC" "ra\u0000ise" 1 1 1)))])
+    (define before (failed-zone-reason))
+    (check-regexp-match #rx"Mars/Base" before)
+    (check-raises 'contract
+                  #rx"^_c-string: contract violation\n  expected: a string without a NUL\n"
+                  raw)
+    (check-equal? (last-error-message) before)))

@@ -11,7 +11,7 @@
          (only-in racket/contract/base
                   [-> ->/c] ->* and/c any/c contract-name contract-out listof or/c)
          (only-in racket/list filter-not index-of)
-         (only-in racket/match match)
+         (only-in racket/match match match-define)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          polars/private/expr-core
          polars/private/expr-dt
@@ -32,7 +32,7 @@
                   series-new-null
                   dataframe-drop
                   frame-sort/c provide-row-windows sort-flags
-                  _CompatDType ->compat-dtype enum-dtype?
+                  _c-string _CompatDType ->compat-dtype check-time-zone-name enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
@@ -796,7 +796,7 @@
   #:wrap (allocator expr-drop))
 
 (define-compat expr-cast-datetime-tz/raw
-  (_fun _Expr-ptr _int32 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _Expr-ptr _int32 _c-string -> _Expr-ptr/null)
   #:c-id expr_cast_datetime_tz
   #:wrap (allocator expr-drop))
 
@@ -810,14 +810,17 @@
                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
                          "cannot convert to ~v" dtype)]
     [(zoned-datetime-dtype? dtype)
-     (define code (time-unit-symbol->code (cadr dtype)))
+     (match-define (list _ unit zone) dtype)
+     (check-time-zone-name who zone)
      (call/foreign-error who
-                         (lambda () (expr-cast-datetime-tz/raw e code (caddr dtype)))
+                         (lambda ()
+                           (expr-cast-datetime-tz/raw e (time-unit-symbol->code unit) zone))
                          "cannot convert to ~v" dtype)]
     [else (expr-cast/c e (->compat-dtype dtype))]))
 
 (module+ internal
-  (provide call-with-plan collect-plan/who expr-diff expr-forward-fill expr-head expr-rank
-           expr-round expr-shift expr-slice expr-sort expr-sort-by expr-std expr-tail expr-var
+  (provide call-with-plan collect-plan/who expr-cast-datetime-tz/raw expr-diff expr-forward-fill
+           expr-head expr-rank expr-round expr-shift expr-slice expr-sort expr-sort-by expr-std
+           expr-tail expr-var
            lazyframe-collect/who lazyframe-explain lazyframe-head lazyframe-join lazyframe-slice
            lazyframe-sort lazyframe-tail rank-methods))

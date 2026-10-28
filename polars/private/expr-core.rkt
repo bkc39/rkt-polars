@@ -15,7 +15,7 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
-                  allocator/or-fail call/foreign-error
+                  _c-string allocator/or-fail call/foreign-error check-time-zone-name
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
@@ -168,7 +168,7 @@
   #:wrap (allocator/or-fail expr-drop 'expr-lit-temporal))
 
 (define-compat expr-lit-datetime-tz/raw
-  (_fun _int64 _int32 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _int64 _int32 _c-string -> _Expr-ptr/null)
   #:c-id expr_lit_datetime_tz
   #:wrap (allocator expr-drop))
 
@@ -244,7 +244,7 @@
   #:wrap (allocator expr-drop))
 
 (define-compat expr-dtype-col-datetime-tz/raw
-  (_fun _int32 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _int32 _c-string -> _Expr-ptr/null)
   #:c-id expr_dtype_col_datetime_tz
   #:wrap (allocator expr-drop))
 
@@ -258,6 +258,7 @@
                          (lambda () (expr-dtype-col-enum/raw (map symbol->string (cdr dtype))))
                          "cannot select ~v" dtype)]
     [(? zoned-datetime-dtype? (list _ unit zone))
+     (check-time-zone-name who zone)
      (define code (time-unit-symbol->code unit))
      (call/foreign-error who
                          (lambda () (expr-dtype-col-datetime-tz/raw code zone))
@@ -296,5 +297,5 @@
    name))
 
 (module+ internal
-  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
-           multi-column-expr?))
+  (provide col expr->string expr-all expr-drop expr-dtype-col expr-dtype-col-datetime-tz/raw
+           expr-exclude expr-lit-datetime-tz/raw lit lit-value/c multi-column-expr?))

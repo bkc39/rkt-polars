@@ -10,7 +10,7 @@
            (only-in gregor/time time)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list make-list)
-           (only-in racket/match match-define)
+           (only-in racket/match match match-define)
            (only-in polars/private/bulk in-series series->list)
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign
@@ -22,7 +22,7 @@
            (only-in polars/private/generic/predicates is-between is-in)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape cast filter rename select with-columns)
-           (only-in polars/private/generic/strings str->datetime)
+           (only-in polars/private/generic/strings str->date str->datetime str->time)
            (only-in polars/private/temporal temporal-value-dtype)
            (prefix-in contracted: polars/private/generic/datetime)
            (only-in polars/private/generic/datetime
@@ -32,6 +32,7 @@
                     dt-year)
            (only-in (submod polars/private/generic/datetime internal)
                     dt-convert-time-zone dt-replace-time-zone)
+           (only-in polars/tests/generic/test-fixtures nul-expected)
            (only-in polars/tests/test-helpers drops-during))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
@@ -591,4 +592,24 @@
   (check-equal? (format "~a" (ref tz-ops "convert time zone"))
                 (string-append "shape: (2,)\nSeries: 'convert time zone'"
                                " [datetime[us, Asia/Kathmandu]]\n[\n"
-                               "\t2021-03-27 08:45:00 +0545\n\t2021-03-28 08:45:00 +0545\n]")))
+                               "\t2021-03-27 08:45:00 +0545\n\t2021-03-28 08:45:00 +0545\n]"))
+
+  (check-equal? (~> (dataframe (list (series (list "2020\u000001\u000002") #:name "d")))
+                    (select (str->date "d" #:format "%Y\u0000%m\u0000%d" #:strict #t))
+                    (ref "d")
+                    series->list)
+                (list (date 2020 1 2)))
+  (define (formatted xs make)
+    (~> (dataframe (list (series xs #:name "s")))
+        (select (alias (make "s") "s"))
+        (ref "s")
+        series->list))
+  (for ([row (in-list (nul-expected 'formats))])
+    (match-define (list name pattern xs expected) row)
+    (define make
+      (match name
+        ['to-date (lambda (c) (str->date c #:format pattern #:strict #t))]
+        ['to-datetime (lambda (c) (str->datetime c #:format pattern #:strict #t))]
+        ['to-time (lambda (c) (str->time c #:format pattern #:strict #t))]
+        ['strftime-date (lambda (c) (dt-strftime c pattern))]))
+    (check-equal? (formatted xs make) expected (format "~s" row))))

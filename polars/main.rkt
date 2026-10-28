@@ -34,7 +34,7 @@
   expr-name-keep index-list/c lit/who lazyframe-collect/raw membership-list/c null-behavior/c
   rank-method/c]
  [polars/private/foreign
-  allocator/or-fail call/foreign-error call/polars-reason
+  allocator/or-fail call/foreign-error call/polars-reason check-time-zone-name
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
   _c-string _c-string/null _rsstr _rsstr-list str-block-drop
@@ -94,6 +94,7 @@
                #:when (regexp-match? #rx"/c$" (symbol->string name)))
       name))
   (check-not-false (memq 'cast exported))
+  (check-not-false (memq 'time-zone-name/c exported))
   (check-not-false (memq 'series-new-str exported))
   (check-not-false (memq 'uint32/c c-integer-contracts))
   (for ([internal (in-list (append internal-names

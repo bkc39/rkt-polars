@@ -7,7 +7,6 @@
 ;; work.
 
 (require racket/contract/base
-         (only-in racket/string non-empty-string?)
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
@@ -29,7 +28,7 @@
           [str->datetime (->* (col-expr/c)
                               (#:format (or/c #f string?)
                                #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)
-                               #:time-zone (or/c #f non-empty-string?)
+                               #:time-zone (or/c #f time-zone-name/c)
                                #:ambiguous (or/c 'raise 'earliest 'latest 'null)
                                #:strict boolean?
                                #:exact boolean?

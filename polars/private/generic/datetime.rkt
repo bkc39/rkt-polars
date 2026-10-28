@@ -10,7 +10,6 @@
 ;; time).
 
 (require racket/contract/base
-         (only-in racket/string non-empty-string?)
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/expr-dt expr-dt-convert-time-zone expr-dt-replace-time-zone)
@@ -23,9 +22,9 @@
          dt-millisecond dt-microsecond dt-nanosecond
          dt-timestamp dt-strftime dt-truncate
          (contract-out
-          [dt-convert-time-zone (-> (or/c series? col-expr/c) non-empty-string?
+          [dt-convert-time-zone (-> (or/c series? col-expr/c) time-zone-name/c
                                     (or/c series? Expr-ptr?))]
-          [dt-replace-time-zone (->* ((or/c series? col-expr/c) (or/c #f non-empty-string?))
+          [dt-replace-time-zone (->* ((or/c series? col-expr/c) (or/c #f time-zone-name/c))
                                      (#:ambiguous (or/c 'raise 'earliest 'latest 'null)
                                       #:non-existent (or/c 'raise 'null))
                                      (or/c series? Expr-ptr?))]))

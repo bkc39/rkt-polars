@@ -170,19 +170,15 @@ pub extern "C" fn expr_dt_timestamp(e: *const Expr, unit: i32) -> *mut Expr {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_dt_strftime(
+pub extern "C" fn expr_dt_strftime_v2(
     e: *const Expr,
-    format: *const c_char,
+    format: StrArg,
 ) -> *mut Expr {
-    if e.is_null() || format.is_null() {
-        return ptr::null_mut();
-    }
-    let fmt = match unsafe { CStr::from_ptr(format).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let ee = unsafe { (*e).clone() };
-    Box::into_raw(Box::new(ee.dt().strftime(fmt)))
+    boxed_unguarded(|| {
+        let e = unsafe { deref_arg(e, "the expression") }?;
+        let format = unsafe { name_arg(format, "the format") }?;
+        Ok(e.clone().dt().strftime(format))
+    })
 }
 
 #[no_mangle]

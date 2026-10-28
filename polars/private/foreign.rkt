@@ -14,7 +14,7 @@
          racket/match
          (only-in racket/dict in-dict)
          (only-in racket/list check-duplicates)
-         (only-in racket/string string-replace)
+         (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
          syntax/parse/define
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
@@ -33,7 +33,7 @@
                      series-strings
                      strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
-                     series-date-ref series-index/c series-ref-bytes
+                     series-date-ref series-index/c series-ref-bytes time-zone-name?
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
@@ -324,6 +324,15 @@
   (match v
     [(list 'decimal (? exact-positive-integer?) (? exact-nonnegative-integer?)) #t]
     [_ #f]))
+
+(define (time-zone-name? v)
+  (and (non-empty-string? v) (not (regexp-match? #rx"\0" v))))
+
+(define time-zone-name/c (flat-named-contract 'time-zone-name/c time-zone-name?))
+
+(define (check-time-zone-name who zone)
+  (unless (time-zone-name? zone)
+    (raise-argument-error who "time-zone-name/c" zone)))
 
 (define (zoned-datetime-dtype? v)
   (match v
@@ -1262,12 +1271,13 @@
                       "cannot convert to ~v" dtype))
 
 (define-compat series-cast-datetime-tz/raw
-  (_fun _Series-ptr _int32 _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _int32 _c-string -> _Series-ptr/null)
   #:c-id series_cast_datetime_tz
   #:wrap (allocator series-drop))
 
 (define (series-cast-datetime-tz who s dtype)
   (match-define (list _ unit zone) dtype)
+  (check-time-zone-name who zone)
   (call/foreign-error who
                       (lambda ()
                         (series-cast-datetime-tz/raw s (time-unit-symbol->code unit) zone))
@@ -1284,7 +1294,7 @@
   (series-cast-to 'series-cast s dtype))
 
 (define-compat series-dt-convert-time-zone/raw
-  (_fun _Series-ptr _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _c-string -> _Series-ptr/null)
   #:c-id series_dt_convert_time_zone
   #:wrap (allocator series-drop))
 
@@ -1294,7 +1304,7 @@
                       "cannot convert to the time zone ~s" zone))
 
 (define-compat series-dt-replace-time-zone/raw
-  (_fun _Series-ptr _string/utf-8 _string/utf-8 _string/utf-8 -> _Series-ptr/null)
+  (_fun _Series-ptr _c-string/null _c-string _c-string -> _Series-ptr/null)
   #:c-id series_dt_replace_time_zone
   #:wrap (allocator series-drop))
 
