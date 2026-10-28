@@ -12,7 +12,8 @@
            (only-in racket/list make-list)
            (only-in polars/private/bulk in-series series->list)
            (only-in polars/private/expr col lit)
-           (only-in polars/private/foreign polars-null polars-null? series-name)
+           (only-in polars/private/foreign
+                    polars-null polars-null? series-drop series-drop-count series-name)
            (only-in polars/private/generic/core column-names dataframe dtype height len ref series)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operands const-series)
@@ -21,6 +22,7 @@
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape cast filter rename select with-columns)
            (only-in polars/private/generic/strings str->datetime)
+           (only-in polars/private/temporal temporal-value-dtype)
            (prefix-in contracted: polars/private/generic/datetime)
            (only-in polars/private/generic/datetime
                     dt-date dt-day dt-hour dt-is-leap-year dt-iso-year dt-microsecond
@@ -28,7 +30,8 @@
                     dt-second dt-strftime dt-time dt-timestamp dt-truncate dt-week dt-weekday
                     dt-year)
            (only-in (submod polars/private/generic/datetime internal)
-                    dt-convert-time-zone dt-replace-time-zone))
+                    dt-convert-time-zone dt-replace-time-zone)
+           (only-in polars/tests/test-helpers drops-during))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
   (define out
@@ -433,6 +436,30 @@
   (check-exn (regexp (string-append "^<: datetimes in different time zones\n"
                                     "  series dtype: '\\(datetime microseconds #f\\)"))
              (lambda () (p:< (series (list (datetime 2021 5 1))) brussels)))
+  (define brussels-t (ref zoned-frame "t"))
+  (define tokyo (moment 2021 5 1 #:tz "Asia/Tokyo"))
+  (define naive (series (list (datetime 2021 5 1))))
+  (for ([op (list p:> p:= p:p- p:<)]
+        [who '(> = - <)]
+        [s (list brussels-t brussels-t brussels-t naive)]
+        [other (list tokyo (datetime 2021 5 1) tokyo brussels)])
+    (check-equal? (drops-during series-drop-count
+                                (lambda ()
+                                  (check-exn #rx"datetimes in different time zones"
+                                             (lambda () (op s other)))))
+                  (drops-during series-drop-count
+                                (lambda ()
+                                  (series-drop (const-series who (temporal-value-dtype other)
+                                                             (len s) other
+                                                             #:name (series-name s)))))
+                  (format "~a" who)))
+  (define utc (series (list (moment 2021 5 1 #:tz "UTC") brussels)))
+  (check-equal? (drops-during series-drop-count
+                              (lambda ()
+                                (check-exn #rx"datetimes in different time zones"
+                                           (lambda () (p:> brussels-t utc)))))
+                0)
+  (check-equal? (map length (list (series->list utc) (series->list brussels-t))) '(2 2))
   (check-exn #rx"^filter: .*comparison"
              (lambda () (filter zoned-frame (p:> (col "t") (moment 2021 5 1 #:tz "Asia/Tokyo")))))
   (check-equal? (literal (moment 2021 3 27 #:tz 3600)) (list '(datetime microseconds "UTC")

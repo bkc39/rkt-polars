@@ -218,28 +218,29 @@
   (define dt (series-dtype s))
   (define n (series-len s))
   (define (lifted dtype value) (const-series who dtype n value #:name (series-name s)))
-  (define o
-    (match (operand-action who dt other side)
-      ['series other]
-      ['same (lifted dt (same-value dt other))]
-      ['own (lifted (temporal-value-dtype other) other)]
-      ['float64 (lifted 'float64 (same-value 'float64 other))]
-      ['physical
-       (match-define (list 'datetime _ zone) (temporal-value-dtype other))
-       (define encode (temporal-encoder who (list 'datetime 'microseconds zone)))
-       (lifted dt (same-value dt (encode other)))]
-      ['string (lifted 'string (same-value 'string other))]
-      ['python-str (lifted 'string (python-str other))]
-      ['modulo (raise-arguments-error who "cannot take the modulo of a temporal dtype"
-                                      "series dtype" dt)]
-      [_ (raise-arguments-error who "the value cannot be an element of a series of this dtype"
-                                "value" other "series dtype" dt)]))
-  (match* (dt (series-dtype o))
+  (match (operand-action who dt other side)
+    ['series other]
+    ['same (lifted dt (same-value dt other))]
+    ['own (lifted (temporal-value-dtype other) other)]
+    ['float64 (lifted 'float64 (same-value 'float64 other))]
+    ['physical
+     (match-define (list 'datetime _ zone) (temporal-value-dtype other))
+     (define encode (temporal-encoder who (list 'datetime 'microseconds zone)))
+     (lifted dt (same-value dt (encode other)))]
+    ['string (lifted 'string (same-value 'string other))]
+    ['python-str (lifted 'string (python-str other))]
+    ['modulo (raise-arguments-error who "cannot take the modulo of a temporal dtype"
+                                    "series dtype" dt)]
+    [_ (raise-arguments-error who "the value cannot be an element of a series of this dtype"
+                              "value" other "series dtype" dt)]))
+
+(define (check-same-zone who s o)
+  (match* ((series-dtype s) (series-dtype o))
     [((list 'datetime _ zone) (list 'datetime _ other-zone))
      #:when (not (equal? zone other-zone))
      (raise-arguments-error who "datetimes in different time zones"
-                            "series dtype" dt "other dtype" (series-dtype o))]
-    [(_ _) o]))
+                            "series dtype" (series-dtype s) "other dtype" (series-dtype o))]
+    [(_ _) (void)]))
 
 (define (logical-operand who s other)
   (cond
@@ -254,7 +255,10 @@
     (proc operand)))
 
 (define (call-with-operand-series who s other side proc)
-  (call-with-lifted (operand-series who s other side) other proc))
+  (call-with-lifted (operand-series who s other side) other
+                    (lambda (operand)
+                      (check-same-zone who s operand)
+                      (proc operand))))
 
 (define (call-with-logical-operand who s other proc)
   (call-with-lifted (logical-operand who s other) other proc))
