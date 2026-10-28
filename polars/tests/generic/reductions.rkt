@@ -6,8 +6,6 @@
            (only-in racket/file file->value)
            (only-in racket/list make-list)
            (only-in gregor date datetime)
-           (only-in gregor/time time)
-           (only-in gregor/period microseconds)
            (only-in racket/match match match-define)
            (only-in racket/contract/base contract-name)
            (only-in polars/private/c-integer uint8/c)
@@ -15,12 +13,13 @@
            (only-in polars/private/foreign
                     dataframe-drop-count series-drop-count series-head series-min-f64
                     series-slice series-sum-f64)
-           (only-in polars/private/generic/core dtype series wrap-series)
-           (only-in polars/private/generic/reductions first last max mean min sum)
+           (only-in polars/private/generic/core column-names dataframe dtype series wrap-series)
+           (only-in polars/private/generic/reshape select)
+           (only-in polars/private/generic/reductions alias first last max mean min sum)
            (only-in (submod polars/private/generic/reductions internal) n-unique std var)
            (only-in polars/tests/generic/test-fixtures
                     Expr-ptr? col datetime floats ints past-chrono-zoned polars-null prices
-                    series-cells settle!)
+                    nul-names rktd-value series-cells settle!)
            (prefix-in contracted: polars/private/generic/reductions))
   (define small (series '(1 2 3) #:dtype 'i8))
   (define flags (series '(#t #f #t)))
@@ -114,16 +113,6 @@
   (define double-epsilon (expt 2.0 -52))
   (define reducers (hash 'sum sum 'mean mean 'min min 'max max 'std std 'var var
                          'n-unique n-unique))
-  (define (decode v)
-    (match v
-      ['null polars-null]
-      [(list 'date y m d) (date y m d)]
-      [(list 'datetime y mo d h mi s ns) (datetime y mo d h mi s ns)]
-      [(list 'time h m s ns) (time h m s ns)]
-      [(list 'duration-us n) (microseconds n)]
-      [(list 'category name) (string->symbol name)]
-      [(list 'decimal digits) (string->number digits 10 'number-or-false 'decimal-as-exact)]
-      [_ v]))
   (define (check-reduction op s expected #:ddof [ddof #f])
     (define reduce (hash-ref reducers op))
     (define label (format "~a of ~a ~v ddof ~a" op (dtype s) (series-cells s) ddof))
@@ -131,7 +120,7 @@
     (match expected
       ['error (check-exn (regexp (format "^~a: " op)) run label)]
       [(? flonum?) (check-= (run) expected (* 4 double-epsilon (abs expected)) label)]
-      [_ (check-equal? (run) (decode expected) label)]))
+      [_ (check-equal? (run) (rktd-value expected) label)]))
   (define (check-reduction-table inputs expectations)
     (for* ([expectation (in-list expectations)]
            [cell (in-list (map cons inputs (cdr expectation)))])
@@ -140,7 +129,7 @@
     (file->value expected-file))
   (for ([row (in-list cases)])
     (match-define (list dt partial expectations ...) row)
-    (define (rows->series rows) (series (map decode rows) #:dtype dt))
+    (define (rows->series rows) (series (map rktd-value rows) #:dtype dt))
     (check-reduction-table (map rows->series (list '() '(null null) partial)) expectations))
   (check-reduction-table (list (wrap-series (series-head prices 0))
                                (wrap-series (series-slice prices 2 1))
@@ -148,4 +137,8 @@
                          decimal-table)
   (for ([single (in-list singles)])
     (match-define (list op dt rows ddof expected) single)
-    (check-reduction op (series (map decode rows) #:dtype dt) expected #:ddof ddof)))
+    (check-reduction op (series (map rktd-value rows) #:dtype dt) expected #:ddof ddof))
+  (define named (dataframe (list (series '(1 2) #:name "a"))))
+  (for ([n (in-list nul-names)])
+    (check-equal? (column-names (select named (alias (col "a") n))) (list n))
+    (check-equal? (column-names (select named (alias (sum "a") n))) (list n))))

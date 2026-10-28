@@ -5,40 +5,23 @@ macro_rules! group_by_agg {
     ($name:ident, $method:ident) => {
         #[no_mangle]
         pub extern "C" fn $name(
-            df_ptr: *mut DataFrame,
-            by_ptrs: *const *const c_char,
-            n_by: usize,
-            agg_ptrs: *const *const c_char,
-            n_agg: usize,
+            df_ptr: *const DataFrame,
+            by: StrListArg,
+            agg: StrListArg,
         ) -> *mut DataFrame {
-            if df_ptr.is_null() {
-                return ptr::null_mut();
-            }
-            let by = match unsafe { collect_c_strings(by_ptrs, n_by) } {
-                Some(v) => v,
-                None => return ptr::null_mut(),
-            };
-            let agg = match unsafe { collect_c_strings(agg_ptrs, n_agg) } {
-                Some(v) => v,
-                None => return ptr::null_mut(),
-            };
-            let df = unsafe { &*df_ptr };
-            let gb = match df.group_by(&by) {
-                Ok(gb) => gb,
-                Err(_) => return ptr::null_mut(),
-            };
-            #[allow(deprecated)]
-            let result = gb.select(&agg).$method();
-            match result {
-                Ok(out) => Box::into_raw(Box::new(out)),
-                Err(_) => ptr::null_mut(),
-            }
+            boxed_result(|| {
+                let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+                let by = unsafe { str_list_arg(by) }?;
+                let agg = unsafe { str_list_arg(agg) }?;
+                #[allow(deprecated)]
+                df.group_by(by)?.select(agg).$method()
+            })
         }
     };
 }
 
-group_by_agg!(dataframe_group_by_sum, sum);
-group_by_agg!(dataframe_group_by_mean, mean);
-group_by_agg!(dataframe_group_by_min, min);
-group_by_agg!(dataframe_group_by_max, max);
-group_by_agg!(dataframe_group_by_count, count);
+group_by_agg!(dataframe_group_by_sum_v2, sum);
+group_by_agg!(dataframe_group_by_mean_v2, mean);
+group_by_agg!(dataframe_group_by_min_v2, min);
+group_by_agg!(dataframe_group_by_max_v2, max);
+group_by_agg!(dataframe_group_by_count_v2, count);

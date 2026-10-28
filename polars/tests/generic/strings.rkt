@@ -7,7 +7,11 @@
            (only-in gregor date datetime moment resolve-offset/post resolve-offset/pre)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c nonnegative-int64/c)
-           (only-in polars/private/expr col)
+           (only-in racket/match match match-define)
+           (only-in polars/private/expr col lit)
+           (only-in polars/private/generic/nullable fill-null)
+           (only-in polars/private/generic/operators [= p=] [!= p!=])
+           (only-in polars/tests/generic/test-fixtures nul-expected)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
@@ -187,4 +191,27 @@
                    (lambda () (contracted:str->datetime "clock" #:ambiguous 'first))
                    (lambda () (contracted:str->datetime "clock" #:unit 'seconds))
                    (lambda () (contracted:str->datetime "clock" #:strict 1)))])
-    (check-exn exn:fail:contract:blame? bad)))
+    (check-exn exn:fail:contract:blame? bad))
+  (define (strings-through xs make)
+    (~> (dataframe (list (series xs #:name "s" #:dtype 'string)))
+        (select (alias (make "s") "s"))
+        (ref "s")
+        series->list))
+  (for ([row (in-list nul-expected)])
+    (match-define (list op args ... expected) row)
+    (define xs (match op ['lit '("x")] [_ (car args)]))
+    (define make
+      (match row
+        [(list 'lit v _) (lambda (_) (lit v))]
+        [(list 'fill-null _ v _) (lambda (c) (fill-null c v))]
+        [(list 'strip-chars _ v _) (lambda (c) (str-strip-chars c v))]
+        [(list 'replace-literal _ v by _) (lambda (c) (str-replace c v by #:literal #t))]
+        [(list 'contains _ v _) (lambda (c) (str-contains c v))]
+        [(list 'starts-with _ v _) (lambda (c) (str-starts-with c v))]
+        [(list 'eq _ v _) (lambda (c) (p= (col c) v))]
+        [(list 'ne _ v _) (lambda (c) (p!= (col c) v))]))
+    (check-equal? (strings-through xs make) expected (format "~s" row)))
+  (for ([row (in-list nul-expected)] #:when (memq (car row) '(eq ne)))
+    (match row
+      [(list 'eq xs v expected) (check-equal? (series->list (p= (series xs) v)) expected)]
+      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)])))

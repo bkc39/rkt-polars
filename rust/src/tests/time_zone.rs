@@ -58,8 +58,8 @@ fn evaluate(frame: Vec<Series>, e: Expr) -> PolarsResult<Series> {
 }
 
 fn column(name: &str) -> *mut Expr {
-    let n = cstr(name);
-    expr_col(n.as_ptr())
+    let n = str_block(name);
+    expr_col_v2(n.as_ptr())
 }
 
 fn take_expr(p: *mut Expr) -> Expr {

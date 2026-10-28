@@ -11,6 +11,7 @@
            (only-in racket/list cartesian-product make-list range remove-duplicates take)
            (only-in racket/math nan?)
            (only-in syntax/parse/define define-syntax-parse-rule)
+           (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer uint64/c)
            (only-in polars/private/expr-core expr->string lit)
            (only-in polars/private/generic/core
@@ -26,8 +27,8 @@
            (prefix-in contracted: polars/private/generic/ordering)
            (only-in (submod polars/private/generic/ordering internal) rank sort sort-by)
            (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col column datetime ops-df polars-null polars-null? series-cells
-                    series-shape v64))
+                    Expr-ptr? col column datetime nul-names ops-df polars-null polars-null?
+                    series-cells series-shape v64))
   (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
                               (series '("b" "a" "b" "a" "b") #:name "g"))))
   ;; rank is length-preserving -> with-columns
@@ -468,4 +469,8 @@
     (define d (random-sort-frame rng ks n (list-ref '(0 1/4 3/4 1) (random 4 rng))))
     (sort-law-case d ks #t)
     (sort-column-laws d ks)
-    (sort-by-laws d k)))
+    (sort-by-laws d k))
+  (for ([n (in-list nul-names)])
+    (define keyed (dataframe (list (series '(3 4) #:name "a") (series '(2 1) #:name n))))
+    (check-equal? (~> keyed (sort n) (ref "a") series->list) '(4 3))
+    (check-equal? (~> keyed lazy (sort n) collect (ref "a") series->list) '(4 3))))

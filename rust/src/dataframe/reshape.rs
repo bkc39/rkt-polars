@@ -65,67 +65,42 @@ fn pivot_eager(
         .collect()
 }
 
-#[no_mangle]
-pub extern "C" fn dataframe_pivot(
-    df_ptr: *mut DataFrame,
-    on_ptrs: *const *const c_char,
-    n_on: usize,
-    index_ptrs: *const *const c_char,
-    n_index: usize,
-    values_ptrs: *const *const c_char,
-    n_values: usize,
-    agg: i32,
-) -> *mut DataFrame {
-    clear_last_error();
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let on = match unsafe { collect_c_strings(on_ptrs, n_on) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    if on.is_empty() {
-        return ptr::null_mut();
-    }
-    let index = match unsafe { collect_c_strings(index_ptrs, n_index) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let values = match unsafe { collect_c_strings(values_ptrs, n_values) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let agg_expr = match compat_pivot_agg(agg) {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let df = unsafe { &*df_ptr };
-    guard_panic(|| record(pivot_eager(df, on, index, values, agg_expr)))
-        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
+fn owned(names: Vec<&str>) -> Vec<String> {
+    names.into_iter().map(str::to_owned).collect()
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_unpivot(
-    df_ptr: *mut DataFrame,
-    on_ptrs: *const *const c_char,
-    n_on: usize,
-    index_ptrs: *const *const c_char,
-    n_index: usize,
+pub extern "C" fn dataframe_pivot_v2(
+    df_ptr: *const DataFrame,
+    on: StrListArg,
+    index: StrListArg,
+    values: StrListArg,
+    agg: i32,
 ) -> *mut DataFrame {
-    clear_last_error();
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let on = match unsafe { collect_c_strings(on_ptrs, n_on) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let index = match unsafe { collect_c_strings(index_ptrs, n_index) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let df = unsafe { &*df_ptr };
-    let on = if on.is_empty() { None } else { Some(on) };
-    guard_panic(|| record(df.unpivot(on, index)))
-        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let on = owned(unsafe { str_list_arg(on) }?);
+        polars_ensure!(!on.is_empty(), ComputeError: "a pivot needs an on column");
+        let index = owned(unsafe { str_list_arg(index) }?);
+        let values = owned(unsafe { str_list_arg(values) }?);
+        let Some(agg_expr) = compat_pivot_agg(agg) else {
+            polars_bail!(ComputeError: "unknown pivot aggregate {}", agg);
+        };
+        pivot_eager(df, on, index, values, agg_expr)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn dataframe_unpivot_v2(
+    df_ptr: *const DataFrame,
+    on: StrListArg,
+    index: StrListArg,
+) -> *mut DataFrame {
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let on = unsafe { str_list_arg(on) }?;
+        let index = unsafe { str_list_arg(index) }?;
+        let on = if on.is_empty() { None } else { Some(on) };
+        df.unpivot(on, index)
+    })
 }

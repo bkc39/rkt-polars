@@ -18,9 +18,15 @@ fn run_asof(
     right: *mut DataFrame,
     strategy: CompatAsofStrategy,
 ) -> *mut DataFrame {
-    let lk = cstr("ts");
-    let rk = cstr("ts");
-    dataframe_join_asof(left, right, lk.as_ptr(), rk.as_ptr(), strategy as i32)
+    let lk = str_block("ts");
+    let rk = str_block("ts");
+    dataframe_join_asof_v2(
+        left,
+        right,
+        lk.as_ptr(),
+        rk.as_ptr(),
+        strategy as i32,
+    )
 }
 
 fn cleanup(
@@ -68,16 +74,17 @@ fn asof_nearest_strategy() {
 #[test]
 fn asof_invalid_strategy_returns_null() {
     let (left, right, series) = make_quotes_trades();
-    let lk = cstr("ts");
-    let rk = cstr("ts");
-    let out = dataframe_join_asof(left, right, lk.as_ptr(), rk.as_ptr(), 999);
+    let lk = str_block("ts");
+    let rk = str_block("ts");
+    let out =
+        dataframe_join_asof_v2(left, right, lk.as_ptr(), rk.as_ptr(), 999);
     assert!(out.is_null());
     assert_eq!(
         recorded_error().as_deref(),
         Some("unknown asof strategy 999")
     );
-    let missing = cstr("nope");
-    let out = dataframe_join_asof(
+    let missing = str_block("nope");
+    let out = dataframe_join_asof_v2(
         left,
         right,
         missing.as_ptr(),
@@ -102,22 +109,18 @@ fn asof_options_with_by_keys() {
     let left = make_df(&[lk, lby, lv]);
     let right = make_df(&[rk, rby, rw]);
 
-    let ts_l = cstr("ts");
-    let ts_r = cstr("ts");
-    let g_l = cstr("g");
-    let g_r = cstr("g");
-    let lby_arr: [*const c_char; 1] = [g_l.as_ptr()];
-    let rby_arr: [*const c_char; 1] = [g_r.as_ptr()];
-    let out = dataframe_join_asof_options(
+    let ts_l = str_block("ts");
+    let ts_r = str_block("ts");
+    let lby_arr = str_list_block(&["g"]);
+    let rby_arr = str_list_block(&["g"]);
+    let out = dataframe_join_asof_options_v2(
         left,
         right,
         ts_l.as_ptr(),
         ts_r.as_ptr(),
         CompatAsofStrategy::Backward as i32,
         lby_arr.as_ptr(),
-        lby_arr.len(),
         rby_arr.as_ptr(),
-        rby_arr.len(),
         CompatAsofToleranceKind::None as i32,
         0,
         0.0,
@@ -135,18 +138,16 @@ fn asof_options_with_by_keys() {
 #[test]
 fn asof_options_with_integer_tolerance() {
     let (left, right, series) = make_quotes_trades();
-    let lk = cstr("ts");
-    let rk = cstr("ts");
-    let out = dataframe_join_asof_options(
+    let lk = str_block("ts");
+    let rk = str_block("ts");
+    let out = dataframe_join_asof_options_v2(
         left,
         right,
         lk.as_ptr(),
         rk.as_ptr(),
         CompatAsofStrategy::Backward as i32,
         ptr::null(),
-        0,
         ptr::null(),
-        0,
         CompatAsofToleranceKind::Integer as i32,
         3,
         0.0,

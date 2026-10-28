@@ -13,20 +13,14 @@ fn make_long() -> (*mut DataFrame, *mut Series, *mut Series, *mut Series) {
 #[test]
 fn pivot_with_first_agg() {
     let (df, id, ty, v) = make_long();
-    let on = cstr("type");
-    let on_arr: [*const c_char; 1] = [on.as_ptr()];
-    let idx = cstr("id");
-    let idx_arr: [*const c_char; 1] = [idx.as_ptr()];
-    let val = cstr("value");
-    let val_arr: [*const c_char; 1] = [val.as_ptr()];
-    let out = dataframe_pivot(
+    let on_arr = str_list_block(&["type"]);
+    let idx_arr = str_list_block(&["id"]);
+    let val_arr = str_list_block(&["value"]);
+    let out = dataframe_pivot_v2(
         df,
         on_arr.as_ptr(),
-        on_arr.len(),
         idx_arr.as_ptr(),
-        idx_arr.len(),
         val_arr.as_ptr(),
-        val_arr.len(),
         CompatPivotAgg::First as i32,
     );
     assert!(!out.is_null());
@@ -43,20 +37,14 @@ fn pivot_with_first_agg() {
 #[test]
 fn pivot_unknown_agg_returns_null() {
     let (df, id, ty, v) = make_long();
-    let on = cstr("type");
-    let on_arr: [*const c_char; 1] = [on.as_ptr()];
-    let idx = cstr("id");
-    let idx_arr: [*const c_char; 1] = [idx.as_ptr()];
-    let val = cstr("value");
-    let val_arr: [*const c_char; 1] = [val.as_ptr()];
-    let out = dataframe_pivot(
+    let on_arr = str_list_block(&["type"]);
+    let idx_arr = str_list_block(&["id"]);
+    let val_arr = str_list_block(&["value"]);
+    let out = dataframe_pivot_v2(
         df,
         on_arr.as_ptr(),
-        on_arr.len(),
         idx_arr.as_ptr(),
-        idx_arr.len(),
         val_arr.as_ptr(),
-        val_arr.len(),
         999,
     );
     assert!(out.is_null());
@@ -73,13 +61,9 @@ fn unpivot_melts_wide_to_long() {
     let a = make_i32("a", &[10, 20]);
     let b = make_i32("b", &[100, 200]);
     let df = make_df(&[id, a, b]);
-    let a_n = cstr("a");
-    let b_n = cstr("b");
-    let on: [*const c_char; 2] = [a_n.as_ptr(), b_n.as_ptr()];
-    let id_n = cstr("id");
-    let idx: [*const c_char; 1] = [id_n.as_ptr()];
-    let out =
-        dataframe_unpivot(df, on.as_ptr(), on.len(), idx.as_ptr(), idx.len());
+    let on = str_list_block(&["a", "b"]);
+    let idx = str_list_block(&["id"]);
+    let out = dataframe_unpivot_v2(df, on.as_ptr(), idx.as_ptr());
     assert!(!out.is_null());
     // 2 ids * 2 value columns -> 4 rows.
     assert_eq!(dataframe_height(out), 4);
@@ -98,9 +82,8 @@ fn unpivot_with_no_on_melts_every_non_index_column() {
     let a = make_i32("a", &[10, 20]);
     let b = make_i32("b", &[100, 200]);
     let df = make_df(&[id, a, b]);
-    let id_n = cstr("id");
-    let idx: [*const c_char; 1] = [id_n.as_ptr()];
-    let out = dataframe_unpivot(df, ptr::null(), 0, idx.as_ptr(), idx.len());
+    let idx = str_list_block(&["id"]);
+    let out = dataframe_unpivot_v2(df, ptr::null(), idx.as_ptr());
     assert!(!out.is_null());
     assert_eq!(dataframe_height(out), 4);
     assert_eq!(read_column_names(out), vec!["id", "variable", "value"]);
@@ -114,12 +97,9 @@ fn unpivot_with_no_on_melts_every_non_index_column() {
 #[test]
 fn unpivot_unknown_column_returns_null() {
     let (df, id, ty, v) = make_long();
-    let bad = cstr("nope");
-    let on: [*const c_char; 1] = [bad.as_ptr()];
-    let id_n = cstr("id");
-    let idx: [*const c_char; 1] = [id_n.as_ptr()];
-    let out =
-        dataframe_unpivot(df, on.as_ptr(), on.len(), idx.as_ptr(), idx.len());
+    let on = str_list_block(&["nope"]);
+    let idx = str_list_block(&["id"]);
+    let out = dataframe_unpivot_v2(df, on.as_ptr(), idx.as_ptr());
     assert!(out.is_null());
     dataframe_drop(df);
     series_drop(id);

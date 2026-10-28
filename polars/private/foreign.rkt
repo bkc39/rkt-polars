@@ -21,7 +21,8 @@
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
-         (only-in polars/private/resource _string-list with-raw-buffer with-release)
+         (only-in polars/private/resource
+                  _str _str-list _string-list utf-8-name/c with-raw-buffer with-release)
          (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
@@ -33,7 +34,7 @@
                      series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned block-reader c-string-argument
-                     c-string/null-argument result-only
+                     c-string/null-argument named result-only series-str-op
                      series-std series-var series-new-null
                      series-head series-tail series-slice
                      dataframe-head dataframe-tail dataframe-slice
@@ -44,6 +45,9 @@
                      series-lt-i32 series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32
                      series-ne-i32
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
+                     (matching-identifiers-out
+                      #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
+                      (all-defined-out))
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
           [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
@@ -64,7 +68,19 @@
           [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]
           [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
           [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
-          [series-new-null (->/c any/c size/c Series-ptr?)]))
+          [series-new-null (->/c utf-8-name/c size/c Series-ptr?)]))
+
+(define-syntax-parse-rule (provide-series-constructors [from-list:id from-vector:id] ...)
+  (provide (contract-out [from-list (->/c utf-8-name/c list? Series-ptr?)] ...
+                         [from-vector (->/c utf-8-name/c vector? Series-ptr?)] ...)))
+
+(provide-series-constructors [series-new-i8 series-new-i8/vec] [series-new-i16 series-new-i16/vec]
+                             [series-new-i32 series-new-i32/vec] [series-new-i64 series-new-i64/vec]
+                             [series-new-u8 series-new-u8/vec] [series-new-u16 series-new-u16/vec]
+                             [series-new-u32 series-new-u32/vec] [series-new-u64 series-new-u64/vec]
+                             [series-new-f32 series-new-f32/vec] [series-new-f64 series-new-f64/vec]
+                             [series-new-bool series-new-bool/vec]
+                             [series-new-str series-new-str/vec])
 
 (define-syntax-parse-rule (provide-row-windows frame?:id head:id tail:id slice:id)
   (provide (contract-out [head (->/c frame? size/c frame?)]
@@ -611,8 +627,20 @@
      (make-CompatDType compat-dtype-tag/duration (time-unit-symbol->code unit) 0 0)]
     [_ (error '->compat-dtype "unsupported cast target ~v" dtype)]))
 
-(define-compat series-rename
-  (_fun _Series-ptr _string -> _void))
+(define-compat series-rename/raw
+  (_fun _Series-ptr _str -> _int32)
+  #:c-id series_rename_v2)
+
+(define (series-rename/who who s name)
+  (call/foreign-error who (lambda () (series-rename/raw s name)) #:ok? zero?)
+  (void))
+
+(define (series-rename s name)
+  (series-rename/who 'series-rename s name))
+
+(define ((named who name) s)
+  (series-rename/who who s name)
+  s)
 
 (define-compat series-len
   (_fun _Series-ptr -> _size))
@@ -797,21 +825,21 @@
   #:with rust-opt-id (format-id #'rs-type "series_new_opt_~a" #'rs-type)
   (begin
     (define-compat list-constructor-raw-name
-      (_fun _string
+      (_fun (_c-string = "")
             (v : (_list i ctype))
             (_size = (length v))
             -> _Series-ptr/null)
       #:c-id rust-id
       #:wrap (allocator/or-fail series-drop 'list-constructor-name))
     (define-compat vector-constructor-raw-name
-      (_fun _string
+      (_fun (_c-string = "")
             (v : (_vector i ctype))
             (_size = (vector-length v))
             -> _Series-ptr/null)
       #:c-id rust-id
       #:wrap (allocator/or-fail series-drop 'vector-constructor-name))
     (define-compat opt-constructor-name
-      (_fun _string
+      (_fun (_c-string = "")
             (v : (_list i ctype))
             (valid : (_list i _uint8))
             (_size = (length v))
@@ -819,17 +847,19 @@
       #:c-id rust-opt-id
       #:wrap (allocator/or-fail series-drop 'list-constructor-name))
     (define (list-constructor-name name values)
-      (if (contains-polars-null? values)
-          (let-values ([(clean-values valid) (values+valid values default-value)])
-            (opt-constructor-name name clean-values valid))
-          (list-constructor-raw-name name values)))
+      ((named 'list-constructor-name name)
+       (if (contains-polars-null? values)
+           (let-values ([(clean-values valid) (values+valid values default-value)])
+             (opt-constructor-name clean-values valid))
+           (list-constructor-raw-name values))))
     (define (vector-constructor-name name values)
-      (if (for/or ([value (in-vector values)])
-            (polars-null? value))
-          (let-values ([(clean-values valid)
-                        (values+valid (vector->list values) default-value)])
-            (opt-constructor-name name clean-values valid))
-          (vector-constructor-raw-name name values)))))
+      ((named 'vector-constructor-name name)
+       (if (for/or ([value (in-vector values)])
+             (polars-null? value))
+           (let-values ([(clean-values valid)
+                         (values+valid (vector->list values) default-value)])
+             (opt-constructor-name clean-values valid))
+           (vector-constructor-raw-name values))))))
 
 (define-series-constructors i32 _int32 0)
 
@@ -852,7 +882,7 @@
 ;; Bools cross the boundary as u8 (0/1).  Racket-side wrappers translate
 ;; #f/#t to 0/1.
 (define-compat series-new-bool/raw
-  (_fun _string
+  (_fun (_c-string = "")
         (v : (_list i _uint8))
         (_size = (length v))
         -> _Series-ptr/null)
@@ -860,7 +890,7 @@
   #:wrap (allocator/or-fail series-drop 'series-new-bool))
 
 (define-compat series-new-bool/vec/raw
-  (_fun _string
+  (_fun (_c-string = "")
         (v : (_vector i _uint8))
         (_size = (vector-length v))
         -> _Series-ptr/null)
@@ -868,7 +898,7 @@
   #:wrap (allocator/or-fail series-drop 'series-new-bool/vec))
 
 (define-compat series-new-bool/opt/raw
-  (_fun _string
+  (_fun (_c-string = "")
         (v : (_list i _uint8))
         (valid : (_list i _uint8))
         (_size = (length v))
@@ -879,32 +909,36 @@
 (define (bool->u8 b) (if b 1 0))
 
 (define (series-new-bool name bools)
-  (cond
-    [(contains-polars-null? bools)
-     (define-values (clean-values valid) (values+valid bools #f))
-     (series-new-bool/opt/raw name (map bool->u8 clean-values) valid)]
-    [else (series-new-bool/raw name (map bool->u8 bools))]))
+  ((named 'series-new-bool name)
+   (cond
+     [(contains-polars-null? bools)
+      (define-values (clean-values valid) (values+valid bools #f))
+      (series-new-bool/opt/raw (map bool->u8 clean-values) valid)]
+     [else (series-new-bool/raw (map bool->u8 bools))])))
 
 (define (series-new-bool/vec name bools)
-  (cond
-    [(for/or ([value (in-vector bools)])
-       (polars-null? value))
-     (define-values (clean-values valid) (values+valid (vector->list bools) #f))
-     (series-new-bool/opt/raw name (map bool->u8 clean-values) valid)]
-    [else
-     (series-new-bool/vec/raw name
-                              (for/vector #:length (vector-length bools)
-                                          ([b (in-vector bools)])
-                                (bool->u8 b)))]))
+  ((named 'series-new-bool/vec name)
+   (cond
+     [(for/or ([value (in-vector bools)])
+        (polars-null? value))
+      (define-values (clean-values valid) (values+valid (vector->list bools) #f))
+      (series-new-bool/opt/raw (map bool->u8 clean-values) valid)]
+     [else
+      (series-new-bool/vec/raw (for/vector #:length (vector-length bools)
+                                           ([b (in-vector bools)])
+                                 (bool->u8 b)))])))
 
-(define-compat series-new-null
-  (_fun _string _size -> _Series-ptr/null)
+(define-compat series-new-null/raw
+  (_fun (_c-string = "") _size -> _Series-ptr/null)
   #:c-id series_new_null
   #:wrap (allocator/or-fail series-drop 'series-new-null))
 
+(define (series-new-null name length)
+  ((named 'series-new-null name) (series-new-null/raw length)))
+
 ;; The buffer and validity are GC memory the collector may move: never #:blocking?.
 (define-compat series-new-str/raw
-  (_fun _string _bytes _size _pointer _size _bytes _size -> _Series-ptr/null)
+  (_fun (_c-string = "") _bytes _size _pointer _size _bytes _size -> _Series-ptr/null)
   #:c-id series_new_str_packed
   #:wrap (allocator series-drop))
 
@@ -929,10 +963,11 @@
       (define utf-8 (string->bytes/utf-8 s))
       (bytes-copy! buf end utf-8)
       (+ end (bytes-length utf-8)))
-    (call/foreign-error
-     who
-     (lambda () (series-new-str/raw name buf size offsets (add1 count) valid (if valid count 0)))
-     "operation failed")))
+    ((named who name)
+     (call/foreign-error
+      who
+      (lambda () (series-new-str/raw buf size offsets (add1 count) valid (if valid count 0)))
+      "operation failed"))))
 
 (define (series-new-str name strings)
   (strings->series 'series-new-str name strings))
@@ -1343,7 +1378,7 @@
     (pattern (~literal _int64) #:with range #'int64/c)
     (pattern (~literal _uint32) #:with range #'uint32/c)
     (pattern (~literal _uint64) #:with range #'uint64/c)
-    (pattern (~or* (~literal _double) (~literal _string)) #:attr range #f)))
+    (pattern (~literal _double) #:attr range #f)))
 
 (define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
   (begin
@@ -1430,34 +1465,28 @@
   (_fun _DataFrame-ptr -> _rsstr-list))
 
 (define-compat dataframe-select/c
-  (_fun _DataFrame-ptr
-        (names : _string-list)
-        (_size = (length names))
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_select
+  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null)
+  #:c-id dataframe_select_v2
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-select df cols)
-  (or (dataframe-select/c df cols) (error 'dataframe-select "operation failed")))
+  (call/polars-reason 'dataframe-select (lambda () (dataframe-select/c df cols))))
 
 (define-compat dataframe-drop-columns/c
-  (_fun _DataFrame-ptr
-        (names : _string-list)
-        (_size = (length names))
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_drop_columns
+  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null)
+  #:c-id dataframe_drop_columns_v2
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-drop-columns df cols)
-  (or (dataframe-drop-columns/c df cols) (error 'dataframe-drop-columns "operation failed")))
+  (call/polars-reason 'dataframe-drop-columns (lambda () (dataframe-drop-columns/c df cols))))
 
 (define-compat dataframe-rename/raw
-  (_fun _DataFrame-ptr _string _string -> _DataFrame-ptr/null)
-  #:c-id dataframe_rename
+  (_fun _DataFrame-ptr _str _str -> _DataFrame-ptr/null)
+  #:c-id dataframe_rename_v2
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-rename df old new)
-  (or (dataframe-rename/raw df old new) (error 'dataframe-rename "operation failed")))
+  (call/polars-reason 'dataframe-rename (lambda () (dataframe-rename/raw df old new))))
 
 (define-compat dataframe-with-column/raw
   (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
@@ -1501,8 +1530,8 @@
   #:c-id dataframe_column_name_v2)
 
 (define-compat dataframe-column/raw
-  (_fun _DataFrame-ptr _string -> _Series-ptr/null)
-  #:c-id dataframe_column
+  (_fun _DataFrame-ptr _str -> _Series-ptr/null)
+  #:c-id dataframe_column_v2
   #:wrap (allocator series-drop))
 
 (define (dataframe-column df name)
@@ -1545,8 +1574,12 @@
 (define-series-scalar-op series-eq-f64 _double)
 (define-series-scalar-op series-ne-f64 _double)
 
-(define-series-scalar-op series-eq-str _string)
-(define-series-scalar-op series-ne-str _string)
+(define ((series-str-op op/who who) s v)
+  (with-release ([rhs (strings->series who "" (list v)) series-drop])
+    (op/who who s rhs)))
+
+(define series-eq-str (series-str-op series-eq/who 'series-eq-str))
+(define series-ne-str (series-str-op series-ne/who 'series-ne-str))
 
 (define-compat series-is-null
   (_fun _Series-ptr -> _Series-ptr)
@@ -1572,13 +1605,13 @@
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
-        (names : _string-list)
+        (names : _str-list)
         (descending : (_list i _stdbool))
         (nulls-last : (_list i _stdbool))
         (_size = (length names))
         (maintain-order : _stdbool)
         -> _DataFrame-ptr/null)
-  #:c-id dataframe_sort_with_options
+  #:c-id dataframe_sort_with_options_v2
   #:wrap (allocator dataframe-drop))
 
 (define sort-flags/c
@@ -1624,33 +1657,23 @@
                         #:maintain-order [maintain-order #f])
   (dataframe-sort/who 'dataframe-sort df names descending nulls-last maintain-order))
 
-(define-syntax-parse-rule (define-group-by-agg name:id who:id rust-id:id)
-  (define-compat name
-    (_fun _DataFrame-ptr
-          (by : _string-list)
-          (_size = (length by))
-          (agg : _string-list)
-          (_size = (length agg))
-          -> _DataFrame-ptr/null)
-    #:c-id rust-id
-    #:wrap (allocator/or-fail dataframe-drop 'who)))
+(define-syntax-parse-rule (define-group-by-agg agg:id)
+  #:with name (format-id #'agg "dataframe-group-by-~a" #'agg)
+  #:with raw (format-id #'agg "dataframe-group-by-~a/c" #'agg)
+  #:with rust-id (format-id #'agg "dataframe_group_by_~a_v2" #'agg)
+  (begin
+    (define-compat raw
+      (_fun _DataFrame-ptr _str-list _str-list -> _DataFrame-ptr/null)
+      #:c-id rust-id
+      #:wrap (allocator dataframe-drop))
+    (define (name df #:by by #:agg agg)
+      (call/polars-reason 'name (lambda () (raw df by agg))))))
 
-(define-group-by-agg dataframe-group-by-sum/c   dataframe-group-by-sum   dataframe_group_by_sum)
-(define-group-by-agg dataframe-group-by-mean/c  dataframe-group-by-mean  dataframe_group_by_mean)
-(define-group-by-agg dataframe-group-by-min/c   dataframe-group-by-min   dataframe_group_by_min)
-(define-group-by-agg dataframe-group-by-max/c   dataframe-group-by-max   dataframe_group_by_max)
-(define-group-by-agg dataframe-group-by-count/c dataframe-group-by-count dataframe_group_by_count)
-
-(define (dataframe-group-by-sum df #:by by #:agg agg)
-  (dataframe-group-by-sum/c df by agg))
-(define (dataframe-group-by-mean df #:by by #:agg agg)
-  (dataframe-group-by-mean/c df by agg))
-(define (dataframe-group-by-min df #:by by #:agg agg)
-  (dataframe-group-by-min/c df by agg))
-(define (dataframe-group-by-max df #:by by #:agg agg)
-  (dataframe-group-by-max/c df by agg))
-(define (dataframe-group-by-count df #:by by #:agg agg)
-  (dataframe-group-by-count/c df by agg))
+(define-group-by-agg sum)
+(define-group-by-agg mean)
+(define-group-by-agg min)
+(define-group-by-agg max)
+(define-group-by-agg count)
 
 (define-compat dataframe-unique
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
@@ -1663,14 +1686,8 @@
 (define-frame-op/reason (dataframe-join left right left-on right-on how)
   (dataframe-join/c left right left-on right-on (join-symbol->code how))
   (define-compat dataframe-join/c
-    (_fun _DataFrame-ptr _DataFrame-ptr
-          (left-on : _string-list)
-          (_size = (length left-on))
-          (right-on : _string-list)
-          (_size = (length right-on))
-          _int32
-          -> _DataFrame-ptr/null)
-    #:c-id dataframe_join
+    (_fun _DataFrame-ptr _DataFrame-ptr _str-list _str-list _int32 -> _DataFrame-ptr/null)
+    #:c-id dataframe_join_v2
     #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join left right
@@ -1682,8 +1699,8 @@
   (dataframe-join/who 'dataframe-join left right lon ron how))
 
 (define-compat dataframe-join-asof/raw
-  (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32 -> _DataFrame-ptr/null)
-  #:c-id dataframe_join_asof
+  (_fun _DataFrame-ptr _DataFrame-ptr _str _str _int32 -> _DataFrame-ptr/null)
+  #:c-id dataframe_join_asof_v2
   #:wrap (allocator dataframe-drop))
 
 (define-frame-op/reason (dataframe-join-asof left right left-on right-on left-by right-by
@@ -1693,16 +1710,9 @@
                                      (asof-strategy-symbol->code strategy)
                                      left-by right-by kind integer float))
   (define-compat dataframe-join-asof-options/raw
-    (_fun _DataFrame-ptr _DataFrame-ptr _string _string _int32
-          (left-by : _string-list)
-          (_size = (length left-by))
-          (right-by : _string-list)
-          (_size = (length right-by))
-          _int32
-          _int64
-          _double
+    (_fun _DataFrame-ptr _DataFrame-ptr _str _str _int32 _str-list _str-list _int32 _int64 _double
           -> _DataFrame-ptr/null)
-    #:c-id dataframe_join_asof_options
+    #:c-id dataframe_join_asof_options_v2
     #:wrap (allocator dataframe-drop)))
 
 (define (dataframe-join-asof left right
@@ -1749,16 +1759,8 @@
                  sym)]))
 
 (define-compat dataframe-pivot/raw
-  (_fun _DataFrame-ptr
-        (on : _string-list)
-        (_size = (length on))
-        (index : _string-list)
-        (_size = (length index))
-        (values : _string-list)
-        (_size = (length values))
-        _int32
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_pivot
+  (_fun _DataFrame-ptr _str-list _str-list _str-list _int32 -> _DataFrame-ptr/null)
+  #:c-id dataframe_pivot_v2
   #:wrap (allocator dataframe-drop))
 
 (define (pivot-frame who df on index values agg)
@@ -1771,13 +1773,8 @@
   (pivot-frame 'dataframe-pivot df on index values agg))
 
 (define-compat dataframe-unpivot/raw
-  (_fun _DataFrame-ptr
-        (on : _string-list)
-        (_size = (length on))
-        (index : _string-list)
-        (_size = (length index))
-        -> _DataFrame-ptr/null)
-  #:c-id dataframe_unpivot
+  (_fun _DataFrame-ptr _str-list _str-list -> _DataFrame-ptr/null)
+  #:c-id dataframe_unpivot_v2
   #:wrap (allocator dataframe-drop))
 
 (define (unpivot-frame who df on index)

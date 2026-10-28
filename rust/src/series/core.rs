@@ -52,18 +52,12 @@ pub extern "C" fn series_dtype(s_ptr: *mut Series) -> CompatDType {
 }
 
 #[no_mangle]
-pub extern "C" fn series_rename(s_ptr: *mut Series, new_name: *const c_char) {
-    if s_ptr.is_null() || new_name.is_null() {
-        return;
-    }
-
-    unsafe {
-        let s = &mut *s_ptr;
-        let c_str = CStr::from_ptr(new_name);
-        if let Ok(str_slice) = c_str.to_str() {
-            s.rename(str_slice.into());
-        }
-    }
+pub extern "C" fn series_rename_v2(s_ptr: *mut Series, name: StrArg) -> i32 {
+    scalar_result(-1, || {
+        let s = unsafe { deref_mut_arg(s_ptr, "series") }?;
+        s.rename(unsafe { name_arg(name, "the name") }?.into());
+        Ok(0)
+    })
 }
 
 #[no_mangle]

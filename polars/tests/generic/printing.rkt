@@ -4,12 +4,14 @@
   (require rackunit racket/list
            (only-in polars/private/expr dataframe-group-by-agg)
            (only-in polars/private/expr-core col expr-drop-count lazyframe-drop-count)
-           (only-in racket/string string-split)
+           (only-in racket/string string-contains? string-split)
            (only-in polars/private/foreign
                     dataframe-column dataframe-new series-cast series-new-i32 series-new-i64
                     series-new-null series-new-str series-slice polars-null)
            (only-in polars/private/generic/printing series->printed series->string)
            (only-in (submod polars/private/generic/printing internal) cell)
+           (only-in polars/private/generic/reshape explain lazy select)
+           (only-in polars/tests/generic/test-fixtures named-frame nul-names)
            (only-in polars/tests/test-helpers settle! with-environment-variable)
            (only-in threading ~>))
   (define ints (series-new-i32 "ints" '(1 2 3 4)))
@@ -176,4 +178,6 @@
                             (list (col "v"))))
   (check-regexp-match #rx"\n\\[\n\t#<cannot print: series->string: unsupported dtype "
                       (series->string (dataframe-column nested "v")))
-  (check-regexp-match #rx"^#<series: cannot print: Series-ptr->C: " (series->printed 'not-a-series)))
+  (check-regexp-match #rx"^#<series: cannot print: Series-ptr->C: " (series->printed 'not-a-series))
+  (for ([n (in-list nul-names)])
+    (check-true (string-contains? (~> (named-frame n) lazy (select (col n)) explain) n))))

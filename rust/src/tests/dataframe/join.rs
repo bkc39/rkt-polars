@@ -18,19 +18,9 @@ fn join_on_k(
     right: *mut DataFrame,
     kind: CompatJoinKind,
 ) -> *mut DataFrame {
-    let lk = cstr("k");
-    let rk = cstr("k");
-    let lon: [*const c_char; 1] = [lk.as_ptr()];
-    let ron: [*const c_char; 1] = [rk.as_ptr()];
-    dataframe_join(
-        left,
-        right,
-        lon.as_ptr(),
-        lon.len(),
-        ron.as_ptr(),
-        ron.len(),
-        kind as i32,
-    )
+    let lon = str_list_block(&["k"]);
+    let ron = str_list_block(&["k"]);
+    dataframe_join_v2(left, right, lon.as_ptr(), ron.as_ptr(), kind as i32)
 }
 
 fn cleanup(
@@ -80,13 +70,11 @@ fn join_outer_keeps_all_rows_from_both_sides() {
 fn join_cross_produces_cartesian_product() {
     let (left, right, series) = make_left_right();
     // Cross join ignores the `on` arrays — pass empties.
-    let out = dataframe_join(
+    let out = dataframe_join_v2(
         left,
         right,
         ptr::null(),
-        0,
         ptr::null(),
-        0,
         CompatJoinKind::Cross as i32,
     );
     assert!(!out.is_null());
@@ -119,20 +107,10 @@ fn join_anti_returns_left_without_matches() {
 #[test]
 fn join_invalid_kind_returns_null() {
     let (left, right, series) = make_left_right();
-    let lk = cstr("k");
-    let rk = cstr("k");
-    let lon: [*const c_char; 1] = [lk.as_ptr()];
-    let ron: [*const c_char; 1] = [rk.as_ptr()];
+    let lon = str_list_block(&["k"]);
+    let ron = str_list_block(&["k"]);
     // 99 isn't a CompatJoinKind variant.
-    let out = dataframe_join(
-        left,
-        right,
-        lon.as_ptr(),
-        lon.len(),
-        ron.as_ptr(),
-        ron.len(),
-        99,
-    );
+    let out = dataframe_join_v2(left, right, lon.as_ptr(), ron.as_ptr(), 99);
     assert!(out.is_null());
     cleanup(left, right, series);
 }
@@ -149,13 +127,11 @@ fn join_null_inputs_return_null() {
 fn join_empty_on_arrays_return_null_for_non_cross() {
     // Inner / left / outer / semi / anti require at least one key.
     let (left, right, series) = make_left_right();
-    let out = dataframe_join(
+    let out = dataframe_join_v2(
         left,
         right,
         ptr::null(),
-        0,
         ptr::null(),
-        0,
         CompatJoinKind::Inner as i32,
     );
     assert!(out.is_null());
@@ -180,13 +156,11 @@ fn join_records_why_it_refuses() {
     assert!(join_on_k(left, missing, CompatJoinKind::Left).is_null());
     let reason = recorded_error().expect("a reason");
     assert!(reason.contains("\"k\""), "{}", reason);
-    assert!(dataframe_join(
+    assert!(dataframe_join_v2(
         left,
         left,
         ptr::null(),
-        0,
         ptr::null(),
-        0,
         CompatJoinKind::Inner as i32
     )
     .is_null());
@@ -208,16 +182,13 @@ fn join_records_why_it_refuses() {
 #[test]
 fn join_refuses_key_lists_of_different_lengths() {
     let (left, right, series) = make_left_right();
-    let (k, v) = (cstr("k"), cstr("v"));
-    let lon: [*const c_char; 2] = [k.as_ptr(), v.as_ptr()];
-    let ron: [*const c_char; 1] = [k.as_ptr()];
-    let out = dataframe_join(
+    let lon = str_list_block(&["k", "v"]);
+    let ron = str_list_block(&["k"]);
+    let out = dataframe_join_v2(
         left,
         right,
         lon.as_ptr(),
-        lon.len(),
         ron.as_ptr(),
-        ron.len(),
         CompatJoinKind::Inner as i32,
     );
     assert!(out.is_null());

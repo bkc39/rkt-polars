@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/runtime-path
+         (only-in racket/file file->value)
          (only-in polars/private/generic/core
                   column-names dataframe dtype len ref series wrap-series)
          (only-in polars/tests/test-helpers
@@ -13,7 +14,10 @@
                   series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
          (only-in polars/private/generic/reshape pivot)
-         (only-in gregor datetime))
+         (only-in gregor date datetime)
+         (only-in gregor/period microseconds)
+         (only-in gregor/time time)
+         (only-in racket/match match))
 
 (provide (all-defined-out)
          (all-from-out polars/tests/test-helpers)
@@ -26,6 +30,9 @@
   (pivot (dataframe (list (series '(1 2) #:name "id") (series (list n n) #:name "k")
                           (series '(3 4) #:name "v")))
          #:on '("k") #:index '("id") #:values '("v")))
+
+(define (named-frame n [keys '(1 2)] [other "a"] [others '(3 4)])
+  (dataframe (list (series keys #:name n) (series others #:name other))))
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
@@ -50,6 +57,24 @@
                    (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
+
+(define-runtime-path nul-expected-file "../../scribblings/data/nul-expected.rktd")
+
+(define (rktd-value v)
+  (match v
+    ['null polars-null]
+    [(list 'date y m d) (date y m d)]
+    [(list 'datetime y mo d h mi s ns) (datetime y mo d h mi s ns)]
+    [(list 'time h m s ns) (time h m s ns)]
+    [(list 'duration-us n) (microseconds n)]
+    [(list 'category name) (string->symbol name)]
+    [(list 'decimal digits) (string->number digits 10 'number-or-false 'decimal-as-exact)]
+    [(? list?) (map rktd-value v)]
+    [_ v]))
+
+(define nul-expected
+  (for/list ([row (in-list (file->value nul-expected-file))])
+    (cons (car row) (map rktd-value (cdr row)))))
 
 (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")
 

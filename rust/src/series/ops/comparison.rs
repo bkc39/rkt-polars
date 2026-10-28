@@ -35,44 +35,6 @@ cmp_scalar!(series_eq_f64, equal, f64, f64);
 cmp_scalar!(series_ne_f64, not_equal, f64, f64);
 
 #[no_mangle]
-pub extern "C" fn series_eq_str(
-    s_ptr: *mut Series,
-    rhs: *const c_char,
-) -> *mut Series {
-    if s_ptr.is_null() || rhs.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    let rhs_str = match unsafe { CStr::from_ptr(rhs).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    match s.str() {
-        Ok(ca) => Box::into_raw(Box::new(ca.equal(rhs_str).into_series())),
-        Err(_) => ptr::null_mut(),
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn series_ne_str(
-    s_ptr: *mut Series,
-    rhs: *const c_char,
-) -> *mut Series {
-    if s_ptr.is_null() || rhs.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    let rhs_str = match unsafe { CStr::from_ptr(rhs).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    match s.str() {
-        Ok(ca) => Box::into_raw(Box::new(ca.not_equal(rhs_str).into_series())),
-        Err(_) => ptr::null_mut(),
-    }
-}
-
-#[no_mangle]
 pub extern "C" fn series_is_null(s_ptr: *mut Series) -> *mut Series {
     if s_ptr.is_null() {
         return ptr::null_mut();

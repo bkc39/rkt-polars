@@ -43,8 +43,8 @@ fn collected(
 }
 
 fn selected(build: impl FnOnce(*const Expr) -> *mut Expr) -> Vec<Option<i32>> {
-    let name = cstr("x");
-    let x = Owned::new(expr_col(name.as_ptr()), expr_drop);
+    let name = str_block("x");
+    let x = Owned::new(expr_col_v2(name.as_ptr()), expr_drop);
     let e = Owned::new(build(x.0), expr_drop);
     collected(|lf| {
         let exprs: [*const Expr; 1] = [e.0];
