@@ -1502,7 +1502,7 @@
           (dataframe-sort (list n))))
     (check-equal? (dataframe-column-names summed) (list n "a_sum"))
     (check-equal? (series-ref (dataframe-column summed "a_sum") 0) 4))
-  (for ([row (in-list nul-expected)] #:when (memq (car row) '(eq ne)))
+  (for ([row (in-list (nul-expected 'values))] #:when (memq (car row) '(eq ne)))
     (match row
       [(list 'eq xs v expected)
        (check-equal? (~> (series-new-str "s" xs) (series-eq-str v) series->list) expected)]
