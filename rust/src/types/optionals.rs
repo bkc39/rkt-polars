@@ -77,6 +77,10 @@ pub struct CompatOptBool {
 
 impl CompatOptI32 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: i32) -> Self {
         Self { valid: 1, value: v }
     }
@@ -90,6 +94,10 @@ impl CompatOptI32 {
 
 impl CompatOptI8 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: i8) -> Self {
         Self { valid: 1, value: v }
     }
@@ -103,6 +111,10 @@ impl CompatOptI8 {
 
 impl CompatOptI16 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: i16) -> Self {
         Self { valid: 1, value: v }
     }
@@ -117,6 +129,10 @@ impl CompatOptI16 {
 impl CompatOptF64 {
     pub(crate) const NONE: Self = Self {
         valid: 0,
+        value: 0.0,
+    };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
         value: 0.0,
     };
     pub(crate) fn some(v: f64) -> Self {
@@ -135,6 +151,10 @@ impl CompatOptF32 {
         valid: 0,
         value: 0.0,
     };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0.0,
+    };
     pub(crate) fn some(v: f32) -> Self {
         Self { valid: 1, value: v }
     }
@@ -148,6 +168,10 @@ impl CompatOptF32 {
 
 impl CompatOptI64 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: i64) -> Self {
         Self { valid: 1, value: v }
     }
@@ -161,6 +185,10 @@ impl CompatOptI64 {
 
 impl CompatOptU8 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: u8) -> Self {
         Self { valid: 1, value: v }
     }
@@ -174,6 +202,10 @@ impl CompatOptU8 {
 
 impl CompatOptU16 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: u16) -> Self {
         Self { valid: 1, value: v }
     }
@@ -187,6 +219,10 @@ impl CompatOptU16 {
 
 impl CompatOptU32 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: u32) -> Self {
         Self { valid: 1, value: v }
     }
@@ -200,6 +236,10 @@ impl CompatOptU32 {
 
 impl CompatOptU64 {
     pub(crate) const NONE: Self = Self { valid: 0, value: 0 };
+    pub(crate) const FAILED: Self = Self {
+        valid: -1,
+        value: 0,
+    };
     pub(crate) fn some(v: u64) -> Self {
         Self { valid: 1, value: v }
     }

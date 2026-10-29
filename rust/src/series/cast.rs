@@ -19,55 +19,48 @@ pub extern "C" fn series_cast(
 }
 
 #[no_mangle]
-pub extern "C" fn series_std(s_ptr: *mut Series, ddof: u8) -> CompatOptF64 {
-    if s_ptr.is_null() {
-        return CompatOptF64::NONE;
-    }
-    let s = unsafe { &*s_ptr };
-    CompatOptF64::from_option(s.std(ddof))
+pub extern "C" fn series_std_v2(
+    s_ptr: *const Series,
+    ddof: u8,
+) -> CompatOptF64 {
+    scalar_result(CompatOptF64::FAILED, || {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(CompatOptF64::from_option(s.std(ddof)))
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn series_var(s_ptr: *mut Series, ddof: u8) -> CompatOptF64 {
-    if s_ptr.is_null() {
-        return CompatOptF64::NONE;
-    }
-    let s = unsafe { &*s_ptr };
-    CompatOptF64::from_option(s.var(ddof))
+pub extern "C" fn series_var_v2(
+    s_ptr: *const Series,
+    ddof: u8,
+) -> CompatOptF64 {
+    scalar_result(CompatOptF64::FAILED, || {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(CompatOptF64::from_option(s.var(ddof)))
+    })
 }
 
-// Quantile of a series, computed in f64 (cast first so every numeric dtype is
-// supported uniformly).  `interpol` selects the interpolation strategy; the
-// Racket side defaults to Nearest, which is what `describe` uses.  Returns NONE
-// for an empty/all-null series or a non-numeric dtype.
 #[no_mangle]
-pub extern "C" fn series_quantile(
-    s_ptr: *mut Series,
+pub extern "C" fn series_quantile_v2(
+    s_ptr: *const Series,
     quantile: f64,
     interpol: u8,
 ) -> CompatOptF64 {
-    if s_ptr.is_null() {
-        return CompatOptF64::NONE;
-    }
-    let interpol = match interpol {
-        0 => QuantileMethod::Nearest,
-        1 => QuantileMethod::Linear,
-        2 => QuantileMethod::Lower,
-        3 => QuantileMethod::Higher,
-        4 => QuantileMethod::Midpoint,
-        _ => QuantileMethod::Nearest,
-    };
-    let s = unsafe { &*s_ptr };
-    let casted = match s.cast(&DataType::Float64) {
-        Ok(c) => c,
-        Err(_) => return CompatOptF64::NONE,
-    };
-    let ca = match casted.f64() {
-        Ok(ca) => ca,
-        Err(_) => return CompatOptF64::NONE,
-    };
-    match ca.quantile(quantile, interpol) {
-        Ok(opt) => CompatOptF64::from_option(opt),
-        Err(_) => CompatOptF64::NONE,
-    }
+    scalar_result(CompatOptF64::FAILED, || {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        let method = match interpol {
+            0 => QuantileMethod::Nearest,
+            1 => QuantileMethod::Linear,
+            2 => QuantileMethod::Lower,
+            3 => QuantileMethod::Higher,
+            4 => QuantileMethod::Midpoint,
+            n => {
+                polars_bail!(ComputeError: "unknown quantile method code {}", n)
+            }
+        };
+        let casted = s.cast(&DataType::Float64)?;
+        Ok(CompatOptF64::from_option(
+            casted.f64()?.quantile(quantile, method)?,
+        ))
+    })
 }

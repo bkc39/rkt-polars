@@ -2358,9 +2358,9 @@ temps
               @defproc[(series-mean-f64 [s Series-ptr?]) (or/c flonum? #f)])]{
   Typed reductions. The suffix names the dtype the series must have
   (@racket['int32] or @racket['float64]); applied to a series of any other
-  dtype they return @racket[#f] rather than converting, so
-  @racket[(series-sum-i32 (series '(1 2)))] is @racket[#f] because
-  @racket[series] infers @racket['int64] for those elements. They also return
+  dtype they raise rather than converting, so
+  @racket[(series-sum-i32 (series '(1 2)))] raises because
+  @racket[series] infers @racket['int64] for those elements. They return
   @racket[#f] when the reduction is undefined — the min, max or mean of a
   series whose entries are all null — while the sum of such a series is
   @racket[0]. The generic @racket[sum], @racket[min], @racket[max] and
@@ -2370,7 +2370,8 @@ temps
 
   @examples[#:eval ev
 (define gaps (series (list polars-null polars-null) #:dtype 'float64))
-(list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))]}
+(list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))
+(eval:error (series-sum-i32 (series '(1 2))))]}
 
 @defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical

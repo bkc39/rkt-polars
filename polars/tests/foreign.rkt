@@ -183,8 +183,8 @@
   (check-equal?
    (series-sum-i32 (series-new-i32 "" '(1 2 3 4)))
    10)
-  (check-false
-   (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))) ;; wrong dtype
+  (check-exn #rx"^series-sum-i32: invalid series dtype: expected `Int32`, got `f64`"
+             (lambda () (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))))
   (check-exn
    #rx"^series-new-i32: contract violation\n  expected: [^\n]*utf-8\\?[^\n]*\n  given: #f"
    (lambda ()
@@ -685,6 +685,41 @@
   (check-= (series-var stats #:ddof 0) 1.25 1e-9)
   (check-= (series-std stats #:ddof 0) (sqrt 1.25) 1e-9)
   (check-false (series-std (series-new-str "s" '("a" "b"))))
+  (check-false (series-var (series-new-str "s" '("a" "b"))))
+
+  (define reduction-wrong-f64 (series-new-f64 "wrong" '(1.0 2.0)))
+  (define reduction-dtype-cases
+    (for*/list ([family (in-list
+                         (list (list "Int8" series-sum-i8 series-min-i8 series-max-i8
+                                     series-mean-i8)
+                               (list "Int16" series-sum-i16 series-min-i16 series-max-i16
+                                     series-mean-i16)
+                               (list "Int32" series-sum-i32 series-min-i32 series-max-i32
+                                     series-mean-i32)
+                               (list "Int64" series-sum-i64 series-min-i64 series-max-i64
+                                     series-mean-i64)
+                               (list "UInt8" series-sum-u8 series-min-u8 series-max-u8
+                                     series-mean-u8)
+                               (list "UInt16" series-sum-u16 series-min-u16 series-max-u16
+                                     series-mean-u16)
+                               (list "UInt32" series-sum-u32 series-min-u32 series-max-u32
+                                     series-mean-u32)
+                               (list "UInt64" series-sum-u64 series-min-u64 series-max-u64
+                                     series-mean-u64)
+                               (list "Float32" series-sum-f32 series-min-f32 series-max-f32
+                                     series-mean-f32)
+                               (list "Float64" series-sum-f64 series-min-f64 series-max-f64
+                                     series-mean-f64)))]
+                [reduce (in-list (cdr family))])
+      (list reduce (car family))))
+  (check-equal? (length reduction-dtype-cases) 40)
+  (for ([case (in-list reduction-dtype-cases)])
+    (match-define (list reduce dtype) case)
+    (define wrong (if (equal? dtype "Float64") (series-new-i32 "wrong" '(1 2)) reduction-wrong-f64))
+    (check-exn (regexp (format "^~a: invalid series dtype: expected `~a`, got `[^`]+` .*`wrong`$"
+                               (object-name reduce) dtype))
+               (lambda () (reduce wrong))
+               (format "~a" (object-name reduce))))
 
   ;; series-series comparisons
   (define cmp-left (series-new-i32 "a" '(1 2 3 4)))

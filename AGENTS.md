@@ -196,7 +196,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
   `series_and`, `series_or`, `series_xor`, `series_not`), the scalar
   operators (`series_{add,sub,mul,div,mod}_{i32,i64,u32,u64,f64}` and
-  `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`), `dataframe_vstack`,
+  `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`), the reductions
+  (`series_{sum,min,max,mean}_<dtype>_v2` over the ten numeric dtypes,
+  `series_n_unique_v2`, `series_std_v2`, `series_var_v2`,
+  `series_quantile_v2`), which mark a failure in the result (`valid` -1, or
+  -1 for `series_n_unique_v2`) and are read with `#:ok?`, `dataframe_vstack`,
   `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
   `dataframe_join_asof_options_v2`, every other entry point that takes a
   `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,
@@ -779,7 +783,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   written by `scripts/reductions-expected.py` from Python on empty,
   all-null and partly null series of each dtype;
   `polars/tests/generic/reductions.rkt` reads it. The typed low-level
-  `series-sum-i32` and kin still return `#f`.
+  `series-sum-i32` and kin return `#f` for an undefined result and raise on
+  the wrong dtype.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.

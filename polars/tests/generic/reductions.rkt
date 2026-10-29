@@ -12,7 +12,7 @@
            (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/foreign
                     dataframe-drop-count series-drop-count series-head series-min-f64
-                    series-slice series-sum-f64)
+                    series-slice series-sum-f64 series-sum-i32)
            (only-in polars/private/generic/core column-names dataframe dtype series wrap-series)
            (only-in polars/private/generic/reshape select)
            (only-in polars/private/generic/reductions alias first last max mean min sum)
@@ -86,6 +86,10 @@
   (define gaps (series (list polars-null polars-null) #:dtype 'float64))
   (check-equal? (list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))
                 (list #f 0.0 polars-null))
+  (check-exn #rx"^series-sum-i32: invalid series dtype: expected `Int32`, got `i64`"
+             (lambda () (series-sum-i32 (series '(1 2)))))
+  (check-equal? (series-sum-i32 (series '(1 2) #:dtype 'int32)) 3)
+  (check-equal? (list (series-min-f64 gaps) (min gaps)) (list #f polars-null))
   (check-exn #rx"^mean: arity mismatch" (lambda () (contracted:mean)))
   (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
   (for* ([reduce (list contracted:std contracted:var)]
