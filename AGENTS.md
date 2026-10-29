@@ -140,7 +140,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/private` and `polars/tests` and fails on one of these four result
   types without its allocator, or on a `_pointer` result. It also fails on
   `allocator/or-fail` around a `_v2` (or later) entry point, which records a
-  reason that `operation failed` would discard.
+  reason that `operation failed` would discard, and the set of bindings
+  under `polars/private` that `allocator/or-fail` wraps is a literal list
+  there, so a new one fails until it is listed.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -189,7 +191,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series_new_str_packed`, the series-by-series operators (`series_add`,
   `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
   `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
-  `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
+  `series_and`, `series_or`, `series_xor`, `series_not`), the scalar
+  operators (`series_{add,sub,mul,div,mod}_{i32,i64,u32,u64,f64}` and
+  `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`), `dataframe_vstack`,
   `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
   `dataframe_join_asof_options_v2`, every other entry point that takes a
   `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,

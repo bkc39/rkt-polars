@@ -79,8 +79,103 @@ fn arith_u32_mul_smoke() {
     series_drop(s);
 }
 
+type ScalarOp = fn(*mut Series) -> *mut Series;
+
+const ARITH_SCALAR_OPS: [(&str, ScalarOp, &str); 25] = [
+    ("series_add_i32", |s| series_add_i32(s, 1), "Int32"),
+    ("series_sub_i32", |s| series_sub_i32(s, 1), "Int32"),
+    ("series_mul_i32", |s| series_mul_i32(s, 1), "Int32"),
+    ("series_div_i32", |s| series_div_i32(s, 1), "Int32"),
+    ("series_mod_i32", |s| series_mod_i32(s, 1), "Int32"),
+    ("series_add_i64", |s| series_add_i64(s, 1), "Int64"),
+    ("series_sub_i64", |s| series_sub_i64(s, 1), "Int64"),
+    ("series_mul_i64", |s| series_mul_i64(s, 1), "Int64"),
+    ("series_div_i64", |s| series_div_i64(s, 1), "Int64"),
+    ("series_mod_i64", |s| series_mod_i64(s, 1), "Int64"),
+    ("series_add_u32", |s| series_add_u32(s, 1), "UInt32"),
+    ("series_sub_u32", |s| series_sub_u32(s, 1), "UInt32"),
+    ("series_mul_u32", |s| series_mul_u32(s, 1), "UInt32"),
+    ("series_div_u32", |s| series_div_u32(s, 1), "UInt32"),
+    ("series_mod_u32", |s| series_mod_u32(s, 1), "UInt32"),
+    ("series_add_u64", |s| series_add_u64(s, 1), "UInt64"),
+    ("series_sub_u64", |s| series_sub_u64(s, 1), "UInt64"),
+    ("series_mul_u64", |s| series_mul_u64(s, 1), "UInt64"),
+    ("series_div_u64", |s| series_div_u64(s, 1), "UInt64"),
+    ("series_mod_u64", |s| series_mod_u64(s, 1), "UInt64"),
+    ("series_add_f64", |s| series_add_f64(s, 1.0), "Float64"),
+    ("series_sub_f64", |s| series_sub_f64(s, 1.0), "Float64"),
+    ("series_mul_f64", |s| series_mul_f64(s, 1.0), "Float64"),
+    ("series_div_f64", |s| series_div_f64(s, 1.0), "Float64"),
+    ("series_mod_f64", |s| series_mod_f64(s, 1.0), "Float64"),
+];
+
+fn make_of(dtype: &str, name: &str) -> *mut Series {
+    let n = cstr(name);
+    let s = match dtype {
+        "Int32" => series_new_i32(n.as_ptr(), [3i32, 4].as_ptr(), 2),
+        "Int64" => series_new_i64(n.as_ptr(), [3i64, 4].as_ptr(), 2),
+        "UInt32" => series_new_u32(n.as_ptr(), [3u32, 4].as_ptr(), 2),
+        "UInt64" => series_new_u64(n.as_ptr(), [3u64, 4].as_ptr(), 2),
+        "Float64" => series_new_f64(n.as_ptr(), [3.0, 4.0].as_ptr(), 2),
+        _ => unreachable!("{}", dtype),
+    };
+    assert!(!s.is_null());
+    s
+}
+
 #[test]
-fn arith_scalar_null_series_returns_null() {
-    assert!(series_add_i32(ptr::null_mut(), 1).is_null());
-    assert!(series_div_f64(ptr::null_mut(), 1.0).is_null());
+fn arith_scalar_ops_clear_a_stale_reason() {
+    for (name, op, dtype) in ARITH_SCALAR_OPS {
+        let s = make_of(dtype, "xs");
+        set_last_error("stale");
+        let out = op(s);
+        assert!(!out.is_null(), "{}", name);
+        assert_eq!(recorded_error(), None, "{}", name);
+        series_drop(out);
+        series_drop(s);
+    }
+}
+
+#[test]
+fn arith_scalar_ops_report_the_wrong_dtype() {
+    for (name, op, dtype) in ARITH_SCALAR_OPS {
+        let wrong = if dtype == "Float64" {
+            "Int32"
+        } else {
+            "Float64"
+        };
+        let s = make_of(wrong, "wrong");
+        clear_last_error();
+        assert!(op(s).is_null(), "{}", name);
+        let reason = recorded_error().unwrap_or_else(|| panic!("{}", name));
+        let expected = format!("invalid series dtype: expected `{}`", dtype);
+        assert!(reason.contains(&expected), "{}: {}", name, reason);
+        assert!(reason.contains("`wrong`"), "{}: {}", name, reason);
+        series_drop(s);
+    }
+}
+
+#[test]
+fn arith_scalar_null_series_reports_it() {
+    for (name, op, _) in ARITH_SCALAR_OPS {
+        clear_last_error();
+        assert!(op(ptr::null_mut()).is_null(), "{}", name);
+        assert_eq!(
+            recorded_error().as_deref(),
+            Some("series is null"),
+            "{}",
+            name
+        );
+    }
+}
+
+#[test]
+fn integer_division_by_zero_is_null_and_no_failure() {
+    let s = make_i32("xs", &[10, -3]);
+    set_last_error("stale");
+    let out = series_div_i32(s, 0);
+    assert_eq!(opt_i32s(out), vec![None, None]);
+    assert_eq!(recorded_error(), None);
+    series_drop(out);
+    series_drop(s);
 }

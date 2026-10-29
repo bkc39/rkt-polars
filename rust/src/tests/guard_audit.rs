@@ -723,7 +723,7 @@ fn the_audit_reads_every_entry_point() {
             name
         );
     }
-    for name in ["series_len", "series_add_i32", "expr_sum"] {
+    for name in ["series_len", "series_null_count", "expr_sum"] {
         assert!(
             !guarded_block(&entry(name).block, &guarding),
             "{} guarded",

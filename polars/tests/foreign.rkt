@@ -734,7 +734,7 @@
                 3.0)
   (check-equal? (series-ref (series-mod-f64 (series-new-f64 "f" '(3.0 7.5)) 2.0) 1)
                 1.5)
-  (check-exn #rx"operation failed"
+  (check-exn #rx"^series-add-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
              (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3)))
 
   ;; Use a small dataframe so we can read mask results back via dataframe-filter.
@@ -1297,6 +1297,9 @@
                             (lambda () (series-cast owned-i32 'float64)))
                 1)
   (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-add-i32 owned-i32 1)))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
                             (lambda () (series-new-i32 "c" '(1 2))))
                 1)
   (check-equal? (drops-once series-drop-count series-drop
@@ -1320,10 +1323,49 @@
              (lambda () (series-not owned-i32)))
   (check-exn #rx"^series-and: invalid series dtype: expected `Boolean`, got `i32`"
              (lambda () (series-and owned-i32 owned-bool)))
-  (check-exn #rx"^series-lt-i32: operation failed$" (lambda () (series-lt-i32 owned-f64 1)))
+  (check-exn #rx"^series-lt-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
+             (lambda () (series-lt-i32 owned-f64 1)))
   (check-exn #rx"^series-eq-str: cannot compare string with numeric type \\(i32\\)$"
              (lambda () (series-eq-str owned-i32 "a")))
-  (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
+  (check-exn #rx"^series-add-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
+             (lambda () (series-add-i32 owned-f64 1)))
+
+  (define wrong-f64 (series-new-f64 "wrong" '(1.0 2.0)))
+  (define wrong-i32 (series-new-i32 "wrong" '(1 2)))
+  (define scalar-op-dtype-cases
+    (for*/list ([family (in-list
+                         (list (list "Int32" wrong-f64 1 series-add-i32 series-sub-i32
+                                     series-mul-i32 series-div-i32 series-mod-i32 series-lt-i32
+                                     series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32
+                                     series-ne-i32)
+                               (list "Int64" wrong-f64 1 series-add-i64 series-sub-i64
+                                     series-mul-i64 series-div-i64 series-mod-i64)
+                               (list "UInt32" wrong-f64 1 series-add-u32 series-sub-u32
+                                     series-mul-u32 series-div-u32 series-mod-u32)
+                               (list "UInt64" wrong-f64 1 series-add-u64 series-sub-u64
+                                     series-mul-u64 series-div-u64 series-mod-u64)
+                               (list "Float64" wrong-i32 1.0 series-add-f64 series-sub-f64
+                                     series-mul-f64 series-div-f64 series-mod-f64 series-lt-f64
+                                     series-le-f64 series-gt-f64 series-ge-f64 series-eq-f64
+                                     series-ne-f64)))]
+                [op (in-list (cdddr family))])
+      (match-define (list* dtype wrong v _) family)
+      (list op dtype wrong v)))
+  (check-equal? (length scalar-op-dtype-cases) 37)
+  (for ([case (in-list scalar-op-dtype-cases)])
+    (match-define (list op dtype wrong v) case)
+    (check-exn (regexp (format "^~a: invalid series dtype: expected `~a`, got `[^`]+` .*`wrong`$"
+                               (object-name op) dtype))
+               (lambda () (op wrong v))
+               (format "~a" (object-name op))))
+
+  (check-exn #rx"^series-not: " (lambda () (series-not owned-i32)))
+  (check-exn (lambda (e)
+               (and (exn:fail? e)
+                    (regexp-match? #rx"^series-add-i32: invalid series dtype: expected `Int32`"
+                                   (exn-message e))
+                    (not (regexp-match? #rx"Boolean" (exn-message e)))))
+             (lambda () (series-add-i32 owned-f64 1)))
   (check-exn #rx"^series-new-i32/vec: contract violation"
              (lambda () (series-new-i32/vec #f (vector 1))))
   (check-exn #rx"^dataframe-new: operation failed$"
@@ -1408,6 +1450,20 @@
   (check-equal? (for/list ([form (in-list bindings)] #:when (discards-reason? form)) (cadr form))
                 '()
                 "a v2 entry point records its reason: read it with call/foreign-error")
+  (define (fails-without-reason? form)
+    (match (memq '#:wrap form)
+      [(list* _ (list* 'allocator/or-fail _) _) #t]
+      [_ #f]))
+  (define private-bindings (compat-bindings (polars-sources #:dirs '("private"))))
+  (check-equal? (sort (for/list ([form (in-list private-bindings)]
+                                 #:when (fails-without-reason? form))
+                        (cadr form))
+                      symbol<?)
+                '(dataframe-drop-nulls dataframe-filter dataframe-unique expr-lit-temporal
+                  list-constructor-raw-name opt-constructor-name series-enum-categories/raw
+                  series-new-bool/opt/raw series-new-bool/raw series-new-bool/vec/raw
+                  series-new-null/raw series-unique vector-constructor-raw-name)
+                "a new allocator/or-fail discards any reason the entry point records")
   (with-planted-sources (root ["tests/planted.rkt"
                                (format "#lang racket/base\n~s"
                                        `(,compat planted (_fun -> _DataFrame-ptr)))])

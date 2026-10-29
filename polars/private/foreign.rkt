@@ -49,6 +49,9 @@
                      series-ne-i32
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
                      (matching-identifiers-out
+                      #rx"^series-(?:add|sub|mul|div|mod|lt|le|gt|ge|eq|ne)-(?:[iu](?:32|64)|f64)/raw$"
+                      (all-defined-out))
+                     (matching-identifiers-out
                       #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
                       (all-defined-out))
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
@@ -1391,10 +1394,16 @@
     (pattern (~literal _double) #:attr range #f)))
 
 (define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
+  #:with raw (format-id #'name "~a/raw" #'name)
+  #:do [(define base (symbol->string (syntax-e #'name)))]
+  #:with c-id (format-id #'name "~a" (regexp-replace* #rx"-" base "_"))
   (begin
-    (define-compat name
+    (define-compat raw
       (_fun _Series-ptr ctype -> _Series-ptr/null)
-      #:wrap (allocator/or-fail series-drop 'name))
+      #:c-id c-id
+      #:wrap (allocator series-drop))
+    (define (name s v)
+      (call/polars-reason 'name (lambda () (raw s v))))
     (~? (provide (contract-out [name (->/c Series-ptr? ctype.range Series-ptr?)])))))
 
 (define-series-scalar-op series-add-i32 _int32)
