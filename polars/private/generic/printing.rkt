@@ -16,6 +16,7 @@
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
          polars/private/foreign
+         (only-in (submod polars/private/foreign internal) series-slice/who)
          (only-in threading ~>>))
 
 (provide series->printed series->string)
@@ -136,7 +137,7 @@
 
 (define (zone-abbreviations s start count)
   (define collected
-    (with-release ([rows (series-slice s start count) series-drop]
+    (with-release ([rows (series-slice/who 'series s start count) series-drop]
                    [frame (dataframe-new (list rows)) dataframe-drop]
                    [all (expr-all) expr-drop]
                    [zone (expr-dt-strftime all "%Z") expr-drop])

@@ -184,7 +184,7 @@
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
-  (check-exn #rx"^with-columns: [^\n]*\"IAH\""
+  (check-exn #rx"^with-columns: 2 of 4 values are not in '\\(enum JFK MIA\\): IAH$"
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
   (define nul-mia (string->symbol "MI\u0000A"))
   (define nul-dests (list 'enum 'JFK nul-mia 'IAH))
@@ -305,7 +305,7 @@
   (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:format 'dot)))
   (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:optimized 1)))
   (check-regexp-match
-   #rx"^explain: failed to explain the query: [^\n]*\"nope\""
+   #rx"^explain: [^\n]*\"nope\"[^\n]*$"
    (with-handlers ([exn:fail? exn-message])
      (contracted:explain (select (lazy ops-df) "nope"))))
 

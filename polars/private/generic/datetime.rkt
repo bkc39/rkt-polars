@@ -20,8 +20,12 @@
          dt-iso-year dt-quarter dt-week dt-weekday dt-ordinal-day
          dt-is-leap-year dt-date dt-time
          dt-millisecond dt-microsecond dt-nanosecond
-         dt-timestamp dt-strftime dt-truncate
+         dt-truncate
          (contract-out
+          [dt-timestamp (->* (col-expr/c)
+                             (#:unit (or/c 'milliseconds 'microseconds 'nanoseconds))
+                             Expr-ptr?)]
+          [dt-strftime (-> col-expr/c string? Expr-ptr?)]
           [dt-convert-time-zone (-> (or/c series? col-expr/c) time-zone-name/c
                                     (or/c series? Expr-ptr?))]
           [dt-replace-time-zone (->* ((or/c series? col-expr/c) (or/c #f time-zone-name/c))

@@ -531,9 +531,9 @@ total
   (@racket[dtype-spec?]), plus @racket['binary] and @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
   in a cast to an Enum, which raises as Python's default @tt{strict=True}
-  does. On a series the error names the values outside the categories (the
-  first ten in sorted order); on an expression it raises when the plan runs,
-  with Polars' message.
+  does. The error names the values outside the categories (the first ten in
+  sorted order); on an expression it raises when the plan runs, under the
+  verb that runs it.
 
   A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each
   instant: a naive datetime, or an integer count since the epoch, is read
@@ -559,6 +559,7 @@ total
 (cast (series '(1 2 3)) 'f64)
 (define-enum carriers UA AA)
 (eval:error (cast (series '("UA" "B6")) carriers))
+(eval:error (select (dataframe (list (series '("UA" "B6") #:name "c"))) (cast "c" carriers)))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
                   '(datetime microseconds "Europe/Brusels")))
@@ -1721,6 +1722,7 @@ stations
 (~> (dataframe (list (series (list (string-append "2020" "\u0000" "01" "\u0000" "02"))
                              #:name "d")))
     (select (str->date "d" #:format "%Y\u0000%m\u0000%d")))
+(eval:error (select (dataframe (list (series '("2021-03-27" "soon") #:name "d"))) (str->date "d")))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 
 @deftogether[(@defproc[(dt-convert-time-zone [x (or/c series? Expr-ptr? string?)]
@@ -1831,8 +1833,11 @@ an implementation detail and not part of the public series API.)
   @racket[polars-null] elements. Both short spellings (@racket['i32], @racket['f64],
   @racket['str], @racket['bool]) and canonical symbols (@racket['int32],
   @racket['float64], @racket['string], @racket['boolean]) are accepted. Use
-  @racket[polars-null] for missing values. Exact integers are coerced to
-  flonums when the target dtype is floating point. Symbols infer
+  @racket[polars-null] for missing values. Exact integers infer
+  @racket['int64], or @racket['uint64] when one is @racket[(expt 2 63)] or
+  more and none is negative, as in Python; an integer neither holds, or one
+  outside @racket[#:dtype]'s range, is a contract violation. Exact integers
+  are coerced to flonums when the target dtype is floating point. Symbols infer
   @racket['categorical]; a @racket['categorical] or Enum (@racket[define-enum])
   series is built from strings or symbols alike, and an Enum raises on a
   value outside its categories (@secref["ref-categorical"]). gregor dates,
@@ -1852,6 +1857,8 @@ an implementation detail and not part of the public series API.)
 (series '() #:name "empty" #:dtype 'f64)
 (eval:error (series '(1 2) #:dtype 'null))
 (series '(1.5 2.5) #:name "floats" #:dtype 'f32)
+(dtype (series (list (expt 2 63))))
+(eval:error (series (list (expt 2 64))))
 (series (list 1 polars-null 3) #:name "with-null")
 (series '(IAH ATL IAH) #:name "dest")
 (series (list (date 1997 1 10) (date 1985 2 15)) #:name "birthdate")

@@ -233,9 +233,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   → `#:null-values`, `missing_columns='insert'` → `#:missing-columns 'insert`,
   `ambiguous` → `#:ambiguous`, ...; `non_existent='null'` becomes
   `dt-replace-time-zone`'s `#:non-existent 'null`, since `str->datetime` and
-  the other verbs that can raise it lack the keyword) and in the JSON readers'
-  advice to increase `infer_schema_length` or give a schema. It drops the
-  multi-file scan's hint to pass `extra_columns` or a schema, which the
+  the other verbs that can raise it lack the keyword, `strict=False` →
+  `#:strict #f`, `str.strptime` → `str->date` or `str->datetime` with a
+  `#:format`) and in the JSON readers' advice to increase
+  `infer_schema_length` or give a schema. It drops the `LazyFrame.` names
+  from the duplicate-name and multiple-predicate messages, and turns
+  `all_horizontal` into `and` or `or`. It drops the multi-file scan's hints
+  to pass `extra_columns` or a schema and to pass `cast_options`, which the
   bindings lack, and the hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the
   nine take a zone's name through `named_time_zone`, which checks it with
   `TimeZone::validate_time_zone` after `opt_try_new`, and only `opt_try_new`
@@ -878,7 +882,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   last categorical column drops: the codes never leave Rust, and
   `series_copy_cat` re-encodes each copy densely with its own category table.
   A cast to an Enum is strict, as Python's default is; every other `cast`
-  stays non-strict (a value that does not convert becomes null).
+  stays non-strict (a value that does not convert becomes null). Both forms
+  run `enum_cast_checked` (`series/categorical.rs`), which records the
+  misses as a tagged payload that `call/foreign-error` renders, so the lazy
+  form raises the eager message under the verb that runs the plan. Its
+  plan prints the cast as `to_enum`, which the expression `sort`'s
+  classifier reads through.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.

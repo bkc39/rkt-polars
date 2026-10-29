@@ -7,6 +7,7 @@
          (only-in polars/private/expr-core drop-owned)
          polars/private/generic/core
          polars/private/generic/dtype
+         (only-in polars/private/generic/expr-util define-named)
          polars/private/generic/logical
          polars/private/generic/operands
          (only-in polars/private/resource with-release)
@@ -27,17 +28,17 @@
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a)
           (call-with-operand-series 'name a b 'right
-                                    (lambda (o) (named-after a b (series-op 'name a o))))]
+                                    (lambda (o) (named-after 'name a b (series-op 'name a o))))]
          [(series? b)
           (call-with-operand-series 'name b a 'left
-                                    (lambda (o) (named-after b a (series-op-reflected 'name b o))))]
+                                    (lambda (o) (named-after 'name b a (series-op-reflected 'name b o))))]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
 
-(define (named-after s other result)
+(define (named-after who s other result)
   (cond
     [(series? other) (wrap-series result)]
-    [else (series-rename result (series-name s))
+    [else (series-rename/who who result (series-name s))
           (wrap-series result)]))
 
 (define (base:!= . args) (base:not (apply base:= args)))
@@ -127,7 +128,7 @@
 
 (define-syntax-parse-rule (define-arith name:id who:id expr-op:expr series-op:expr base-op:expr
                            (~var one (one-argument #'who #'base-op)))
-  (define (name . args)
+  (define-named (name who . args)
     (match args
       one.clause ...
       [_ #:when (andmap base:number? args) (apply base-op args)]

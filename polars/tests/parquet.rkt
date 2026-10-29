@@ -264,7 +264,7 @@
                                                             (in-scratch "raw.parquet")
                                                             #:compression 'lzo)))
   (check-regexp-match
-   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"colour\""
+   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"colour\"[^\n]*$"
    (message-of (lambda ()
                  (lazyframe-explain
                   (lazyframe-select (dataframe-lazy (dataframe-read-parquet produce-parquet))

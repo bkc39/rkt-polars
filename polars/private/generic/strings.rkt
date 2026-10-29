@@ -19,8 +19,9 @@
          str-replace str-replace-all
          str-len-bytes str-len-chars str-head str-tail
          str-find str-find-literal str-count-matches
-         str->date str->time
          (contract-out
+          [str->date str-parse/c]
+          [str->time str-parse/c]
           [str-extract (->* (col-expr/c any/c) (#:group-index size/c) Expr-ptr?)]
           [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
                           ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
@@ -34,6 +35,11 @@
                                #:exact boolean?
                                #:cache boolean?)
                               Expr-ptr?)]))
+
+(define str-parse/c
+  (->* (col-expr/c)
+       (#:format (or/c #f string?) #:strict boolean? #:exact boolean? #:cache boolean?)
+       Expr-ptr?))
 
 (define-expr-unop str-to-lowercase 'str-to-lowercase expr-str-to-lowercase)
 (define-expr-unop str-to-uppercase 'str-to-uppercase expr-str-to-uppercase)

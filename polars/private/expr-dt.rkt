@@ -139,7 +139,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-dt-truncate e every)
-  (expr-dt-truncate/raw e (->expr every)))
+  (expr-dt-truncate/raw e (->expr/who 'expr-dt-truncate every)))
 
 (define-compat expr-dt-convert-time-zone/raw
   (_fun _Expr-ptr _c-string -> _Expr-ptr/null)

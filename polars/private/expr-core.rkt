@@ -103,12 +103,12 @@
 (define (explain/c frame/c)
   (->* (frame/c) (#:optimized boolean? #:format explain-format/c) string?))
 
-(define (lazyframe-explainer who)
+(define (lazyframe-explainer who [fmt #f])
   (procedure-rename
    (lambda (lf #:optimized [optimized #t] #:format [format 'plain])
      (call/foreign-error who
                          (lambda () (lazyframe-explain/raw lf optimized (eq? format 'tree)))
-                         "failed to explain the query"))
+                         fmt))
    who))
 
 (define-compat expr-col/raw

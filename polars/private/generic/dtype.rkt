@@ -4,7 +4,12 @@
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
+         (only-in racket/contract flat-contract-with-explanation raise-blame-error)
+         (only-in racket/contract/base and/c contract-name integer-in or/c unsupplied-arg?)
          (only-in racket/sequence sequence-length)
+         (only-in polars/private/c-integer
+                  int16/c int32/c int64-min int64/c int8/c uint16/c uint32/c uint64-max uint64/c
+                  uint8/c)
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -14,7 +19,7 @@
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec? define-enum)
+         dtype-spec? define-enum series-elements/c)
 
 (begin-for-syntax
   (define-syntax-class enum-category
@@ -64,13 +69,64 @@
   (cond
     [(null? vals) 'null]
     [(andmap boolean? vals) 'boolean]
-    [(andmap exact-integer? vals) 'int64]
+    [(andmap exact-integer? vals) (if (andmap int64/c vals) 'int64 'uint64)]
     [(andmap real? vals) 'float64]              ; mixed int/float -> float64
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
     [(temporal-values-dtype vals)]
     [else (error 'series
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
+
+(define integer-dtype-ranges
+  (hash 'int8 (cons 'int8/c int8/c) 'int16 (cons 'int16/c int16/c)
+        'int32 (cons 'int32/c int32/c) 'int64 (cons 'int64/c int64/c)
+        'uint8 (cons 'uint8/c uint8/c) 'uint16 (cons 'uint16/c uint16/c)
+        'uint32 (cons 'uint32/c uint32/c) 'uint64 (cons 'uint64/c uint64/c)))
+
+(define series-integer/c (integer-in int64-min uint64-max))
+
+(define (in-elements elements)
+  (if (vector? elements) (in-vector elements) (in-list elements)))
+
+(define (first-element elements keep?)
+  (for/first ([x (in-elements elements)] #:when (keep? x))
+    (list x)))
+
+(define ((refuse-element elements expected given) blame)
+  (raise-blame-error blame elements '(expected: "~a" given: "~e") expected given))
+
+(define (inferred-integers-explanation elements)
+  (define present
+    (for/list ([x (in-elements elements)] #:unless (polars-null? x))
+      x))
+  (cond
+    [(not (andmap exact-integer? present)) #t]
+    [(or (andmap int64/c present) (andmap uint64/c present)) #t]
+    [(first-element present (lambda (x) (not (series-integer/c x))))
+     => (lambda (wide) (refuse-element elements (contract-name series-integer/c) (car wide)))]
+    [else
+     (refuse-element elements
+                     (format "~a, beside a negative integer" (contract-name int64/c))
+                     (car (first-element present (lambda (x) (not (int64/c x))))))]))
+
+(define inferred-integers/c
+  (flat-contract-with-explanation inferred-integers-explanation #:name 'series-elements/c))
+
+(define ((ranged-explanation name in-range?) elements)
+  (match (first-element elements (lambda (x) (not (or (polars-null? x) (in-range? x)))))
+    [#f #t]
+    [(list x) (refuse-element elements name x)]))
+
+(define (series-elements/c dtype)
+  (define range (and (symbol? dtype)
+                     (hash-ref integer-dtype-ranges (hash-ref dtype-aliases dtype #f) #f)))
+  (cond
+    [(or (unsupplied-arg? dtype) (not dtype)) (and/c (or/c list? vector?) inferred-integers/c)]
+    [range
+     (and/c (or/c list? vector?)
+            (flat-contract-with-explanation (ranged-explanation (car range) (cdr range))
+                                            #:name 'series-elements/c))]
+    [else (or/c list? vector?)]))
 
 (define (dtype->constructor canonical vec?)
   (case canonical

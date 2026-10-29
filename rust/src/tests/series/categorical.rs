@@ -377,3 +377,110 @@ fn enum_dtype_col_selects_the_enum_column() {
         series_drop(p);
     }
 }
+
+fn enum_of(categories: &[&str]) -> DataType {
+    DataType::from_frozen_categories(
+        FrozenCategories::new(categories.iter().copied()).unwrap(),
+    )
+}
+
+fn misses_payload(s: &Series, categories: &[&str]) -> String {
+    let reason = enum_cast_checked(s, &enum_of(categories))
+        .unwrap_err()
+        .to_string();
+    match reason.strip_prefix(ENUM_MISSES_TAG) {
+        Some(payload) => payload.to_string(),
+        None => panic!("an untagged reason: {}", reason),
+    }
+}
+
+#[test]
+fn an_enum_cast_reports_its_misses_from_any_string_source() {
+    let s =
+        strings(&[Some("TEB"), None, Some("XYZ"), Some("TEB"), Some("EWR")]);
+    let cat = s
+        .cast(&DataType::from_categories(Categories::global()))
+        .unwrap();
+    let other = s.cast(&enum_of(&["EWR", "TEB", "XYZ"])).unwrap();
+    for source in [&s, &cat, &other] {
+        assert_eq!(
+            misses_payload(source, &["EWR", "JFK", "LGA"]),
+            concat!(
+                r#"{"categories":["EWR","JFK","LGA"],"missing":3,"#,
+                r#""total":4,"distinct":2,"shown":["TEB","XYZ"]}"#
+            )
+        );
+    }
+}
+
+#[test]
+fn the_misses_payload_escapes_what_json_must() {
+    let s = strings(&[Some("a\0b"), Some("q\"\\"), Some("\u{1f}")]);
+    assert_eq!(
+        misses_payload(&s, &["\"", "\\"]),
+        concat!(
+            r#"{"categories":["\"","\\"],"missing":3,"total":3,"#,
+            r#""distinct":3,"shown":["\u001f","a\u0000b","q\"\\"]}"#
+        )
+    );
+}
+
+#[test]
+fn the_misses_payload_shows_ten_sorted_misses() {
+    let values: Vec<String> =
+        (0..12).rev().map(|i| format!("v{:02}", i)).collect();
+    let payload = misses_payload(&Series::new("s".into(), &values), &["a"]);
+    let shown: Vec<String> =
+        (0..10).map(|i| format!("\"v{:02}\"", i)).collect();
+    assert!(
+        payload.ends_with(&format!(
+            "\"distinct\":12,\"shown\":[{}]}}",
+            shown.join(",")
+        )),
+        "{}",
+        payload
+    );
+}
+
+#[test]
+fn an_enum_cast_without_misses_is_the_strict_cast() {
+    let dtype = enum_of(&["EWR", "TEB"]);
+    let s = strings(&[Some("TEB"), None, Some("EWR")]);
+    let cat = s
+        .cast(&DataType::from_categories(Categories::global()))
+        .unwrap();
+    for source in [&s, &cat] {
+        let checked = enum_cast_checked(source, &dtype).unwrap();
+        assert!(checked.equals_missing(&source.strict_cast(&dtype).unwrap()));
+        assert_eq!(checked.dtype(), &dtype);
+        assert_eq!(checked.name(), source.name());
+    }
+    let bools = Series::new("b".into(), &[true]);
+    assert_eq!(
+        enum_cast_checked(&bools, &dtype).unwrap_err().to_string(),
+        bools.strict_cast(&dtype).unwrap_err().to_string()
+    );
+}
+
+#[test]
+fn a_lazy_enum_cast_records_the_tagged_reason() {
+    let s = make_str("o", &["EWR", "LGA"]);
+    let df = make_df(&[s]);
+    let column = expr_col_v2(str_block("o").as_ptr());
+    let categories = str_list_block(&["EWR"]);
+    let cast = expr_cast_enum_v2(column, categories.as_ptr());
+    let exprs = [cast as *const Expr];
+    let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
+    assert!(lazyframe_collect(lf).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some(concat!(
+            "\u{1}enum-misses\u{1}",
+            r#"{"categories":["EWR"],"missing":1,"total":2,"#,
+            r#""distinct":1,"shown":["LGA"]}"#
+        ))
+    );
+    series_drop(s);
+    expr_drop(column);
+    expr_drop(cast);
+}

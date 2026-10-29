@@ -38,6 +38,16 @@
   (define parquet-pattern (build-path scratch "*.parquet"))
   (check-equal? (column (read-parquet parquet-pattern) "x") '(1 2 3))
   (check-equal? (~> parquet-pattern scan-parquet collect (column "x")) '(1 2 3))
+  (define widened (build-path scratch "widened"))
+  (make-directory widened)
+  (for ([name '("a" "b")] [integer '(i32 i64)])
+    (write-parquet (dataframe (list (series '(1) #:name "a" #:dtype integer)))
+                   (build-path widened (format "~a.parquet" name))))
+  (define widened-message (message-of (lambda () (read-parquet (build-path widened "*.parquet")))))
+  (check-regexp-match
+   #rx"^read-parquet: [^\n]*data type mismatch for column a: incoming: Int64 != target: Int32$"
+   widened-message)
+  (check-false (regexp-match? #rx"cast_options|pl[.]" widened-message))
 
   (define nothing (build-path scratch "*.none"))
   (check-pred lazyframe? (scan-parquet nothing))
@@ -136,7 +146,7 @@
   (check-equal? (column-names cached) '("row" "item" "grade" "price"))
   (check-equal? (column cached "row") '(0 1 2 3))
   (check-regexp-match
-   #rx"^explain: failed to explain the query: [^\n]*\"colour\""
+   #rx"^explain: [^\n]*\"colour\"[^\n]*$"
    (message-of (lambda () (explain (select (lazy produce) "colour")))))
   (define inserted (read-parquet mixed #:missing-columns 'insert))
   (check-equal? (shape inserted) '(8 3))

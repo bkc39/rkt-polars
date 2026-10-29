@@ -12,9 +12,10 @@
 (require (only-in racket/contract/base flat-named-contract or/c)
          polars/private/foreign
          polars/private/expr
-         syntax/parse/define)
+         syntax/parse/define
+         (for-syntax racket/base))
 
-(provide ->col-expr col-expr/c define-expr-unop define-math-unop)
+(provide ->col-expr col-expr/c define-expr-unop define-math-unop define-named)
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->col-expr who x)
@@ -29,10 +30,17 @@
 (define-syntax-parse-rule (define-expr-unop name:id who:expr expr-op:expr)
   (define (name x) (expr-op (->col-expr who x))))
 
+;; A procedure bound to `name` whose object-name is `public`, the name it is
+;; exported under, so its arity errors name that.
+(define-syntax-parse-rule (define-named (name:id public:id . formals) body:expr ...+)
+  #:with procedure (syntax-property (syntax/loc this-syntax (lambda formals body ...))
+                                    'inferred-name (syntax-e #'public))
+  (define name procedure))
+
 ;; unary, racket/base-shadowing: Expr/colname -> Expr; number -> racket/base.
-(define-syntax-parse-rule (define-math-unop name:id who:expr expr-op:expr base-op:expr)
-  (define (name x)
+(define-syntax-parse-rule (define-math-unop name:id public:id expr-op:expr base-op:expr)
+  (define-named (name public x)
     (cond [(Expr-ptr? x) (expr-op x)]
           [(string? x)   (expr-op (col x))]
           [(number? x)   (base-op x)]
-          [else (error who "expected an Expr, column name, or number, got ~v" x)])))
+          [else (error 'public "expected an Expr, column name, or number, got ~v" x)])))

@@ -147,7 +147,7 @@
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define lazyframe-explain (lazyframe-explainer 'lazyframe-explain))
+(define lazyframe-explain (lazyframe-explainer 'lazyframe-explain "failed to explain the query"))
 
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
@@ -257,14 +257,14 @@
   #:c-id expr_fill_null
   #:wrap (allocator expr-drop))
 
-(define (expr-fill-null e value) (expr-fill-null/raw e (->expr value)))
+(define (expr-fill-null e value) (expr-fill-null/raw e (->expr/who 'expr-fill-null value)))
 
 (define-compat expr-fill-nan/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
   #:c-id expr_fill_nan
   #:wrap (allocator expr-drop))
 
-(define (expr-fill-nan e value) (expr-fill-nan/raw e (->expr value)))
+(define (expr-fill-nan e value) (expr-fill-nan/raw e (->expr/who 'expr-fill-nan value)))
 
 (define-compat expr-forward-fill/raw
   (_fun _Expr-ptr _uint8 _uint32 -> _Expr-ptr)
@@ -313,7 +313,7 @@
   #:c-id expr_pow
   #:wrap (allocator expr-drop))
 
-(define (expr-pow e exponent) (expr-pow/raw e (->expr exponent)))
+(define (expr-pow e exponent) (expr-pow/raw e (->expr/who 'expr-pow exponent)))
 
 (define-compat expr-clip/raw
   (_fun _Expr-ptr _uint8 _Expr-ptr/null _uint8 _Expr-ptr/null -> _Expr-ptr)
@@ -322,8 +322,8 @@
 
 (define (expr-clip e #:lower [lower #f] #:upper [upper #f])
   (expr-clip/raw e
-                 (if lower 1 0) (and lower (->expr lower))
-                 (if upper 1 0) (and upper (->expr upper))))
+                 (if lower 1 0) (and lower (->expr/who 'expr-clip lower))
+                 (if upper 1 0) (and upper (->expr/who 'expr-clip upper))))
 
 ;; --- Membership / distinct predicates ---
 
@@ -423,7 +423,7 @@
     [else (error who "closed must be one of 'both 'left 'right 'none, got ~v" closed)]))
 
 (define (expr-is-between e lower upper #:closed [closed 'both])
-  (expr-is-between/raw e (->expr lower) (->expr upper)
+  (expr-is-between/raw e (->expr/who 'expr-is-between lower) (->expr/who 'expr-is-between upper)
                        (closed->byte 'expr-is-between closed)))
 
 ;; --- Cumulative + shift / diff ---
@@ -455,7 +455,7 @@
 
 (define (expr-shift e #:n [n 1] #:fill-value [fill-value #f])
   (if fill-value
-      (expr-shift-and-fill/raw e n (->expr fill-value))
+      (expr-shift-and-fill/raw e n (->expr/who 'expr-shift fill-value))
       (expr-shift/raw e n)))
 
 (define-compat expr-diff/raw
@@ -478,7 +478,7 @@
   #:c-id expr_filter
   #:wrap (allocator expr-drop))
 
-(define (expr-filter e predicate) (expr-filter/raw e (->expr predicate)))
+(define (expr-filter e predicate) (expr-filter/raw e (->expr/who 'expr-filter predicate)))
 
 (define-compat expr-gather/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -640,16 +640,16 @@
 
 ;; (expr-when (list (list pred value) ...) #:otherwise default)
 ;; Builds the chained when().then()...otherwise() expression.  Both
-;; predicates and values are lifted with ->expr, so Racket scalars work.
+;; predicates and values are lifted with ->expr/who, so Racket scalars work.
 (define (expr-when clauses #:otherwise otherwise)
   (when (null? clauses)
     (error 'expr-when "requires at least one [pred value] clause"))
   (for ([c (in-list clauses)])
     (unless (and (list? c) (= 2 (length c)))
       (error 'expr-when "each clause must be (list pred value); got ~v" c)))
-  (expr-when-then/c (for/list ([c (in-list clauses)]) (->expr (car c)))
-                    (for/list ([c (in-list clauses)]) (->expr (cadr c)))
-                    (->expr otherwise)))
+  (expr-when-then/c (for/list ([c (in-list clauses)]) (->expr/who 'expr-when (car c)))
+                    (for/list ([c (in-list clauses)]) (->expr/who 'expr-when (cadr c)))
+                    (->expr/who 'expr-when otherwise)))
 
 ;; --- Phase A3: lazy frame integration ---
 
@@ -742,7 +742,7 @@
                               #:descending [descending #f]
                               #:nulls-last [nulls-last #f]
                               #:maintain-order [maintain-order #f])
-  (collect-plan/who 'lazyframe-collect df
+  (collect-plan/who 'dataframe-sort-exprs df
                     (lambda (lf)
                       (lazyframe-sort lf names
                                       #:descending descending

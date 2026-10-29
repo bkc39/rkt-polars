@@ -155,7 +155,7 @@
   (check-true (string-contains? (lazyframe-explain narrowed-lf) "PROJECT[\"x\"] 1/2 COLUMNS"))
   (check-not-equal? (lazyframe-explain narrowed-lf #:format 'tree #:optimized #f) written-plan)
   (check-regexp-match
-   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"nope\""
+   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"nope\"[^\n]*$"
    (with-handlers ([exn:fail? exn-message])
      (lazyframe-explain (lazyframe-select lf (list (col "nope"))))))
 

@@ -30,7 +30,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-contains e pat #:strict [strict #t])
-  (expr-str-contains/raw e (->expr pat) (if strict 1 0)))
+  (expr-str-contains/raw e (->expr/who 'expr-str-contains pat) (if strict 1 0)))
 
 (define-compat expr-str-starts-with/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -38,7 +38,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-starts-with e prefix)
-  (expr-str-starts-with/raw e (->expr prefix)))
+  (expr-str-starts-with/raw e (->expr/who 'expr-str-starts-with prefix)))
 
 (define-compat expr-str-ends-with/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -46,7 +46,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-ends-with e suffix)
-  (expr-str-ends-with/raw e (->expr suffix)))
+  (expr-str-ends-with/raw e (->expr/who 'expr-str-ends-with suffix)))
 
 (define-compat expr-str-to-lowercase
   (_fun _Expr-ptr -> _Expr-ptr)
@@ -64,7 +64,8 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-replace e pat value #:literal [literal #f])
-  (expr-str-replace/raw e (->expr pat) (->expr value) (if literal 1 0)))
+  (expr-str-replace/raw e (->expr/who 'expr-str-replace pat) (->expr/who 'expr-str-replace value)
+                        (if literal 1 0)))
 
 (define-compat expr-str-replace-all/raw
   (_fun _Expr-ptr _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -72,7 +73,8 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-replace-all e pat value #:literal [literal #f])
-  (expr-str-replace-all/raw e (->expr pat) (->expr value) (if literal 1 0)))
+  (expr-str-replace-all/raw e (->expr/who 'expr-str-replace-all pat)
+                            (->expr/who 'expr-str-replace-all value) (if literal 1 0)))
 
 (define-compat expr-str-extract/raw
   (_fun _Expr-ptr _Expr-ptr _size -> _Expr-ptr)
@@ -80,7 +82,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-extract e pat #:group-index [group-index 1])
-  (expr-str-extract/raw e (->expr pat) group-index))
+  (expr-str-extract/raw e (->expr/who 'expr-str-extract pat) group-index))
 
 (define-compat expr-str-strip-chars/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -94,7 +96,7 @@
 
 (define (expr-str-strip-chars e [chars #f])
   (if chars
-      (expr-str-strip-chars/raw e (->expr chars))
+      (expr-str-strip-chars/raw e (->expr/who 'expr-str-strip-chars chars))
       (expr-str-strip-chars/whitespace e)))
 
 (define-compat expr-str-strip-chars-start/raw
@@ -109,7 +111,7 @@
 
 (define (expr-str-strip-chars-start e [chars #f])
   (if chars
-      (expr-str-strip-chars-start/raw e (->expr chars))
+      (expr-str-strip-chars-start/raw e (->expr/who 'expr-str-strip-chars-start chars))
       (expr-str-strip-chars-start/whitespace e)))
 
 (define-compat expr-str-strip-chars-end/raw
@@ -124,7 +126,7 @@
 
 (define (expr-str-strip-chars-end e [chars #f])
   (if chars
-      (expr-str-strip-chars-end/raw e (->expr chars))
+      (expr-str-strip-chars-end/raw e (->expr/who 'expr-str-strip-chars-end chars))
       (expr-str-strip-chars-end/whitespace e)))
 
 (define-compat expr-str-strip-prefix/raw
@@ -133,7 +135,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-strip-prefix e prefix)
-  (expr-str-strip-prefix/raw e (->expr prefix)))
+  (expr-str-strip-prefix/raw e (->expr/who 'expr-str-strip-prefix prefix)))
 
 (define-compat expr-str-strip-suffix/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -141,7 +143,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-strip-suffix e suffix)
-  (expr-str-strip-suffix/raw e (->expr suffix)))
+  (expr-str-strip-suffix/raw e (->expr/who 'expr-str-strip-suffix suffix)))
 
 (define-compat expr-str-len-bytes
   (_fun _Expr-ptr -> _Expr-ptr)
@@ -159,7 +161,8 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-slice e offset [len polars-null])
-  (expr-str-slice/raw e (->expr offset) (->expr (or len polars-null))))
+  (expr-str-slice/raw e (->expr/who 'expr-str-slice offset)
+                      (->expr/who 'expr-str-slice (or len polars-null))))
 
 (define-compat expr-str-head/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -167,7 +170,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-head e n)
-  (expr-str-head/raw e (->expr n)))
+  (expr-str-head/raw e (->expr/who 'expr-str-head n)))
 
 (define-compat expr-str-tail/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -175,7 +178,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-tail e n)
-  (expr-str-tail/raw e (->expr n)))
+  (expr-str-tail/raw e (->expr/who 'expr-str-tail n)))
 
 (define-compat expr-str-find/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -183,7 +186,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-find e pat #:strict [strict #t])
-  (expr-str-find/raw e (->expr pat) (if strict 1 0)))
+  (expr-str-find/raw e (->expr/who 'expr-str-find pat) (if strict 1 0)))
 
 (define-compat expr-str-find-literal/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -191,7 +194,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-find-literal e pat)
-  (expr-str-find-literal/raw e (->expr pat)))
+  (expr-str-find-literal/raw e (->expr/who 'expr-str-find-literal pat)))
 
 (define-compat expr-str-count-matches/raw
   (_fun _Expr-ptr _Expr-ptr _uint8 -> _Expr-ptr)
@@ -199,7 +202,7 @@
   #:wrap (allocator expr-drop))
 
 (define (expr-str-count-matches e pat #:literal [literal #f])
-  (expr-str-count-matches/raw e (->expr pat) (if literal 1 0)))
+  (expr-str-count-matches/raw e (->expr/who 'expr-str-count-matches pat) (if literal 1 0)))
 
 (define compat-time-unit/nanoseconds 1)
 (define compat-time-unit/microseconds 2)

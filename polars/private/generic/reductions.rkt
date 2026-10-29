@@ -4,8 +4,9 @@
          racket/match
          (prefix-in base: racket/base)
          syntax/parse/define
-         (except-in polars/private/foreign series-std series-var)
-         (only-in (submod polars/private/foreign internal) series-std series-var)
+         polars/private/foreign
+         (only-in (submod polars/private/foreign internal)
+                  series-n-unique/who series-std/who series-var/who typed-reductions)
          (except-in polars/private/expr expr-std expr-var)
          (only-in (submod polars/private/expr internal) expr-std expr-var)
          (only-in polars/private/c-integer uint8/c)
@@ -20,25 +21,6 @@
           [n-unique (-> (or/c series? col-expr/c) any/c)]
           [alias (-> col-expr/c string? Expr-ptr?)])
          sum mean min max count median first last)
-
-(define (typed-table i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
-  (hash 'int8 i8 'int16 i16 'int32 i32 'int64 i64
-        'uint8 u8 'uint16 u16 'uint32 u32 'uint64 u64
-        'float32 f32 'float64 f64))
-
-(define native-reducers
-  (hash 'sum (typed-table series-sum-i8 series-sum-i16 series-sum-i32 series-sum-i64
-                          series-sum-u8 series-sum-u16 series-sum-u32 series-sum-u64
-                          series-sum-f32 series-sum-f64)
-        'mean (typed-table series-mean-i8 series-mean-i16 series-mean-i32 series-mean-i64
-                           series-mean-u8 series-mean-u16 series-mean-u32 series-mean-u64
-                           series-mean-f32 series-mean-f64)
-        'min (typed-table series-min-i8 series-min-i16 series-min-i32 series-min-i64
-                          series-min-u8 series-min-u16 series-min-u32 series-min-u64
-                          series-min-f32 series-min-f64)
-        'max (typed-table series-max-i8 series-max-i16 series-max-i32 series-max-i64
-                          series-max-u8 series-max-u16 series-max-u32 series-max-u64
-                          series-max-f32 series-max-f64)))
 
 (define (reduction-route op dt)
   (match* (op dt)
@@ -65,12 +47,12 @@
 
 (define (reduce-series op s #:ddof [ddof 1])
   (define dt (series-dtype s))
-  (define series-dispersion (if (eq? op 'std) series-std series-var))
+  (define series-dispersion (if (eq? op 'std) series-std/who series-var/who))
   (match (reduction-route op dt)
-    ['native (or ((hash-ref (hash-ref native-reducers op) dt) s) polars-null)]
-    ['dispersion (or (series-dispersion s #:ddof ddof) polars-null)]
+    ['native (or ((hash-ref (hash-ref typed-reductions op) dt) op s) polars-null)]
+    ['dispersion (or (series-dispersion op s #:ddof ddof) polars-null)]
     ['float64 (with-release ([floats (series-cast s 'float64) series-drop])
-                (or (series-dispersion floats #:ddof ddof) polars-null))]
+                (or (series-dispersion op floats #:ddof ddof) polars-null))]
     ['expr (series-agg-via-expr op (lambda (e) (aggregation op e ddof)) s)]
     ['null polars-null]
     [#f (error op "unsupported dtype for reduction: ~v" dt)]))
@@ -109,7 +91,7 @@
 
 (define (n-unique x)
   (match x
-    [(? series?) (series-n-unique x)]
+    [(? series?) (series-n-unique/who 'n-unique x)]
     [_ (expr-n-unique (->col-expr 'n-unique x))]))
 
 (define (median x) (expr-median (->col-expr 'median x)))

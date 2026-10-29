@@ -14,7 +14,7 @@
                   dataframe-column dataframe-column-names dataframe-drop dataframe-height
                   dataframe-new decimal-dtype?
                   polars-null polars-null? series-drop series-dtype series-null-count
-                  series-rename zoned-datetime-dtype?)
+                  series-rename/who zoned-datetime-dtype?)
          (only-in polars/private/generic/core
                   dataframe dataframe? ref series series? wrap-dataframe)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
@@ -50,7 +50,7 @@
 (define (plan-column d column i height)
   (define name (number->string i))
   (define s (dataframe-column d column))
-  (series-rename s name)
+  (series-rename/who 'describe s name)
   (define dt (series-dtype s))
   (define nulls (series-null-count s))
   (define count (- height nulls))
