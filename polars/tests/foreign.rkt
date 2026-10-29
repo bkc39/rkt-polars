@@ -12,15 +12,14 @@
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
            (only-in polars/private/foreign
                     ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS? _Series-ptr
-                    call/refusal define-compat
+                    call/foreign-error define-compat
                     copy-zoned-datetimes dataframe-column dataframe-column-name
                     dataframe-column-names dataframe-drop-columns dataframe-drop-count
                     dataframe-drop-nulls dataframe-empty dataframe-filter
                     dataframe-group-by-count dataframe-group-by-max dataframe-group-by-mean
                     dataframe-group-by-min dataframe-group-by-sum dataframe-height
                     dataframe-join-asof/raw dataframe-make dataframe-new dataframe-pivot
-                    dataframe-rename dataframe-select dataframe-select/c dataframe-shape
-                    dataframe-unique
+                    dataframe-rename dataframe-select dataframe-shape dataframe-unique
                     dataframe-unpivot dataframe-width dataframe-with-column dtype-short-names
                     enum-dtype? make-YMDHMS polars-null respell series-add series-add-f64
                     series-and series-cast series-div series-div-f64 series-drop-count
@@ -43,6 +42,7 @@
                     series-new-str series-new-str/vec series-new-u16 series-new-u16/vec
                     series-new-u32 series-new-u32/vec series-new-u64 series-new-u64/vec
                     series-new-u8 series-new-u8/vec series-new-ymdhms series-new-ymdhms/vec
+                    series-cast-datetime-tz/raw
                     series-not series-null-count series-or series-quantile series-ref series-rename
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
@@ -53,6 +53,7 @@
            (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
            (only-in (submod polars/private/foreign internal)
                     block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-join
+                    dataframe-select/who
                     dataframe-join-asof dataframe-slice dataframe-sort dataframe-tail
                     dataframe-vstack series-add-i32 series-add-i64 series-add-u32 series-add-u64
                     series-div-i32 series-div-i64 series-div-u32 series-div-u64 series-drop
@@ -66,6 +67,7 @@
            (only-in polars/private/resource with-raw-buffer with-release)
            (only-in threading ~>)
            (only-in (submod polars/private/resource internal) str-block->string)
+           (only-in racket/function const)
            (only-in racket/list append-map)
            (only-in racket/string string-join)
            (only-in racket/contract exn:fail:contract:blame?)
@@ -852,7 +854,7 @@
   (check-equal? (series-dtype score-col) 'int32)
   (check-equal? (series-len score-col) 4)
   (check-equal? (series-sum-i32 score-col) 94)
-  (check-exn #rx"^dataframe-column: no column named \"points\"$"
+  (check-exn #rx"^dataframe-column: [^\n]*\"points\""
              (lambda () (dataframe-column example-df "points")))
 
   ;; column-names helper
@@ -1311,9 +1313,6 @@
     (check >= (releases dataframe-drop-count (cadr owned)) 10 (format "~a" (car owned))))
 
   (check-equal? (drops-once series-drop-count series-drop
-                            (lambda () (series-head owned-i32 2)))
-                1)
-  (check-equal? (drops-once series-drop-count series-drop
                             (lambda () (series-cast owned-i32 'float64)))
                 1)
   (check-equal? (drops-once series-drop-count series-drop
@@ -1334,9 +1333,25 @@
   (check-equal? (drops-once dataframe-drop-count dataframe-drop
                             (lambda () (dataframe-hstack owned-frame (list owned-extra))))
                 1)
-  (check-equal? (drops-once dataframe-drop-count dataframe-drop
-                            (lambda () (dataframe-filter owned-frame owned-mask)))
-                1)
+  (for ([row (in-list
+              (list (list series-drop-count series-drop series-head owned-i32 2)
+                    (list series-drop-count series-drop series-tail owned-i32 2)
+                    (list series-drop-count series-drop series-slice owned-i32 1 2)
+                    (list series-drop-count series-drop series-reverse owned-i32)
+                    (list series-drop-count series-drop series-drop-nulls owned-i32)
+                    (list series-drop-count series-drop series-unique owned-i32)
+                    (list series-drop-count series-drop series-is-null owned-i32)
+                    (list series-drop-count series-drop series-is-not-null owned-i32)
+                    (list dataframe-drop-count dataframe-drop dataframe-head owned-frame 2)
+                    (list dataframe-drop-count dataframe-drop dataframe-tail owned-frame 2)
+                    (list dataframe-drop-count dataframe-drop dataframe-slice owned-frame 1 2)
+                    (list dataframe-drop-count dataframe-drop dataframe-filter owned-frame owned-mask)
+                    (list dataframe-drop-count dataframe-drop dataframe-unique owned-frame)
+                    (list dataframe-drop-count dataframe-drop dataframe-drop-nulls owned-frame)
+                    (list dataframe-drop-count dataframe-drop dataframe-with-column owned-frame
+                          owned-extra)))])
+    (match-define (list count drop verb args ...) row)
+    (check-equal? (drops-once count drop (lambda () (apply verb args))) 1 (format "~a" verb)))
   (check-equal? (drops-once dataframe-drop-count dataframe-drop
                             (lambda () (dataframe-pivot owned-frame #:on '("k") #:index '("x")
                                                         #:values '("v"))))
@@ -1423,19 +1438,36 @@
              (lambda () (dataframe-filter owned-frame (series-new-bool "m" '(#t #f)))))
   (check-exn #rx"^dataframe-with-column: [^\n]*length 2[^\n]*height 3"
              (lambda () (dataframe-with-column owned-frame (series-new-i32 "e" '(1 2)))))
-  (check-exn (lambda (e)
-               (and (exn:fail:contract? e) (regexp-match? #rx"^drop: not found: " (exn-message e))))
-             (lambda ()
-               (call/refusal 'drop (lambda () (dataframe-select/c owned-frame '("nope")))
-                             (lambda () #f))))
-  (check-exn (lambda (e)
-               (and (exn:fail:contract? e) (regexp-match? #rx"^drop: mine$" (exn-message e))))
-             (lambda ()
-               (call/refusal 'drop (lambda () (dataframe-select/c owned-frame '("nope")))
-                             (lambda () "mine"))))
-  (check-equal? (dataframe-width
-                 (call/refusal 'ref (lambda () (dataframe-select/c owned-frame '("x")))
-                               (lambda () "unused")))
+  (define (raised-kind thunk)
+    (with-handlers ([exn:fail:contract? (lambda (e) (list 'contract (exn-message e)))]
+                    [exn:fail? (lambda (e) (list 'polars (exn-message e)))])
+      (thunk)
+      #f))
+  (for ([row (in-list
+              (list (list 'contract #rx"^drop: mine$"
+                          (lambda ()
+                            (dataframe-select/who 'drop owned-frame '("nope")
+                                                  #:problem (const "mine"))))
+                    (list 'polars #rx"^drop: not found: "
+                          (lambda () (dataframe-select/who 'drop owned-frame '("nope"))))
+                    (list 'polars #rx"^cast: [^\n]*'Mars/Base'.*instead[?]$"
+                          (lambda ()
+                            (call/foreign-error
+                             'cast (lambda () (series-cast-datetime-tz/raw stamps 1 "Mars/Base"))
+                             #:problem (const #f))))
+                    (list 'polars #rx"^test: no reason recorded$"
+                          (lambda ()
+                            (call/foreign-error 'test
+                                                (lambda () (series-drop (series-head owned-i32 1)) #f)
+                                                #:problem (const #f))))))])
+    (match-define (list kind rx thunk) row)
+    (match (raised-kind thunk)
+      [(list got message)
+       (check-equal? got kind message)
+       (check-regexp-match rx message)]
+      [#f (fail (format "expected ~a ~s, nothing raised" kind rx))]))
+  (check-equal? (dataframe-width (dataframe-select/who 'ref owned-frame '("x")
+                                                       #:problem (const "unused")))
                 1)
   (check-exn #rx"^dataframe-join-asof: [^\n]*\"nope\""
              (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope")))

@@ -10,6 +10,7 @@
          (only-in polars/private/bulk in-series)
          (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
+         (only-in (submod polars/private/foreign internal) dataframe-column/who dataframe-select/who)
          (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/dtype
          polars/private/generic/printing)
@@ -106,13 +107,11 @@
     [(check-duplicates names) => (lambda (name) (format "~s named more than once" name))]
     [else #f]))
 
-(define (refuse who problem fallback)
-  (raise-arguments-error who (or problem fallback)))
-
 (define (dataframe series-list)
   (wrap-dataframe
    (or (dataframe-new/raw series-list)
-       (refuse 'dataframe (frame-columns-problem series-list) "could not create a new DataFrame"))))
+       (raise-arguments-error 'dataframe (or (frame-columns-problem series-list)
+                                             "could not create a new DataFrame")))))
 
 ;; ---------------------------------------------------------------------------
 ;; the lazyframe wrapper
@@ -188,12 +187,14 @@
     [(list? sel)
      (define names (map (lambda (c) (column->name d c)) sel))
      (wrap-dataframe
-      (call/refusal 'ref
-                    (lambda () (dataframe-select/c d names))
-                    (lambda () (column-problem (dataframe-column-names d) names))))]
+      (dataframe-select/who 'ref d names
+                            #:problem (lambda () (column-problem (dataframe-column-names d) names))))]
     [else
      (define name (column->name d sel))
-     (wrap-series (or (dataframe-column/raw d name) (error 'ref "~s not found" name)))]))
+     (wrap-series
+      (dataframe-column/who 'ref d name
+                            #:problem (lambda ()
+                                        (column-problem (dataframe-column-names d) (list name)))))]))
 
 (module+ internal
   (provide dataframe))

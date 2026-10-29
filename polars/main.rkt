@@ -34,7 +34,7 @@
   expr-name-keep index-list/c lit/who lazyframe-collect/raw membership-list/c null-behavior/c
   rank-method/c]
  [polars/private/foreign
-  allocator/or-fail call/foreign-error call/polars-reason call/refusal datetime-zone/c
+  allocator/or-fail call/foreign-error call/polars-reason datetime-zone/c
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
   _c-string _c-string/null _rsstr _rsstr-list str-block-drop
@@ -60,9 +60,7 @@
   series-add/who series-sub/who series-mul/who series-div/who series-mod/who
   series-eq/who series-ne/who series-gt/who series-ge/who series-lt/who series-le/who
   series-and/who series-or/who series-xor/who series-not/who
-  dataframe-vstack/raw dataframe-hstack/raw
-  dataframe-select/c dataframe-drop-columns/c dataframe-rename/raw
-  dataframe-with-column/raw dataframe-new/raw provide-row-windows])
+  dataframe-vstack/raw dataframe-hstack/raw dataframe-new/raw provide-row-windows])
 
 ;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
 ;; Racket spelling of Python/Polars method chaining:
@@ -105,8 +103,14 @@
                                       expr-drop/raw expr-dropped
                                       lazyframe-drop/raw lazyframe-dropped
                                       define-frame-op/reason define-reasoned
+                                      call/refusal no-problem
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
+                                      dataframe-column/raw dataframe-select/raw
+                                      dataframe-drop-columns/raw
+                                      dataframe-select/who dataframe-drop-columns/who
+                                      dataframe-rename/who dataframe-with-column/who
+                                      dataframe-column/who
                                       dataframe-new/raw expr-lit-u64 null-behavior/c
                                       rank-method/c provide-row-windows
                                       valid-opt? call/f64-reduction define-typed-reduction
@@ -116,7 +120,13 @@
                                     (for*/list ([op (in-list '(sum min max mean))]
                                                 [t (in-list '(i8 i16 i32 i64 u8 u16 u32 u64
                                                               f32 f64))])
-                                      (string->symbol (format "series-~a-~a/raw" op t)))))])
+                                      (string->symbol (format "series-~a-~a/raw" op t)))
+                                    (for/list ([op (in-list '(head tail slice reverse drop-nulls
+                                                              unique is-null is-not-null))])
+                                      (string->symbol (format "series-~a/raw" op)))
+                                    (for/list ([op (in-list '(head tail slice filter unique
+                                                              drop-nulls))])
+                                      (string->symbol (format "dataframe-~a/raw" op)))))])
     (check-false (memq internal exported) (format "~a is internal" internal)))
   (for ([name (in-list exported)])
     (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"

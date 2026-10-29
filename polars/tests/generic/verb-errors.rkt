@@ -196,7 +196,7 @@
                 (lambda () (rename frame "v")))
   (check-equal? (column-names (rename frame "v" "v")) '("v" "s"))
 
-  (check-raises 'polars #rx"^ref: \"nope\" not found$" (lambda () (ref frame "nope")))
+  (check-raises 'contract #rx"^ref: \"nope\" not found$" (lambda () (ref frame "nope")))
   (check-raises 'contract #rx"^ref: column index out of range\n  index: 9\n  width: 2$"
                 (lambda () (ref frame 9)))
   (check-raises 'contract #rx"^ref: \"nope\" not found$" (lambda () (ref frame '("v" "nope"))))

@@ -37,7 +37,7 @@
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-cast series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
-                     define-frame-op/reason define-reasoned block-reader c-string-argument
+                     define-frame-op/reason define-reasoned no-problem block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
                      series-std series-var series-new-null series-n-unique series-n-unique/raw
                      series-std/raw series-var/raw series-quantile series-quantile/raw
@@ -192,12 +192,14 @@
      (define result (thunk))
      (values result (and (not (ok? result)) (last-error-message))))))
 
-(define (call/foreign-error who thunk #:ok? [ok? values] #:explain [explain (lambda () #f)]
-                            #:cause [cause values] [fmt #f] . args)
+(define (call/foreign-error who thunk #:ok? [ok? values] #:problem [problem (lambda () #f)]
+                            #:explain [explain (lambda () #f)] #:cause [cause values]
+                            [fmt #f] . args)
   (define-values (result reason) (call/reason thunk ok?))
   (define (cause-of reason) (cause (respell reason)))
   (cond
     [(ok? result) result]
+    [(problem) => (lambda (message) (raise-arguments-error who message))]
     [(explain) => (lambda (message) (error who "~a" message))]
     [(and reason fmt)
      (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
@@ -208,13 +210,6 @@
 (define (call/polars-reason who thunk)
   (call/foreign-error who thunk))
 
-(define (call/refusal who thunk problem)
-  (define-values (result reason) (call/reason thunk values))
-  (or result
-      (raise-arguments-error who (or (problem)
-                                     (and reason (respell reason))
-                                     "no reason recorded"))))
-
 (begin-for-syntax
   (define-syntax-class reasoned-formal
     #:attributes (arg [formal 1] [actual 1])
@@ -223,21 +218,44 @@
              #:with (actual ...) #'(arg))
     (pattern [kw:keyword arg:id default:expr]
              #:with (formal ...) #'(kw [arg default])
-             #:with (actual ...) #'(kw arg))))
+             #:with (actual ...) #'(kw arg)))
+
+  (define-syntax-class owned-result
+    #:attributes (drop)
+    (pattern (~literal _Series-ptr/null) #:with drop #'series-drop)
+    (pattern (~literal _DataFrame-ptr/null) #:with drop #'dataframe-drop))
+
+  (define-splicing-syntax-class (reasoned-binding name)
+    #:attributes (compat raw)
+    (pattern (~seq (~and compat ((~datum define-compat) raw:id _ ...))))
+    (pattern (~seq (~optional (~seq #:c-id c-id:id)
+                              #:defaults ([c-id (format-id #'here "~a"
+                                                           (string-replace
+                                                            (symbol->string (syntax-e name))
+                                                            "-" "_"))]))
+                   (~and fun ((~literal _fun) _ ... (~datum ->) result:owned-result)))
+             #:with raw (format-id #'here "~a/raw" name)
+             #:with compat #'(define-compat raw
+                               fun
+                               #:c-id c-id
+                               #:wrap (allocator result.drop)))))
+
+(define (no-problem) #f)
 
 (define-syntax-parse-rule (define-reasoned (name:id f:reasoned-formal ...)
                             (~optional (~seq #:who-variant name/who:id)
                                        #:defaults ([name/who (generate-temporary #'name)]))
                             (~optional (~seq #:ok? ok?:expr) #:defaults ([ok? #'values]))
                             (~optional (~seq #:result result:expr) #:defaults ([result #'values]))
-                            (~and compat ((~datum define-compat) raw:id _ ...)))
+                            (~var binding (reasoned-binding #'name)))
   #:with (ok-proc result-proc) (generate-temporaries '(ok result))
   (begin
-    compat
+    binding.compat
     (define ok-proc ok?)
     (define result-proc result)
-    (define (name/who who f.formal ... ...)
-      (result-proc (call/foreign-error who (lambda () (raw f.arg ...)) #:ok? ok-proc)))
+    (define (name/who who f.formal ... ... #:problem [problem no-problem])
+      (result-proc (call/foreign-error who (lambda () (binding.raw f.arg ...))
+                                       #:ok? ok-proc #:problem problem)))
     (define (name f.formal ... ...)
       (name/who 'name f.actual ... ...))))
 
@@ -720,40 +738,22 @@
     #:c-id series_n_unique_v2))
 
 (define-reasoned (series-head s n)
-  (define-compat series-head/raw
-    (_fun _Series-ptr _size -> _Series-ptr/null)
-    #:c-id series_head
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr _size -> _Series-ptr/null))
 
 (define-reasoned (series-tail s n)
-  (define-compat series-tail/raw
-    (_fun _Series-ptr _size -> _Series-ptr/null)
-    #:c-id series_tail
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr _size -> _Series-ptr/null))
 
-(define-reasoned (series-slice s offset length)
-  (define-compat series-slice/raw
-    (_fun _Series-ptr _int64 _size -> _Series-ptr/null)
-    #:c-id series_slice
-    #:wrap (allocator series-drop)))
+(define-reasoned (series-slice s offset len)
+  (_fun _Series-ptr _int64 _size -> _Series-ptr/null))
 
 (define-reasoned (series-reverse s)
-  (define-compat series-reverse/raw
-    (_fun _Series-ptr -> _Series-ptr/null)
-    #:c-id series_reverse
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-reasoned (series-drop-nulls s)
-  (define-compat series-drop-nulls/raw
-    (_fun _Series-ptr -> _Series-ptr/null)
-    #:c-id series_drop_nulls
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-reasoned (series-unique s)
-  (define-compat series-unique/raw
-    (_fun _Series-ptr -> _Series-ptr/null)
-    #:c-id series_unique
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-compat series-sort/raw
   (_fun _Series-ptr _stdbool _stdbool -> _Series-ptr/null)
@@ -1415,57 +1415,31 @@
   (_fun _DataFrame-ptr -> _size))
 
 (define-reasoned (dataframe-head df n)
-  (define-compat dataframe-head/raw
-    (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null)
-    #:c-id dataframe_head
-    #:wrap (allocator dataframe-drop)))
+  (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null))
 
 (define-reasoned (dataframe-tail df n)
-  (define-compat dataframe-tail/raw
-    (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null)
-    #:c-id dataframe_tail
-    #:wrap (allocator dataframe-drop)))
+  (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null))
 
-(define-reasoned (dataframe-slice df offset length)
-  (define-compat dataframe-slice/raw
-    (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr/null)
-    #:c-id dataframe_slice
-    #:wrap (allocator dataframe-drop)))
+(define-reasoned (dataframe-slice df offset len)
+  (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr/null))
 
 (define-compat dataframe-column-names
   (_fun _DataFrame-ptr -> _rsstr-list))
 
-(define-compat dataframe-select/c
-  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null)
+(define-reasoned (dataframe-select df cols) #:who-variant dataframe-select/who
   #:c-id dataframe_select_v2
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null))
 
-(define (dataframe-select df cols)
-  (call/polars-reason 'dataframe-select (lambda () (dataframe-select/c df cols))))
-
-(define-compat dataframe-drop-columns/c
-  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null)
+(define-reasoned (dataframe-drop-columns df cols) #:who-variant dataframe-drop-columns/who
   #:c-id dataframe_drop_columns_v2
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _str-list -> _DataFrame-ptr/null))
 
-(define (dataframe-drop-columns df cols)
-  (call/polars-reason 'dataframe-drop-columns (lambda () (dataframe-drop-columns/c df cols))))
-
-(define-compat dataframe-rename/raw
-  (_fun _DataFrame-ptr _str _str -> _DataFrame-ptr/null)
+(define-reasoned (dataframe-rename df old new) #:who-variant dataframe-rename/who
   #:c-id dataframe_rename_v2
-  #:wrap (allocator dataframe-drop))
+  (_fun _DataFrame-ptr _str _str -> _DataFrame-ptr/null))
 
-(define (dataframe-rename df old new)
-  (call/polars-reason 'dataframe-rename (lambda () (dataframe-rename/raw df old new))))
-
-(define-compat dataframe-with-column/raw
-  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
-  #:c-id dataframe_with_column
-  #:wrap (allocator dataframe-drop))
-
-(define (dataframe-with-column df s)
-  (call/polars-reason 'dataframe-with-column (lambda () (dataframe-with-column/raw df s))))
+(define-reasoned (dataframe-with-column df s) #:who-variant dataframe-with-column/who
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null))
 
 (define-syntax-parse-rule (define-frame-op/reason (name:id arg:id ...) call:expr compat:expr)
   #:with name/who (format-id #'name "~a/who" #'name)
@@ -1500,14 +1474,9 @@
   (_fun _DataFrame-ptr _size -> _rsstr)
   #:c-id dataframe_column_name_v2)
 
-(define-compat dataframe-column/raw
-  (_fun _DataFrame-ptr _str -> _Series-ptr/null)
+(define-reasoned (dataframe-column df name) #:who-variant dataframe-column/who
   #:c-id dataframe_column_v2
-  #:wrap (allocator series-drop))
-
-(define (dataframe-column df name)
-  (or (dataframe-column/raw df name)
-      (error 'dataframe-column "no column named ~s" name)))
+  (_fun _DataFrame-ptr _str -> _Series-ptr/null))
 
 (define-compat dataframe->string/raw
   (_fun _DataFrame-ptr -> _rsstr)
@@ -1553,16 +1522,10 @@
 (define series-ne-str (series-str-op series-ne/who 'series-ne-str))
 
 (define-reasoned (series-is-null s)
-  (define-compat series-is-null/raw
-    (_fun _Series-ptr -> _Series-ptr/null)
-    #:c-id series_is_null
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-reasoned (series-is-not-null s)
-  (define-compat series-is-not-null/raw
-    (_fun _Series-ptr -> _Series-ptr/null)
-    #:c-id series_is_not_null
-    #:wrap (allocator series-drop)))
+  (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-series-series-op series-and series-and/who series-and/raw series_and)
 (define-series-series-op series-or series-or/who series-or/raw series_or)
@@ -1575,10 +1538,7 @@
     #:wrap (allocator series-drop)))
 
 (define-reasoned (dataframe-filter df mask)
-  (define-compat dataframe-filter/raw
-    (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
-    #:c-id dataframe_filter
-    #:wrap (allocator dataframe-drop)))
+  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null))
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
@@ -1653,16 +1613,10 @@
 (define-group-by-agg count)
 
 (define-reasoned (dataframe-unique df)
-  (define-compat dataframe-unique/raw
-    (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
-    #:c-id dataframe_unique
-    #:wrap (allocator dataframe-drop)))
+  (_fun _DataFrame-ptr -> _DataFrame-ptr/null))
 
 (define-reasoned (dataframe-drop-nulls df)
-  (define-compat dataframe-drop-nulls/raw
-    (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
-    #:c-id dataframe_drop_nulls
-    #:wrap (allocator dataframe-drop)))
+  (_fun _DataFrame-ptr -> _DataFrame-ptr/null))
 
 (define-frame-op/reason (dataframe-join left right left-on right-on how)
   (dataframe-join/c left right left-on right-on (join-symbol->code how))
@@ -1770,10 +1724,11 @@
   (newline out))
 
 (module+ internal
-  (provide block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
-           dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-slice
-           dataframe-sort dataframe-sort/who dataframe-tail dataframe-vstack
-           dataframe-vstack/who series-add-i32 series-add-i64 series-add-u32 series-add-u64
+  (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
+           dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
+           dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-rename/who
+           dataframe-select/who dataframe-slice dataframe-sort dataframe-sort/who dataframe-tail
+           dataframe-vstack dataframe-vstack/who dataframe-with-column/who series-add-i32 series-add-i64 series-add-u32 series-add-u64
            series-div-i32 series-div-i64 series-div-u32 series-div-u64 series-drop series-eq-i32
            series-ge-i32 series-gt-i32 series-head series-le-i32 series-lt-i32 series-mod-i32
            series-mod-i64 series-mod-u32 series-mod-u64 series-mul-i32 series-mul-i64

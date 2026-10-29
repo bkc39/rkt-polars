@@ -25,7 +25,8 @@
                     unique with-columns)
            (prefix-in contracted: polars/private/generic/reshape)
            (only-in (submod polars/private/generic/reshape internal)
-                    agg cast drop group-by head pivot rename slice tail unpivot with-column))
+                    agg cast column-height-problem drop group-by head pivot rename slice tail
+                    unpivot with-column))
 
   (define (sorted-by d key) (wrap-dataframe (dataframe-sort d (list key))))
 
@@ -344,4 +345,17 @@
                   (list n "0"))
     (define melted (unpivot named #:on '("a") #:index (list n)))
     (check-equal? (column-names melted) (list n "variable" "value"))
-    (check-equal? (~> melted (ref 0) series->list) '(1 2))))
+    (check-equal? (~> melted (ref 0) series->list) '(1 2)))
+
+  (define three-rows (dataframe (list (series '(1 2 3) #:name "v"))))
+  (for ([row (in-list `((,three-rows (0) #f)
+                        (,three-rows (1 2 3) #f)
+                        (,(dataframe '()) (1 2) #f)
+                        (,(head three-rows 0) (0) #f)
+                        (,three-rows (1 2)
+                         "unable to add a column of length 2 to a DataFrame of height 3")
+                        (,(head three-rows 0) (1 2)
+                         "unable to add a column of length 2 to a DataFrame of height 0")))])
+    (match-define (list d cells expected) row)
+    (check-equal? (column-height-problem d (series cells #:name "w")) expected
+                  (format "~s beside height ~a" cells (height d)))))
