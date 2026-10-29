@@ -12,9 +12,11 @@ mod time_zone;
 pub use self::access::*;
 pub use self::cast::*;
 #[cfg(test)]
+pub(crate) use self::categorical::enum_cast_checked;
+pub(crate) use self::categorical::enum_dtype;
+#[cfg(test)]
 pub(crate) use self::categorical::ENUM_MISSES_TAG;
 pub use self::categorical::*;
-pub(crate) use self::categorical::{enum_cast_checked, enum_dtype};
 pub(crate) use self::constructors::name_from_ptr;
 #[cfg(test)]
 pub(crate) use self::constructors::ymdhms_to_naive_datetime;

@@ -40,13 +40,13 @@ pub(crate) use ffi::{on_polars_worker, panic_is_quiet};
 pub(crate) use ffi::{str_arg, StrError};
 #[cfg(test)]
 pub(crate) use series::ymdhms_to_naive_datetime;
-#[cfg(test)]
-pub(crate) use series::ENUM_MISSES_TAG;
 pub(crate) use series::{
-    ambiguous_name, datetime_tz_dtype, enum_cast_checked, enum_dtype,
-    name_from_ptr, named_time_zone, optional_time_zone, series_new,
-    tz_resolution, valid_slices,
+    ambiguous_name, datetime_tz_dtype, enum_dtype, name_from_ptr,
+    named_time_zone, optional_time_zone, series_new, tz_resolution,
+    valid_slices,
 };
+#[cfg(test)]
+pub(crate) use series::{enum_cast_checked, ENUM_MISSES_TAG};
 #[cfg(test)]
 pub(crate) use types::compat_time_unit_from_polars;
 pub(crate) use types::{compat_dtype_from_polars, polars_dtype_from_compat};

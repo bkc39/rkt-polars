@@ -480,25 +480,32 @@ fn an_enum_cast_without_misses_is_the_strict_cast() {
     );
 }
 
+const ENUM_HINT: &str = "\n\nEnsure that all values in the input column \
+    are present in the categories of the enum datatype.";
+
 #[test]
-fn a_lazy_enum_cast_records_the_tagged_reason() {
+fn a_lazy_enum_cast_is_polars_strict_cast() {
     let s = make_str("o", &["EWR", "LGA"]);
     let df = make_df(&[s]);
     let column = expr_col_v2(str_block("o").as_ptr());
     let categories = str_list_block(&["EWR"]);
     let cast = expr_cast_enum_v2(column, categories.as_ptr());
+    assert!(matches!(
+        unsafe { &*cast },
+        Expr::Cast {
+            options: polars::chunked_array::cast::CastOptions::Strict,
+            ..
+        }
+    ));
     let exprs = [cast as *const Expr];
     let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
     assert!(lazyframe_collect(lf).is_null());
     assert_eq!(
-        parsed_payload(&recorded_error().unwrap()),
-        json!({
-            "categories": ["EWR"],
-            "distinct": 1,
-            "missing": 1,
-            "shown": ["LGA"],
-            "total": 2
-        })
+        recorded_error().unwrap(),
+        format!(
+            "conversion from `str` to `enum` failed in column 'o' for 1 out \
+             of 2 values: [\"LGA\"]{ENUM_HINT}"
+        )
     );
     series_drop(s);
     expr_drop(column);
@@ -537,7 +544,7 @@ fn lazy_enum_cast(name: &str, categories: &[&str]) -> Expr {
 }
 
 #[test]
-fn a_lazy_enum_cast_reports_one_chunk_s_misses() {
+fn a_lazy_enum_cast_counts_one_chunk_as_polars_does() {
     let width = 2 * std::thread::available_parallelism().map_or(8, |n| n.get());
     let piece = |values: &[&str]| {
         let columns: Vec<Column> = (0..width)
@@ -557,21 +564,28 @@ fn a_lazy_enum_cast_reports_one_chunk_s_misses() {
         frame.clone().lazy().with_columns([cast.clone()]),
         frame.clone().lazy().filter(cast.clone().is_null()),
     ];
+    let lead = "conversion from `str` to `enum` failed in column 'o0' for ";
     for plan in plans {
         let reason = plan.collect().unwrap_err().to_string();
-        let payload =
-            parsed_payload(&reason[reason.find(ENUM_MISSES_TAG).unwrap()..]);
-        assert_eq!(payload["categories"], json!(["EWR"]), "{}", reason);
-        let count = |key: &str| payload[key].as_u64().unwrap();
-        assert!(1 <= count("missing"), "{}", reason);
-        assert!(count("missing") <= count("total"), "{}", reason);
-        assert!(count("total") <= 8, "{}", reason);
-        let shown = payload["shown"].as_array().unwrap();
-        assert_eq!(shown.len() as u64, count("distinct"), "{}", reason);
-        assert!(
-            shown.iter().all(|v| misses.contains(&v.as_str().unwrap())),
-            "{}",
-            reason
-        );
+        let counts = reason
+            .strip_prefix(lead)
+            .and_then(|rest| rest.split_once(" values: ["))
+            .and_then(|(counts, rest)| {
+                let (missing, total) = counts.split_once(" out of ")?;
+                let listing = rest.strip_suffix(&format!("]{ENUM_HINT}"))?;
+                Some((
+                    missing.parse::<usize>().ok()?,
+                    total.parse().ok()?,
+                    listing,
+                ))
+            });
+        let (missing, total, listing) = counts.expect(&reason);
+        assert!(1 <= missing && missing <= total && total <= 8, "{}", reason);
+        let shown: Vec<&str> = listing
+            .split(", ")
+            .map(|v| v.trim_start_matches("… ").trim_matches('"'))
+            .collect();
+        assert_eq!(shown.len(), missing.min(3), "{}", reason);
+        assert!(shown.iter().all(|v| misses.contains(v)), "{}", reason);
     }
 }

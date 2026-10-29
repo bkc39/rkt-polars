@@ -19,7 +19,7 @@
          (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
          syntax/parse/define
-         (only-in polars/private/enum-misses enum-misses-reason)
+         (only-in polars/private/enum-misses enum-cast-reason enum-misses-reason)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
@@ -33,7 +33,7 @@
 
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-cat series-ref-str series-ref-string
-                     series-strings
+                     series-rename/who series-sort/who series-strings
                      strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-cast series-date-ref series-index/c series-ref-bytes
@@ -220,7 +220,8 @@
   (cond
     [(ok? result) result]
     [(problem) => (lambda (message) (raise-arguments-error who message))]
-    [(and reason (enum-misses-reason reason)) => (lambda (message) (error who "~a" message))]
+    [(and reason (or (enum-misses-reason reason) (enum-cast-reason reason)))
+     => (lambda (message) (error who "~a" message))]
     [(and reason fmt)
      (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
     [reason (error who "~a" (cause-of reason))]
@@ -735,7 +736,7 @@
 
 (define-syntax-parse-rule (define-typed-reduction op:id t:id opt-type:id valid:id opt->datum:id)
   #:with name (format-id #'t "series-~a-~a" #'op #'t)
-  #:with name/who (format-id #'t "series-~a-~a/who" #'op #'t)
+  #:with name/who (format-id #'name "~a/who" #'name)
   #:with raw (format-id #'here "~a/raw" #'name)
   #:with c-id (format-id #'here "series_~a_~a_v2" #'op #'t)
   (define-reasoned (name s) #:who-variant name/who
@@ -1329,10 +1330,9 @@
 
 (define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
   #:with raw (format-id #'here "~a/raw" #'name)
-  #:with name/who (format-id #'t "series-~a-~a/who" #'op #'t)
   #:with c-id (format-id #'name "~a" (string-replace (symbol->string (syntax-e #'name)) "-" "_"))
   (begin
-    (define-reasoned (name s v) #:who-variant name/who
+    (define-reasoned (name s v)
       (define-compat raw
         (_fun _Series-ptr ctype -> _Series-ptr/null)
         #:c-id c-id
@@ -1713,8 +1713,8 @@
 (module+ internal
   (provide dataframe-drop-nulls/who dataframe-head/who dataframe-slice/who dataframe-tail/who
            dataframe-unique/who series-drop-nulls/who series-head/who series-n-unique/who
-           series-reverse/who series-slice/who series-sort/who series-std/who series-tail/who
-           series-unique/who
+           series-rename/who series-reverse/who series-slice/who series-sort/who series-std/who
+           series-tail/who series-unique/who
            series-var/who typed-reductions define-reasoned named)
   (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
            dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join

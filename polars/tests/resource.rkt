@@ -423,12 +423,19 @@
                 [phase+exports (in-list (call-with-values (lambda () (module->exports mod)) append))]
                 [export (in-list (cdr phase+exports))])
       (car export)))
+  (define reasoned-families
+    `((define-group-by-agg . ,(lambda (agg) (string->symbol (format "dataframe-group-by-~a" agg))))
+      (define-series-scalar-op . ,values)))
   (define (reasoned-names form)
     (define own
       (match form
         [(list* (or 'call/foreign-error 'call/polars-reason) (list 'quote (? symbol? who)) _)
          (list who)]
         [(list* 'define-reasoned (cons (? symbol? name) _) _) (list name)]
+        [(list* (? symbol? (app (lambda (head) (assq head reasoned-families)) (cons _ named)))
+                (? symbol? arg)
+                _)
+         (list (named arg))]
         [_ '()]))
     (append own
             (match form
@@ -441,6 +448,7 @@
                #:when (memq name exports))
       name))
   (define generic-sources (polars-sources #:dirs '("private/generic")))
+  (define foreign-source (build-path polars-dir "private" "foreign.rkt"))
   (define low-level-sources
     (for/list ([file (in-list (polars-sources #:dirs '("private")))]
                #:unless (member file generic-sources))
@@ -448,6 +456,13 @@
   (check-equal? (reasoned-names '(define (series-frob s)
                                    (call/foreign-error 'series-frob (lambda () s) "x")))
                 '(series-frob))
+  (check-equal? (reasoned-names '((define-group-by-agg median)
+                                  (define-series-scalar-op series-add-i32 _int32)
+                                  (define-syntax-parse-rule (define-group-by-agg agg:id)
+                                    (define (name df) (call/polars-reason 'name df)))))
+                '(dataframe-group-by-median series-add-i32 dataframe-group-by-agg:id name))
+  (check-not-false (memq 'dataframe-group-by-sum (exported-reasoned-names foreign-source)))
+  (check-not-false (memq 'series-add-i32 (exported-reasoned-names foreign-source)))
   (check-equal? (reasoned-names '((define-reasoned (series-twiddle s) #:who-variant t/who)
                                   (call/polars-reason who (lambda () s))
                                   (f call/foreign-error 'series-not-a-call)))
@@ -465,6 +480,19 @@
                             '(series-std series-var))
                 '())
   (check-not-false (memq 'series-sort who-plain-names))
+  (for ([blind-spot (in-list '((rename-in ((require (rename-in m [series-std sd])) (sd s)))
+                               (prefix-in ((require (prefix-in m: m)) (m:series-std s)))
+                               (literal-who ((define (sd s) (call/polars-reason 'sd s)) (sd s)))))])
+    (match-define (list spot program) blind-spot)
+    (check-equal? (plain-uses program '(series-std)) '() (format "the law is blind to ~a" spot)))
+  (check-true (module-declared? 'polars #t))
+  (check-equal? (for*/list ([phase+exports (in-list (call-with-values
+                                                     (lambda () (module->exports 'polars))
+                                                     append))]
+                            [export (in-list (cdr phase+exports))]
+                            #:when (regexp-match? #rx"/who$" (symbol->string (car export))))
+                  (car export))
+                '())
   (check-equal? (for*/list ([file (in-list generic-sources)]
                             [name (in-list (plain-uses (read-source file) who-plain-names))])
                   (list (path->string (file-name-from-path file)) name))

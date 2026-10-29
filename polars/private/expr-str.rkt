@@ -5,11 +5,11 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          (only-in polars/private/c-integer size/c)
-         (only-in racket/contract/base ->* any/c contract-out)
+         (only-in racket/contract/base ->* any/c contract-out flat-contract-predicate)
          polars/private/expr-core
          (only-in polars/private/foreign
                   _c-string call/foreign-error call/polars-reason polars-null)
-         (only-in polars/private/resource _str/null))
+         (only-in polars/private/resource _str/null utf-8-name/c))
 
 (provide expr-str-contains expr-str-starts-with expr-str-ends-with
          expr-str-to-lowercase expr-str-to-uppercase
@@ -219,9 +219,11 @@
 
 (define (flag b) (if b 1 0))
 
+(define utf-8-name? (flat-contract-predicate utf-8-name/c))
+
 (define (check-strptime-options who format strict exact cache)
-  (when (and format (not (string? format)))
-    (error who "format must be a string or #f, got ~v" format))
+  (unless (or (not format) (utf-8-name? format))
+    (error who "format must be a UTF-8 name or #f, got ~v" format))
   (unless (boolean? strict)
     (error who "strict must be a boolean, got ~v" strict))
   (unless (boolean? exact)

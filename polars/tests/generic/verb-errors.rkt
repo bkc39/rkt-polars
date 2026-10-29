@@ -13,9 +13,10 @@
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
+           (only-in polars/private/enum-misses enum-misses-strict-shown)
            (only-in polars/private/expr-core expr->string lit lit-integer/c)
            (only-in polars/private/foreign
-                    last-error-message polars-null series-add/who series-cast
+                    dataframe->string last-error-message polars-null series-add/who series-cast
                     series-cast-datetime-tz/raw series-dt-convert-time-zone/raw
                     series-dt-replace-time-zone/raw series-name time-unit-symbol->code
                     time-zone-name/c)
@@ -39,7 +40,7 @@
            (only-in (submod polars/private/expr-dt internal)
                     expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw)
            (only-in (submod polars/private/expr-str internal) expr-str->datetime-tz/raw)
-           (only-in polars/private/generic/combine vstack)
+           (only-in polars/private/generic/combine join vstack)
            (only-in polars/private/generic/core
                     column-names dataframe dataframe? dtype height lazyframe? len ref series series?
                     shape)
@@ -53,10 +54,11 @@
            (only-in polars/private/generic/nullable
                     backward-fill fill-nan fill-null forward-fill is-null)
            (only-in polars/private/generic/operators
-                    < <= > else-when otherwise p* p+ p- p/ p-when then)
+                    < <= > [= p=] else-when otherwise p* p+ p- p/ p-when then)
            (only-in polars/private/generic/ordering gather sort)
            (only-in polars/private/generic/predicates is-between)
            (only-in polars/private/generic/reductions alias count first last max min sum)
+           (only-in polars/private/generic/selectors exclude)
            (only-in polars/private/generic/window over)
            (only-in polars/private/generic/reshape
                     agg cast collect drop explain filter group-by head lazy pivot rename select
@@ -469,57 +471,91 @@
   (define (with-groups source)
     (dataframe (list source
                      (series (for/list ([i (in-range (len source))]) (modulo i 2)) #:name "g"))))
-  (define (cast-message source target)
-    (message-after "cast: " (raised-message 'polars #rx"^cast: " (lambda () (cast source target)))))
-  (define (column-misses elements target)
-    (define categories (map symbol->string (cdr target)))
-    (remove-duplicates (for/list ([v (in-list elements)]
-                                  #:when (and (string? v) (not (member v categories))))
-                         v)))
   (define (listed-values listing)
     (for/list ([v (in-port read (open-input-string listing))])
       (if (symbol? v) (symbol->string v) v)))
-  (define (chunk-law-failures message who target elements)
+  (define (miss-rows elements target)
+    (define categories (map symbol->string (cdr target)))
+    (for/list ([v (in-list elements)]
+               #:when (and (string? v) (not (member v categories))))
+      v))
+  (define (subsequence? listed rows)
+    (match* (listed rows)
+      [('() _) #t]
+      [(_ '()) #f]
+      [((cons v more) (cons v rest)) (subsequence? more rest)]
+      [(_ (cons _ rest)) (subsequence? listed rest)]))
+  (define (chunk-law-failures message who target elements #:row-order? [row-order? #t])
     (define lead (format "~a: " who))
-    (define split (regexp-match-positions (regexp-quote (format " not in ~v: " target)) message))
+    (define split (regexp-match-positions #rx" not in the enum: " message))
     (define counts
       (and (string-prefix? message lead) split
-           (regexp-match #px"^(\\d+) of (\\d+) values? (?:is|are)$"
+           (regexp-match #px"^(\\d+) of (\\d+) (values?) (is|are)$"
                          (substring message (string-length lead) (caar split)))))
     (match counts
-      [(list _ (app string->number missing) (app string->number total))
-       (define listed
-         (listed-values (regexp-replace #px", and \\d+ more$" (substring message (cdar split)) "")))
-       (define misses (column-misses elements target))
-       (for/list ([failure (list (and (not (<= 1 missing total (length elements))) 'counts)
+      [(list _ (app string->number missing) (app string->number total) noun verb)
+       (define listing (substring message (cdar split)))
+       (define tail (regexp-match #px"^(.*), and (\\d+) more$" listing))
+       (define listed (listed-values (if tail (cadr tail) listing)))
+       (define more (if tail (string->number (caddr tail)) 0))
+       (define rows (miss-rows elements target))
+       (define shown-rows (- missing more))
+       (define misses? (andmap (lambda (v) (member v rows)) listed))
+       (define distinct? (equal? listed (remove-duplicates listed)))
+       (for/list ([failure (list (and (not (and (<= 1 missing (length rows))
+                                                (<= missing total (length elements))))
+                                      'counts)
+                                 (and (not (and (equal? noun (if (= total 1) "value" "values"))
+                                                (equal? verb (if (= missing 1) "is" "are"))))
+                                      'number)
                                  (and (null? listed) 'listed)
-                                 (and (not (andmap (lambda (v) (member v misses)) listed))
-                                      'not-a-miss)
-                                 (and (not (equal? listed (remove-duplicates listed))) 'repeated))]
+                                 (and (not misses?) 'not-a-miss)
+                                 (and (not distinct?) 'repeated)
+                                 (and (not (and (= shown-rows (if (> missing enum-misses-strict-shown)
+                                                                  (sub1 enum-misses-strict-shown)
+                                                                  missing))
+                                                (<= (length listed) shown-rows)))
+                                      'tally)
+                                 (and row-order? misses? distinct? (not (subsequence? listed rows))
+                                      'order))]
                   #:when failure)
          failure)]
       [_ '(shape)]))
   (define carrier-enum '(enum UA AA))
-  (define law-elements (list "UA" "B6" polars-null "XX" "UA"))
-  (for ([row (in-list `(("select: 2 of 4 values are not in '(enum UA AA): B6 XX" ())
-                        ("select: 1 of 1 value is not in '(enum UA AA): XX" ())
-                        ("select: 1 of 4 value is not in '(enum UA AA): XX, and 1 more" ())
-                        ("agg: 1 of 4 values is not in '(enum UA AA): XX" (shape))
+  (define law-elements (list "UA" "B6" polars-null "XX" "UA" "B6" "ZZ"))
+  (for ([row (in-list `(("select: 2 of 4 values are not in the enum: B6 XX" ())
+                        ("select: 1 of 1 value is not in the enum: XX" ())
+                        ("select: 1 of 4 values is not in the enum: XX" ())
+                        ("select: 3 of 7 values are not in the enum: B6 XX" ())
+                        ("select: 4 of 7 values are not in the enum: B6 XX, and 2 more" ())
+                        ("select: 2 of 4 values are not in the enum: XX B6" ())
+                        ("select: 1 of 4 value is not in the enum: XX, and 1 more" (number tally))
+                        ("select: 1 of 4 values is not in the enum: B6 XX" (tally))
+                        ("select: 2 of 4 value are not in the enum: ZZ XX" (number order))
+                        ("select: 2 of 4 values is not in the enum: B6 XX" (number))
+                        ("select: 2 of 4 values are not in the enum: ZZ XX" (order))
+                        ("select: 4 of 7 values are not in the enum: B6 XX" (tally))
+                        ("select: 3 of 7 values are not in the enum: B6, and 2 more" (tally))
+                        ("agg: 1 of 4 values is not in the enum: XX" (shape))
                         ("select: 2 of 4 values are not in '(enum UA): B6 XX" (shape))
-                        ("select: 2 values are not in '(enum UA AA): B6 XX" (shape))
-                        ("select: 0 of 4 values are not in '(enum UA AA): B6" (counts))
-                        ("select: 6 of 6 values are not in '(enum UA AA): B6" (counts))
-                        ("select: 1 of 4 value is not in '(enum UA AA): " (listed))
-                        ("select: 1 of 4 value is not in '(enum UA AA): UA" (not-a-miss))
-                        ("select: 1 of 4 value is not in '(enum UA AA): TEB" (not-a-miss))
-                        ("select: 2 of 4 values are not in '(enum UA AA): XX XX" (repeated))))])
+                        ("select: 2 values are not in the enum: B6 XX" (shape))
+                        ("select: 0 of 4 values are not in the enum: B6" (counts tally))
+                        ("select: 5 of 7 values are not in the enum: B6 XX, and 3 more" (counts))
+                        ("select: 4 of 9 values are not in the enum: B6 XX, and 2 more" (counts))
+                        ("select: 1 of 4 values is not in the enum: " (listed))
+                        ("select: 1 of 4 values is not in the enum: UA" (not-a-miss))
+                        ("select: 1 of 4 values is not in the enum: TEB" (not-a-miss))
+                        ("select: 2 of 4 values are not in the enum: XX XX" (repeated))))])
     (match-define (list message failures) row)
     (check-equal? (chunk-law-failures message 'select carrier-enum law-elements) failures message))
+  (check-equal? (chunk-law-failures "agg: 2 of 4 values are not in the enum: ZZ XX" 'agg
+                                    carrier-enum law-elements #:row-order? #f)
+                '())
   (define enum-cases
     (list (list carrier-enum (list "UA" polars-null "B6" "B6" "AA" polars-null))
           (list carrier-enum (list "UA" "B6"))
           (list carrier-enum (cons "UA" (for/list ([i (in-range 12)]) (format "m~a" i))))
-          (list carrier-enum (list "UA" "a\u0000b" "c\nd"))
+          (list carrier-enum (list "UA" "c\nd" "e\tf"))
           (list carrier-enum (list "Very High" "UA" "Very High"))
           (list '(enum) (list "x" "y" polars-null))))
   (define lazy-enum-messages
@@ -532,10 +568,8 @@
       (match-define (cons who run) verb)
       (define message (raised-message 'polars (who-prefix who) run))
       (define context (format "~s on ~s" who elements))
-      (if grouped?
-          (check-equal? (chunk-law-failures message who target elements) '() context)
-          (check-equal? (message-after (format "~a: " who) message) (cast-message source target)
-                        context))
+      (check-equal? (chunk-law-failures message who target elements #:row-order? (not grouped?))
+                    '() context)
       (message-after (format "~a: " who) message)))
 
   (define carriers
@@ -597,7 +631,47 @@
                       (series->list (ref pushed-past "c")) (series->list (ref pushed-past "v")))
                 (list '(1 2) ua-only '(UA) '(2)))
   (check-equal? (raised-message 'polars (who-prefix 'collect) (lambda () (collect pushed-plan)))
-                (format "collect: ~a" (cast-message (ref pushed "c") ua-only)))
+                "collect: 1 of 2 values is not in the enum: XX")
+  (define filtered-first
+    (collect (filter (filter (lazy pushed) (> (col "v") 1)) (p= (cast "c" ua-only) "UA"))))
+  (check-equal? (list (shape filtered-first) (series->list (ref filtered-first "c")))
+                (list '(1 2) '("UA")))
+  (define joined-first
+    (collect (filter (join (lazy pushed) (lazy (dataframe (list (series '(2) #:name "v"))))
+                           #:on '("v"))
+                     (p= (cast "c" ua-only) "UA"))))
+  (check-equal? (list (shape joined-first) (series->list (ref joined-first "c")))
+                (list '(1 2) '("UA")))
+  (define grouped-pushed
+    (dataframe (list (series '(1 1) #:name "g") (series '("UA" "XX") #:name "c")
+                     (series '(2 0) #:name "v"))))
+  (for ([narrowed (list (filter (col "c") (> (col "v") 1)) (head (col "c") 1) (slice (col "c") 0 1))]
+        [i (in-naturals)])
+    (define grouped (agg (group-by grouped-pushed "g")
+                         (alias (first (cast narrowed ua-only)) "first")
+                         (alias (count (cast narrowed ua-only)) "count")))
+    (check-equal? (list (dtype (ref grouped "first")) (ref (ref grouped "first") 0)
+                        (ref (ref grouped "count") 0))
+                  (list ua-only 'UA 1)
+                  (format "agg case ~a" i))
+    (check-regexp-match #rx"list\\[enum\\] [^\n]*\n[^\n]*\n[^\n]* 1 +┆ \\[\"UA\"\\] "
+                        (with-environment-variable #"POLARS_TABLE_WIDTH" #"200"
+                          (dataframe->string (agg (group-by grouped-pushed "g")
+                                                  (alias (cast narrowed ua-only) "k"))))))
+  (for ([narrowed (list (filter (col "c") (> (col "v") 1)) (head (col "c") 1) (slice (col "c") 0 1))])
+    (check-raises 'polars
+                  (string-append "^select: lengths don't match: the length of the window "
+                                 "expression did not match that of the group\n")
+                  (lambda () (select grouped-pushed (over (cast narrowed ua-only) "g")))))
+  (define (fallback-message value)
+    (string-append "select: conversion from `str` to `enum` failed in column 'c' for 1 out of 2 "
+                   "values: [\"" value "\"]\n\nEnsure that all values in the input column are "
+                   "present in the categories of the enum datatype."))
+  (for ([value (list "a\"b" "a\u0000b")])
+    (check-raises 'polars (string-append "^" (regexp-quote (fallback-message value)))
+                  (lambda ()
+                    (select (dataframe (list (series (list "UA" value) #:name "c")))
+                            (cast "c" ua-only)))))
 
   (define (cycle elements n)
     (for/list ([i (in-range n)]) (list-ref elements (modulo i (length elements)))))
@@ -761,6 +835,30 @@
                                                "|cast_options|_horizontal|`str[.]")
                                 message)
                  message))
+
+  (define stamped
+    (dataframe (list (series '("2021-03-27") #:name "s") (series '("12:30") #:name "u")
+                     (series (list (datetime 2021 3 27)) #:name "t"))))
+  (for ([row (in-list (list (cons 'select (lambda () (select stamped (str->date "s" #:format "%Q"))))
+                            (cons 'select (lambda () (select stamped (str->time "u" #:format "%Q"))))
+                            (cons 'select (lambda () (select stamped (dt-strftime "t" "%Q"))))
+                            (cons 'collect (lambda ()
+                                             (collect (join (lazy stamped) (lazy stamped)
+                                                            #:on '("nope")))))))])
+    (match-define (cons who run) row)
+    (check-raises 'polars (who-prefix who) run))
+  (for ([run (list (lambda () (exclude (col "s") "t"))
+                   (lambda () (join (lazy stamped) (lazy stamped) #:on '())))]
+        [who '(exclude join)])
+    (check-raises 'contract (string-append (who-prefix who) "contract violation\n") run))
+  (for ([row (in-list (list (list "s" str->date "%Y-%m-%d") (list "u" str->time "%H:%M")
+                            (list "s" str->datetime "%Y-%m-%d")))])
+    (match-define (list name parse format) row)
+    (define (parsed given) (series->list (ref (select stamped (parse name #:format given)) name)))
+    (check-equal? (parsed (string->bytes/utf-8 format)) (parsed format) format)
+    (check-not-false (pair? (parsed format)) format)
+    (check-raises 'contract (string-append (who-prefix (object-name parse)) "contract violation\n")
+                  (lambda () (parse name #:format #"\377"))))
 
   (define select-unknown (select (lazy (dataframe (list (series '(1) #:name "o")))) "nope"))
   (for ([explained (list (lambda () (explain select-unknown))

@@ -531,11 +531,15 @@ total
   (@racket[dtype-spec?]), plus @racket['binary] and @racket['duration]. Any other value is a contract violation. A
   value that does not convert becomes null, except
   in a cast to an Enum, which raises as Python's default @tt{strict=True}
-  does. The error names the values outside the categories (the first ten in
-  sorted order); on an expression it raises when the plan runs, under the
-  verb that runs it. The eager cast counts the whole column; a lazy one,
-  like Python's, reports the counts and the values of the chunk or group
-  it failed in, and a filter or a slice after it can exclude a row before
+  does. On a series the error counts the column's values outside the
+  categories and names the first ten in sorted order. On an expression it
+  raises when the plan runs, under the verb that runs it, and counts what
+  Polars' strict cast was given at once, as Python does: the whole column in
+  @racket[select] or @racket[with-columns], one thread's part of the frame in
+  a @racket[filter], and every group's values in @racket[agg] or
+  @racket[over]. That count includes nulls, and the message names the first
+  missed values in row order but no categories. A filter, @racket[head] or
+  @racket[slice] before the cast, in a plan or a group, removes a row before
   the cast sees it.
 
   A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each

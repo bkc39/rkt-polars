@@ -153,6 +153,9 @@
              (lambda () (contracted:cast 5 'f64)))
   (check-exn #rx"^cast: 1 of 2 "
              (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
+  (check-exn #rx"^select: 1 of 2 values is not in the enum: B6$"
+             (lambda () (select (dataframe (list (series '("UA" "B6") #:name "c")))
+                                (contracted:cast "c" '(enum UA AA)))))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (series (list 'TEB polars-null 'XYZ 'TEB 'EWR)) '(enum EWR JFK LGA))))
   (check-equal? (series-cells (cast (series (list 'EWR polars-null 'LGA)) '(enum EWR JFK LGA)))
@@ -184,7 +187,7 @@
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
-  (check-exn #rx"^with-columns: 2 of 4 values are not in '\\(enum JFK MIA\\): IAH$"
+  (check-exn #rx"^with-columns: 2 of 4 values are not in the enum: IAH$"
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
   (define nul-mia (string->symbol "MI\u0000A"))
   (define nul-dests (list 'enum 'JFK nul-mia 'IAH))

@@ -35,7 +35,7 @@
                           ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
                           Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
-                              (#:format (or/c #f string?)
+                              (#:format (or/c #f utf-8-name/c)
                                #:unit time-unit/c
                                #:time-zone (or/c #f time-zone-name/c)
                                #:ambiguous (or/c 'raise 'earliest 'latest 'null)

@@ -3,6 +3,7 @@
 (require (prefix-in base: racket/base)
          (only-in racket/match match)
          polars/private/foreign
+         (only-in (submod polars/private/foreign internal) series-rename/who)
          polars/private/expr
          (only-in polars/private/expr-core drop-owned)
          polars/private/generic/core

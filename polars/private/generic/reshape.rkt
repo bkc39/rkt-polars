@@ -11,7 +11,8 @@
          (only-in racket/contract/base contract-out)
          polars/private/foreign
          (only-in (submod polars/private/foreign internal)
-                  dataframe-drop-columns/who dataframe-rename/who dataframe-with-column/who)
+                  dataframe-drop-columns/who dataframe-rename/who dataframe-with-column/who
+                  series-rename/who)
          polars/private/expr
          (only-in (submod polars/private/expr internal) collect-plan/who lazyframe-collect/who)
          (only-in (submod polars/private/foreign internal)
