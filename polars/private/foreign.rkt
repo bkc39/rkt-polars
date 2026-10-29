@@ -19,6 +19,7 @@
          (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/enum-misses enum-cast-reason enum-misses-reason)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
@@ -32,7 +33,7 @@
 
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-cat series-ref-str series-ref-string
-                     series-strings
+                     series-rename/who series-sort/who series-strings
                      strings->series series-drop
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-cast series-date-ref series-index/c series-ref-bytes
@@ -52,12 +53,15 @@
                      series-ne-i32
                      series-add-f64 series-sub-f64 series-mul-f64 series-div-f64 series-mod-f64
                      series-lt-f64 series-le-f64 series-gt-f64 series-ge-f64 series-eq-f64
-                     series-ne-f64
+                     series-ne-f64 typed-reductions spelling-rules expanded-reason
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
                      (matching-identifiers-out
                       #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
                       (all-defined-out))
-                     (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
+                     (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out))
+                     (matching-identifiers-out
+                      #rx"^series-(?:(?:sum|min|max|mean)-[iuf][0-9]+|head|tail|slice|reverse|drop-nulls|unique|n-unique|std|var)/who$"
+                      (all-defined-out)))
          (contract-out
           [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
           [dataframe-vstack (->/c DataFrame-ptr? DataFrame-ptr? DataFrame-ptr?)]
@@ -171,19 +175,36 @@
     ("with `.alias(\"new_name\")`" . "with `(alias expr \"new-name\")`")
     (,(string-append "\n\nIf you would like to forcibly disable timezone validation,"
                      " set POLARS_IGNORE_TIMEZONE_PARSE_ERROR=1.")
+     . "")
+    ("setting `strict=False` to set values that cannot be converted to `null`"
+     . "passing #:strict #f to set values that cannot be converted to null")
+    ("using `str.strptime`, `str.to_date`, or `str.to_datetime` and providing a format string"
+     . "passing str->date or str->datetime a #:format string")
+    (" passed to `LazyFrame.with_columns` is duplicate" . " is duplicate")
+    ("The predicate passed to 'LazyFrame.filter' expanded" . "The predicate expanded")
+    ("Try to combine the predicates with the 'all_horizontal' or `any_horizontal' expression."
+     . "Combine them into one predicate with and or or.")
+    (#rx", hint: (?:specify this field in the schema, or )?pass cast_options=pl\\.ScanCastOptions\\([^)]*\\)"
      . "")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
+(define spelling-rules
+  (for/list ([(python racket) (in-dict racket-spellings)])
+    (cons (if (regexp? python) python (regexp (regexp-quote python)))
+          (regexp-replace-quote racket))))
+
+(define (expanded-reason reason)
+  (if (or (regexp-match? empty-expansion reason)
+          (equal? reason "no paths specified for this reader"))
+      "no files match the pattern"
+      reason))
+
 (define (respell reason)
-  (for/fold ([reason (cond
-                       [(or (regexp-match? empty-expansion reason)
-                            (equal? reason "no paths specified for this reader"))
-                        "no files match the pattern"]
-                       [else reason])])
-            ([(python racket) (in-dict racket-spellings)])
-    (string-replace reason python racket)))
+  (for/fold ([reason (expanded-reason reason)])
+            ([rule (in-list spelling-rules)])
+    (regexp-replace* (car rule) reason (cdr rule))))
 
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
 (define (call/reason thunk ok?)
@@ -192,15 +213,15 @@
      (define result (thunk))
      (values result (and (not (ok? result)) (last-error-message))))))
 
-(define (call/foreign-error who thunk #:ok? [ok? values] #:problem [problem (lambda () #f)]
-                            #:explain [explain (lambda () #f)] #:cause [cause values]
-                            [fmt #f] . args)
+(define (call/foreign-error who thunk #:ok? [ok? values] #:problem [problem no-problem]
+                            #:cause [cause values] [fmt #f] . args)
   (define-values (result reason) (call/reason thunk ok?))
   (define (cause-of reason) (cause (respell reason)))
   (cond
     [(ok? result) result]
     [(problem) => (lambda (message) (raise-arguments-error who message))]
-    [(explain) => (lambda (message) (error who "~a" message))]
+    [(and reason (or (enum-misses-reason reason) (enum-cast-reason reason)))
+     => (lambda (message) (error who "~a" message))]
     [(and reason fmt)
      (apply error who (string-append fmt ": ~a") (append args (list (cause-of reason))))]
     [reason (error who "~a" (cause-of reason))]
@@ -700,59 +721,70 @@
 
 (begin-for-syntax
   (define-syntax-class reduction-dtype
-    #:attributes (opt-type valid opt->datum)
+    #:attributes (opt-type valid opt->datum dtype)
     (pattern t:id
              #:fail-unless (memq (syntax-e #'t) '(i8 i16 i32 i64 u8 u16 u32 u64 f32 f64))
              "a numeric dtype suffix"
-             #:do [(define upper (string-upcase (symbol->string (syntax-e #'t))))]
+             #:do [(define suffix (symbol->string (syntax-e #'t)))
+                   (define upper (string-upcase suffix))
+                   (define kind (hash-ref #hash(("i" . "int") ("u" . "uint") ("f" . "float"))
+                                          (substring suffix 0 1)))]
+             #:with dtype (string->symbol (string-append kind (substring suffix 1)))
              #:with opt-type (format-id #'t "_CompatOpt~a" upper)
              #:with valid (format-id #'t "CompatOpt~a-valid" upper)
              #:with opt->datum (format-id #'t "compat-opt-~a->datum" #'t))))
 
 (define-syntax-parse-rule (define-typed-reduction op:id t:id opt-type:id valid:id opt->datum:id)
   #:with name (format-id #'t "series-~a-~a" #'op #'t)
+  #:with name/who (format-id #'name "~a/who" #'name)
   #:with raw (format-id #'here "~a/raw" #'name)
   #:with c-id (format-id #'here "series_~a_~a_v2" #'op #'t)
-  (define-reasoned (name s)
+  (define-reasoned (name s) #:who-variant name/who
     #:ok? (compose1 (negate negative?) valid)
     #:result opt->datum
     (define-compat raw
       (_fun _Series-ptr -> opt-type)
       #:c-id c-id)))
 
-(define-syntax-parse-rule (define-typed-reductions t:reduction-dtype ...)
+(define-syntax-parse-rule (define-typed-reductions table:id t:reduction-dtype ...)
+  #:with (op ...) #'(sum min max mean)
+  #:with ((op/who ...) ...) (for/list ([op (in-list (syntax->list #'(op ...)))])
+                              (for/list ([t (in-list (syntax->list #'(t ...)))])
+                                (format-id t "series-~a-~a/who" op t)))
   (begin
     (begin
       (define-typed-reduction sum t t.opt-type t.valid t.opt->datum)
       (define-typed-reduction min t t.opt-type t.valid t.opt->datum)
       (define-typed-reduction max t t.opt-type t.valid t.opt->datum)
       (define-typed-reduction mean t _CompatOptF64 CompatOptF64-valid compat-opt-f64->datum))
-    ...))
+    ...
+    (define table
+      (hash (~@ 'op (hash (~@ 't.dtype op/who) ...)) ...))))
 
-(define-typed-reductions i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
+(define-typed-reductions typed-reductions i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
 
-(define-reasoned (series-n-unique s)
+(define-reasoned (series-n-unique s) #:who-variant series-n-unique/who
   #:ok? (negate negative?)
   (define-compat series-n-unique/raw
     (_fun _Series-ptr -> _int64)
     #:c-id series_n_unique_v2))
 
-(define-reasoned (series-head s n)
+(define-reasoned (series-head s n) #:who-variant series-head/who
   (_fun _Series-ptr _size -> _Series-ptr/null))
 
-(define-reasoned (series-tail s n)
+(define-reasoned (series-tail s n) #:who-variant series-tail/who
   (_fun _Series-ptr _size -> _Series-ptr/null))
 
-(define-reasoned (series-slice s offset len)
+(define-reasoned (series-slice s offset len) #:who-variant series-slice/who
   (_fun _Series-ptr _int64 _size -> _Series-ptr/null))
 
-(define-reasoned (series-reverse s)
+(define-reasoned (series-reverse s) #:who-variant series-reverse/who
   (_fun _Series-ptr -> _Series-ptr/null))
 
-(define-reasoned (series-drop-nulls s)
+(define-reasoned (series-drop-nulls s) #:who-variant series-drop-nulls/who
   (_fun _Series-ptr -> _Series-ptr/null))
 
-(define-reasoned (series-unique s)
+(define-reasoned (series-unique s) #:who-variant series-unique/who
   (_fun _Series-ptr -> _Series-ptr/null))
 
 (define-compat series-sort/raw
@@ -760,10 +792,13 @@
   #:c-id series_sort_with_options
   #:wrap (allocator series-drop))
 
-(define (series-sort s #:descending [descending #f] #:nulls-last [nulls-last #f])
-  (call/foreign-error 'series-sort
+(define (series-sort/who who s descending nulls-last)
+  (call/foreign-error who
                       (lambda () (series-sort/raw s descending nulls-last))
                       "failed to sort the series"))
+
+(define (series-sort s #:descending [descending #f] #:nulls-last [nulls-last #f])
+  (series-sort/who 'series-sort s descending nulls-last))
 
 (define (values+valid input-values default-value)
   (for/lists (clean-values valid)
@@ -1188,56 +1223,9 @@
   #:c-id series_cast_enum_v2
   #:wrap (allocator series-drop))
 
-(module enum-misses racket/base
-  (require (only-in racket/string string-join))
-  (provide enum-misses-message enum-misses-shown)
-
-  (define enum-misses-shown 10)
-
-  (define (spell value)
-    (cond
-      [(for/or ([c (in-string value)]) (char-iso-control? c)) (format "~s" value)]
-      [else (format "~s" (string->symbol value))]))
-
-  (define (enum-misses-message dtype missing total named distinct)
-    (define noun (if (= total 1) "value" "values"))
-    (define verb (if (= missing 1) "is" "are"))
-    (define listed (string-join (map spell named)))
-    (define more (- distinct (length named)))
-    (define tail (if (positive? more) (format "~a, and ~a more" listed more) listed))
-    (format "~a of ~a ~a ~a not in ~v: ~a" missing total noun verb dtype tail)))
-
-(require 'enum-misses)
-
 (define (series-cast-enum who s dtype)
-  (define categories (map symbol->string (cdr dtype)))
-  (define (misses)
-    (match (series-dtype s)
-      [(or 'string 'categorical (cons 'enum _))
-       (with-release ([strings (series-cast-to who s 'string) series-drop]
-                      [present (series-drop-nulls strings) series-drop])
-         (series-rename present "value")
-         (with-release ([known (strings->series who "value" categories) series-drop]
-                        [left (dataframe-new (list present)) dataframe-drop]
-                        [right (dataframe-new (list known)) dataframe-drop]
-                        [missed (dataframe-join left right #:on '("value") #:how 'anti)
-                                dataframe-drop]
-                        [column (dataframe-column missed "value") series-drop]
-                        [distinct (series-unique column) series-drop]
-                        [sorted (series-sort distinct) series-drop]
-                        [shown (series-head sorted enum-misses-shown) series-drop])
-           (define named
-             (for/list ([i (in-range (series-len shown))])
-               (series-ref-string shown i)))
-           (cond
-             [(zero? (dataframe-height missed)) #f]
-             [(memv #f named) #f]
-             [else (enum-misses-message dtype (dataframe-height missed) (series-len present)
-                                        named (series-len distinct))])))]
-      [_ #f]))
   (call/foreign-error who
-                      (lambda () (series-cast-enum/raw s categories))
-                      #:explain misses
+                      (lambda () (series-cast-enum/raw s (map symbol->string (cdr dtype))))
                       "cannot convert to ~v" dtype))
 
 (define-compat series-cast-datetime-tz/raw
@@ -1289,14 +1277,14 @@
       (format "cannot replace the time zone with ~s" zone)
       "cannot unset the time zone"))
 
-(define-reasoned (series-std s [#:ddof ddof 1])
+(define-reasoned (series-std s [#:ddof ddof 1]) #:who-variant series-std/who
   #:ok? (compose1 (negate negative?) CompatOptF64-valid)
   #:result compat-opt-f64->datum
   (define-compat series-std/raw
     (_fun _Series-ptr _uint8 -> _CompatOptF64)
     #:c-id series_std_v2))
 
-(define-reasoned (series-var s [#:ddof ddof 1])
+(define-reasoned (series-var s [#:ddof ddof 1]) #:who-variant series-var/who
   #:ok? (compose1 (negate negative?) CompatOptF64-valid)
   #:result compat-opt-f64->datum
   (define-compat series-var/raw
@@ -1342,10 +1330,9 @@
 
 (define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
   #:with raw (format-id #'here "~a/raw" #'name)
-  #:with name/who (format-id #'here "~a/who" #'name)
   #:with c-id (format-id #'name "~a" (string-replace (symbol->string (syntax-e #'name)) "-" "_"))
   (begin
-    (define-reasoned (name s v) #:who-variant name/who
+    (define-reasoned (name s v)
       (define-compat raw
         (_fun _Series-ptr ctype -> _Series-ptr/null)
         #:c-id c-id
@@ -1414,13 +1401,13 @@
 (define-compat dataframe-width
   (_fun _DataFrame-ptr -> _size))
 
-(define-reasoned (dataframe-head df n)
+(define-reasoned (dataframe-head df n) #:who-variant dataframe-head/who
   (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null))
 
-(define-reasoned (dataframe-tail df n)
+(define-reasoned (dataframe-tail df n) #:who-variant dataframe-tail/who
   (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null))
 
-(define-reasoned (dataframe-slice df offset len)
+(define-reasoned (dataframe-slice df offset len) #:who-variant dataframe-slice/who
   (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr/null))
 
 (define-compat dataframe-column-names
@@ -1612,10 +1599,10 @@
 (define-group-by-agg max)
 (define-group-by-agg count)
 
-(define-reasoned (dataframe-unique df)
+(define-reasoned (dataframe-unique df) #:who-variant dataframe-unique/who
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null))
 
-(define-reasoned (dataframe-drop-nulls df)
+(define-reasoned (dataframe-drop-nulls df) #:who-variant dataframe-drop-nulls/who
   (_fun _DataFrame-ptr -> _DataFrame-ptr/null))
 
 (define-frame-op/reason (dataframe-join left right left-on right-on how)
@@ -1724,6 +1711,11 @@
   (newline out))
 
 (module+ internal
+  (provide dataframe-drop-nulls/who dataframe-head/who dataframe-slice/who dataframe-tail/who
+           dataframe-unique/who series-drop-nulls/who series-head/who series-n-unique/who
+           series-rename/who series-reverse/who series-slice/who series-sort/who series-std/who
+           series-tail/who series-unique/who
+           series-var/who typed-reductions define-reasoned named)
   (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
            dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
            dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-rename/who

@@ -6,7 +6,6 @@
                     ->posix ->tzid ->utc-offset date datetime moment moment->iso8601/tzid
                     posix->datetime posix->moment resolve-offset/post resolve-offset/pre)
            (only-in gregor/period hours microseconds nanoseconds period weeks)
-           (only-in gregor/private/moment-base make-moment)
            (only-in gregor/time time)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list make-list)
@@ -33,7 +32,7 @@
            (only-in (submod polars/private/generic/datetime internal)
                     dt-convert-time-zone dt-replace-time-zone)
            (only-in polars/tests/generic/test-fixtures nul-expected)
-           (only-in polars/tests/test-helpers drops-during with-environment-variable))
+           (only-in polars/tests/test-helpers drops-during make-moment with-environment-variable))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
   (define out
@@ -72,6 +71,7 @@
             (alias (dt-date "ts") "date")
             (alias (dt-time "ts") "time")
             (alias (dt-strftime "ts" "%Y-%m-%d") "fmt")
+            (alias (dt-strftime "ts" #"%Y-%m-%d") "fmt-bytes")
             (alias (dt-millisecond "ts_ms") "ms")
             (alias (dt-microsecond "ts_ms") "us")
             (alias (dt-nanosecond "ts_ms") "ns")
@@ -86,6 +86,7 @@
   (check-equal? (c0 "leap") #t)
   (check-equal? (c0 "date") (date 2024 1 2))
   (check-equal? (c0 "fmt") "2024-01-02")
+  (check-equal? (c0 "fmt-bytes") "2024-01-02")
   (check-equal? (c0 "ms") 123)
   (check-equal? (c0 "us") 123000)
   (check-equal? (c0 "ns") 123000000)

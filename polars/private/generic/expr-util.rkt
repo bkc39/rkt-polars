@@ -12,9 +12,12 @@
 (require (only-in racket/contract/base flat-named-contract or/c)
          polars/private/foreign
          polars/private/expr
-         syntax/parse/define)
+         syntax/parse/define
+         (for-syntax racket/base
+                     racket/syntax
+                     (only-in syntax/parse/lib/function-header formals)))
 
-(provide ->col-expr col-expr/c define-expr-unop define-math-unop)
+(provide ->col-expr col-expr/c define-expr-unop define-math-unop define-named)
 
 ;; Lift a column-name string to an Expr; pass an Expr through unchanged.
 (define (->col-expr who x)
@@ -29,10 +32,17 @@
 (define-syntax-parse-rule (define-expr-unop name:id who:expr expr-op:expr)
   (define (name x) (expr-op (->col-expr who x))))
 
+(define-syntax-parse-rule (define-named (name:id public:id . (~or* fs:id fs:formals))
+                           body:expr ...+)
+  #:with procedure (syntax-property (syntax/loc this-syntax (lambda fs body ...))
+                                    'inferred-name (syntax-e #'public))
+  (define name procedure))
+
 ;; unary, racket/base-shadowing: Expr/colname -> Expr; number -> racket/base.
-(define-syntax-parse-rule (define-math-unop name:id who:expr expr-op:expr base-op:expr)
-  (define (name x)
+(define-syntax-parse-rule (define-math-unop public:id expr-op:expr base-op:expr)
+  #:with name (format-id #'public "p-~a" #'public)
+  (define-named (name public x)
     (cond [(Expr-ptr? x) (expr-op x)]
           [(string? x)   (expr-op (col x))]
           [(number? x)   (base-op x)]
-          [else (error who "expected an Expr, column name, or number, got ~v" x)])))
+          [else (error 'public "expected an Expr, column name, or number, got ~v" x)])))

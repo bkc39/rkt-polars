@@ -1,7 +1,7 @@
 #lang racket/base
 
 (require racket/generic
-         (only-in racket/contract/base -> ->* any/c contract-out listof or/c)
+         (only-in racket/contract/base -> ->i contract-out listof)
          (only-in racket/list check-duplicates)
          (only-in racket/match match*)
          syntax/parse/define
@@ -18,8 +18,9 @@
 (provide (except-out (all-defined-out) dataframe series)
          (contract-out
           [dataframe (-> (listof Series-ptr?) dataframe?)]
-          [series (->* ((or/c list? vector?)) (#:name utf-8-name/c #:dtype datetime-zone/c)
-                       series?)]))
+          [series (->i ([elements (dtype) (series-elements/c dtype)])
+                       (#:name [name utf-8-name/c] #:dtype [dtype datetime-zone/c])
+                       [result series?])]))
 
 (define unset (gensym 'unset))
 

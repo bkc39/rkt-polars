@@ -12,10 +12,12 @@
          racket/list
          racket/string
          (only-in polars/private/expr
-                  expr-all expr-drop expr-dt-strftime lazyframe-collect/raw lazyframe-select)
+                  expr-all expr-drop lazyframe-collect/raw lazyframe-select)
+         (only-in (submod polars/private/expr-dt internal) expr-dt-strftime/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
          polars/private/foreign
+         (only-in (submod polars/private/foreign internal) dataframe-column/who series-slice/who)
          (only-in threading ~>>))
 
 (provide series->printed series->string)
@@ -136,17 +138,18 @@
 
 (define (zone-abbreviations s start count)
   (define collected
-    (with-release ([rows (series-slice s start count) series-drop]
+    (with-release ([rows (series-slice/who 'series s start count) series-drop]
                    [frame (dataframe-new (list rows)) dataframe-drop]
                    [all (expr-all) expr-drop]
-                   [zone (expr-dt-strftime all "%Z") expr-drop])
+                   [zone (expr-dt-strftime/who 'series all "%Z") expr-drop])
       (call-with-plan frame
                       (lambda (source) (lazyframe-select source (list zone)))
                       lazyframe-collect/raw)))
   (cond
     [collected
      (with-release ([out collected dataframe-drop]
-                    [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
+                    [names (dataframe-column/who 'series out (dataframe-column-name out 0))
+                           series-drop])
        (for/list ([i (in-range count)])
          (series-ref names i)))]
     [(= count 1) (list #f)]

@@ -18,7 +18,7 @@
                     lazyframe-scan-parquet make-CompatParquetWriteOptions)
            (only-in polars/private/io-contracts size-max)
            (only-in polars/tests/test-helpers
-                    apply-keywords contract-violation-of drops-once
+                    apply-keywords contract-violation-of drops-once explain-failure
                     keyword-rejected? message-of scratch-file))
 
   (define scratch (make-temporary-directory "rkt-polars-parquet-~a"))
@@ -264,7 +264,7 @@
                                                             (in-scratch "raw.parquet")
                                                             #:compression 'lzo)))
   (check-regexp-match
-   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"colour\""
+   (explain-failure 'lazyframe-explain "colour")
    (message-of (lambda ()
                  (lazyframe-explain
                   (lazyframe-select (dataframe-lazy (dataframe-read-parquet produce-parquet))

@@ -10,8 +10,16 @@
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
+         (only-in polars/private/expr-core time-unit/c)
          (only-in polars/private/expr-str parse-datetime)
+         (only-in (submod polars/private/expr-str internal) expr-str->date/who expr-str->time/who)
+         (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/expr-util)
+
+(define str-parse/c
+  (->* (col-expr/c)
+       (#:format (or/c #f utf-8-name/c) #:strict boolean? #:exact boolean? #:cache boolean?)
+       Expr-ptr?))
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
@@ -19,15 +27,16 @@
          str-replace str-replace-all
          str-len-bytes str-len-chars str-head str-tail
          str-find str-find-literal str-count-matches
-         str->date str->time
          (contract-out
+          [str->date str-parse/c]
+          [str->time str-parse/c]
           [str-extract (->* (col-expr/c any/c) (#:group-index size/c) Expr-ptr?)]
           [str-slice (->* (col-expr/c (or/c Expr-ptr? int64/c))
                           ((or/c #f polars-null? Expr-ptr? nonnegative-int64/c))
                           Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
-                              (#:format (or/c #f string?)
-                               #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)
+                              (#:format (or/c #f utf-8-name/c)
+                               #:unit time-unit/c
                                #:time-zone (or/c #f time-zone-name/c)
                                #:ambiguous (or/c 'raise 'earliest 'latest 'null)
                                #:strict boolean?
@@ -91,8 +100,7 @@
 ;; str->datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
 (define (str->date x #:format [format #f] #:strict [strict #t]
                    #:exact [exact #t] #:cache [cache #t])
-  (expr-str->date (->col-expr 'str->date x)
-                  #:format format #:strict strict #:exact exact #:cache cache))
+  (expr-str->date/who 'str->date (->col-expr 'str->date x) format strict exact cache))
 (define (str->datetime x #:format [format #f] #:unit [unit 'microseconds]
                        #:time-zone [time-zone #f] #:ambiguous [ambiguous 'raise]
                        #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
@@ -100,8 +108,7 @@
                   format unit time-zone ambiguous strict exact cache))
 (define (str->time x #:format [format #f] #:strict [strict #t]
                    #:exact [exact #t] #:cache [cache #t])
-  (expr-str->time (->col-expr 'str->time x)
-                  #:format format #:strict strict #:exact exact #:cache cache))
+  (expr-str->time/who 'str->time (->col-expr 'str->time x) format strict exact cache))
 
 (module+ internal
   (provide str->datetime str-extract str-slice))

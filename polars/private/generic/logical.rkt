@@ -4,6 +4,7 @@
                   polars-null? series-and/who series-not/who series-or/who series-xor/who)
          (only-in polars/private/expr ->expr/who Expr-ptr? expr-and expr-not expr-or expr-xor)
          (only-in polars/private/generic/core series? wrap-series)
+         (only-in polars/private/generic/expr-util define-named)
          (only-in polars/private/generic/operands call-with-logical-operand)
          syntax/parse/define
          (for-syntax racket/base))
@@ -47,13 +48,13 @@
 (define-syntax-parse-rule (p-or e:expr ...)
   (connective #f combine-or e ...))
 
-(define (p-not x)
+(define-named (p-not not x)
   (cond
     [(Expr-ptr? x) (expr-not x)]
     [(series? x) (wrap-series (series-not/who 'not x))]
     [else (not x)]))
 
-(define (p-xor a b)
+(define-named (p-xor xor a b)
   (cond
     [(or (operand? a) (operand? b)) (combine 'xor expr-xor series-xor/who a b)]
     [else (and (or a b) (not (and a b)))]))

@@ -116,7 +116,8 @@
                                       valid-opt? call/f64-reduction define-typed-reduction
                                       define-typed-reductions define-int-reductions
                                       series-n-unique/raw series-std/raw series-var/raw
-                                      series-quantile/raw)
+                                      series-quantile/raw typed-reductions spelling-rules
+                                      expanded-reason)
                                     (for*/list ([op (in-list '(sum min max mean))]
                                                 [t (in-list '(i8 i16 i32 i64 u8 u16 u32 u64
                                                               f32 f64))])

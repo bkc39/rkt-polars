@@ -6,6 +6,7 @@
            racket/match
            (only-in racket/file file->string)
            (only-in racket/list append-map flatten remove-duplicates)
+           (only-in racket/path file-name-from-path)
            (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
                     _str _str-list _str/null with-raw-buffer with-release with-release-pool
@@ -398,4 +399,101 @@
                                      (path->string name)))
                        (sort (inline-test-offenders (polars-sources root #:dirs '("private")))
                              path<?))
-                  '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt"))))
+                  '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
+
+  (define (who-variant-plain-names file)
+    (define root `(file ,(path->string file)))
+    (for*/list ([mod (in-list (list root `(submod ,root internal)))]
+                #:when (module-declared? mod #t)
+                [phase+exports (in-list (call-with-values (lambda () (module->exports mod)) append))]
+                [export (in-list (cdr phase+exports))]
+                [name (in-value (symbol->string (car export)))]
+                #:when (regexp-match? #rx"/who$" name))
+      (string->symbol (regexp-replace #rx"/who$" name ""))))
+  (define (plain-uses form names)
+    (match form
+      [(list (or 'require 'provide 'quote) _ ...) '()]
+      [(? symbol? name) (if (memq name names) (list name) '())]
+      [(cons head rest) (append (plain-uses head names) (plain-uses rest names))]
+      [_ '()]))
+  (define (module-exports file)
+    (define root `(file ,(path->string file)))
+    (for*/list ([mod (in-list (list root `(submod ,root internal)))]
+                #:when (module-declared? mod #t)
+                [phase+exports (in-list (call-with-values (lambda () (module->exports mod)) append))]
+                [export (in-list (cdr phase+exports))])
+      (car export)))
+  (define reasoned-families
+    `((define-group-by-agg . ,(lambda (agg) (string->symbol (format "dataframe-group-by-~a" agg))))
+      (define-series-scalar-op . ,values)))
+  (define (reasoned-names form)
+    (define own
+      (match form
+        [(list* (or 'call/foreign-error 'call/polars-reason) (list 'quote (? symbol? who)) _)
+         (list who)]
+        [(list* 'define-reasoned (cons (? symbol? name) _) _) (list name)]
+        [(list* (? symbol? (app (lambda (head) (assq head reasoned-families)) (cons _ named)))
+                (? symbol? arg)
+                _)
+         (list (named arg))]
+        [_ '()]))
+    (append own
+            (match form
+              [(? list?) (append-map reasoned-names form)]
+              [(cons head rest) (append (reasoned-names head) (reasoned-names rest))]
+              [_ '()])))
+  (define (exported-reasoned-names file)
+    (define exports (module-exports file))
+    (for/list ([name (in-list (reasoned-names (read-source file)))]
+               #:when (memq name exports))
+      name))
+  (define generic-sources (polars-sources #:dirs '("private/generic")))
+  (define foreign-source (build-path polars-dir "private" "foreign.rkt"))
+  (define low-level-sources
+    (for/list ([file (in-list (polars-sources #:dirs '("private")))]
+               #:unless (member file generic-sources))
+      file))
+  (check-equal? (reasoned-names '(define (series-frob s)
+                                   (call/foreign-error 'series-frob (lambda () s) "x")))
+                '(series-frob))
+  (check-equal? (reasoned-names '((define-group-by-agg median)
+                                  (define-series-scalar-op series-add-i32 _int32)
+                                  (define-syntax-parse-rule (define-group-by-agg agg:id)
+                                    (define (name df) (call/polars-reason 'name df)))))
+                '(dataframe-group-by-median series-add-i32 dataframe-group-by-agg:id name))
+  (check-not-false (memq 'dataframe-group-by-sum (exported-reasoned-names foreign-source)))
+  (check-not-false (memq 'series-add-i32 (exported-reasoned-names foreign-source)))
+  (check-equal? (reasoned-names '((define-reasoned (series-twiddle s) #:who-variant t/who)
+                                  (call/polars-reason who (lambda () s))
+                                  (f call/foreign-error 'series-not-a-call)))
+                '(series-twiddle))
+  (define who-plain-names
+    (remove-duplicates (append (append-map who-variant-plain-names (polars-sources #:dirs '("private")))
+                               (append-map exported-reasoned-names low-level-sources))))
+  (check-not-false (memq 'series-head who-plain-names))
+  (check-not-false (memq 'series-std who-plain-names))
+  (check-equal? (plain-uses '(define (spread s op)
+                               (if (eq? op 'std) series-std (series-var s)))
+                            '(series-std series-var))
+                '(series-std series-var))
+  (check-equal? (plain-uses '((require series-std) (provide series-var) 'series-std (f 'series-var))
+                            '(series-std series-var))
+                '())
+  (check-not-false (memq 'series-sort who-plain-names))
+  (for ([blind-spot (in-list '((rename-in ((require (rename-in m [series-std sd])) (sd s)))
+                               (prefix-in ((require (prefix-in m: m)) (m:series-std s)))
+                               (literal-who ((define (sd s) (call/polars-reason 'sd s)) (sd s)))))])
+    (match-define (list spot program) blind-spot)
+    (check-equal? (plain-uses program '(series-std)) '() (format "the law is blind to ~a" spot)))
+  (check-true (module-declared? 'polars #t))
+  (check-equal? (for*/list ([phase+exports (in-list (call-with-values
+                                                     (lambda () (module->exports 'polars))
+                                                     append))]
+                            [export (in-list (cdr phase+exports))]
+                            #:when (regexp-match? #rx"/who$" (symbol->string (car export))))
+                  (car export))
+                '())
+  (check-equal? (for*/list ([file (in-list generic-sources)]
+                            [name (in-list (plain-uses (read-source file) who-plain-names))])
+                  (list (path->string (file-name-from-path file)) name))
+                '()))
