@@ -19,8 +19,13 @@ fn words(bytes: &[u8]) -> Vec<u64> {
 
 /// A single argument block holding `value`, as Racket's `_str` builds it.
 pub(super) fn str_block(value: &str) -> Vec<u64> {
-    let data = words(value.as_bytes());
-    let mut block = vec![(2 + data.len()) as u64, value.len() as u64];
+    bytes_block(value.as_bytes())
+}
+
+/// A single argument block holding `bytes`, which need not be UTF-8.
+pub(super) fn bytes_block(bytes: &[u8]) -> Vec<u64> {
+    let data = words(bytes);
+    let mut block = vec![(2 + data.len()) as u64, bytes.len() as u64];
     block.extend(data);
     block
 }
@@ -28,11 +33,21 @@ pub(super) fn str_block(value: &str) -> Vec<u64> {
 /// A list argument block holding `values`, as Racket's `_str-list` builds
 /// it.
 pub(super) fn str_list_block(values: &[&str]) -> Vec<u64> {
+    let bytes: Vec<&[u8]> = values.iter().map(|v| v.as_bytes()).collect();
+    bytes_list_block(&bytes)
+}
+
+/// A list argument block holding `values`, which need not be UTF-8.
+pub(super) fn bytes_list_block<B: AsRef<[u8]>>(values: &[B]) -> Vec<u64> {
     let mut offsets = vec![0u64];
     for value in values {
-        offsets.push(offsets[offsets.len() - 1] + value.len() as u64);
+        offsets.push(offsets[offsets.len() - 1] + value.as_ref().len() as u64);
     }
-    let data = words(values.concat().as_bytes());
+    let joined: Vec<u8> = values
+        .iter()
+        .flat_map(|v| v.as_ref().iter().copied())
+        .collect();
+    let data = words(&joined);
     let mut block =
         vec![(2 + offsets.len() + data.len()) as u64, values.len() as u64];
     block.extend(offsets);

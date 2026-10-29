@@ -112,6 +112,9 @@
   (define-values (dir name _) (split-path path))
   (build-path dir (regexp-replace #rx"^." (path->string name) "[&]")))
 
+(define (keyword-of name)
+  (string->keyword (symbol->string name)))
+
 (define (dtypes-of df)
   (for/list ([name (in-list (column-names df))])
     (list name (dtype (ref df name)))))
@@ -121,17 +124,19 @@
            syntax/parse/define
            (for-syntax racket/base)
            (only-in compiler/find-exe find-exe)
-           (only-in racket/dict dict-set)
+           (only-in racket/dict dict-set in-dict)
            (only-in racket/file delete-directory/files file->string make-temporary-directory)
            (only-in racket/list filter-map)
            (only-in racket/match match match* match-define)
            (only-in racket/port copy-port)
            (only-in racket/string string-join)
            (only-in polars/private/generic/core shape)
+           (only-in polars/private/generic/reshape collect)
            (only-in polars/private/io-contracts size-max))
 
-  (provide call-in-child check-readers-agree check-reads-like-every check-staged-write
-           eager-reader glob-reader outcome-difference read-outcome scan-reader)
+  (provide call-in-child check-nul-names-round-trip check-readers-agree check-reads-like-every
+           check-staged-write eager-and-scan eager-reader glob-reader outcome-difference
+           read-outcome scan-reader)
 
   (define (read-outcome thunk)
     (with-handlers ([exn:fail? (lambda (e) (cause-of (exn-message e)))]) (thunk)))
@@ -142,6 +147,14 @@
     (apply-keywords read (dict-set kvs '#:glob #t) (one-file-pattern path)))
   (define ((scan-reader scan collect) path kvs)
     (collect (apply-keywords scan kvs path)))
+  (define (eager-and-scan read scan)
+    (list (cons 'eager (eager-reader read)) (cons 'scan (scan-reader scan collect))))
+
+  (define (check-nul-names-round-trip write-frame path readers check)
+    (for ([n (in-list nul-names)])
+      (write-frame (named-frame n '(1 2) "s" '("x" "y")) path)
+      (for ([(kind read-with) (in-dict readers)])
+        (check n read-with (format "~a ~s" kind n)))))
 
   (define (column-difference a b name)
     (define da (dtype (ref a name)))

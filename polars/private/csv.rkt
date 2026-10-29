@@ -13,17 +13,18 @@
          (only-in polars/private/expr-core
                   _LazyFrame-ptr/null LazyFrame-ptr? define-compat lazyframe-drop)
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null DataFrame-ptr?
+                  ->compat-dtype _c-string _CompatDType _DataFrame-ptr _DataFrame-ptr/null
+                  DataFrame-ptr?
                   call/foreign-error dataframe-column dataframe-column-name
                   dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
                   series-ref zoned-datetime-dtype?)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/io-contracts
-                  c-string/c column-name/c distinct-names? distinct? given positive-size/c
-                  row-index/c size/c)
+                  column-name/c distinct-names? distinct? given positive-size/c row-index/c
+                  size/c)
          (only-in polars/private/io-options define-io-options keyword-forwarder)
-         (only-in polars/private/resource _string-list))
+         (only-in polars/private/resource _str _str-list _str/null))
 
 (provide csv-reader/c csv-scanner/c csv-writer/c csv-reader csv-scanner csv-writer
          csv-read-arguments csv-scan-arguments csv-write-arguments
@@ -109,7 +110,7 @@
               '()]
    [#:new-columns new-columns (and/c (listof column-name/c) distinct?) '()]
    [#:separator separator (or/c csv-char/c #f) #f]
-   [#:comment-prefix comment-prefix (or/c (and/c non-empty-string? c-string/c) #f) #f]
+   [#:comment-prefix comment-prefix (or/c non-empty-string? #f) #f]
    [#:quote-char quote-char (or/c csv-char/c #f) #\"]
    [#:skip-rows skip-rows size/c 0]
    [#:skip-lines skip-lines size/c 0]
@@ -117,8 +118,8 @@
                        (and/c (listof (cons/c column-name/c csv-dtype/c)) distinct-names?)
                        '()]
    [#:null-values null-values
-                  (or/c c-string/c (listof c-string/c)
-                        (and/c (listof (cons/c column-name/c c-string/c)) distinct-names?)
+                  (or/c string? (listof string?)
+                        (and/c (listof (cons/c column-name/c string?)) distinct-names?)
                         #f)
                   #f]
    [#:missing-utf8-is-empty-string missing-utf8-is-empty-string boolean? #f]
@@ -185,32 +186,28 @@
               (and has-header (not separator) (null? new-columns) (null? columns)))))
 
 (define-syntax-parse-rule (_csv-fun (~datum ->) result:expr)
-  (_fun _string/utf-8
-        _CompatCsvOptions
-        _string/utf-8
-        _string/utf-8
-        (null-values : _string-list)
-        (_size = (length null-values))
-        (null-columns : _string-list)
-        _string-list
-        (_size = (length null-columns))
-        (names : _string-list)
-        (_list i _CompatDType)
+  (_fun (path : _c-string)
+        (options : _CompatCsvOptions)
+        (comment-prefix : _str/null)
+        (row-index-name : _str/null)
+        (null-values : _str-list)
+        (null-columns : _str-list)
+        (null-markers : _str-list)
+        (names : _str-list)
+        (dtypes : (_list i _CompatDType))
         (_size = (length names))
-        (new-columns : _string-list)
-        (_size = (length new-columns))
-        (columns : _string-list)
-        (_size = (length columns))
+        (new-columns : _str-list)
+        (columns : _str-list)
         (projection : (_list i _size))
         (_size = (length projection))
         -> result))
 
 (define-compat dataframe-read-csv/raw (_csv-fun -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_csv_v2
+  #:c-id dataframe_read_csv_v3
   #:wrap (allocator dataframe-drop))
 
 (define-compat lazyframe-scan-csv/raw (_csv-fun -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_csv_v2
+  #:c-id lazyframe_scan_csv_v3
   #:wrap (allocator lazyframe-drop))
 
 (define (apply-csv who entry path call)
@@ -294,15 +291,15 @@
 
 (define-compat dataframe-write-csv/raw
   (_fun _DataFrame-ptr
-        _string/utf-8
+        _c-string
         _CompatCsvWriteOptions
-        _string/utf-8
-        _string/utf-8
-        _string/utf-8
-        _string/utf-8
-        _string/utf-8
+        _str
+        _str
+        _str/null
+        _str/null
+        _str/null
         -> _int32)
-  #:c-id dataframe_write_csv_with_options)
+  #:c-id dataframe_write_csv_with_options_v2)
 
 (struct write-call (options line-terminator null-value datetime-format date-format time-format))
 
@@ -312,16 +309,16 @@
   ([#:include-bom include-bom boolean? #f]
    [#:include-header include-header boolean? #t]
    [#:separator separator csv-char/c #\,]
-   [#:line-terminator line-terminator c-string/c "\n"]
+   [#:line-terminator line-terminator string? "\n"]
    [#:quote-char quote-char csv-char/c #\"]
    [#:batch-size batch-size positive-size/c 1024]
-   [#:datetime-format datetime-format (or/c c-string/c #f) #f]
-   [#:date-format date-format (or/c c-string/c #f) #f]
-   [#:time-format time-format (or/c c-string/c #f) #f]
+   [#:datetime-format datetime-format (or/c string? #f) #f]
+   [#:date-format date-format (or/c string? #f) #f]
+   [#:time-format time-format (or/c string? #f) #f]
    [#:float-scientific float-scientific (or/c 'auto boolean?) 'auto]
    [#:float-precision float-precision (or/c float-precision/c #f) #f]
    [#:decimal-comma decimal-comma boolean? #f]
-   [#:null-value null-value c-string/c ""]
+   [#:null-value null-value string? ""]
    [#:quote-style quote-style (or/c 'necessary 'always 'non-numeric 'never) 'necessary])
   #:pre (separator quote-char) "quote-char must differ from the separator (#\\, when not given)"
   (not (eqv? (given separator #\,) (given quote-char #\")))

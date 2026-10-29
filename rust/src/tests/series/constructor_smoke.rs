@@ -65,20 +65,6 @@ fn test_series_new_i32_empty_data() {
 }
 
 #[test]
-fn test_string_drop_non_null() {
-    let s = CString::new("hello").unwrap();
-    let s_ptr = s.into_raw();
-
-    string_drop(s_ptr);
-}
-
-#[test]
-fn test_string_drop_null() {
-    string_drop(ptr::null_mut());
-    // Should not do anything, hence no assertion or panic
-}
-
-#[test]
 fn test_series_new_f64_valid() {
     let data = [1.1, 2.2, 3.3, 4.4];
     let data_ptr = data.as_ptr();

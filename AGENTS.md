@@ -321,12 +321,7 @@ it. Racket side: `define-compat` with `#:c-id`.
     the values it is given and not what a ctype converts them to: as a ctype
     the block could be freed by a collection during a `#:blocking?` call or a
     callback.
-  - `_string-list`, a `const char **` table and its NUL-terminated strings in
-    one block, is left only where the IO readers' keywords still cross as C
-    strings. A test in `polars/tests/resource.rkt` names those four bindings
-    and fails on any other `define-compat`, `define-syntax-parse-rule` or
-    `define-syntax-parser` that uses it, at any depth (inside a `begin` or
-    another definer).
+  - The IO verbs' names and string keywords cross as blocks too.
   - `series-ref` reads a String value by length, through `series_copy_str`,
     and a Categorical or Enum value as one block, through `series_ref_cat`,
     so a NUL a value holds survives. An Enum's categories are read in one
@@ -335,11 +330,12 @@ it. Racket side: `define-compat` with `#:c-id`.
     value or category may hold a NUL, as in Python.
   - A `strptime` or `strftime` format (`str->date`, `str->datetime`,
     `str->time`, `dt-strftime`) crosses as a `_str/null` or `_str` block, so
-    it keeps a NUL, as in Python; `write-csv`'s `#:date-format`,
-    `#:datetime-format` and `#:time-format` still refuse one (#165). A zone's
-    name with a NUL is a contract error (see the zoned datetime fact).
+    it keeps a NUL, as in Python, and so do `write-csv`'s `#:date-format`,
+    `#:datetime-format` and `#:time-format`. A zone's name with a NUL is a
+    contract error (see the zoned datetime fact).
   - A C string still crossing is `_c-string` / `_c-string/null`
-    (`foreign.rkt`), which refuse a NUL.
+    (`foreign.rkt`), which refuse a NUL: a path, a zone's name, the
+    `#:ambiguous` / `#:non-existent` names and the constructors' empty name.
   - A test in `polars/tests/resource.rkt` reads every module under
     `polars/private` and `polars/tests` as data and fails on a
     pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`, `_symbol`,
@@ -351,7 +347,15 @@ it. Racket side: `define-compat` with `#:c-id`.
     `polars/private` whose result is `_string`, `_string/utf-8` or
     `_string*/utf-8`, and on a `_fun` or a `define-series-constructors` there
     naming `_rsstring` or `_c-string-result`, the C-string result type #165
-    retired.
+    retired, `_string-list`, the `const char **` table #165 retired, or any
+    other C-string ctype (`_string`, `_string/locale`, `_bytes/nul-terminated`,
+    `_path`, `_symbol`, ..., or a name `define`d as one) but `_c-string` and
+    `_c-string/null`.
+  - `rust/src/tests/c_strings.rs`, on the guard audit's walk of the exports,
+    holds the Rust side: no export takes or returns a pointer to `c_char`,
+    directly or through a `type` alias, but the C strings it lists, and only
+    the modules it lists name `CStr`. Each rule has planted offenders and
+    fails on a stale exemption.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -375,8 +379,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/tests/resource.rkt` fails on one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
-  `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`), so a
-  stale library fails at load, when
+  `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
+  `dataframe_read_csv_v3`), so a stale library fails at load, when
   `define-compat` cannot resolve the symbol, instead of misreading its
   arguments.
 - **A change to any `#[no_mangle]` export needs both
@@ -410,7 +414,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   temporal value on the left (`(/ (hours 1) decimals)` is a duration).
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
-    keywords, as Python's `read_csv` does: `dataframe_read_csv_v2` reads a
+    keywords, as Python's `read_csv` does: `dataframe_read_csv_v3` reads a
     glob pattern, or any path given `#:n-rows`, by scan and collect, and
     any other single file with 0.55's eager `CsvReader`, about three times
     faster on nycflights. Given `n_rows`, the eager reader stops spawning
@@ -518,13 +522,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   Python panics on 0. An override naming a column absent from the file (or
   from `#:schema`) is an error, as in Python, reworded from 0.55's bare
   `SchemaFieldNotFound`. The schema dtypes are `series`' `#:dtype` spellings
-  but an Enum, which `CompatDType` cannot carry; a column name with a NUL is
-  a contract error, since `_string/utf-8` would cut it there (#165).
+  but an Enum, which `CompatDType` cannot carry.
   `write-json` refuses a binary column, where polars hits a `todo!()`.
 - Every writer goes through `write_checked_frame` (`write_frame` when there
   is nothing to check; `rust/src/dataframe/io.rs`).
-  Its checks on the frame and the path (a JSON writer's binary column, say)
-  run before the target is opened. It follows a symlink to the file it
+  Its checks on the frame, the path and the options (a JSON writer's binary
+  column, say, or a malformed block of `write-csv`'s) run before the target
+  is opened. It follows a symlink to the file it
   names; a dangling link is written through in place, creating that file.
   A directory target is refused, and a FIFO or device is written in place.
   For a regular or missing file it writes `.rkt-polars-<pid>-<n>.partial`
@@ -540,7 +544,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   empty (polars-io drops zero-length files) and otherwise fails with
   polars' "different file extensions" error.
 - `read-ndjson` is `(collect (scan-ndjson ...))`, as Python's `read_ndjson`
-  is, through `dataframe_read_ndjson_with_options`; a directory reads every
+  is, through `dataframe_read_ndjson_with_options_v2`; a directory reads every
   file in it, and they must share one extension (a README or `.DS_Store`
   fails with "directory contained paths with different file extensions",
   in Python too). Its schema dtypes exclude Int8, Int16, UInt8, UInt16, Time,
@@ -588,13 +592,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:statistics` list must name `'min`, `'max` and `'null-count`: without
   min and max polars writes a page index that marks pages holding values as
   null pages (#203), and without the null count it fails at the footer on a
-  column it does not dictionary-encode. A name passed as a C string
-  (`#:columns`, `#:row-index-name`, `#:include-file-paths`) refuses a NUL in
-  the contract, which would otherwise truncate it (#165).
+  column it does not dictionary-encode.
 - The Parquet verbs report under the verb's own name (`read-parquet:`),
   the low-level bindings under theirs (#153). The C surface is the three
-  `_with_options` entries; Rust tests reach them through the default-option
-  helpers in `tests/dataframe/io.rs`.
+  `_with_options` entries (the read and the scan `_v2`); Rust tests reach
+  them through the default-option helpers in `tests/dataframe/io.rs`.
 - The Parquet reader and scan number the row index from 0 and add
   `#:row-index-offset` afterwards, checked, as the CSV readers do; polars'
   streaming row-index node would panic past `u32::MAX`.
@@ -633,7 +635,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `col`, `alias`, `exclude`, `lit` and every verb that names a column, so a
   frame may hold both `"a"` and `"a\u0000b"` and each finds its own. A
   `strptime` or `strftime` format keeps its NUL as well, which matches a NUL
-  in the text, as in Python.
+  in the text, as in Python, and so does every IO keyword that names a
+  column or gives a marker, a prefix, a terminator or a format (`read-csv`'s,
+  `scan-csv`'s and `write-csv`'s, the JSON, NDJSON and Parquet readers'
+  schema names, row index and file path columns, `#:columns`); a path
+  cannot hold one.
 - A polars deprecation prints a warning to stderr: replace the spelling it
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix

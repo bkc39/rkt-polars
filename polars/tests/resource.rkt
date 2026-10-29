@@ -5,16 +5,13 @@
            (for-syntax racket/base)
            racket/match
            (only-in racket/file file->string)
-           (only-in racket/list append-map flatten)
-           (only-in ffi/unsafe
-                    _fun _int64 _pointer _size _string/utf-8 _void cast function-ptr ptr-ref
-                    ptr-set!)
+           (only-in racket/list append-map flatten remove-duplicates)
+           (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
-                    _str _str-list _str/null _string-list with-raw-buffer with-release
-                    with-release-pool with-releases)
+                    _str _str-list _str/null with-raw-buffer with-release with-release-pool
+                    with-releases)
            (only-in (submod polars/private/resource internal)
-                    str-block->string str-block->strings string->str-block strings->c-array
-                    strings->str-block)
+                    str-block->string str-block->strings string->str-block strings->str-block)
            (only-in polars/tests/gc-pressure call-with-collections)
            (only-in polars/tests/generic/test-fixtures nul-names)
            (only-in polars/tests/test-helpers
@@ -157,32 +154,6 @@
                 '(0 10 20))
   (check-equal? (with-raw-buffer ([empty 0 _int64]) 'zero-length-ok) 'zero-length-ok)
 
-  (define tables '())
-  (define (read-back table count)
-    (collect-garbage)
-    (set! tables
-          (cons (and table (for/list ([i (in-range count)]) (ptr-ref table _string/utf-8 i)))
-                tables)))
-  (define read-back-pointer (function-ptr read-back (_fun _pointer _size -> _void)))
-  (define call-read-back
-    (cast read-back-pointer _pointer (_fun (strings : _string-list) (_size = (length strings))
-                                           -> _void)))
-  (call-read-back '())
-  (call-read-back '("" "a" "東京 😀"))
-  (check-equal? tables '(("" "a" "東京 😀") #f))
-  (call-read-back (list #"bytes" (string->path "a/path") "東京"))
-  (check-equal? (car tables) '("bytes" "a/path" "東京"))
-  (define column-names
-    (list* "" "a" (for/list ([i (in-range 300000)]) (format "column ~a é 東京 😀" i))))
-  (define-values (table collections)
-    (call-with-collections (lambda () (strings->c-array column-names))))
-  (check > collections 1)
-  (collect-garbage)
-  (check-equal? (for/list ([i (in-range (length column-names))]) (ptr-ref table _string/utf-8 i))
-                column-names)
-  (check-exn #rx"^_string-list: contract violation\n  expected: \\(or/c string\\? bytes\\? path\\?\\)\n  given: 'b"
-             (lambda () (strings->c-array '("a" b))))
-
   (define str-lists
     (list '() '("") nul-names '("é" "東京 😀" "" "abcdefgh" "abcdefghi")
           (for/list ([i (in-range 300)]) (format "column ~a é 東京 😀" i))))
@@ -260,13 +231,13 @@
       [(list* 'make-ctype base _) (pointer-ctype? base aliases)]
       [_ #f]))
 
-  (define (pointer-aliases forms)
+  (define (pointer-aliases forms [ctype? pointer-ctype?])
     (let grow ([aliases '()])
       (define more
         (for/list ([form (in-list forms)]
                    #:when (match form
                             [(list 'define (? symbol? name) type)
-                             (and (not (memq name aliases)) (pointer-ctype? type aliases))]
+                             (and (not (memq name aliases)) (ctype? type aliases))]
                             [_ #f]))
           (cadr form)))
       (if (null? more) aliases (grow (append more aliases)))))
@@ -318,33 +289,36 @@
   (check > (length polars-forms) 30)
   (check-equal? (pointer-store-offenders polars-forms)
                 '()
-                "a string or Racket object stored by address in Racket memory: use _string-list")
+                "a string or Racket object stored by address in Racket memory: use _str-list")
 
-  (define (mentions? form type)
-    (for/or ([inner (in-list (forms-in form))]) (memq type inner)))
-  (define (fun-result type)
-    (match (member '-> type)
-      [(list* '-> (list _ ': result) _) result]
-      [(list* '-> result _) result]
+  (define c-string-blocks '(_c-string _c-string/null))
+  (define c-string-ctype-name
+    #px"^_(?:string(?:[*/]\\S*)?|bytes/nul-terminated|path|file|symbol)$")
+  (define (c-string-ctype? type aliases)
+    (match type
+      [(? symbol?)
+       (and (not (memq type c-string-blocks))
+            (or (memq type aliases)
+                (memq type '(_rsstring _c-string-result _string-list))
+                (regexp-match? c-string-ctype-name (symbol->string type))))]
+      [(list* 'make-ctype base _) (c-string-ctype? base aliases)]
       [_ #f]))
-  (define (c-string-crossing form)
+  (define (c-string-types datum aliases)
+    (remove-duplicates (filter (lambda (type) (c-string-ctype? type aliases)) (flatten datum))))
+  (define (c-string-crossing form aliases)
     (match form
-      [(list* (or '_fun 'define-series-constructors) _)
-       (for/first ([type (in-list '(_rsstring _c-string-result))] #:when (mentions? form type))
-         type)]
-      [(list* 'define-compat _ (? list? type) _)
-       (define result (fun-result type))
-       (and (memq result '(_string _string/utf-8 _string*/utf-8)) result)]
-      [_ #f]))
+      [(list* (or '_fun 'define-series-constructors) _) (c-string-types form aliases)]
+      [(list* 'define-compat _ (and (cons (not '_fun) _) type) _) (c-string-types type aliases)]
+      [_ '()]))
   (define (c-string-crossings file-forms)
+    (define aliases (pointer-aliases (append-map cdr file-forms) c-string-ctype?))
     (for*/list ([file+forms (in-list file-forms)]
                 [form (in-list (cdr file+forms))]
-                [type (in-value (c-string-crossing form))]
-                #:when type)
+                [type (in-list (c-string-crossing form aliases))])
       (list (car file+forms) type)))
   (check-equal? (c-string-crossings (source-forms (polars-sources #:dirs '("private"))))
                 '()
-                "a C string crosses the boundary: use _str, _str-list, _rsstr or _rsstr-list")
+                "a C string crosses: use _str, _str-list, _rsstr, _rsstr-list or _c-string")
   (with-planted-sources (root ["private/planted.rkt"
                                (module-text
                                 '(define-compat x (_fun _pointer -> _rsstring))
@@ -352,44 +326,38 @@
                                 '(define-series-constructors s _rsstring "")
                                 ''(_fun -> _rsstring)
                                 '(define-compat z (_fun _pointer -> _string))
-                                '(define-compat w (_fun _string -> (r : _string/utf-8) -> r))
+                                '(define-compat w (_fun _pointer -> (r : _string/utf-8) -> r))
                                 '(define-compat v (_fun -> _string*/utf-8) #:c-id v)
                                 '(define-compat u (_fun _Series-ptr _size -> _c-string-result))
-                                '(define-compat kept (_fun _string -> _void)))])
+                                '(define-compat t (_csv-fun -> _string/utf-8))
+                                '(define-compat a (_fun _string -> _void))
+                                '(define-syntax-parse-rule (_planted-fun)
+                                   (_fun _c-string (n : _string/utf-8) -> _void))
+                                '(define-compat c (_fun _string*/utf-8 _path -> _void))
+                                '(define-series-constructors t _symbol "")
+                                '(define-compat l
+                                   (_fun _string/locale _string/latin-1 _bytes/nul-terminated
+                                         -> _void))
+                                '(define _name _string/utf-8)
+                                '(define _held (make-ctype _name #f #f))
+                                '(define-compat aliased (_fun _held -> _void))
+                                '(define-compat listed (_fun _string-list -> _void))
+                                '(define-reasoned in-reasoned
+                                   (define-compat nested-reasoned (_csv-fun _string-list -> _void)))
+                                '(begin (define-compat nested-begin (_fun _string-list -> _void)))
+                                '(define-syntax-parser nested-parser
+                                   [(_) #'(_fun _string-list -> _void)])
+                                '(define-compat kept
+                                   (_fun _c-string _c-string/null _str _str-list _bytes
+                                         -> _void)))])
     (define planted (simplify-path (build-path root "private" "planted.rkt")))
     (check-equal? (c-string-crossings (source-forms (polars-sources root #:dirs '("private"))))
                   (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
-                                     _string*/utf-8 _c-string-result)])
+                                     _string*/utf-8 _c-string-result _string/utf-8 _string
+                                     _string/utf-8 _string*/utf-8 _path _symbol _string/locale
+                                     _string/latin-1 _bytes/nul-terminated _held _string-list
+                                     _string-list _string-list _string-list)])
                     (list planted type))))
-
-  (define string-list-holders
-    '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw))
-  (define string-list-definers '(define-compat define-syntax-parse-rule define-syntax-parser))
-  (define (string-list-users file-forms)
-    (sort (for*/list ([file+forms (in-list file-forms)]
-                      [form (in-list (cdr file+forms))]
-                      #:when (and (pair? form) (memq (car form) string-list-definers))
-                      #:when (memq '_string-list (flatten form)))
-            (match form
-              [(list* _ (cons name _) _) name]
-              [(list* _ name _) name]))
-          symbol<?))
-  (check-equal? (string-list-users (source-forms (polars-sources #:dirs '("private"))))
-                string-list-holders
-                "a name list crosses as C strings: use _str-list")
-  (with-planted-sources (root ["private/planted.rkt"
-                               (module-text
-                                '(define-compat planted (_fun _string-list -> _void))
-                                '(define-reasoned in-reasoned
-                                   (define-compat nested-reasoned (_fun _string-list -> _void)))
-                                '(begin (define-compat nested-begin (_fun _string-list -> _void)))
-                                '(define-frame-op/reason in-frame-op
-                                   (define-compat nested-frame-op (_fun _string-list -> _void)))
-                                '(define-syntax-parser nested-parser
-                                   [(_) #'(_fun _string-list -> _void)])
-                                '(define-compat kept (_fun _str-list -> _void)))])
-    (check-equal? (string-list-users (source-forms (polars-sources root #:dirs '("private"))))
-                  '(nested-begin nested-frame-op nested-parser nested-reasoned planted)))
 
   (define planted-text
     (format "#lang racket/base\n(define (planted-buffer) (~a 16))\n~s"
