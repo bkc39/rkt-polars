@@ -12,9 +12,12 @@
            (only-in polars/private/expr-core expr-drop-count)
            (only-in polars/private/foreign
                     dataframe-drop-count series-drop-count series-head series-min-f64
-                    series-slice series-sum-f64 series-sum-i32)
-           (only-in polars/private/generic/core column-names dataframe dtype series wrap-series)
-           (only-in polars/private/generic/reshape select)
+                    series-n-unique series-quantile series-slice series-std series-sum-f64
+                    series-sum-i32 series-var)
+           (only-in polars/private/generic/core
+                    column-names dataframe dtype ref series wrap-series)
+           (only-in polars/private/generic/reshape agg group-by select)
+           (only-in threading ~>)
            (only-in polars/private/generic/reductions alias first last max mean min sum)
            (only-in (submod polars/private/generic/reductions internal) n-unique std var)
            (only-in polars/tests/generic/test-fixtures
@@ -88,8 +91,27 @@
                 (list #f 0.0 polars-null))
   (check-exn #rx"^series-sum-i32: invalid series dtype: expected `Int32`, got `i64`"
              (lambda () (series-sum-i32 (series '(1 2)))))
-  (check-equal? (series-sum-i32 (series '(1 2) #:dtype 'int32)) 3)
-  (check-equal? (list (series-min-f64 gaps) (min gaps)) (list #f polars-null))
+  (check-equal? (series-n-unique (series (list 1 2 2 polars-null))) 3)
+  (check-exn #rx"^series-n-unique: contract violation" (lambda () (series-n-unique '(1 2 2))))
+  (define spread (series '(1.0 2.0 3.0 4.0)))
+  (check-= (series-std spread) (sqrt (/ 5.0 3.0)) 1e-12)
+  (check-equal? (series-var spread #:ddof 0) 1.25)
+  (check-false (series-std (series '("a" "b"))))
+  (check-exn #rx"^series-var: contract violation\n  expected: \\(integer-in 0 255\\)"
+             (lambda () (series-var spread #:ddof 256)))
+  (define ranks (series '(1 2 3 4 5)))
+  (check-equal? (list (series-quantile ranks 0.3)
+                      (series-quantile ranks 0.3 #:interpolation 'linear))
+                '(2.0 2.2))
+  (check-exn #rx"^series-quantile: contract violation\n  expected: \\(or/c \\(quote nearest\\)"
+             (lambda () (series-quantile ranks 0.3 #:interpolation 'cubic)))
+  (define nested
+    (~> (dataframe (list (series '(1 1 2) #:name "g") (series '(3.0 4.0 5.0) #:name "v")))
+        (group-by "g")
+        (agg (col "v"))
+        (ref "v")))
+  (check-exn #rx"^series-quantile: cannot cast List type"
+             (lambda () (series-quantile nested 0.5)))
   (check-exn #rx"^mean: arity mismatch" (lambda () (contracted:mean)))
   (check-exn #rx"^std: contract violation" (lambda () (contracted:std (series '(1 2)) #:ddof -1)))
   (for* ([reduce (list contracted:std contracted:var)]

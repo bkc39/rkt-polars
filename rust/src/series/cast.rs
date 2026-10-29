@@ -23,8 +23,7 @@ pub extern "C" fn series_std_v2(
     s_ptr: *const Series,
     ddof: u8,
 ) -> CompatOptF64 {
-    scalar_result(CompatOptF64::FAILED, || {
-        let s = unsafe { deref_arg(s_ptr, "series") }?;
+    with_series(s_ptr, CompatOptF64::FAILED, |s| {
         Ok(CompatOptF64::from_option(s.std(ddof)))
     })
 }
@@ -34,8 +33,7 @@ pub extern "C" fn series_var_v2(
     s_ptr: *const Series,
     ddof: u8,
 ) -> CompatOptF64 {
-    scalar_result(CompatOptF64::FAILED, || {
-        let s = unsafe { deref_arg(s_ptr, "series") }?;
+    with_series(s_ptr, CompatOptF64::FAILED, |s| {
         Ok(CompatOptF64::from_option(s.var(ddof)))
     })
 }
@@ -46,8 +44,7 @@ pub extern "C" fn series_quantile_v2(
     quantile: f64,
     interpol: u8,
 ) -> CompatOptF64 {
-    scalar_result(CompatOptF64::FAILED, || {
-        let s = unsafe { deref_arg(s_ptr, "series") }?;
+    with_series(s_ptr, CompatOptF64::FAILED, |s| {
         let method = match interpol {
             0 => QuantileMethod::Nearest,
             1 => QuantileMethod::Linear,

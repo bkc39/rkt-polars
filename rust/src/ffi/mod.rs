@@ -12,6 +12,7 @@ pub(crate) use self::errors::{
 pub(crate) use self::errors::{on_polars_worker, panic_is_quiet};
 pub(crate) use self::results::{
     boxed_result, boxed_unguarded, deref_arg, deref_mut_arg, scalar_result,
+    with_series,
 };
 pub(crate) use self::schema::decode_schema;
 pub(crate) use self::slices::{

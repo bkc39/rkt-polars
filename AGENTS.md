@@ -683,8 +683,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   and an expression or series after it, `and` and `or` combine as Python's
   `pl.lit(None) & e` does, not as Racket's short-circuit (so an `or`
   evaluates its rest to know). On a `'null` series `sum`, `mean`, `min`, `max`, `std`
-  and `var` give `polars-null` and `n-unique` gives 1, through the
-  expression engine (the typed `series_sum_*` have no Null case). A `'null`
+  and `var` give `polars-null`, through the expression engine (the typed
+  `series_sum_<dtype>_v2` have no Null case), and `n-unique` is the native
+  count, `series_n_unique_v2`: 1, or 0 for an empty series. A `'null`
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
   and `not` refuse a `'null` series, as Python's eager operators do, and any
   other non-Boolean series, where Python's `& | ^` are bitwise on integers.

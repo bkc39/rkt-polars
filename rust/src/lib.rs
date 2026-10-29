@@ -32,6 +32,7 @@ pub(crate) use ffi::{
     decode_path, decode_schema, deref_arg, deref_mut_arg, guard_panic,
     name_arg, named_sort, optional_name, record, scalar_result, set_last_error,
     slice_or_empty, sort_multiple_options, str_list_arg, str_list_out, str_out,
+    with_series,
 };
 #[cfg(test)]
 pub(crate) use ffi::{on_polars_worker, panic_is_quiet};

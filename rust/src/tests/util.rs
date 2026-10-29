@@ -85,6 +85,10 @@ pub(super) fn recorded_error() -> Option<String> {
     (!p.is_null()).then(|| take_str(p))
 }
 
+pub(super) fn boxed<T>(value: T) -> *mut T {
+    Box::into_raw(Box::new(value))
+}
+
 pub(super) fn take_box<T>(p: *mut T) -> Option<T> {
     (!p.is_null()).then(|| *unsafe { Box::from_raw(p) })
 }

@@ -9,11 +9,12 @@
          gregor/period
          (only-in racket/contract/base
                   [-> ->/c] </c ->* ->i and/c any any/c contract-out flat-contract-predicate
-                  flat-named-contract listof non-empty-listof not/c or/c rename-contract)
+                  flat-named-contract listof non-empty-listof not/c or/c real-in rename-contract)
          (only-in racket/contract flat-contract-with-explanation raise-blame-error)
          (only-in racket/provide matching-identifiers-out)
          racket/match
          (only-in racket/dict in-dict)
+         (only-in racket/function negate)
          (only-in racket/list check-duplicates)
          (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
@@ -38,7 +39,9 @@
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
-                     series-std series-var series-new-null
+                     series-std series-var series-new-null series-n-unique series-n-unique/raw
+                     series-std/raw series-var/raw series-quantile series-quantile/raw
+                     define-typed-reduction define-typed-reductions
                      series-head series-tail series-slice
                      dataframe-head dataframe-tail dataframe-slice
                      series-add-i32 series-sub-i32 series-mul-i32 series-div-i32 series-mod-i32
@@ -51,9 +54,6 @@
                      series-lt-f64 series-le-f64 series-gt-f64 series-ge-f64 series-eq-f64
                      series-ne-f64
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
-                     (matching-identifiers-out
-                      #rx"^series-(?:sum|min|max|mean)-(?:[iu](?:8|16|32|64)|f32|f64)/raw$"
-                      (all-defined-out))
                      (matching-identifiers-out
                       #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
                       (all-defined-out))
@@ -75,8 +75,13 @@
           [series-sort (->* (Series-ptr?) (#:descending boolean? #:nulls-last boolean?)
                             Series-ptr?)]
           [dataframe-sort (frame-sort/c DataFrame-ptr? 'dataframe-sort/c)]
-          [series-std (->* (Series-ptr?) (#:ddof uint8/c) any)]
-          [series-var (->* (Series-ptr?) (#:ddof uint8/c) any)]
+          [series-std (->* (Series-ptr?) (#:ddof uint8/c) (or/c flonum? #f))]
+          [series-var (->* (Series-ptr?) (#:ddof uint8/c) (or/c flonum? #f))]
+          [series-n-unique (->/c Series-ptr? exact-nonnegative-integer?)]
+          [series-quantile
+           (->* (Series-ptr? (real-in 0 1))
+                (#:interpolation (or/c 'nearest 'linear 'lower 'higher 'midpoint))
+                (or/c flonum? #f))]
           [series-new-null (->/c utf-8-name/c size/c Series-ptr?)]
           [series-ref-str series-index/c]
           [series-cast (->/c any/c datetime-zone/c Series-ptr?)]))
@@ -203,14 +208,31 @@
 (define (call/polars-reason who thunk)
   (call/foreign-error who thunk))
 
-(define-syntax-parse-rule (define-reasoned (name:id arg:id ...) #:who-variant name/who:id
+(begin-for-syntax
+  (define-syntax-class reasoned-formal
+    #:attributes (arg [formal 1] [actual 1])
+    (pattern arg:id
+             #:with (formal ...) #'(arg)
+             #:with (actual ...) #'(arg))
+    (pattern [kw:keyword arg:id default:expr]
+             #:with (formal ...) #'(kw [arg default])
+             #:with (actual ...) #'(kw arg))))
+
+(define-syntax-parse-rule (define-reasoned (name:id f:reasoned-formal ...)
+                            (~optional (~seq #:who-variant name/who:id)
+                                       #:defaults ([name/who (generate-temporary #'name)]))
+                            (~optional (~seq #:ok? ok?:expr) #:defaults ([ok? #'values]))
+                            (~optional (~seq #:result result:expr) #:defaults ([result #'values]))
                             (~and compat ((~datum define-compat) raw:id _ ...)))
+  #:with (ok-proc result-proc) (generate-temporaries '(ok result))
   (begin
     compat
-    (define (name/who who arg ...)
-      (call/polars-reason who (lambda () (raw arg ...))))
-    (define (name arg ...)
-      (name/who 'name arg ...))))
+    (define ok-proc ok?)
+    (define result-proc result)
+    (define (name/who who f.formal ... ...)
+      (result-proc (call/foreign-error who (lambda () (raw f.arg ...)) #:ok? ok-proc)))
+    (define (name f.formal ... ...)
+      (name/who 'name f.actual ... ...))))
 
 (define (printed-or-placeholder what render)
   (define-values (text reason) (call/reason render values))
@@ -651,76 +673,44 @@
 (define-compat series-null-count
   (_fun _Series-ptr -> _size))
 
-(define-syntax-parse-rule (define-typed-reductions opt-type:id valid:id opt->datum:id
-                            sum-id:id min-id:id max-id:id mean-id:id
-                            sum-c:id min-c:id max-c:id mean-c:id)
-  (begin
-    (define-typed-reduction sum-id sum-c opt-type valid opt->datum)
-    (define-typed-reduction min-id min-c opt-type valid opt->datum)
-    (define-typed-reduction max-id max-c opt-type valid opt->datum)
-    (define-typed-reduction mean-id mean-c _CompatOptF64 CompatOptF64-valid
-      compat-opt-f64->datum)))
+(begin-for-syntax
+  (define-syntax-class reduction-dtype
+    #:attributes (opt-type valid opt->datum)
+    (pattern t:id
+             #:fail-unless (memq (syntax-e #'t) '(i8 i16 i32 i64 u8 u16 u32 u64 f32 f64))
+             "a numeric dtype suffix"
+             #:do [(define upper (string-upcase (symbol->string (syntax-e #'t))))]
+             #:with opt-type (format-id #'t "_CompatOpt~a" upper)
+             #:with valid (format-id #'t "CompatOpt~a-valid" upper)
+             #:with opt->datum (format-id #'t "compat-opt-~a->datum" #'t))))
 
-(define-syntax-parse-rule (define-typed-reduction name:id c-id:id opt-type:id valid:id
-                            opt->datum:id)
-  #:with name/raw (format-id #'name "~a/raw" #'name)
-  (begin
-    (define-compat name/raw
+(define-syntax-parse-rule (define-typed-reduction op:id t:id opt-type:id valid:id opt->datum:id)
+  #:with name (format-id #'t "series-~a-~a" #'op #'t)
+  #:with raw (format-id #'here "~a/raw" #'name)
+  #:with c-id (format-id #'here "series_~a_~a_v2" #'op #'t)
+  (define-reasoned (name s)
+    #:ok? (compose1 (negate negative?) valid)
+    #:result opt->datum
+    (define-compat raw
       (_fun _Series-ptr -> opt-type)
-      #:c-id c-id)
-    (define (name s)
-      (opt->datum (call/foreign-error 'name (lambda () (name/raw s)) #:ok? (valid-opt? valid))))))
+      #:c-id c-id)))
 
-(define ((valid-opt? valid) o)
-  (not (negative? (valid o))))
+(define-syntax-parse-rule (define-typed-reductions t:reduction-dtype ...)
+  (begin
+    (begin
+      (define-typed-reduction sum t t.opt-type t.valid t.opt->datum)
+      (define-typed-reduction min t t.opt-type t.valid t.opt->datum)
+      (define-typed-reduction max t t.opt-type t.valid t.opt->datum)
+      (define-typed-reduction mean t _CompatOptF64 CompatOptF64-valid compat-opt-f64->datum))
+    ...))
 
-(define-typed-reductions _CompatOptI32 CompatOptI32-valid compat-opt-i32->datum
-  series-sum-i32 series-min-i32 series-max-i32 series-mean-i32
-  series_sum_i32_v2 series_min_i32_v2 series_max_i32_v2 series_mean_i32_v2)
+(define-typed-reductions i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
 
-(define-typed-reductions _CompatOptF64 CompatOptF64-valid compat-opt-f64->datum
-  series-sum-f64 series-min-f64 series-max-f64 series-mean-f64
-  series_sum_f64_v2 series_min_f64_v2 series_max_f64_v2 series_mean_f64_v2)
-
-(define-typed-reductions _CompatOptI64 CompatOptI64-valid compat-opt-i64->datum
-  series-sum-i64 series-min-i64 series-max-i64 series-mean-i64
-  series_sum_i64_v2 series_min_i64_v2 series_max_i64_v2 series_mean_i64_v2)
-
-(define-typed-reductions _CompatOptI8 CompatOptI8-valid compat-opt-i8->datum
-  series-sum-i8 series-min-i8 series-max-i8 series-mean-i8
-  series_sum_i8_v2 series_min_i8_v2 series_max_i8_v2 series_mean_i8_v2)
-
-(define-typed-reductions _CompatOptI16 CompatOptI16-valid compat-opt-i16->datum
-  series-sum-i16 series-min-i16 series-max-i16 series-mean-i16
-  series_sum_i16_v2 series_min_i16_v2 series_max_i16_v2 series_mean_i16_v2)
-
-(define-typed-reductions _CompatOptU8 CompatOptU8-valid compat-opt-u8->datum
-  series-sum-u8 series-min-u8 series-max-u8 series-mean-u8
-  series_sum_u8_v2 series_min_u8_v2 series_max_u8_v2 series_mean_u8_v2)
-
-(define-typed-reductions _CompatOptU16 CompatOptU16-valid compat-opt-u16->datum
-  series-sum-u16 series-min-u16 series-max-u16 series-mean-u16
-  series_sum_u16_v2 series_min_u16_v2 series_max_u16_v2 series_mean_u16_v2)
-
-(define-typed-reductions _CompatOptU32 CompatOptU32-valid compat-opt-u32->datum
-  series-sum-u32 series-min-u32 series-max-u32 series-mean-u32
-  series_sum_u32_v2 series_min_u32_v2 series_max_u32_v2 series_mean_u32_v2)
-
-(define-typed-reductions _CompatOptU64 CompatOptU64-valid compat-opt-u64->datum
-  series-sum-u64 series-min-u64 series-max-u64 series-mean-u64
-  series_sum_u64_v2 series_min_u64_v2 series_max_u64_v2 series_mean_u64_v2)
-
-(define-typed-reductions _CompatOptF32 CompatOptF32-valid compat-opt-f32->datum
-  series-sum-f32 series-min-f32 series-max-f32 series-mean-f32
-  series_sum_f32_v2 series_min_f32_v2 series_max_f32_v2 series_mean_f32_v2)
-
-(define-compat series-n-unique/raw
-  (_fun _Series-ptr -> _int64)
-  #:c-id series_n_unique_v2)
-
-(define (series-n-unique s)
-  (call/foreign-error 'series-n-unique (lambda () (series-n-unique/raw s))
-                      #:ok? (lambda (n) (not (negative? n)))))
+(define-reasoned (series-n-unique s)
+  #:ok? (negate negative?)
+  (define-compat series-n-unique/raw
+    (_fun _Series-ptr -> _int64)
+    #:c-id series_n_unique_v2))
 
 (define-compat series-head
   (_fun _Series-ptr _size -> _Series-ptr)
@@ -1280,47 +1270,27 @@
       (format "cannot replace the time zone with ~s" zone)
       "cannot unset the time zone"))
 
-(define (call/f64-reduction who thunk)
-  (compat-opt-f64->datum (call/foreign-error who thunk #:ok? (valid-opt? CompatOptF64-valid))))
+(define-reasoned (series-std s [#:ddof ddof 1])
+  #:ok? (compose1 (negate negative?) CompatOptF64-valid)
+  #:result compat-opt-f64->datum
+  (define-compat series-std/raw
+    (_fun _Series-ptr _uint8 -> _CompatOptF64)
+    #:c-id series_std_v2))
 
-(define-compat series-std/raw
-  (_fun _Series-ptr _uint8 -> _CompatOptF64)
-  #:c-id series_std_v2)
+(define-reasoned (series-var s [#:ddof ddof 1])
+  #:ok? (compose1 (negate negative?) CompatOptF64-valid)
+  #:result compat-opt-f64->datum
+  (define-compat series-var/raw
+    (_fun _Series-ptr _uint8 -> _CompatOptF64)
+    #:c-id series_var_v2))
 
-(define (series-std s #:ddof [ddof 1])
-  (call/f64-reduction 'series-std (lambda () (series-std/raw s ddof))))
-
-(define-compat series-var/raw
-  (_fun _Series-ptr _uint8 -> _CompatOptF64)
-  #:c-id series_var_v2)
-
-(define (series-var s #:ddof [ddof 1])
-  (call/f64-reduction 'series-var (lambda () (series-var/raw s ddof))))
-
-(define-compat series-quantile/raw
-  (_fun _Series-ptr _double _uint8 -> _CompatOptF64)
-  #:c-id series_quantile_v2)
-
-(define (quantile-interpolation->code who interpolation)
-  (case interpolation
-    [(nearest) 0]
-    [(linear) 1]
-    [(lower) 2]
-    [(higher) 3]
-    [(midpoint) 4]
-    [else (error who
-                 "interpolation must be one of 'nearest 'linear 'lower 'higher 'midpoint, got ~v"
-                 interpolation)]))
-
-;; Quantile of a series, computed in f64.  `quantile` is in [0, 1].
-;; `#:interpolation` defaults to 'nearest, matching what describe uses.
-;; Returns a flonum, or polars-null for an empty/all-null or non-numeric series.
-(define (series-quantile s quantile #:interpolation [interpolation 'nearest])
-  (unless (and (real? quantile) (<= 0 quantile 1))
-    (error 'series-quantile "quantile must be a real in [0, 1], got ~v" quantile))
-  (define code (quantile-interpolation->code 'series-quantile interpolation))
-  (call/f64-reduction 'series-quantile
-                      (lambda () (series-quantile/raw s (exact->inexact quantile) code))))
+(define-reasoned (series-quantile s quantile [#:interpolation interpolation 'nearest])
+  #:ok? (compose1 (negate negative?) CompatOptF64-valid)
+  #:result compat-opt-f64->datum
+  (define-compat series-quantile/raw
+    (_fun _Series-ptr _double* (_enum '(nearest linear lower higher midpoint) _uint8)
+          -> _CompatOptF64)
+    #:c-id series_quantile_v2))
 
 (define-syntax-parse-rule (define-series-series-op name:id name/who:id raw-name:id rust-id:id)
   (define-reasoned (name a b) #:who-variant name/who
