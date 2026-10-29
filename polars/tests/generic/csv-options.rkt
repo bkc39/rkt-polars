@@ -6,13 +6,11 @@
            racket/runtime-path
            (only-in racket/list last make-list range second)
            (only-in racket/dict in-dict)
-           (only-in racket/match match match-define)
+           (only-in racket/match match-define)
            (only-in racket/string string-append*)
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
-           (only-in gregor date datetime)
-           (only-in gregor/time time)
            (only-in polars/private/generic/core
                     column-names dataframe dtype height ref series shape)
            (only-in polars/private/generic/csv read-csv scan-csv write-csv)
@@ -21,15 +19,14 @@
            (only-in polars/private/io-contracts size-max)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords cause-of col column contract-violation-of dtypes-of frame=?
-                    message-of nul-expected one-file-pattern polars-null scratch-file
+                    keyword-of message-of nul-expected one-file-pattern polars-null scratch-file
                     staging-files)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     call-in-child check-readers-agree check-reads-like-every check-staged-write
-                    eager-reader scan-reader))
+                    [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
-  (define eager-and-scan
-    (list (cons 'eager (eager-reader read-csv)) (cons 'scan (scan-reader scan-csv collect))))
+  (define eager-and-scan (eager-and-scan* read-csv scan-csv))
   (define flights (build-path data-dir "flights.tsv"))
   (define part-1 (build-path data-dir "parts" "part-1.csv"))
   (define csv-dir (make-temporary-directory "rkt-polars-csv-options-~a"))
@@ -470,17 +467,14 @@
                   (make-list reads late-float-every)
                   label))
 
-  (define (gregor-value v)
-    (match v
-      [(cons 'date fields) (apply date fields)]
-      [(cons 'datetime fields) (apply datetime fields)]
-      [(cons 'time fields) (apply time fields)]
-      [_ v]))
   (define nul-written (build-path csv-dir "nul-written.csv"))
   (for ([row (in-list (nul-expected 'io-writes))])
     (match-define (list name xs arg expected) row)
-    (apply-keywords write-csv (list (cons (string->keyword (symbol->string name)) arg))
-                    (dataframe (list (series (map gregor-value xs) #:name "s"))) nul-written)
+    (apply-keywords write-csv (list (cons (keyword-of name) arg))
+                    (dataframe (list (series xs #:name "s"))) nul-written)
     (check-equal? (file->string nul-written) expected (format "~s" row)))
+  (write-csv (dataframe (list (series (list "x" polars-null) #:name "s"))) nul-written
+             #:null-value "N\u0000A")
+  (check-equal? (column (read-csv nul-written #:null-values "N\u0000A") "s") (list "x" polars-null))
 
   (delete-directory/files csv-dir))

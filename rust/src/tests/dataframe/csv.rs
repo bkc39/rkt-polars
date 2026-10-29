@@ -1217,8 +1217,10 @@ fn written_in_batches(batch_size: usize) -> Result<String, String> {
             bytes: Vec::new(),
             cap: 1 << 16,
         };
-        let result = csv_writer(&mut out, &options, &strings, df.height())
-            .and_then(|mut writer| writer.finish(&mut df))
+        let result = csv_write_settings(&options, &strings, df.height())
+            .and_then(|settings| {
+                csv_writer(&mut out, &options, settings).finish(&mut df)
+            })
             .map(|()| String::from_utf8(out.bytes).unwrap())
             .map_err(|err| err.to_string());
         let _ = sender.send(result);

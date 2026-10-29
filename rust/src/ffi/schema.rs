@@ -3,7 +3,7 @@ use crate::{polars_dtype_from_compat, str_list_arg, CompatDType, StrListArg};
 
 /// The `len` column names and dtypes a caller passed as a schema; `what`
 /// names the argument in an error.
-pub(crate) unsafe fn decode_schema(
+pub(crate) fn decode_schema(
     names: StrListArg,
     dtypes: *const CompatDType,
     len: usize,
@@ -27,7 +27,7 @@ pub(crate) unsafe fn decode_schema(
         .zip(dtypes)
         .map(|(name, dtype)| {
             polars_dtype_from_compat(dtype)
-                .map(|dtype| Field::new((*name).into(), dtype))
+                .map(|dtype| Field::new(PlSmallStr::from(*name), dtype))
                 .ok_or_else(|| {
                     polars_err!(ComputeError: "unsupported dtype for column {:?}", name)
                 })

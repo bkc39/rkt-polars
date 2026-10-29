@@ -322,11 +322,6 @@ it. Racket side: `define-compat` with `#:c-id`.
     the block could be freed by a collection during a `#:blocking?` call or a
     callback.
   - The IO verbs' names and string keywords cross as blocks too.
-  - `_string-list`, a `const char **` table and its NUL-terminated strings in
-    one block, is used by no binding: a test in `polars/tests/resource.rkt`
-    fails on any `define-compat`, `define-syntax-parse-rule` or
-    `define-syntax-parser` that uses it, at any depth (inside a `begin` or
-    another definer).
   - `series-ref` reads a String value by length, through `series_copy_str`,
     and a Categorical or Enum value as one block, through `series_ref_cat`,
     so a NUL a value holds survives. An Enum's categories are read in one
@@ -352,14 +347,15 @@ it. Racket side: `define-compat` with `#:c-id`.
     `polars/private` whose result is `_string`, `_string/utf-8` or
     `_string*/utf-8`, and on a `_fun` or a `define-series-constructors` there
     naming `_rsstring` or `_c-string-result`, the C-string result type #165
-    retired, or `_string`, `_string/utf-8`, `_string*/utf-8`, `_path` or
-    `_symbol`.
+    retired, `_string-list`, the `const char **` table #165 retired, or any
+    other C-string ctype (`_string`, `_string/locale`, `_bytes/nul-terminated`,
+    `_path`, `_symbol`, ..., or a name `define`d as one) but `_c-string` and
+    `_c-string/null`.
   - `rust/src/tests/c_strings.rs`, on the guard audit's walk of the exports,
-    holds the Rust side: a `c_char` parameter is a `path`, `tz`, `ambiguous`
-    or `non_existent`, or the `name` of a `series_new_*`, but `string_drop`'s;
-    and `CStr::from_ptr` appears only in `ffi/errors.rs`, `ffi/slices.rs`,
-    `series/time_zone.rs` and `series/constructors/`. Each rule has planted
-    offenders and fails on a stale exemption.
+    holds the Rust side: no export takes or returns a pointer to `c_char`,
+    directly or through a `type` alias, but the C strings it lists, and only
+    the modules it lists name `CStr`. Each rule has planted offenders and
+    fails on a stale exemption.
 - **A scoped native resource is never paired by hand.** A buffer or owned
   result used only for the length of a computation is bound with
   `with-raw-buffer`, `with-release`, `with-releases` for a list acquired by
@@ -384,8 +380,7 @@ it. Racket side: `define-compat` with `#:c-id`.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
-  `dataframe_read_csv_v3`), so a
-  stale library fails at load, when
+  `dataframe_read_csv_v3`), so a stale library fails at load, when
   `define-compat` cannot resolve the symbol, instead of misreading its
   arguments.
 - **A change to any `#[no_mangle]` export needs both
@@ -531,8 +526,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `write-json` refuses a binary column, where polars hits a `todo!()`.
 - Every writer goes through `write_checked_frame` (`write_frame` when there
   is nothing to check; `rust/src/dataframe/io.rs`).
-  Its checks on the frame and the path (a JSON writer's binary column, say)
-  run before the target is opened. It follows a symlink to the file it
+  Its checks on the frame, the path and the options (a JSON writer's binary
+  column, say, or a malformed block of `write-csv`'s) run before the target
+  is opened. It follows a symlink to the file it
   names; a dangling link is written through in place, creating that file.
   A directory target is refused, and a FIFO or device is written in place.
   For a regular or missing file it writes `.rkt-polars-<pid>-<n>.partial`
@@ -598,11 +594,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   null pages (#203), and without the null count it fails at the footer on a
   column it does not dictionary-encode.
 - The Parquet verbs report under the verb's own name (`read-parquet:`),
-  the low-level bindings under theirs (#153). The C surface is
-  `dataframe_read_parquet_with_options_v2`,
-  `lazyframe_scan_parquet_with_options_v2` and
-  `dataframe_write_parquet_with_options`; Rust tests reach them through the default-option
-  helpers in `tests/dataframe/io.rs`.
+  the low-level bindings under theirs (#153). The C surface is the three
+  `_with_options` entries (the read and the scan `_v2`); Rust tests reach
+  them through the default-option helpers in `tests/dataframe/io.rs`.
 - The Parquet reader and scan number the row index from 0 and add
   `#:row-index-offset` afterwards, checked, as the CSV readers do; polars'
   streaming row-index node would panic past `u32::MAX`.

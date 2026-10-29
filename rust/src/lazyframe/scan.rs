@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::{
-    clear_last_error, decode_path, guard_panic, record, str_arg,
+    clear_last_error, decode_path, guard_panic, optional_name, record,
     CompatParquetReadOptions, StrArg,
 };
 use polars::io::{HiveOptions, RowIndex};
@@ -21,17 +21,13 @@ pub(crate) struct ParquetNames {
     pub include_file_paths: Option<PlSmallStr>,
 }
 
-pub(crate) fn decode_name(p: StrArg) -> PolarsResult<Option<PlSmallStr>> {
-    Ok(unsafe { str_arg(p) }?.map(PlSmallStr::from))
-}
-
 pub(crate) fn decode_parquet_names(
     row_index_name: StrArg,
     include_file_paths: StrArg,
 ) -> PolarsResult<ParquetNames> {
     Ok(ParquetNames {
-        row_index_name: decode_name(row_index_name)?,
-        include_file_paths: decode_name(include_file_paths)?,
+        row_index_name: optional_name(row_index_name)?,
+        include_file_paths: optional_name(include_file_paths)?,
     })
 }
 

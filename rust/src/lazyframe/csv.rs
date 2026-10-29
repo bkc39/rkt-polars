@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    is_pattern, offset_frame_rows, offset_rows, polars_dtype_from_compat,
-    read_path, require_path, scan, str_arg, str_list_arg, zero_based,
-    CompatCsvOptions, CompatDType, PathRules, StrArg, StrListArg,
+    is_pattern, offset_frame_rows, offset_rows, optional_name,
+    polars_dtype_from_compat, read_path, require_path, scan, str_list_arg,
+    zero_based, CompatCsvOptions, CompatDType, PathRules, StrArg, StrListArg,
 };
 use polars::io::path_utils::{decode_file_uri_paths, expand_paths};
 use polars::io::utils::compression::SupportedCompression;
@@ -29,10 +29,6 @@ struct CsvArrays {
     columns: StrListArg,
     projection: *const usize,
     projection_len: usize,
-}
-
-fn decode_string(p: StrArg) -> PolarsResult<Option<String>> {
-    Ok(unsafe { str_arg(p) }?.map(str::to_string))
 }
 
 fn decode_strings(p: StrListArg) -> PolarsResult<Vec<PlSmallStr>> {
@@ -245,10 +241,10 @@ struct CsvRequest {
     selection: Selection,
 }
 
-fn comment_prefix(prefix: String) -> CommentPrefix {
+fn comment_prefix(prefix: PlSmallStr) -> CommentPrefix {
     match prefix.as_bytes() {
         [byte] if byte.is_ascii() => CommentPrefix::Single(*byte),
-        _ => CommentPrefix::Multi(prefix.into()),
+        _ => CommentPrefix::Multi(prefix),
     }
 }
 
@@ -268,10 +264,10 @@ fn decode(
             },
             || most_rows(path, options.glob),
         ),
-        comment_prefix: decode_string(arrays.comment_prefix)?
+        comment_prefix: optional_name(arrays.comment_prefix)?
             .map(comment_prefix),
-        row_index: decode_string(arrays.row_index_name)?.map(|name| RowIndex {
-            name: name.into(),
+        row_index: optional_name(arrays.row_index_name)?.map(|name| RowIndex {
+            name,
             offset: options.row_index_offset as IdxSize,
         }),
         null_values: decode_null_values(arrays)?,

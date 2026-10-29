@@ -59,7 +59,7 @@ fn json_read(
 ) -> PolarsResult<DataFrame> {
     let schema = options
         .has_schema
-        .then(|| unsafe {
+        .then(|| {
             decode_schema(
                 arrays.schema_names,
                 arrays.schema_dtypes,
@@ -68,14 +68,12 @@ fn json_read(
             )
         })
         .transpose()?;
-    let overrides = unsafe {
-        decode_schema(
-            arrays.override_names,
-            arrays.override_dtypes,
-            options.overrides_len,
-            "override",
-        )
-    }?;
+    let overrides = decode_schema(
+        arrays.override_names,
+        arrays.override_dtypes,
+        options.overrides_len,
+        "override",
+    )?;
     let mut reader = JsonReader::new(json_file(path)?)
         .with_json_format(JsonFormat::Json)
         .infer_schema_len(infer_schema_length(

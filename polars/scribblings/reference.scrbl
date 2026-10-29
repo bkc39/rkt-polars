@@ -763,9 +763,8 @@ by-quarter
   by a bare @litchar{dir/*}.
 
   A @racket[csv-char/c] is one ASCII character other than newline or
-  return; the integer contracts are @tech{integer ranges}. A
-  @racket[column-name/c] is a string. A name, a marker or a comment prefix
-  may hold any character, a NUL included, as in Python.
+  return; the integer contracts are @tech{integer ranges}. A name, a marker
+  or a comment prefix may hold any character, a NUL included, as in Python.
   @racket[separator] defaults to @racket[#\,]; @racket[quote-char] must
   differ from it, and @racket[#:quote-char #f] turns quoting off. An
   @racket[eol-char/c] is any ASCII character; @racket[eol-char] ends a line
@@ -1035,7 +1034,9 @@ stations
   are @hyperlink["https://docs.rs/chrono/latest/chrono/format/strftime/index.html"]{chrono}
   format strings, by default ISO 8601 at the column's precision; a zoned
   datetime is written as its local time and UTC offset,
-  @tt{2021-03-27T12:00:00.000000+0100}, as Python does.
+  @tt{2021-03-27T12:00:00.000000+0100}, as Python does. A format, the line
+  terminator and the null value may hold any character, a NUL included, as
+  in Python.
   @racket[float-precision] fixes the digits after the decimal point; a
   @racket[float-precision/c] is at most 65535, the most Rust formats;
   @racket[float-scientific] writes every float in scientific notation
@@ -1217,8 +1218,7 @@ stations
   column the file lacks reads as nulls. @racket[schema-overrides] retypes
   columns of the file or of @racket[schema]; naming any other column is an
   error. A @racket[json-schema/c] is a list of @racket[(cons name dtype)]
-  pairs with distinct names, a name any string (@racket[column-name/c]),
-  a NUL included, and a dtype any @racket[series]
+  pairs with distinct names, a name a string, and a dtype any @racket[series]
   @racket[#:dtype] spelling but an Enum. A string reads as the date,
   datetime or time the schema asks for, and as null where it does not
   parse.

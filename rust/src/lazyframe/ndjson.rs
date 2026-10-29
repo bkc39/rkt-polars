@@ -2,9 +2,10 @@ use std::num::NonZeroUsize;
 
 use crate::prelude::*;
 use crate::{
-    clear_last_error, decode_name, decode_path, decode_schema, guard_panic,
-    infer_schema_length, missing_override, read_path, record, without_plan,
-    CompatDType, CompatNdjsonOptions, PathRules, StrArg, StrListArg,
+    clear_last_error, decode_path, decode_schema, guard_panic,
+    infer_schema_length, missing_override, optional_name, read_path, record,
+    without_plan, CompatDType, CompatNdjsonOptions, PathRules, StrArg,
+    StrListArg,
 };
 
 struct NdjsonArrays {
@@ -20,7 +21,7 @@ fn row_index(
     options: &CompatNdjsonOptions,
     arrays: &NdjsonArrays,
 ) -> PolarsResult<Option<RowIndex>> {
-    let Some(name) = decode_name(arrays.row_index_name)? else {
+    let Some(name) = optional_name(arrays.row_index_name)? else {
         return Ok(None);
     };
     let offset = IdxSize::try_from(options.row_index_offset).map_err(
@@ -43,23 +44,19 @@ fn ndjson_scan(
     options: &CompatNdjsonOptions,
     arrays: &NdjsonArrays,
 ) -> PolarsResult<LazyFrame> {
-    let overrides = unsafe {
-        decode_schema(
-            arrays.override_names,
-            arrays.override_dtypes,
-            options.overrides_len,
-            "override",
-        )
-    }?;
+    let overrides = decode_schema(
+        arrays.override_names,
+        arrays.override_dtypes,
+        options.overrides_len,
+        "override",
+    )?;
     let schema = if options.has_schema {
-        let schema = unsafe {
-            decode_schema(
-                arrays.schema_names,
-                arrays.schema_dtypes,
-                options.schema_len,
-                "schema",
-            )
-        }?;
+        let schema = decode_schema(
+            arrays.schema_names,
+            arrays.schema_dtypes,
+            options.schema_len,
+            "schema",
+        )?;
         Some(Arc::new(overridden(schema, &overrides)?))
     } else {
         None
@@ -83,7 +80,7 @@ fn ndjson_scan(
         .with_schema_overwrite(has_overrides.then(|| Arc::new(overrides)))
         .with_row_index(row_index(options, arrays)?)
         .with_ignore_errors(options.ignore_errors)
-        .with_include_file_paths(decode_name(arrays.include_file_paths)?)
+        .with_include_file_paths(optional_name(arrays.include_file_paths)?)
         .finish()?;
     if has_overrides {
         lf.clone()

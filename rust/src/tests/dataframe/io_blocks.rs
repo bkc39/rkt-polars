@@ -11,29 +11,69 @@ fn dtype(tag: CompatDTypeTag) -> CompatDType {
     }
 }
 
-fn read_csv_with(
-    path: *const c_char,
-    prefix: StrArg,
-    nulls: StrListArg,
+#[derive(Clone, Copy)]
+struct CsvBlocks {
+    comment_prefix: StrArg,
+    null_values: StrListArg,
+    null_columns: StrListArg,
+    null_markers: StrListArg,
+    override_names: StrListArg,
+    override_dtypes: *const CompatDType,
+    overrides_len: usize,
     new_columns: StrListArg,
-) -> bool {
+}
+
+impl Default for CsvBlocks {
+    fn default() -> Self {
+        CsvBlocks {
+            comment_prefix: ptr::null(),
+            null_values: ptr::null(),
+            null_columns: ptr::null(),
+            null_markers: ptr::null(),
+            override_names: ptr::null(),
+            override_dtypes: ptr::null(),
+            overrides_len: 0,
+            new_columns: ptr::null(),
+        }
+    }
+}
+
+fn read_csv_v3(path: *const c_char, b: CsvBlocks) -> *mut DataFrame {
     dataframe_read_csv_v3(
         path,
         CompatCsvOptions::default(),
-        prefix,
+        b.comment_prefix,
         ptr::null(),
-        nulls,
-        ptr::null(),
-        ptr::null(),
-        ptr::null(),
-        ptr::null(),
-        0,
-        new_columns,
+        b.null_values,
+        b.null_columns,
+        b.null_markers,
+        b.override_names,
+        b.override_dtypes,
+        b.overrides_len,
+        b.new_columns,
         ptr::null(),
         ptr::null(),
         0,
     )
-    .is_null()
+}
+
+fn scan_csv_v3(path: *const c_char, b: CsvBlocks) -> *mut LazyFrame {
+    lazyframe_scan_csv_v3(
+        path,
+        CompatCsvOptions::default(),
+        b.comment_prefix,
+        ptr::null(),
+        b.null_values,
+        b.null_columns,
+        b.null_markers,
+        b.override_names,
+        b.override_dtypes,
+        b.overrides_len,
+        b.new_columns,
+        ptr::null(),
+        ptr::null(),
+        0,
+    )
 }
 
 #[test]
@@ -71,35 +111,26 @@ fn every_io_v2_refuses_a_malformed_block_with_its_cause() {
         (
             "dataframe_read_csv_v3",
             Box::new(|| {
-                read_csv_with(csv.as_ptr(), bad, ptr::null(), ptr::null())
-                    && read_csv_with(
-                        csv.as_ptr(),
-                        ptr::null(),
-                        bad_list,
-                        ptr::null(),
-                    )
+                let prefix = CsvBlocks {
+                    comment_prefix: bad,
+                    ..Default::default()
+                };
+                let nulls = CsvBlocks {
+                    null_values: bad_list,
+                    ..Default::default()
+                };
+                read_csv_v3(csv.as_ptr(), prefix).is_null()
+                    && read_csv_v3(csv.as_ptr(), nulls).is_null()
             }),
         ),
         (
             "lazyframe_scan_csv_v3",
             Box::new(|| {
-                lazyframe_scan_csv_v3(
-                    csv.as_ptr(),
-                    CompatCsvOptions::default(),
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    ptr::null(),
-                    0,
-                    bad_list,
-                    ptr::null(),
-                    ptr::null(),
-                    0,
-                )
-                .is_null()
+                let renamed = CsvBlocks {
+                    new_columns: bad_list,
+                    ..Default::default()
+                };
+                scan_csv_v3(csv.as_ptr(), renamed).is_null()
             }),
         ),
         (
@@ -207,6 +238,28 @@ fn every_io_v2_refuses_a_malformed_block_with_its_cause() {
         );
     }
     assert!(!dir.path().join("w.csv").exists());
+    let pointee = dir.path().join("pointee.csv");
+    let link = dir.path().join("link.csv");
+    std::os::unix::fs::symlink(&pointee, &link).expect("symlink");
+    let linked = cstr(link.to_str().unwrap());
+    assert_ne!(
+        dataframe_write_csv_with_options_v2(
+            df,
+            linked.as_ptr(),
+            CompatCsvWriteOptions::default(),
+            ptr::null(),
+            bad,
+            ptr::null(),
+            ptr::null(),
+            ptr::null(),
+        ),
+        0
+    );
+    assert_eq!(recorded_error(), Some(StrError::Truncated.to_string()));
+    assert!(
+        !pointee.exists(),
+        "a malformed block opened the dangling link's pointee"
+    );
     dataframe_drop(df);
     series_drop(xs);
 }
@@ -220,23 +273,15 @@ fn the_io_v2s_refuse_lists_whose_counts_disagree() {
     let (one, two) = (str_list_block(&["x"]), str_list_block(&["x", "y"]));
     let float64 = dtype(CompatDTypeTag::Float64);
     let read = |columns: StrListArg, markers: StrListArg, names: StrListArg| {
-        let out = dataframe_read_csv_v3(
-            p.as_ptr(),
-            CompatCsvOptions::default(),
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-            columns,
-            markers,
-            names,
-            &float64,
-            1,
-            ptr::null(),
-            ptr::null(),
-            ptr::null(),
-            0,
-        );
-        assert!(out.is_null());
+        let blocks = CsvBlocks {
+            null_columns: columns,
+            null_markers: markers,
+            override_names: names,
+            override_dtypes: &float64,
+            overrides_len: 1,
+            ..Default::default()
+        };
+        assert!(read_csv_v3(p.as_ptr(), blocks).is_null());
         recorded_error().expect("a reason")
     };
     assert_eq!(
@@ -267,6 +312,26 @@ fn the_io_v2s_refuse_lists_whose_counts_disagree() {
         recorded_error().as_deref(),
         Some("2 column names are given for 1 columns")
     );
+    for (kind, indices) in [(0, ptr::null()), (2, [0i64].as_ptr())] {
+        let selected = dataframe_read_parquet_with_options_v2(
+            q.as_ptr(),
+            CompatParquetReadOptions::default(),
+            ptr::null(),
+            ptr::null(),
+            kind,
+            one.as_ptr(),
+            indices,
+            1,
+        );
+        assert!(selected.is_null());
+        assert_eq!(
+            recorded_error(),
+            Some(format!(
+                "column names are given with column selection {}",
+                kind
+            ))
+        );
+    }
     let json = dir.path().join("x.json");
     let j = cstr(json.to_str().unwrap());
     assert_eq!(dataframe_write_json(df, j.as_ptr()), 0);
@@ -286,6 +351,76 @@ fn the_io_v2s_refuse_lists_whose_counts_disagree() {
         recorded_error().as_deref(),
         Some("2 override names are given for 1 dtypes")
     );
+    let schema_json = dataframe_read_json_with_options_v2(
+        j.as_ptr(),
+        CompatJsonOptions {
+            has_schema: true,
+            schema_len: 1,
+            ..Default::default()
+        },
+        two.as_ptr(),
+        &float64,
+        ptr::null(),
+        ptr::null(),
+    );
+    assert!(schema_json.is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("2 schema names are given for 1 dtypes")
+    );
+    let ndjson = dir.path().join("x.ndjson");
+    let n = cstr(ndjson.to_str().unwrap());
+    assert_eq!(
+        dataframe_write_ndjson_with_options(df, n.as_ptr(), 0, false, 0, true),
+        0
+    );
+    let ndjson_rows: [(&str, CompatNdjsonOptions, StrListArg, StrListArg); 2] = [
+        (
+            "2 schema names are given for 1 dtypes",
+            CompatNdjsonOptions {
+                has_schema: true,
+                schema_len: 1,
+                ..Default::default()
+            },
+            two.as_ptr(),
+            ptr::null(),
+        ),
+        (
+            "2 override names are given for 1 dtypes",
+            CompatNdjsonOptions {
+                overrides_len: 1,
+                ..Default::default()
+            },
+            ptr::null(),
+            two.as_ptr(),
+        ),
+    ];
+    for (reason, options, schema, overrides) in ndjson_rows {
+        let read = dataframe_read_ndjson_with_options_v2(
+            n.as_ptr(),
+            options,
+            schema,
+            &float64,
+            overrides,
+            &float64,
+            ptr::null(),
+            ptr::null(),
+        );
+        assert!(read.is_null());
+        assert_eq!(recorded_error().as_deref(), Some(reason));
+        let scanned = lazyframe_scan_ndjson_with_options_v2(
+            n.as_ptr(),
+            options,
+            schema,
+            &float64,
+            overrides,
+            &float64,
+            ptr::null(),
+            ptr::null(),
+        );
+        assert!(scanned.is_null());
+        assert_eq!(recorded_error().as_deref(), Some(reason));
+    }
     dataframe_drop(df);
     series_drop(xs);
 }

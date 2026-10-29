@@ -186,18 +186,18 @@
               (and has-header (not separator) (null? new-columns) (null? columns)))))
 
 (define-syntax-parse-rule (_csv-fun (~datum ->) result:expr)
-  (_fun _c-string
-        _CompatCsvOptions
-        _str/null
-        _str/null
-        _str-list
-        _str-list
-        _str-list
+  (_fun (path : _c-string)
+        (options : _CompatCsvOptions)
+        (comment-prefix : _str/null)
+        (row-index-name : _str/null)
+        (null-values : _str-list)
+        (null-columns : _str-list)
+        (null-markers : _str-list)
         (names : _str-list)
-        (_list i _CompatDType)
+        (dtypes : (_list i _CompatDType))
         (_size = (length names))
-        _str-list
-        _str-list
+        (new-columns : _str-list)
+        (columns : _str-list)
         (projection : (_list i _size))
         (_size = (length projection))
         -> result))

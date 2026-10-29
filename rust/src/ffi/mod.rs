@@ -15,15 +15,14 @@ pub(crate) use self::results::{
 };
 pub(crate) use self::schema::decode_schema;
 pub(crate) use self::slices::{
-    collect_c_strings, collect_exprs, named_sort, slice_or_empty,
-    sort_multiple_options,
+    collect_exprs, named_sort, slice_or_empty, sort_multiple_options,
 };
 #[cfg(test)]
 pub(crate) use self::strings::StrError;
 pub(crate) use self::strings::{
-    name_arg, str_arg, str_list_arg, str_list_out, str_out,
+    name_arg, optional_name, str_arg, str_list_arg, str_list_out, str_out,
 };
 pub use self::strings::{
-    str_block_drop, str_block_drop_count, string_drop, StrArg, StrListArg,
-    StrListOut, StrOut,
+    str_block_drop, str_block_drop_count, StrArg, StrListArg, StrListOut,
+    StrOut,
 };

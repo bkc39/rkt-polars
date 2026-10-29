@@ -153,10 +153,14 @@
    [overrides-len _size]))
 
 (define-syntax-parse-rule (_ndjson-fun (~literal ->) result:expr)
-  (_fun _c-string _CompatNdjsonOptions
-        _str-list (_list i _CompatDType)
-        _str-list (_list i _CompatDType)
-        _str/null _str/null
+  (_fun (path : _c-string)
+        (options : _CompatNdjsonOptions)
+        (schema-names : _str-list)
+        (schema-dtypes : (_list i _CompatDType))
+        (override-names : _str-list)
+        (override-dtypes : (_list i _CompatDType))
+        (row-index-name : _str/null)
+        (include-file-paths : _str/null)
         -> result))
 
 (define-compat dataframe-read-ndjson/raw (_ndjson-fun -> _DataFrame-ptr/null)

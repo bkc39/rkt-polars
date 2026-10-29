@@ -4,6 +4,7 @@
   (require rackunit
            racket/file
            racket/runtime-path
+           (only-in racket/dict in-dict)
            (only-in racket/list filter-map range remove-duplicates second)
            (only-in racket/match match match-define match-lambda)
            (only-in racket/sequence sequence->list)
@@ -20,14 +21,14 @@
            (only-in polars/private/generic/reshape collect)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
-                    frame=? gzip-file keyword-rejected? message-of nul-expected nul-names
+                    frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
                     polars-null scratch-file)
            (only-in (submod polars/tests/generic/test-fixtures test)
-                    check-readers-agree eager-reader glob-reader outcome-difference scan-reader))
+                    check-nul-names-round-trip check-readers-agree eager-reader glob-reader
+                    outcome-difference scan-reader [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
-  (define eager-and-scan
-    (list (cons 'eager (eager-reader read-csv)) (cons 'scan (scan-reader scan-csv collect))))
+  (define eager-and-scan (eager-and-scan* read-csv scan-csv))
   (define flights (build-path data-dir "flights.tsv"))
   (define scratch (make-temporary-directory "rkt-polars-io-~a"))
   (for ([sub '("globbed" "ordered" "mixed" "literal" "dirmix")])
@@ -433,31 +434,30 @@
 
   (define nul-plain (scratch-file scratch "nul-plain.csv" "s,t\n1,2\n"))
   (define nul-named (build-path scratch "nul-named.csv"))
-  (for ([n (in-list nul-names)])
-    (write-csv (dataframe (list (series '(1 2) #:name n) (series '("x" "y") #:name "s"))) nul-named)
-    (check-equal? (column-names (read-csv nul-named #:columns (list n))) (list n) (format "~s" n))
-    (for ([reader (in-list eager-and-scan)])
-      (define (read path kvs) ((cdr reader) path kvs))
-      (define label (format "~a ~s" (car reader) n))
-      (check-equal? (column-names (read nul-named '())) (list n "s") label)
-      (check-equal? (dtype (ref (read nul-named `((#:schema-overrides . ((,n . f64))))) n))
-                    'float64 label)
-      (check-equal? (column (read nul-named `((#:null-values . ((,n . "2"))))) n)
-                    (list 1 polars-null) label)
-      (check-equal? (column-names (read nul-plain `((#:new-columns . (,n "t"))))) (list n "t")
-                    label)
-      (check-equal? (column-names (read nul-plain `((#:row-index-name . ,n)))) (list n "s" "t")
-                    label)))
+  (check-nul-names-round-trip
+   write-csv nul-named (list (assq 'eager eager-and-scan))
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-named `((#:columns . (,n))))) (list n) label)))
+  (check-nul-names-round-trip
+   write-csv nul-named eager-and-scan
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-named '())) (list n "s") label)
+     (check-equal? (dtype (ref (read-with nul-named `((#:schema-overrides . ((,n . f64))))) n))
+                   'float64 label)
+     (check-equal? (column (read-with nul-named `((#:null-values . ((,n . "2"))))) n)
+                   (list 1 polars-null) label)
+     (check-equal? (column-names (read-with nul-plain `((#:new-columns . (,n "t"))))) (list n "t")
+                   label)
+     (check-equal? (column-names (read-with nul-plain `((#:row-index-name . ,n))))
+                   (list n "s" "t") label)))
   (for ([row (in-list (nul-expected 'io-reads))])
     (match-define (list name text marker expected) row)
     (define path (scratch-file scratch "nul-keyword.csv" text))
     (define kvs
       (match name
-        ['null-values `((#:null-values . ,marker))]
         ['named-null-values `((#:null-values . (("s" . ,marker))))]
-        ['comment-prefix `((#:comment-prefix . ,marker))]))
-    (for ([reader (in-list eager-and-scan)])
-      (check-equal? (column ((cdr reader) path kvs) "s") expected
-                    (format "~a ~s" (car reader) row))))
+        [_ (list (cons (keyword-of name) marker))]))
+    (for ([(kind read-with) (in-dict eager-and-scan)])
+      (check-equal? (column (read-with path kvs) "s") expected (format "~a ~s" kind row))))
 
   (delete-directory/files scratch))
