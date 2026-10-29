@@ -901,17 +901,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   list parses unambiguously (no value holds a `"` or a NUL, the column's name
   holds no `'`, and the list has polars' default length), and otherwise
   leaves as polars' text. It counts what polars' cast was given at once, as
-  Python does: the whole column in a `select` or `with-columns`, but each
-  chunk of a frame of several chunks taller than twice polars' thread
-  count; each chunk, or the part of the frame each thread takes, in a
-  `filter` that polars splits (a frame of several chunks, or one at least
-  as wide as the thread pool); and in `agg` or `over` all the groups'
-  values together, in row order (or one value per group, for an aggregated
-  input). N counts nulls, the values are polars' first missed rows in row
-  order (all of them up to three, else the first two, deduplicated, with
-  the other rows counted as `, and K more rows`, where the eager tail
-  counts distinct values), and the message names no
-  categories, since polars' reason carries none.
+  Python does. On a frame of several chunks (a `vstack` does not rechunk),
+  `with-columns` counts each chunk, `select` each chunk once the frame is
+  taller than twice polars' thread count, and `filter` each chunk;
+  otherwise `select` and `with-columns` count the whole column, and
+  `filter` the whole column of a frame narrower than the thread pool and
+  each thread's part of a wider one. In `agg` or `over` it counts all the
+  groups' values together, in row order (or one value per group, for an
+  aggregated input). N counts nulls, and the values are polars' first
+  missed rows in row order, one per row, repeats kept (all of them up to
+  three, else the first two, with the other rows counted as `, and K more
+  rows`; the eager form names distinct values and counts the other
+  distinct ones). The message names no categories, since polars' reason
+  carries none.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.

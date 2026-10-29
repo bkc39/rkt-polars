@@ -536,13 +536,17 @@ total
   categories and names the first ten distinct ones in sorted order, with
   the other distinct ones counted as @tt{, and K more}. On an expression it
   raises when the plan runs, under the verb that runs it, and counts what
-  Polars' strict cast was given at once, as Python does: the whole column in
-  @racket[select] or @racket[with-columns], one thread's part of the frame in
-  a @racket[filter], and every group's values in @racket[agg] or
-  @racket[over]. That count includes nulls, and the message names no
-  categories: it names the values of Polars' first missed rows in row order,
-  all of them up to three and otherwise the first two, and counts the other
-  rows as @tt{, and K more rows}. A value holding a double quote or a NUL, a
+  Polars' strict cast was given at once, as Python does. On a frame of
+  several chunks, as @racket[vstack] makes, @racket[with-columns] and
+  @racket[filter] count each chunk, and @racket[select] does once the frame
+  is taller than twice Polars' thread count; otherwise @racket[select] and
+  @racket[with-columns] count the whole column, and @racket[filter] the
+  whole column of a frame narrower than the thread pool and each thread's
+  part of a wider one. In @racket[agg] or @racket[over] it counts every
+  group's values. That count includes nulls, and the message names no
+  categories: it names the value of each of Polars' first missed rows in
+  row order, repeats included, all of them up to three and otherwise the
+  first two, and counts the other rows as @tt{, and K more rows}. A value holding a double quote or a NUL, a
   column name holding a single quote, or a @tt{POLARS_FMT_TABLE_CELL_LIST_LEN}
   other than Polars' default leaves the message as Polars' own text. A filter, @racket[head] or
   @racket[slice] before the cast, in a plan or a group, removes a row before

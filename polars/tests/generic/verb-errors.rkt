@@ -487,7 +487,7 @@
     (and (positive? missing)
          (format "~a: ~a of ~a ~a ~a not in the enum: ~a~a" who missing (length rows)
                  (if (= (length rows) 1) "value" "values") (if (= missing 1) "is" "are")
-                 (string-join (map spelled (remove-duplicates shown)))
+                 (string-join (map spelled shown))
                  (if (positive? more) (format ", and ~a more rows" more) ""))))
   (define (window-message? message who target elements)
     (match (regexp-match #px"^[^:]*: [0-9]+ of ([0-9]+) " message)
@@ -550,12 +550,21 @@
             (check-true (window-message? message who target elements) context)
             (check-equal? message (polars-message who target elements) context))
         (message-after (format "~a: " who) message))))
-  (check-equal? (with-environment-variable #"POLARS_FMT_TABLE_CELL_LIST_LEN" #"10"
-                  (with-default-polars-format
-                    (raised-message 'polars (who-prefix 'select)
-                                    (lambda () (select (with-groups (series '("UA" "B6") #:name "c"))
-                                                       (cast "c" carrier-enum))))))
-                "select: 1 of 2 values is not in the enum: B6")
+  (define planted-misses (dataframe (list (series '("UA" "B6" "XX" "ZZ" "QQ") #:name "c"))))
+  (define (planted-format)
+    (list (raised-message 'polars (who-prefix 'select)
+                          (lambda () (select planted-misses (cast "c" carrier-enum))))
+          (string-contains? (dataframe->string (with-groups (series '("UA") #:name "c"))) "┆")))
+  (with-environment-variable #"POLARS_FMT_TABLE_CELL_LIST_LEN" #"10"
+    (with-environment-variable #"POLARS_FMT_TABLE_FORMATTING" #"ASCII_FULL"
+      (check-equal? (planted-format)
+                    (list (string-append "select: conversion from `str` to `enum` failed in column"
+                                         " 'c' for 4 out of 5 values: [\"B6\", \"XX\", \"ZZ\","
+                                         " \"QQ\"]\n\nEnsure that all values in the input column"
+                                         " are present in the categories of the enum datatype.")
+                          #f))
+      (check-equal? (with-default-polars-format (planted-format))
+                    (list "select: 4 of 5 values are not in the enum: B6 XX, and 2 more rows" #t))))
   (define repeated-miss (series (for/list ([i (in-range 100)]) "XX") #:name "c"))
   (check-equal? (raised-message 'polars (who-prefix 'cast) (lambda () (cast repeated-miss '(enum UA))))
                 "cast: 100 of 100 values are not in '(enum UA): XX")
@@ -563,7 +572,7 @@
                   (raised-message 'polars (who-prefix 'select)
                                   (lambda () (select (dataframe (list repeated-miss))
                                                      (cast "c" '(enum UA))))))
-                "select: 100 of 100 values are not in the enum: XX, and 98 more rows")
+                "select: 100 of 100 values are not in the enum: XX XX, and 98 more rows")
 
   (define carriers
     (dataframe (list (series '("UA" "AA" "UA" "AA" "AA") #:name "c")
@@ -684,6 +693,8 @@
   (define top-carriers (cycle '("UA" "B6" "AA" "JFK") 1000))
   (define bottom-carriers (cycle '("LGA" "UA" "TEB" "AA") 1000))
   (define wide-carriers '("UA" "B6" "AA" "JFK" "LGA" "UA" "TEB" "UA"))
+  (define short-chunks '(("XX" "UA") ("XX" "XX")))
+  (define narrow-carriers '("XX" "UA" "XX"))
   (define (child-rows elements) (for/list ([v (in-list elements)]) (and (string? v) v)))
   (define filtered-rows
     (for*/list ([row (in-list enum-cases)]
@@ -698,6 +709,9 @@
                                    (for/list ([i (in-range ,(add1 (* 2 (processor-count))))])
                                      (series (build-list 8 (lambda (_) i))
                                              #:name (format "w~a" i)))))]
+            [short (vstack (dataframe (list (series ',(car short-chunks) #:name "c")))
+                           (dataframe (list (series ',(cadr short-chunks) #:name "c"))))]
+            [narrow (dataframe (list (series ',narrow-carriers #:name "c")))]
             [message (lambda (run) (with-handlers ([exn:fail? exn-message]) (run) #f))]
             [grouped (lambda (target dtype elements groups)
                        (message
@@ -712,32 +726,49 @@
                                              (lambda () (with-columns table (cast "c" target)))
                                              (lambda () (filter table (is-null (cast "c" target)))))])
                         (message run))
+                      (map message
+                           (list (lambda () (select short (cast "c" target)))
+                                 (lambda () (with-columns short (cast "c" target)))
+                                 (lambda () (filter short (is-null (cast "c" target))))
+                                 (lambda () (filter narrow (is-null (cast "c" target))))))
                       (for/list ([row (in-list ',filtered-rows)])
                         (apply grouped row))))))
-  (define chunked-cases
-    (append (for*/list ([table (list (list (append top-carriers bottom-carriers) #t)
-                                     (list wide-carriers #f))]
+  (define (chunked-cases pool)
+    (define short-carriers (apply append short-chunks))
+    (append (for*/list ([table (list (list (append top-carriers bottom-carriers) 'window)
+                                     (list wide-carriers 'exact))]
                         [who (in-list '(select with-columns filter))])
-              (match-define (list elements chunked?) table)
-              (list who carrier-enum elements (or chunked? (eq? who 'filter))))
+              (match-define (list elements expected) table)
+              (list who carrier-enum elements (if (eq? who 'filter) 'window expected)))
+            (list (list 'select carrier-enum short-carriers
+                        (if (> (length short-carriers) (* 2 pool)) short-chunks 'exact))
+                  (list 'with-columns carrier-enum short-carriers short-chunks)
+                  (list 'filter carrier-enum short-carriers short-chunks)
+                  (list 'filter carrier-enum narrow-carriers 'exact))
             (for*/list ([row (in-list enum-cases)]
                         [dtype (in-list (source-dtypes (cadr row)))])
-              (list 'filter (car row) (cadr row) #t))))
+              (list 'filter (car row) (cadr row) 'window))))
+  (define (chunk-message? message who target chunks)
+    (for/or ([chunk (in-list chunks)])
+      (equal? message (polars-message who target chunk))))
   (for ([threads (list #"1" #"2" #f)])
+    (define cases (chunked-cases (if threads (string->number (bytes->string/utf-8 threads))
+                                     (processor-count))))
     (define-values (status output errors)
       (with-default-polars-format
         (with-environment-variable #"POLARS_MAX_THREADS" threads (call-in-child chunked-program))))
     (check-equal? (list status errors) (list 0 "") (format "~s" threads))
     (define messages (read (open-input-string output)))
-    (check-equal? (length messages) (length chunked-cases) (format "~s" threads))
+    (check-equal? (length messages) (length cases) (format "~s" threads))
     (for ([message (in-list messages)]
-          [row (in-list chunked-cases)])
-      (match-define (list who target elements split?) row)
+          [row (in-list cases)])
+      (match-define (list who target elements expected) row)
       (define context (format "~s on ~s under ~s" who elements threads))
-      (cond
-        [(not (string? message)) (fail (format "nothing raised: ~a" context))]
-        [split? (check-true (window-message? message who target elements) context)]
-        [else (check-equal? message (polars-message who target elements) context)])))
+      (match expected
+        [_ #:when (not (string? message)) (fail (format "nothing raised: ~a" context))]
+        ['window (check-true (window-message? message who target elements) context)]
+        ['exact (check-equal? message (polars-message who target elements) context)]
+        [chunks (check-true (chunk-message? message who target chunks) context)])))
 
   (define ranks '(enum c b a))
   (define ranked-sort (sort (cast "o" ranks)))

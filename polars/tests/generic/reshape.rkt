@@ -161,7 +161,7 @@
   (define repeated (series (for/list ([i 5]) "B6") #:name "c"))
   (check-exn #rx"^cast: 5 of 5 values are not in '\\(enum UA AA\\): B6$"
              (lambda () (cast repeated '(enum UA AA))))
-  (check-exn #rx"^select: 5 of 5 values are not in the enum: B6, and 3 more rows$"
+  (check-exn #rx"^select: 5 of 5 values are not in the enum: B6 B6, and 3 more rows$"
              (lambda () (with-default-polars-format
                           (select (dataframe (list repeated)) (contracted:cast "c" '(enum UA AA))))))
   (check-exn #rx"^cast: 3 of 4 "
@@ -195,7 +195,7 @@
   (check-equal? (series-cells (cast (ref coded "dest") 'string)) '("IAH" "MIA" "IAH" "JFK"))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
-  (check-exn #rx"^with-columns: 2 of 4 values are not in the enum: IAH$"
+  (check-exn #rx"^with-columns: 2 of 4 values are not in the enum: IAH IAH$"
              (lambda () (with-default-polars-format
                           (with-columns flights (cast "dest" '(enum JFK MIA))))))
   (define nul-mia (string->symbol "MI\u0000A"))

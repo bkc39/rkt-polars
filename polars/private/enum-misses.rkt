@@ -2,7 +2,6 @@
 
 (require (only-in json read-json)
          racket/match
-         (only-in racket/list remove-duplicates)
          (only-in racket/string string-join))
 
 (provide enum-cast-reason enum-misses-message enum-misses-reason enum-misses-shown)
@@ -83,7 +82,6 @@
      #:when (<= 1 missing total)
      (match (polars-shown shown missing)
        [(? list? listed)
-        (misses-message total missing "the enum" (remove-duplicates listed)
-                        (- missing (length listed)) " rows")]
+        (misses-message total missing "the enum" listed (- missing (length listed)) " rows")]
        [_ #f])]
     [_ #f]))
