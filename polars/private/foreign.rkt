@@ -791,10 +791,13 @@
   #:c-id series_sort_with_options
   #:wrap (allocator series-drop))
 
-(define (series-sort s #:descending [descending #f] #:nulls-last [nulls-last #f])
-  (call/foreign-error 'series-sort
+(define (series-sort/who who s descending nulls-last)
+  (call/foreign-error who
                       (lambda () (series-sort/raw s descending nulls-last))
                       "failed to sort the series"))
+
+(define (series-sort s #:descending [descending #f] #:nulls-last [nulls-last #f])
+  (series-sort/who 'series-sort s descending nulls-last))
 
 (define (values+valid input-values default-value)
   (for/lists (clean-values valid)
@@ -1710,7 +1713,8 @@
 (module+ internal
   (provide dataframe-drop-nulls/who dataframe-head/who dataframe-slice/who dataframe-tail/who
            dataframe-unique/who series-drop-nulls/who series-head/who series-n-unique/who
-           series-reverse/who series-slice/who series-std/who series-tail/who series-unique/who
+           series-reverse/who series-slice/who series-sort/who series-std/who series-tail/who
+           series-unique/who
            series-var/who typed-reductions define-reasoned named)
   (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
            dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join

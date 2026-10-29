@@ -233,9 +233,11 @@
   #:c-id expr_dtype_col
   #:wrap (allocator expr-drop))
 
+(define (expr-exclude/who who e names)
+  (call/foreign-error who (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
+
 (define (expr-exclude e names)
-  (call/foreign-error 'expr-exclude
-                      (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
+  (expr-exclude/who 'expr-exclude e names))
 
 (define-compat expr-dtype-col-enum/raw
   (_fun _str-list -> _Expr-ptr/null)
@@ -295,6 +297,7 @@
    name))
 
 (module+ internal
-  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
+  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude expr-exclude/who lit
+           lit-value/c
            multi-column-expr?
            expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw))

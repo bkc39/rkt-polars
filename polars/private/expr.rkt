@@ -776,7 +776,10 @@
                         #:right-on [right-on #f]
                         #:how [how 'inner])
   (define-values (lon ron) (join-keys how on left-on right-on))
-  (call/foreign-error 'lazyframe-join
+  (lazyframe-join/who 'lazyframe-join left right lon ron how))
+
+(define (lazyframe-join/who who left right lon ron how)
+  (call/foreign-error who
                       (lambda () (lazyframe-join/c left right lon ron (join-symbol->code how)))))
 
 ;; --- Phase A9: expr cast ---
@@ -816,6 +819,7 @@
 (module+ internal
   (provide call-with-plan collect-plan/who expr-diff expr-forward-fill expr-head expr-rank
            expr-round expr-shift expr-slice expr-sort expr-sort-by expr-std expr-tail expr-var
-           lazyframe-collect/who lazyframe-explain lazyframe-head lazyframe-join lazyframe-slice
+           lazyframe-collect/who lazyframe-explain lazyframe-head lazyframe-join lazyframe-join/who
+           lazyframe-slice
            lazyframe-sort lazyframe-tail rank-methods
            expr-cast-datetime-tz/raw))

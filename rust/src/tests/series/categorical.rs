@@ -1,5 +1,6 @@
 use super::test_util::*;
 use super::*;
+use serde_json::json;
 
 fn boxed(s: Series) -> *mut Series {
     Box::into_raw(Box::new(s))
@@ -384,14 +385,19 @@ fn enum_of(categories: &[&str]) -> DataType {
     )
 }
 
-fn misses_payload(s: &Series, categories: &[&str]) -> String {
-    let reason = enum_cast_checked(s, &enum_of(categories))
-        .unwrap_err()
-        .to_string();
+fn parsed_payload(reason: &str) -> serde_json::Value {
     match reason.strip_prefix(ENUM_MISSES_TAG) {
-        Some(payload) => payload.to_string(),
+        Some(payload) => serde_json::from_str(payload).unwrap(),
         None => panic!("an untagged reason: {}", reason),
     }
+}
+
+fn misses_payload(s: &Series, categories: &[&str]) -> serde_json::Value {
+    parsed_payload(
+        &enum_cast_checked(s, &enum_of(categories))
+            .unwrap_err()
+            .to_string(),
+    )
 }
 
 #[test]
@@ -405,10 +411,13 @@ fn an_enum_cast_reports_its_misses_from_any_string_source() {
     for source in [&s, &cat, &other] {
         assert_eq!(
             misses_payload(source, &["EWR", "JFK", "LGA"]),
-            concat!(
-                r#"{"categories":["EWR","JFK","LGA"],"distinct":2,"missing":3,"#,
-                r#""shown":["TEB","XYZ"],"total":4}"#
-            )
+            json!({
+                "categories": ["EWR", "JFK", "LGA"],
+                "distinct": 2,
+                "missing": 3,
+                "shown": ["TEB", "XYZ"],
+                "total": 4
+            })
         );
     }
 }
@@ -416,30 +425,38 @@ fn an_enum_cast_reports_its_misses_from_any_string_source() {
 #[test]
 fn the_misses_payload_escapes_what_json_must() {
     let s = strings(&[Some("a\0b"), Some("q\"\\"), Some("\u{1f}")]);
+    let reason = enum_cast_checked(&s, &enum_of(&["\"", "\\"]))
+        .unwrap_err()
+        .to_string();
     assert_eq!(
-        misses_payload(&s, &["\"", "\\"]),
-        concat!(
-            r#"{"categories":["\"","\\"],"distinct":3,"missing":3,"#,
-            r#""shown":["\u001f","a\u0000b","q\"\\"],"total":3}"#
-        )
+        parsed_payload(&reason),
+        json!({
+            "categories": ["\"", "\\"],
+            "distinct": 3,
+            "missing": 3,
+            "shown": ["\u{1f}", "a\0b", "q\"\\"],
+            "total": 3
+        })
     );
+    for escaped in [r#"\u001f"#, r#"a\u0000b"#, r#"q\"\\"#] {
+        assert!(reason.contains(escaped), "{}", reason);
+    }
 }
 
 #[test]
 fn the_misses_payload_shows_ten_sorted_misses() {
     let values: Vec<String> =
         (0..12).rev().map(|i| format!("v{:02}", i)).collect();
-    let payload = misses_payload(&Series::new("s".into(), &values), &["a"]);
-    let shown: Vec<String> =
-        (0..10).map(|i| format!("\"v{:02}\"", i)).collect();
-    assert!(payload.contains(r#""distinct":12,"#), "{}", payload);
-    assert!(
-        payload.ends_with(&format!(
-            "\"shown\":[{}],\"total\":12}}",
-            shown.join(",")
-        )),
-        "{}",
-        payload
+    let shown: Vec<String> = (0..10).map(|i| format!("v{:02}", i)).collect();
+    assert_eq!(
+        misses_payload(&Series::new("s".into(), &values), &["a"]),
+        json!({
+            "categories": ["a"],
+            "distinct": 12,
+            "missing": 12,
+            "shown": shown,
+            "total": 12
+        })
     );
 }
 
@@ -474,12 +491,14 @@ fn a_lazy_enum_cast_records_the_tagged_reason() {
     let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
     assert!(lazyframe_collect(lf).is_null());
     assert_eq!(
-        recorded_error().as_deref(),
-        Some(concat!(
-            "\u{1}enum-misses\u{1}",
-            r#"{"categories":["EWR"],"distinct":1,"missing":1,"#,
-            r#""shown":["LGA"],"total":2}"#
-        ))
+        parsed_payload(&recorded_error().unwrap()),
+        json!({
+            "categories": ["EWR"],
+            "distinct": 1,
+            "missing": 1,
+            "shown": ["LGA"],
+            "total": 2
+        })
     );
     series_drop(s);
     expr_drop(column);
@@ -495,13 +514,15 @@ fn the_misses_payload_counts_many_rows_of_few_misses() {
             _ => "UA",
         })
         .collect();
-    let payload = misses_payload(&Series::new("s".into(), &values), &["UA"]);
     assert_eq!(
-        payload,
-        concat!(
-            r#"{"categories":["UA"],"distinct":2,"missing":8,"#,
-            r#""shown":["AA","B6"],"total":200000}"#
-        )
+        misses_payload(&Series::new("s".into(), &values), &["UA"]),
+        json!({
+            "categories": ["UA"],
+            "distinct": 2,
+            "missing": 8,
+            "shown": ["AA", "B6"],
+            "total": 200000
+        })
     );
 }
 
@@ -516,7 +537,7 @@ fn lazy_enum_cast(name: &str, categories: &[&str]) -> Expr {
 }
 
 #[test]
-fn a_lazy_enum_cast_sees_every_chunk() {
+fn a_lazy_enum_cast_reports_one_chunk_s_misses() {
     let width = 2 * std::thread::available_parallelism().map_or(8, |n| n.get());
     let piece = |values: &[&str]| {
         let columns: Vec<Column> = (0..width)
@@ -529,11 +550,7 @@ fn a_lazy_enum_cast_sees_every_chunk() {
         .vstack_mut(&piece(&["JFK", "EWR", "TEB", "EWR"]))
         .unwrap();
     assert_eq!(frame.first_col_n_chunks(), 2);
-    let expected = concat!(
-        "\u{1}enum-misses\u{1}",
-        r#"{"categories":["EWR"],"distinct":3,"missing":4,"#,
-        r#""shown":["JFK","LGA","TEB"],"total":8}"#
-    );
+    let misses = ["JFK", "LGA", "TEB"];
     let cast = lazy_enum_cast("o0", &["EWR"]);
     let plans = [
         frame.clone().lazy().select([cast.clone()]),
@@ -542,6 +559,19 @@ fn a_lazy_enum_cast_sees_every_chunk() {
     ];
     for plan in plans {
         let reason = plan.collect().unwrap_err().to_string();
-        assert!(reason.ends_with(expected), "{}", reason);
+        let payload =
+            parsed_payload(&reason[reason.find(ENUM_MISSES_TAG).unwrap()..]);
+        assert_eq!(payload["categories"], json!(["EWR"]), "{}", reason);
+        let count = |key: &str| payload[key].as_u64().unwrap();
+        assert!(1 <= count("missing"), "{}", reason);
+        assert!(count("missing") <= count("total"), "{}", reason);
+        assert!(count("total") <= 8, "{}", reason);
+        let shown = payload["shown"].as_array().unwrap();
+        assert_eq!(shown.len() as u64, count("distinct"), "{}", reason);
+        assert!(
+            shown.iter().all(|v| misses.contains(&v.as_str().unwrap())),
+            "{}",
+            reason
+        );
     }
 }

@@ -13,7 +13,7 @@
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
-           (only-in polars/private/expr-core expr->string lit-integer/c)
+           (only-in polars/private/expr-core expr->string lit lit-integer/c)
            (only-in polars/private/foreign
                     last-error-message polars-null series-add/who series-cast
                     series-cast-datetime-tz/raw series-dt-convert-time-zone/raw
@@ -471,15 +471,50 @@
                      (series (for/list ([i (in-range (len source))]) (modulo i 2)) #:name "g"))))
   (define (cast-message source target)
     (message-after "cast: " (raised-message 'polars #rx"^cast: " (lambda () (cast source target)))))
-  (define (group-messages table target)
-    (define column (ref table "c"))
-    (for*/list ([g (in-list '(0 1))]
-                [group (in-value (ref (filter table (series (for/list ([i (in-range (len column))])
-                                                              (= (modulo i 2) g))))
-                                      "c"))]
-                #:when (raised (lambda () (cast group target))))
-      (cast-message group target)))
+  (define (column-misses elements target)
+    (define categories (map symbol->string (cdr target)))
+    (remove-duplicates (for/list ([v (in-list elements)]
+                                  #:when (and (string? v) (not (member v categories))))
+                         v)))
+  (define (listed-values listing)
+    (for/list ([v (in-port read (open-input-string listing))])
+      (if (symbol? v) (symbol->string v) v)))
+  (define (chunk-law-failures message who target elements)
+    (define lead (format "~a: " who))
+    (define split (regexp-match-positions (regexp-quote (format " not in ~v: " target)) message))
+    (define counts
+      (and (string-prefix? message lead) split
+           (regexp-match #px"^(\\d+) of (\\d+) values? (?:is|are)$"
+                         (substring message (string-length lead) (caar split)))))
+    (match counts
+      [(list _ (app string->number missing) (app string->number total))
+       (define listed
+         (listed-values (regexp-replace #px", and \\d+ more$" (substring message (cdar split)) "")))
+       (define misses (column-misses elements target))
+       (for/list ([failure (list (and (not (<= 1 missing total (length elements))) 'counts)
+                                 (and (null? listed) 'listed)
+                                 (and (not (andmap (lambda (v) (member v misses)) listed))
+                                      'not-a-miss)
+                                 (and (not (equal? listed (remove-duplicates listed))) 'repeated))]
+                  #:when failure)
+         failure)]
+      [_ '(shape)]))
   (define carrier-enum '(enum UA AA))
+  (define law-elements (list "UA" "B6" polars-null "XX" "UA"))
+  (for ([row (in-list `(("select: 2 of 4 values are not in '(enum UA AA): B6 XX" ())
+                        ("select: 1 of 1 value is not in '(enum UA AA): XX" ())
+                        ("select: 1 of 4 value is not in '(enum UA AA): XX, and 1 more" ())
+                        ("agg: 1 of 4 values is not in '(enum UA AA): XX" (shape))
+                        ("select: 2 of 4 values are not in '(enum UA): B6 XX" (shape))
+                        ("select: 2 values are not in '(enum UA AA): B6 XX" (shape))
+                        ("select: 0 of 4 values are not in '(enum UA AA): B6" (counts))
+                        ("select: 6 of 6 values are not in '(enum UA AA): B6" (counts))
+                        ("select: 1 of 4 value is not in '(enum UA AA): " (listed))
+                        ("select: 1 of 4 value is not in '(enum UA AA): UA" (not-a-miss))
+                        ("select: 1 of 4 value is not in '(enum UA AA): TEB" (not-a-miss))
+                        ("select: 2 of 4 values are not in '(enum UA AA): XX XX" (repeated))))])
+    (match-define (list message failures) row)
+    (check-equal? (chunk-law-failures message 'select carrier-enum law-elements) failures message))
   (define enum-cases
     (list (list carrier-enum (list "UA" polars-null "B6" "B6" "AA" polars-null))
           (list carrier-enum (list "UA" "B6"))
@@ -495,14 +530,13 @@
                 [verb (in-list ((if grouped? grouped-verbs enum-verbs) table (car row)))])
       (match-define (list target elements) row)
       (match-define (cons who run) verb)
-      (define message
-        (message-after (format "~a: " who) (raised-message 'polars (who-prefix who) run)))
-      (define expected
-        (if grouped?
-            (group-messages table target)
-            (list (cast-message source target))))
-      (check-not-false (member message expected) (format "~s on ~s" who elements))
-      message))
+      (define message (raised-message 'polars (who-prefix who) run))
+      (define context (format "~s on ~s" who elements))
+      (if grouped?
+          (check-equal? (chunk-law-failures message who target elements) '() context)
+          (check-equal? (message-after (format "~a: " who) message) (cast-message source target)
+                        context))
+      (message-after (format "~a: " who) message)))
 
   (define carriers
     (dataframe (list (series '("UA" "AA" "UA" "AA" "AA") #:name "c")
@@ -520,6 +554,50 @@
   (check-equal? (dtype (ref agg-carriers "first")) carrier-enum)
   (check-equal? (for/list ([name '("first" "last" "count")]) (series->list (ref agg-carriers name)))
                 '((UA AA) (AA AA) (2 3)))
+
+  (define (enum-column frame)
+    (list (dtype (ref frame "k")) (series->list (ref frame "k"))))
+  (define first-carrier (cast (first "c") carrier-enum))
+  (define scalar-enum-cases
+    (list (list (lambda () (sort (agg (group-by carriers "g") (alias first-carrier "k")) "g"))
+                '(UA AA))
+          (list (lambda () (select carriers (col "g") (alias first-carrier "k")))
+                '(UA UA UA UA UA))
+          (list (lambda () (with-columns carriers (alias (cast (lit "UA") carrier-enum) "k")))
+                '(UA UA UA UA UA))
+          (list (lambda () (select carriers (alias (over first-carrier "g") "k")))
+                '(UA AA AA UA AA))
+          (list (lambda () (select carriers (alias (over (cast (lit "AA") carrier-enum) "g") "k")))
+                '(AA AA AA AA AA))))
+  (for ([row (in-list scalar-enum-cases)]
+        [i (in-naturals)])
+    (match-define (list run expected) row)
+    (check-equal? (enum-column (run)) (list carrier-enum expected) (format "scalar case ~a" i)))
+  (define ua-only '(enum UA))
+  (for ([row (in-list (list (cons 'select (lambda () (select carriers (col "g")
+                                                             (cast (lit "B6") ua-only))))
+                            (cons 'with-columns (lambda () (with-columns carriers
+                                                             (alias (cast (lit "B6") ua-only)
+                                                                    "k"))))
+                            (cons 'agg (lambda () (agg (group-by carriers "g")
+                                                       (cast (first "c") ua-only))))
+                            (cons 'select (lambda () (select carriers
+                                                             (over (cast (first "c") ua-only)
+                                                                   "g"))))))])
+    (match-define (cons who run) row)
+    (check-equal? (chunk-law-failures (raised-message 'polars (who-prefix who) run) who ua-only
+                                      (list "B6" "AA" "UA"))
+                  '()
+                  (format "~a" who)))
+
+  (define pushed (dataframe (list (series '("UA" "XX") #:name "c") (series '(2 0) #:name "v"))))
+  (define pushed-plan (with-columns (lazy pushed) (cast "c" ua-only)))
+  (define pushed-past (collect (filter pushed-plan (> (col "v") 1))))
+  (check-equal? (list (shape pushed-past) (dtype (ref pushed-past "c"))
+                      (series->list (ref pushed-past "c")) (series->list (ref pushed-past "v")))
+                (list '(1 2) ua-only '(UA) '(2)))
+  (check-equal? (raised-message 'polars (who-prefix 'collect) (lambda () (collect pushed-plan)))
+                (format "collect: ~a" (cast-message (ref pushed "c") ua-only)))
 
   (define (cycle elements n)
     (for/list ([i (in-range n)]) (list-ref elements (modulo i (length elements)))))
@@ -539,15 +617,23 @@
                                      (lambda () (with-columns table (cast "c" target)))
                                      (lambda () (filter table (is-null (cast "c" target)))))])
                 (with-handlers ([exn:fail? exn-message]) (run) #f)))))
-  (define chunked-expected
+  (define chunked-cases
     (for*/list ([elements (list (append top-carriers bottom-carriers) wide-carriers)]
                 [who (in-list '(select with-columns filter))])
-      (format "~a: ~a" who (cast-message (series elements) carrier-enum))))
+      (list who elements)))
   (for ([threads (list #"1" #f)])
     (define-values (status output errors)
       (with-environment-variable #"POLARS_MAX_THREADS" threads (call-in-child chunked-program)))
     (check-equal? (list status errors) (list 0 "") (format "~s" threads))
-    (check-equal? (read (open-input-string output)) chunked-expected (format "~s" threads)))
+    (define messages (read (open-input-string output)))
+    (check-equal? (length messages) (length chunked-cases) (format "~s" threads))
+    (for ([message (in-list messages)]
+          [row (in-list chunked-cases)])
+      (match-define (list who elements) row)
+      (check-equal? (and (string? message)
+                         (chunk-law-failures message who carrier-enum elements))
+                    '()
+                    (format "~s under ~s" who threads))))
 
   (define ranks '(enum c b a))
   (define ranked-sort (sort (cast "o" ranks)))

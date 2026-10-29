@@ -239,8 +239,11 @@
                         #:strict [strict #t]
                         #:exact [exact #t]
                         #:cache [cache #t])
-  (check-strptime-options 'expr-str->date format strict exact cache)
-  (call/polars-reason 'expr-str->date
+  (expr-str->date/who 'expr-str->date e format strict exact cache))
+
+(define (expr-str->date/who who e format strict exact cache)
+  (check-strptime-options who format strict exact cache)
+  (call/polars-reason who
                       (lambda ()
                         (expr-str->date/raw e format (flag strict) (flag exact) (flag cache)))))
 
@@ -287,10 +290,13 @@
                         #:strict [strict #t]
                         #:exact [exact #t]
                         #:cache [cache #t])
-  (check-strptime-options 'expr-str->time format strict exact cache)
-  (call/polars-reason 'expr-str->time
+  (expr-str->time/who 'expr-str->time e format strict exact cache))
+
+(define (expr-str->time/who who e format strict exact cache)
+  (check-strptime-options who format strict exact cache)
+  (call/polars-reason who
                       (lambda ()
                         (expr-str->time/raw e format (flag strict) (flag exact) (flag cache)))))
 
 (module+ internal
-  (provide expr-str->datetime-tz/raw))
+  (provide expr-str->date/who expr-str->datetime-tz/raw expr-str->time/who))

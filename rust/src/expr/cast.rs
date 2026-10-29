@@ -32,11 +32,11 @@ pub extern "C" fn expr_cast_enum_v2(
 }
 
 /// A cast to an Enum that reports its misses as the eager cast does. It is
-/// groupwise, not elementwise, so that polars runs it once on the whole
-/// column in `select`, `with_columns` and `filter`, never once per chunk.
+/// elementwise, as polars' own cast is, so polars may run it once per chunk
+/// and push a filter or a slice past it.
 fn enum_cast_expr(e: Expr, dtype: DataType) -> Expr {
     let field_dtype = dtype.clone();
-    e.apply_with_fmt_str(
+    e.map_with_fmt_str(
         move |c: Column| {
             enum_cast_checked(c.as_materialized_series(), &dtype)
                 .map(Column::from)

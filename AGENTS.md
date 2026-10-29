@@ -888,14 +888,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   stays non-strict (a value that does not convert becomes null). Both forms
   run `enum_cast_checked` (`series/categorical.rs`), which records the
   misses as a tagged payload that `call/foreign-error` renders, so the lazy
-  form raises the eager message under the verb that runs the plan. The
-  lazy form is a groupwise function, not an elementwise one: polars'
-  in-memory engine splits an elementwise `select`, `with_columns` or
-  `filter` by chunk (and a `filter` by thread when the frame is at least as
-  wide as the pool), and would count one piece. Inside `agg` or `over` it
-  runs once per group, so the counts are the failing group's; the values
-  are the elementwise cast's. Its plan prints the cast as `to_enum`, which
-  the expression `sort`'s classifier reads through.
+  form raises the message under the verb that runs the plan. The eager
+  cast counts the whole column. The lazy form is elementwise, as polars'
+  own cast is, so a filter or a slice is pushed past it and polars may run
+  it once per chunk (a vstacked frame, a `filter` split by thread) or on
+  one group's values: a lazy failure reports the counts and the missed
+  values of the chunk or group it failed in, as Python's lazy strict cast
+  does. Its plan prints the cast as `to_enum`, which the expression
+  `sort`'s classifier reads through.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.

@@ -416,8 +416,45 @@
       [(? symbol? name) (if (memq name names) (list name) '())]
       [(cons head rest) (append (plain-uses head names) (plain-uses rest names))]
       [_ '()]))
+  (define (module-exports file)
+    (define root `(file ,(path->string file)))
+    (for*/list ([mod (in-list (list root `(submod ,root internal)))]
+                #:when (module-declared? mod #t)
+                [phase+exports (in-list (call-with-values (lambda () (module->exports mod)) append))]
+                [export (in-list (cdr phase+exports))])
+      (car export)))
+  (define (reasoned-names form)
+    (define own
+      (match form
+        [(list* (or 'call/foreign-error 'call/polars-reason) (list 'quote (? symbol? who)) _)
+         (list who)]
+        [(list* 'define-reasoned (cons (? symbol? name) _) _) (list name)]
+        [_ '()]))
+    (append own
+            (match form
+              [(? list?) (append-map reasoned-names form)]
+              [(cons head rest) (append (reasoned-names head) (reasoned-names rest))]
+              [_ '()])))
+  (define (exported-reasoned-names file)
+    (define exports (module-exports file))
+    (for/list ([name (in-list (reasoned-names (read-source file)))]
+               #:when (memq name exports))
+      name))
+  (define generic-sources (polars-sources #:dirs '("private/generic")))
+  (define low-level-sources
+    (for/list ([file (in-list (polars-sources #:dirs '("private")))]
+               #:unless (member file generic-sources))
+      file))
+  (check-equal? (reasoned-names '(define (series-frob s)
+                                   (call/foreign-error 'series-frob (lambda () s) "x")))
+                '(series-frob))
+  (check-equal? (reasoned-names '((define-reasoned (series-twiddle s) #:who-variant t/who)
+                                  (call/polars-reason who (lambda () s))
+                                  (f call/foreign-error 'series-not-a-call)))
+                '(series-twiddle))
   (define who-plain-names
-    (remove-duplicates (append-map who-variant-plain-names (polars-sources #:dirs '("private")))))
+    (remove-duplicates (append (append-map who-variant-plain-names (polars-sources #:dirs '("private")))
+                               (append-map exported-reasoned-names low-level-sources))))
   (check-not-false (memq 'series-head who-plain-names))
   (check-not-false (memq 'series-std who-plain-names))
   (check-equal? (plain-uses '(define (spread s op)
@@ -427,7 +464,8 @@
   (check-equal? (plain-uses '((require series-std) (provide series-var) 'series-std (f 'series-var))
                             '(series-std series-var))
                 '())
-  (check-equal? (for*/list ([file (in-list (polars-sources #:dirs '("private/generic")))]
+  (check-not-false (memq 'series-sort who-plain-names))
+  (check-equal? (for*/list ([file (in-list generic-sources)]
                             [name (in-list (plain-uses (read-source file) who-plain-names))])
                   (list (path->string (file-name-from-path file)) name))
                 '()))

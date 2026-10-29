@@ -12,6 +12,7 @@
          (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
          (only-in polars/private/expr-core time-unit/c)
          (only-in polars/private/expr-str parse-datetime)
+         (only-in (submod polars/private/expr-str internal) expr-str->date/who expr-str->time/who)
          (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/expr-util)
 
@@ -99,8 +100,7 @@
 ;; str->datetime also takes #:unit ('milliseconds | 'microseconds | 'nanoseconds).
 (define (str->date x #:format [format #f] #:strict [strict #t]
                    #:exact [exact #t] #:cache [cache #t])
-  (expr-str->date (->col-expr 'str->date x)
-                  #:format format #:strict strict #:exact exact #:cache cache))
+  (expr-str->date/who 'str->date (->col-expr 'str->date x) format strict exact cache))
 (define (str->datetime x #:format [format #f] #:unit [unit 'microseconds]
                        #:time-zone [time-zone #f] #:ambiguous [ambiguous 'raise]
                        #:strict [strict #t] #:exact [exact #t] #:cache [cache #t])
@@ -108,8 +108,7 @@
                   format unit time-zone ambiguous strict exact cache))
 (define (str->time x #:format [format #f] #:strict [strict #t]
                    #:exact [exact #t] #:cache [cache #t])
-  (expr-str->time (->col-expr 'str->time x)
-                  #:format format #:strict strict #:exact exact #:cache cache))
+  (expr-str->time/who 'str->time (->col-expr 'str->time x) format strict exact cache))
 
 (module+ internal
   (provide str->datetime str-extract str-slice))

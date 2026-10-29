@@ -12,7 +12,8 @@
          racket/list
          racket/string
          (only-in polars/private/expr
-                  expr-all expr-drop expr-dt-strftime lazyframe-collect/raw lazyframe-select)
+                  expr-all expr-drop lazyframe-collect/raw lazyframe-select)
+         (only-in (submod polars/private/expr-dt internal) expr-dt-strftime/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
          polars/private/foreign
@@ -140,7 +141,7 @@
     (with-release ([rows (series-slice/who 'series s start count) series-drop]
                    [frame (dataframe-new (list rows)) dataframe-drop]
                    [all (expr-all) expr-drop]
-                   [zone (expr-dt-strftime all "%Z") expr-drop])
+                   [zone (expr-dt-strftime/who 'series all "%Z") expr-drop])
       (call-with-plan frame
                       (lambda (source) (lazyframe-select source (list zone)))
                       lazyframe-collect/raw)))

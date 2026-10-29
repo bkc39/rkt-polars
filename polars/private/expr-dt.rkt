@@ -130,8 +130,11 @@
   #:c-id expr_dt_strftime_v2
   #:wrap (allocator expr-drop))
 
+(define (expr-dt-strftime/who who e format)
+  (call/polars-reason who (lambda () (expr-dt-strftime/raw e format))))
+
 (define (expr-dt-strftime e format)
-  (call/polars-reason 'expr-dt-strftime (lambda () (expr-dt-strftime/raw e format))))
+  (expr-dt-strftime/who 'expr-dt-strftime e format))
 
 (define-compat expr-dt-truncate/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -167,4 +170,4 @@
                       "~a" (replace-zone-failure zone)))
 
 (module+ internal
-  (provide expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw))
+  (provide expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw expr-dt-strftime/who))

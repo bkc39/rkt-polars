@@ -14,6 +14,7 @@
          polars/private/expr
          (only-in polars/private/expr-core time-unit/c)
          (only-in polars/private/expr-dt expr-dt-convert-time-zone expr-dt-replace-time-zone)
+         (only-in (submod polars/private/expr-dt internal) expr-dt-strftime/who)
          (only-in polars/private/generic/core series? wrap-series)
          (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/expr-util)
@@ -57,7 +58,7 @@
 ;; formatting, and truncation to a fixed interval (e.g. "1h", "1d").
 (define (dt-timestamp x #:unit [unit 'microseconds])
   (expr-dt-timestamp (->col-expr 'dt-timestamp x) #:unit unit))
-(define (dt-strftime x fmt) (expr-dt-strftime (->col-expr 'dt-strftime x) fmt))
+(define (dt-strftime x fmt) (expr-dt-strftime/who 'dt-strftime (->col-expr 'dt-strftime x) fmt))
 (define (dt-truncate x every)
   (expr-dt-truncate (->col-expr 'dt-truncate x) (->expr/who 'dt-truncate every)))
 
