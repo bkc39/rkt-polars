@@ -14,7 +14,6 @@ const CLASSES: &[&str] = &[
     "count",
     "drop",
     "error",
-    "todo-129",
 ];
 
 const MAX_DEPTH: usize = 32;
@@ -802,7 +801,7 @@ family!(i32, add_i32, sub_i32);
 family!(Vec<(i16, u8)>, add_i16, sub_i16);
 "#,
     );
-    let listed = "add_i32 todo-129\nsub_i32 todo-129\n";
+    let listed = "add_i32 builder\nsub_i32 builder\n";
     assert_eq!(
         audit(&source, listed),
         vec![
@@ -1023,13 +1022,13 @@ pub extern "C" fn thing_drop() {}
 "#,
     );
     assert_eq!(
-        audit(&source, "bare todo-129\nthing_drop drop\n"),
+        audit(&source, "bare builder\nthing_drop drop\n"),
         Vec::<String>::new()
     );
     assert_eq!(
         audit(
             &source,
-            "bare todo-129\nthing_drop drop\nguarded builder\ngone accessor\n"
+            "bare builder\nthing_drop drop\nguarded builder\ngone accessor\n"
         ),
         vec![
             "guarded is guarded: remove its exemption",
@@ -1038,6 +1037,7 @@ pub extern "C" fn thing_drop() {}
     );
     for (list, problem) in [
         ("bare sometimes\n", "unknown class sometimes for bare"),
+        ("x todo-129\n", "unknown class todo-129 for x"),
         ("bare drop\n", "bare does not fit class drop"),
         (
             "thing_drop builder\n",

@@ -1,22 +1,23 @@
 use crate::prelude::*;
-use crate::{clear_last_error, guard_panic, record, set_last_error};
+use crate::{
+    boxed_result, clear_last_error, deref_arg, guard_panic, record,
+    set_last_error,
+};
 
 #[no_mangle]
 pub extern "C" fn series_head(s_ptr: *mut Series, n: usize) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.head(Some(n))))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.head(Some(n)))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn series_tail(s_ptr: *mut Series, n: usize) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.tail(Some(n))))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.tail(Some(n)))
+    })
 }
 
 #[no_mangle]
@@ -25,41 +26,34 @@ pub extern "C" fn series_slice(
     offset: i64,
     length: usize,
 ) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.slice(offset, length)))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.slice(offset, length))
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn series_reverse(s_ptr: *mut Series) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.reverse()))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.reverse())
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn series_drop_nulls(s_ptr: *mut Series) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.drop_nulls()))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.drop_nulls())
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn series_unique(s_ptr: *mut Series) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    match s.unique() {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        s.unique()
+    })
 }
 
 #[no_mangle]

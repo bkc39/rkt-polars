@@ -203,11 +203,73 @@ fn slice_offset_length_picks_window() {
     series_drop(gs);
 }
 
+type FrameOp = fn(*mut DataFrame) -> *mut DataFrame;
+
+const FRAME_RESHAPES: [(&str, FrameOp); 5] = [
+    ("dataframe_head", |df| dataframe_head(df, 1)),
+    ("dataframe_tail", |df| dataframe_tail(df, 1)),
+    ("dataframe_slice", |df| dataframe_slice(df, 0, 1)),
+    ("dataframe_unique", |df| dataframe_unique(df)),
+    ("dataframe_drop_nulls", |df| dataframe_drop_nulls(df)),
+];
+
 #[test]
-fn row_shaping_on_null_df_returns_null() {
-    assert!(dataframe_head(ptr::null_mut(), 1).is_null());
-    assert!(dataframe_tail(ptr::null_mut(), 1).is_null());
-    assert!(dataframe_slice(ptr::null_mut(), 0, 1).is_null());
+fn row_shaping_on_null_df_reports_it() {
+    let s = make_i32("y", &[1]);
+    let mask = make_bool("m", &[1]);
+    for (name, op) in FRAME_RESHAPES {
+        set_last_error("stale");
+        assert!(op(ptr::null_mut()).is_null(), "{}", name);
+        assert_eq!(
+            recorded_error().as_deref(),
+            Some("dataframe is null"),
+            "{}",
+            name
+        );
+    }
+    set_last_error("stale");
+    assert!(dataframe_filter(ptr::null_mut(), mask).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
+    set_last_error("stale");
+    assert!(dataframe_with_column(ptr::null_mut(), s).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
+    let (df, xs, gs) = make_xg(&[1], &["a"]);
+    set_last_error("stale");
+    assert!(dataframe_with_column(df, ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("series is null"));
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+    series_drop(mask);
+    series_drop(s);
+}
+
+#[test]
+fn frame_reshapes_clear_a_stale_reason() {
+    let (df, xs, gs) = make_xg(&[1, 1, 2], &["a", "a", "b"]);
+    let mask = make_bool("m", &[1, 0, 1]);
+    let extra = make_i32("y", &[7, 8, 9]);
+    let filter = |df| dataframe_filter(df, mask);
+    let with_column = |df| dataframe_with_column(df, extra);
+    let mut cases: Vec<(&str, &dyn Fn(*mut DataFrame) -> *mut DataFrame)> =
+        Vec::new();
+    for (name, op) in &FRAME_RESHAPES {
+        cases.push((name, op));
+    }
+    cases.push(("dataframe_filter", &filter));
+    cases.push(("dataframe_with_column", &with_column));
+    for (name, op) in cases {
+        set_last_error("stale");
+        let out = op(df);
+        assert!(!out.is_null(), "{}", name);
+        assert_eq!(recorded_error(), None, "{}", name);
+        dataframe_drop(out);
+    }
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+    series_drop(mask);
+    series_drop(extra);
 }
 
 // --- column ops --------------------------------------------------
@@ -341,20 +403,56 @@ fn filter_with_bool_mask_keeps_true_rows() {
 }
 
 #[test]
-fn filter_null_mask_returns_null() {
+fn filter_null_mask_reports_it() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
     assert!(dataframe_filter(df, ptr::null_mut()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("mask is null"));
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
 }
 
 #[test]
-fn filter_non_bool_mask_returns_null() {
-    // Passing an i32 series as the mask is a polars type error
-    // that the wrapper must surface as a null pointer.
+fn filter_non_bool_mask_reports_the_dtype() {
     let (df, xs, gs) = make_xg(&[1, 2], &["a", "b"]);
     assert!(dataframe_filter(df, xs).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(reason.contains("expected `Boolean`"), "{}", reason);
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+}
+
+#[test]
+fn filter_wrong_length_mask_reports_both_lengths() {
+    let (df, xs, gs) = make_xg(&[1, 2, 3], &["a", "b", "c"]);
+    let mask = make_bool("m", &[1, 0]);
+    assert!(dataframe_filter(df, mask).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(
+        reason
+            .contains("filter's length: 2 differs from that of the series: 3"),
+        "{}",
+        reason
+    );
+    series_drop(mask);
+    dataframe_drop(df);
+    series_drop(xs);
+    series_drop(gs);
+}
+
+#[test]
+fn with_column_wrong_height_reports_both_heights() {
+    let (df, xs, gs) = make_xg(&[1, 2, 3], &["a", "b", "c"]);
+    let short = make_i32("y", &[1, 2]);
+    assert!(dataframe_with_column(df, short).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert!(
+        reason.contains("length 2 to a DataFrame of height 3"),
+        "{}",
+        reason
+    );
+    series_drop(short);
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -578,9 +676,15 @@ fn drop_nulls_removes_rows_with_any_null() {
 }
 
 #[test]
-fn unique_and_drop_nulls_null_df_return_null() {
-    assert!(dataframe_unique(ptr::null_mut()).is_null());
-    assert!(dataframe_drop_nulls(ptr::null_mut()).is_null());
+fn unique_of_a_width_zero_frame_succeeds() {
+    let df = dataframe_new(ptr::null(), 0);
+    set_last_error("stale");
+    let out = dataframe_unique(df);
+    assert!(!out.is_null(), "{:?}", recorded_error());
+    assert_eq!(recorded_error(), None);
+    assert_eq!(dataframe_width(out), 0);
+    dataframe_drop(out);
+    dataframe_drop(df);
 }
 
 #[test]

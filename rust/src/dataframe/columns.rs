@@ -46,16 +46,12 @@ pub extern "C" fn dataframe_with_column(
     df_ptr: *mut DataFrame,
     series_ptr: *const Series,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() || series_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    let s = unsafe { &*series_ptr };
-    let mut out = df.clone();
-    match out.with_column(s.clone().into_column()) {
-        Ok(_) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let mut out = unsafe { deref_arg(df_ptr, "dataframe") }?.clone();
+        let s = unsafe { deref_arg(series_ptr, "series") }?;
+        out.with_column(s.clone().into_column())?;
+        Ok(out)
+    })
 }
 
 #[no_mangle]
