@@ -901,14 +901,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   list parses unambiguously (no value holds a `"` or a NUL, the column's name
   holds no `'`, and the list has polars' default length), and otherwise
   leaves as polars' text. It counts what polars' cast was given at once, as
-  Python does. When every expression the verb is given is elementwise, on
-  a frame of several chunks (a `vstack` does not rechunk) `with-columns`
-  counts each chunk, `select` each chunk once the frame is taller than
-  twice polars' thread count, and `filter` each chunk; otherwise `select`
-  and `with-columns` count the whole column, and `filter` the whole column
-  of a frame narrower than the thread pool and each thread's part of one at
-  least as wide. A non-elementwise expression in the same verb (a `count`,
-  say) makes it count the whole column. In `agg` or `over` it counts all the
+  Python does. On a frame of several chunks (a `vstack` does not rechunk)
+  `with-columns` counts each chunk, `select` each chunk once the frame is
+  taller than twice polars' thread count, and `filter` each chunk;
+  otherwise `select` and `with-columns` count the whole column, and
+  `filter` the whole column of a frame narrower than the thread pool and
+  each thread's part of one at least as wide. That holds when every
+  expression the verb is given is elementwise; any other (a `count`, say)
+  makes it count the whole column. In `agg` or `over` it counts all the
   groups' values together, in row order (or one value per group, for an
   aggregated input). N counts nulls, and the values are polars' first
   missed rows in row order, one per row, repeats kept (all of them up to

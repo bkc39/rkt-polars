@@ -536,15 +536,15 @@ total
   categories and names the first ten distinct ones in sorted order, with
   the other distinct ones counted as @tt{, and K more}. On an expression it
   raises when the plan runs, under the verb that runs it, and counts what
-  Polars' strict cast was given at once, as Python does. When every
-  expression the verb is given is elementwise, on a frame of several
-  chunks, as @racket[vstack] makes, @racket[with-columns] and
+  Polars' strict cast was given at once, as Python does. On a frame of
+  several chunks, as @racket[vstack] makes, @racket[with-columns] and
   @racket[filter] count each chunk, and @racket[select] does once the frame
   is taller than twice Polars' thread count; otherwise @racket[select] and
   @racket[with-columns] count the whole column, and @racket[filter] the
   whole column of a frame narrower than the thread pool and each thread's
-  part of one at least as wide. A non-elementwise expression in the same
-  verb, such as @racket[count], makes it count the whole column. In
+  part of one at least as wide. That holds when every expression the verb
+  is given is elementwise; any other, such as @racket[count], makes it
+  count the whole column. In
   @racket[agg] or @racket[over] it counts every group's values. That count includes nulls, and the message names no
   categories: it names the value of each of Polars' first missed rows in
   row order, repeats included, all of them up to three and otherwise the
