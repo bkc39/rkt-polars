@@ -42,7 +42,7 @@
                     series-new-str series-new-str/vec series-new-u16 series-new-u16/vec
                     series-new-u32 series-new-u32/vec series-new-u64 series-new-u64/vec
                     series-new-u8 series-new-u8/vec series-new-ymdhms series-new-ymdhms/vec
-                    series-not series-null-count series-or series-ref series-rename
+                    series-not series-null-count series-or series-quantile series-ref series-rename
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
@@ -183,8 +183,8 @@
   (check-equal?
    (series-sum-i32 (series-new-i32 "" '(1 2 3 4)))
    10)
-  (check-false
-   (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))) ;; wrong dtype
+  (check-exn #rx"^series-sum-i32: invalid series dtype: expected `Int32`, got `f64`"
+             (lambda () (series-sum-i32 (series-new-f64 "" '(1.0 2.0)))))
   (check-exn
    #rx"^series-new-i32: contract violation\n  expected: [^\n]*utf-8\\?[^\n]*\n  given: #f"
    (lambda ()
@@ -684,7 +684,24 @@
   (check-= (series-var stats #:ddof 1) (/ 5.0 3.0) 1e-9)
   (check-= (series-var stats #:ddof 0) 1.25 1e-9)
   (check-= (series-std stats #:ddof 0) (sqrt 1.25) 1e-9)
-  (check-false (series-std (series-new-str "s" '("a" "b"))))
+  (with-release ([strings (series-new-str "s" '("a" "b")) series-drop])
+    (for ([dispersion (in-list (list series-std series-var))])
+      (check-false (dispersion strings))))
+
+  (define quantile-xs (series-new-f64 "q" '(1.0 2.0 3.0 4.0 5.0)))
+  (check-equal? (for/list ([method (in-list '(nearest linear lower higher midpoint))])
+                  (series-quantile quantile-xs 0.3 #:interpolation method))
+                '(2.0 2.2 2.0 3.0 2.5))
+  (check-equal? (series-quantile quantile-xs 1/2) 3.0)
+  (check-false (series-quantile (series-new-f64 "q" (list polars-null)) 0.5))
+  (check-exn #rx"^series-quantile: contract violation\n  expected: \\(real-in 0 1\\)"
+             (lambda () (contracted:series-quantile quantile-xs 1.5)))
+  (check-exn #rx"^series-quantile: contract violation\n  expected: \\(or/c \\(quote nearest\\)"
+             (lambda () (contracted:series-quantile quantile-xs 0.5 #:interpolation 'cubic)))
+  (check-exn #rx"^series-n-unique: contract violation"
+             (lambda () (contracted:series-n-unique '(1 2))))
+  (check-exn #rx"^series-std: contract violation"
+             (lambda () (contracted:series-std quantile-xs #:ddof -1)))
 
   ;; series-series comparisons
   (define cmp-left (series-new-i32 "a" '(1 2 3 4)))
@@ -1358,6 +1375,23 @@
       (length ops)))
   (check-equal? scalar-op-count 37)
   (check >= (- (series-drop-count) drops-before-wrong-dtypes) (length scalar-op-rows)
+         "each wrong-dtype series is released at the end of its row")
+
+  (define reduction-rows
+    '((i8 Int8 f64) (i16 Int16 f64) (i32 Int32 f64) (i64 Int64 f64) (u8 UInt8 f64)
+      (u16 UInt16 f64) (u32 UInt32 f64) (u64 UInt64 f64) (f32 Float32 f64) (f64 Float64 i32)))
+  (settle!)
+  (define drops-before-reductions (series-drop-count))
+  (for ([row (in-list reduction-rows)])
+    (match-define (list t dtype wrong) row)
+    (with-release ([s ((hash-ref wrong-series wrong)) series-drop])
+      (for ([op (in-list '(sum min max mean))])
+        (define reduce (string->symbol (format "series-~a-~a" op t)))
+        (check-exn (regexp (format "^~a: invalid series dtype: expected `~a`, got `~a` .*`wrong`$"
+                                   reduce dtype wrong))
+                   (lambda () ((dynamic-require 'polars/private/foreign reduce) s))
+                   (symbol->string reduce)))))
+  (check >= (- (series-drop-count) drops-before-reductions) (length reduction-rows)
          "each wrong-dtype series is released at the end of its row")
 
   (check-exn #rx"^series-not: " (lambda () (series-not owned-i32)))
