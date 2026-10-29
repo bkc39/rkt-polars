@@ -20,6 +20,7 @@
            (only-in polars/tests/generic/test-fixtures
                     check-cells col column explain-failure expr-add frame named-frame nul-frame
                     nul-names ops-df polars-null series-cells settle! v64)
+           (only-in polars/tests/test-helpers with-default-polars-format)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -154,8 +155,15 @@
   (check-exn #rx"^cast: 1 of 2 "
              (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
   (check-exn #rx"^select: 1 of 2 values is not in the enum: B6$"
-             (lambda () (select (dataframe (list (series '("UA" "B6") #:name "c")))
-                                (contracted:cast "c" '(enum UA AA)))))
+             (lambda () (with-default-polars-format
+                          (select (dataframe (list (series '("UA" "B6") #:name "c")))
+                                  (contracted:cast "c" '(enum UA AA))))))
+  (define repeated (series (for/list ([i 5]) "B6") #:name "c"))
+  (check-exn #rx"^cast: 5 of 5 values are not in '\\(enum UA AA\\): B6$"
+             (lambda () (cast repeated '(enum UA AA))))
+  (check-exn #rx"^select: 5 of 5 values are not in the enum: B6, and 3 more rows$"
+             (lambda () (with-default-polars-format
+                          (select (dataframe (list repeated)) (contracted:cast "c" '(enum UA AA))))))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (series (list 'TEB polars-null 'XYZ 'TEB 'EWR)) '(enum EWR JFK LGA))))
   (check-equal? (series-cells (cast (series (list 'EWR polars-null 'LGA)) '(enum EWR JFK LGA)))
@@ -188,7 +196,8 @@
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^with-columns: 2 of 4 values are not in the enum: IAH$"
-             (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
+             (lambda () (with-default-polars-format
+                          (with-columns flights (cast "dest" '(enum JFK MIA))))))
   (define nul-mia (string->symbol "MI\u0000A"))
   (define nul-dests (list 'enum 'JFK nul-mia 'IAH))
   (define nul-flights (dataframe (list (series (list "IAH" "MI\u0000A" "JFK") #:name "dest"))))

@@ -71,7 +71,8 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
     (agg (alias (sum (col "value")) "sum_value")))
 ]
 
-A @racket[utf-8-name/c] in a signature below is a column name: a string, or a
+A @racket[utf-8-name/c] in a signature below is a column name, or for a
+@racket[#:format] a format: a string, or a
 byte string or path whose bytes are UTF-8. Any other byte string or path is a
 contract error. A @racket[utf-8-names/c] is a list of them.
 
@@ -532,13 +533,18 @@ total
   value that does not convert becomes null, except
   in a cast to an Enum, which raises as Python's default @tt{strict=True}
   does. On a series the error counts the column's values outside the
-  categories and names the first ten in sorted order. On an expression it
+  categories and names the first ten distinct ones in sorted order, with
+  the other distinct ones counted as @tt{, and K more}. On an expression it
   raises when the plan runs, under the verb that runs it, and counts what
   Polars' strict cast was given at once, as Python does: the whole column in
   @racket[select] or @racket[with-columns], one thread's part of the frame in
   a @racket[filter], and every group's values in @racket[agg] or
-  @racket[over]. That count includes nulls, and the message names the first
-  missed values in row order but no categories. A filter, @racket[head] or
+  @racket[over]. That count includes nulls, and the message names no
+  categories: it names the values of Polars' first missed rows in row order,
+  all of them up to three and otherwise the first two, and counts the other
+  rows as @tt{, and K more rows}. A value holding a double quote or a NUL, a
+  column name holding a single quote, or a @tt{POLARS_FMT_TABLE_CELL_LIST_LEN}
+  other than Polars' default leaves the message as Polars' own text. A filter, @racket[head] or
   @racket[slice] before the cast, in a plan or a group, removes a row before
   the cast sees it.
 
@@ -567,6 +573,9 @@ total
 (define-enum carriers UA AA)
 (eval:error (cast (series '("UA" "B6")) carriers))
 (eval:error (select (dataframe (list (series '("UA" "B6") #:name "c"))) (cast "c" carriers)))
+(define repeated (series (for/list ([i 5]) "B6") #:name "c"))
+(eval:error (cast repeated carriers))
+(eval:error (select (dataframe (list repeated)) (cast "c" carriers)))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
                   '(datetime microseconds "Europe/Brusels")))
@@ -1679,13 +1688,19 @@ stations
                                     [#:group-index group-index size/c 1])
                        Expr-ptr?]
               @defproc[(str->date [x (or/c Expr-ptr? string?)]
-                                  [#:format format (or/c string? #f) #f]
+                                  [#:format format (or/c utf-8-name/c #f) #f]
+                                  [#:strict strict boolean? #t]
+                                  [#:exact exact boolean? #t]
+                                  [#:cache cache boolean? #t])
+                       Expr-ptr?]
+              @defproc[(str->time [x (or/c Expr-ptr? string?)]
+                                  [#:format format (or/c utf-8-name/c #f) #f]
                                   [#:strict strict boolean? #t]
                                   [#:exact exact boolean? #t]
                                   [#:cache cache boolean? #t])
                        Expr-ptr?]
               @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
-                                      [#:format format (or/c string? #f) #f]
+                                      [#:format format (or/c utf-8-name/c #f) #f]
                                       [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
                                       [#:time-zone time-zone (or/c time-zone-name/c #f) #f]
                                       [#:ambiguous ambiguous
@@ -1695,10 +1710,10 @@ stations
                                       [#:cache cache boolean? #t])
                        Expr-ptr?])]{
   @racket[str-extract] returns capture group @racket[#:group-index] of the
-  first regex match (@tt{.str.extract}). @racket[str->date] and
-  @racket[str->datetime] parse strings with a chrono @tt{strptime}
-  @racket[#:format], inferred when omitted (@tt{.str.to_date},
-  @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
+  first regex match (@tt{.str.extract}). @racket[str->date],
+  @racket[str->time] and @racket[str->datetime] parse strings with a chrono
+  @tt{strptime} @racket[#:format], inferred when omitted (@tt{.str.to_date},
+  @tt{.str.to_time}, @tt{.str.to_datetime}); @racket[#:strict #f] yields null instead of raising
   on unparseable values. A UTC offset parsed with @litchar{%z} converts each
   value to UTC, so the column is @racket['(datetime unit "UTC")], as in
   Python; without a @racket[#:format] or a @racket[#:time-zone], an offset
@@ -1729,6 +1744,9 @@ stations
 (~> (dataframe (list (series (list (string-append "2020" "\u0000" "01" "\u0000" "02"))
                              #:name "d")))
     (select (str->date "d" #:format "%Y\u0000%m\u0000%d")))
+(define stamped (dataframe (list (series '("29|10|2026") #:name "d") (series '("12h30") #:name "u"))))
+(select stamped (str->date "d" #:format #"%d|%m|%Y") (str->time "u" #:format "%Hh%M"))
+(eval:error (select stamped (str->time "u")))
 (eval:error (select (dataframe (list (series '("2021-03-27" "soon") #:name "d"))) (str->date "d")))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 

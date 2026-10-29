@@ -45,16 +45,14 @@
                 (,(strict-failure "cat" "3 out of 3" "\"B6\", \"XX\", \"B6\"" "")
                  "3 of 3 values are not in the enum: B6 XX")
                 (,(strict-failure "cat" "12 out of 13" "\"m0\", \"m1\", … \"m9\"" too-many)
-                 "12 of 13 values are not in the enum: m0 m1, and 10 more")
+                 "12 of 13 values are not in the enum: m0 m1, and 10 more rows")
                 (,(strict-failure "enum" "4 out of 4" "\"a\", \"a\", ... \"b\"" "")
-                 "4 of 4 values are not in the enum: a, and 2 more")
+                 "4 of 4 values are not in the enum: a, and 2 more rows")
+                (,(strict-failure "str" "100 out of 100" "\"XX\", \"XX\", … \"XX\"")
+                 "100 of 100 values are not in the enum: XX, and 98 more rows")
                 (,(strict-failure "str" "2 out of 2" "\"c\nd\", \"a]b\"")
                  "2 of 2 values are not in the enum: \"c\\nd\" |a]b|")
                 (,(strict-failure "str" "1 out of 2" "\"\"") "1 of 2 values is not in the enum: ||")
-                (,(strict-failure "str" "1 out of 2" "\"XX\""
-                                  (string-append enum-hint "\n\nThis error occurred in the following"
-                                                 " expression:\n\tcol(\"c\").strict_cast(Enum([...]))\n"))
-                 "1 of 2 values is not in the enum: XX")
                 (,(strict-failure "str" "1 out of 2" "\"XX\"" #:column "a, b")
                  "1 of 2 values is not in the enum: XX")))])
     (match-define (list reason message) row)
@@ -68,6 +66,13 @@
                       (string-append (strict-failure "str" "1 out of 2" "\"XX\"") " trailing")
                       (strict-failure "str" "1 out of 2" "\"XX\"" "\n\nYou might want to try:")
                       (strict-failure "str" "1 out of 2" "\"XX\"" "\n\nThis error occurred in")
+                      (strict-failure "str" "1 out of 2" "\"XX\""
+                                      (string-append enum-hint "\n\nThis error occurred in the following"
+                                                     " expression:\n\tcol(\"c\").strict_cast(Enum([...]))\n"))
+                      (strict-failure "str" "5 out of 5" "\"A\", \"B\", … \"E\""
+                                      #:column (string-append "x' for 1 out of 1 values: [\"Q\"]\n\nThis"
+                                                              " error occurred in the following"
+                                                              " expression:\n"))
                       (strict-failure "str" "0 out of 2" "\"XX\"")
                       (strict-failure "str" "3 out of 2" "\"XX\", \"XX\", \"YY\"")
                       (strict-failure "str" "2 out of 4" "\"XX\"")

@@ -889,7 +889,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   form, `series_cast_enum_v2`, runs `enum_cast_checked`
   (`series/categorical.rs`), which records the misses as a tagged payload
   that `call/foreign-error` renders: it counts the whole column's non-null
-  values and names the first ten missed values in sorted order. The lazy
+  values and names the first ten distinct missed values in sorted order,
+  counting the other distinct ones as `, and K more`. The lazy
   form, `expr_cast_enum_v2`, is polars' own strict cast, so the optimizer
   treats it as fallible, as Python's does: a filter on another column is
   pushed past it, a filter that casts stays above an earlier filter, and
@@ -900,12 +901,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   list parses unambiguously (no value holds a `"` or a NUL, the column's name
   holds no `'`, and the list has polars' default length), and otherwise
   leaves as polars' text. It counts what polars' cast was given at once, as
-  Python does: the whole column in a `select` or `with-columns`, the part of
-  the frame each thread takes in a `filter` that polars splits by thread,
-  and in `agg` or `over` all the groups' values together (or one value per
-  group, for an aggregated input). N counts nulls, the values are polars'
-  first misses in row order (all of them up to three, else the first two,
-  with the rest counted as `, and K more`), and the message names no
+  Python does: the whole column in a `select` or `with-columns`, but each
+  chunk of a frame of several chunks taller than twice polars' thread
+  count; each chunk, or the part of the frame each thread takes, in a
+  `filter` that polars splits (a frame of several chunks, or one at least
+  as wide as the thread pool); and in `agg` or `over` all the groups'
+  values together, in row order (or one value per group, for an aggregated
+  input). N counts nulls, the values are polars' first missed rows in row
+  order (all of them up to three, else the first two, deduplicated, with
+  the other rows counted as `, and K more rows`, where the eager tail
+  counts distinct values), and the message names no
   categories, since polars' reason carries none.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no

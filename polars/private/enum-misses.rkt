@@ -5,8 +5,7 @@
          (only-in racket/list remove-duplicates)
          (only-in racket/string string-join))
 
-(provide enum-cast-reason enum-misses-message enum-misses-reason enum-misses-shown
-         enum-misses-strict-shown)
+(provide enum-cast-reason enum-misses-message enum-misses-reason enum-misses-shown)
 
 (define enum-misses-shown 10)
 
@@ -21,7 +20,7 @@
                   "\\[((?:\"[^\"\u0000]*\"(?:, (?:…|[.]{3}) |, )?)+)\\]"
                   "(?:\n\nEnsure that all values in the input column are present in the categories"
                   " of the enum datatype[.]|\n\nDid not show all failed cases as there were too"
-                  " many[.])?(?s:\n\nThis error occurred in the following expression:\n.*)?$")))
+                  " many[.])?$")))
 
 (define strict-cast-values (pregexp "^\"([^\"]*)\"(, (?:…|[.]{3}) |, |$)"))
 
@@ -30,11 +29,11 @@
     [(for/or ([c (in-string value)]) (char-iso-control? c)) (format "~s" value)]
     [else (format "~s" (string->symbol value))]))
 
-(define (misses-message noun-count missing target listed more)
+(define (misses-message noun-count missing target listed more [counted ""])
   (define noun (if (= noun-count 1) "value" "values"))
   (define verb (if (= missing 1) "is" "are"))
   (define spelled (string-join (map spell listed)))
-  (define tail (if (positive? more) (format "~a, and ~a more" spelled more) spelled))
+  (define tail (if (positive? more) (format "~a, and ~a more~a" spelled more counted) spelled))
   (format "~a of ~a ~a ~a not in ~a: ~a" missing noun-count noun verb target tail))
 
 (define (enum-misses-message dtype missing total named distinct)
@@ -85,6 +84,6 @@
      (match (polars-shown shown missing)
        [(? list? listed)
         (misses-message total missing "the enum" (remove-duplicates listed)
-                        (- missing (length listed)))]
+                        (- missing (length listed)) " rows")]
        [_ #f])]
     [_ #f]))

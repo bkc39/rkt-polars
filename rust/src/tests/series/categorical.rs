@@ -545,47 +545,43 @@ fn lazy_enum_cast(name: &str, categories: &[&str]) -> Expr {
 
 #[test]
 fn a_lazy_enum_cast_counts_one_chunk_as_polars_does() {
-    let width = 2 * std::thread::available_parallelism().map_or(8, |n| n.get());
-    let piece = |values: &[&str]| {
+    let threads = std::thread::available_parallelism()
+        .map_or(8, |n| n.get())
+        .max(polars_core::runtime::THREAD_POOL.current_num_threads())
+        .max(4);
+    let width = 2 * threads;
+    let piece = |pattern: [&str; 4]| {
+        let values: Vec<&str> =
+            pattern.iter().copied().cycle().take(4 * threads).collect();
         let columns: Vec<Column> = (0..width)
-            .map(|i| Series::new(format!("o{}", i).into(), values).into())
+            .map(|i| Series::new(format!("o{}", i).into(), &values).into())
             .collect();
         DataFrame::new(values.len(), columns).unwrap()
     };
-    let mut frame = piece(&["EWR", "LGA", "EWR", "JFK"]);
+    let mut frame = piece(["EWR", "LGA", "EWR", "JFK"]);
     frame
-        .vstack_mut(&piece(&["JFK", "EWR", "TEB", "EWR"]))
+        .vstack_mut(&piece(["JFK", "LGA", "TEB", "EWR"]))
         .unwrap();
     assert_eq!(frame.first_col_n_chunks(), 2);
-    let misses = ["JFK", "LGA", "TEB"];
+    let rows = 4 * threads;
+    let chunks = [
+        (2 * threads, "\"LGA\", \"JFK\", … \"JFK\""),
+        (3 * threads, "\"JFK\", \"LGA\", … \"JFK\""),
+    ]
+    .map(|(missing, listing)| {
+        format!(
+            "conversion from `str` to `enum` failed in column 'o0' for {missing} out of {rows} \
+             values: [{listing}]{ENUM_HINT}"
+        )
+    });
     let cast = lazy_enum_cast("o0", &["EWR"]);
     let plans = [
         frame.clone().lazy().select([cast.clone()]),
         frame.clone().lazy().with_columns([cast.clone()]),
         frame.clone().lazy().filter(cast.clone().is_null()),
     ];
-    let lead = "conversion from `str` to `enum` failed in column 'o0' for ";
     for plan in plans {
         let reason = plan.collect().unwrap_err().to_string();
-        let counts = reason
-            .strip_prefix(lead)
-            .and_then(|rest| rest.split_once(" values: ["))
-            .and_then(|(counts, rest)| {
-                let (missing, total) = counts.split_once(" out of ")?;
-                let listing = rest.strip_suffix(&format!("]{ENUM_HINT}"))?;
-                Some((
-                    missing.parse::<usize>().ok()?,
-                    total.parse().ok()?,
-                    listing,
-                ))
-            });
-        let (missing, total, listing) = counts.expect(&reason);
-        assert!(1 <= missing && missing <= total && total <= 8, "{}", reason);
-        let shown: Vec<&str> = listing
-            .split(", ")
-            .map(|v| v.trim_start_matches("… ").trim_matches('"'))
-            .collect();
-        assert_eq!(shown.len(), missing.min(3), "{}", reason);
-        assert!(shown.iter().all(|v| misses.contains(v)), "{}", reason);
+        assert!(chunks.contains(&reason), "{reason}");
     }
 }

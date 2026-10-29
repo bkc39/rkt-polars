@@ -20,7 +20,7 @@
          explain-failure gzip-file keyword-rejected? make-moment message-of module-text
          not-utf-8-expected not-utf-8-names polars-dir polars-sources read-source refusal
          refusal-misses refused scratch-file settle! staging-files who-prefix
-         with-environment-variable with-planted-sources)
+         with-default-polars-format with-environment-variable with-planted-sources)
 
 (define-runtime-path polars-dir "..")
 
@@ -58,6 +58,25 @@
   [(_ name:expr value:expr body:expr ...+)
    (syntax/loc this-syntax
      (call-with-environment-variable name value (lambda () body ...)))])
+
+(define (call-with-default-polars-format thunk)
+  (define env (current-environment-variables))
+  (define saved
+    (for/list ([name (in-list (environment-variables-names env))]
+               #:when (regexp-match? #rx#"^POLARS_(?:FMT_|TABLE_WIDTH$)" name))
+      (cons name (environment-variables-ref env name))))
+  (dynamic-wind (lambda ()
+                  (for ([pair (in-list saved)])
+                    (environment-variables-set! env (car pair) #f)))
+                thunk
+                (lambda ()
+                  (for ([pair (in-list saved)])
+                    (environment-variables-set! env (car pair) (cdr pair))))))
+
+(define-syntax-parser with-default-polars-format
+  [(_ body:expr ...+)
+   (syntax/loc this-syntax
+     (call-with-default-polars-format (lambda () body ...)))])
 
 (define (module-text . forms)
   (with-output-to-string
