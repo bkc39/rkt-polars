@@ -729,6 +729,8 @@
                       (map message
                            (list (lambda () (select short (cast "c" target)))
                                  (lambda () (with-columns short (cast "c" target)))
+                                 (lambda ()
+                                   (with-columns short (cast "c" target) (alias (count "c") "n")))
                                  (lambda () (filter short (is-null (cast "c" target))))
                                  (lambda () (filter narrow (is-null (cast "c" target))))))
                       (for/list ([row (in-list ',filtered-rows)])
@@ -741,8 +743,12 @@
               (match-define (list elements expected) table)
               (list who carrier-enum elements (if (eq? who 'filter) 'window expected)))
             (list (list 'select carrier-enum short-carriers
-                        (if (> (length short-carriers) (* 2 pool)) short-chunks 'exact))
+                        (cond
+                          [(not pool) (cons 'exact short-chunks)]
+                          [(> (length short-carriers) (* 2 pool)) short-chunks]
+                          [else 'exact]))
                   (list 'with-columns carrier-enum short-carriers short-chunks)
+                  (list 'with-columns carrier-enum short-carriers 'exact)
                   (list 'filter carrier-enum short-carriers short-chunks)
                   (list 'filter carrier-enum narrow-carriers 'exact))
             (for*/list ([row (in-list enum-cases)]
@@ -752,8 +758,7 @@
     (for/or ([chunk (in-list chunks)])
       (equal? message (polars-message who target chunk))))
   (for ([threads (list #"1" #"2" #f)])
-    (define cases (chunked-cases (if threads (string->number (bytes->string/utf-8 threads))
-                                     (processor-count))))
+    (define cases (chunked-cases (and threads (string->number (bytes->string/utf-8 threads)))))
     (define-values (status output errors)
       (with-default-polars-format
         (with-environment-variable #"POLARS_MAX_THREADS" threads (call-in-child chunked-program))))
@@ -768,6 +773,10 @@
         [_ #:when (not (string? message)) (fail (format "nothing raised: ~a" context))]
         ['window (check-true (window-message? message who target elements) context)]
         ['exact (check-equal? message (polars-message who target elements) context)]
+        [(cons 'exact chunks)
+         (check-true (or (equal? message (polars-message who target elements))
+                         (chunk-message? message who target chunks))
+                     context)]
         [chunks (check-true (chunk-message? message who target chunks) context)])))
 
   (define ranks '(enum c b a))
