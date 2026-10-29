@@ -35,20 +35,18 @@ cmp_scalar!(series_ne_f64, not_equal, f64, f64);
 
 #[no_mangle]
 pub extern "C" fn series_is_null(s_ptr: *mut Series) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.is_null().into_series()))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.is_null().into_series())
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn series_is_not_null(s_ptr: *mut Series) -> *mut Series {
-    if s_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let s = unsafe { &*s_ptr };
-    Box::into_raw(Box::new(s.is_not_null().into_series()))
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        Ok(s.is_not_null().into_series())
+    })
 }
 
 pub(crate) fn series_cmp_result<F>(

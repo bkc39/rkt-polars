@@ -152,15 +152,16 @@
     [(dataframe? x)
      (define names (map utf-8-name->string (if (list? arg) arg (list arg))))
      (wrap-dataframe
-      (or (dataframe-drop-columns/c x names)
-          (refuse 'drop (column-problem (dataframe-column-names x) names)
-                  "cannot drop the columns")))]
+      (call/refusal 'drop
+                    (lambda () (dataframe-drop-columns/c x names))
+                    (lambda () (column-problem (dataframe-column-names x) names))))]
     [else (list-drop x arg)]))
 
 (define (with-column d s)
   (wrap-dataframe
-   (or (dataframe-with-column/raw d s)
-       (refuse 'with-column (column-height-problem d s) "cannot add the column"))))
+   (call/refusal 'with-column
+                 (lambda () (dataframe-with-column/raw d s))
+                 (lambda () (column-height-problem d s)))))
 
 (define (cast x dtype)
   (cond [(Expr-ptr? x) (expr-cast-to 'cast x dtype)]
@@ -223,8 +224,9 @@
     [else
      (define new (utf-8-name->string b))
      (wrap-dataframe
-      (or (dataframe-rename/raw x name new)
-          (refuse 'rename (rename-problem x name new) "cannot rename the column")))]))
+      (call/refusal 'rename
+                    (lambda () (dataframe-rename/raw x name new))
+                    (lambda () (rename-problem x name new))))]))
 
 (module+ internal
   (provide agg cast drop group-by head pivot rename slice tail unpivot with-column))

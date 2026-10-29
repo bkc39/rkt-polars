@@ -188,9 +188,9 @@
     [(list? sel)
      (define names (map (lambda (c) (column->name d c)) sel))
      (wrap-dataframe
-      (or (dataframe-select/c d names)
-          (refuse 'ref (column-problem (dataframe-column-names d) names)
-                  "cannot select the columns")))]
+      (call/refusal 'ref
+                    (lambda () (dataframe-select/c d names))
+                    (lambda () (column-problem (dataframe-column-names d) names))))]
     [else
      (define name (column->name d sel))
      (wrap-series (or (dataframe-column/raw d name) (error 'ref "~s not found" name)))]))

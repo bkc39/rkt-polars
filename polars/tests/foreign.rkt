@@ -12,14 +12,15 @@
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
            (only-in polars/private/foreign
                     ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS? _Series-ptr
-                    define-compat
+                    call/refusal define-compat
                     copy-zoned-datetimes dataframe-column dataframe-column-name
                     dataframe-column-names dataframe-drop-columns dataframe-drop-count
                     dataframe-drop-nulls dataframe-empty dataframe-filter
                     dataframe-group-by-count dataframe-group-by-max dataframe-group-by-mean
                     dataframe-group-by-min dataframe-group-by-sum dataframe-height
                     dataframe-join-asof/raw dataframe-make dataframe-new dataframe-pivot
-                    dataframe-rename dataframe-select dataframe-shape dataframe-unique
+                    dataframe-rename dataframe-select dataframe-select/c dataframe-shape
+                    dataframe-unique
                     dataframe-unpivot dataframe-width dataframe-with-column dtype-short-names
                     enum-dtype? make-YMDHMS polars-null respell series-add series-add-f64
                     series-and series-cast series-div series-div-f64 series-drop-count
@@ -1334,6 +1335,9 @@
                             (lambda () (dataframe-hstack owned-frame (list owned-extra))))
                 1)
   (check-equal? (drops-once dataframe-drop-count dataframe-drop
+                            (lambda () (dataframe-filter owned-frame owned-mask)))
+                1)
+  (check-equal? (drops-once dataframe-drop-count dataframe-drop
                             (lambda () (dataframe-pivot owned-frame #:on '("k") #:index '("x")
                                                         #:values '("v"))))
                 1)
@@ -1413,8 +1417,26 @@
              (lambda () (dataframe-drop-columns owned-frame '("nope"))))
   (check-exn #rx"^dataframe-vstack: [^\n]*unable to append to a DataFrame of shape"
              (lambda () (dataframe-vstack owned-frame (dataframe-select owned-frame '("x")))))
-  (check-exn #rx"^dataframe-filter: operation failed$"
+  (check-exn #rx"^dataframe-filter: invalid series dtype: expected `Boolean`, got `i32`"
              (lambda () (dataframe-filter owned-frame owned-i32)))
+  (check-exn #rx"^dataframe-filter: lengths don't match: filter's length: 2 [^\n]*: 3$"
+             (lambda () (dataframe-filter owned-frame (series-new-bool "m" '(#t #f)))))
+  (check-exn #rx"^dataframe-with-column: [^\n]*length 2[^\n]*height 3"
+             (lambda () (dataframe-with-column owned-frame (series-new-i32 "e" '(1 2)))))
+  (check-exn (lambda (e)
+               (and (exn:fail:contract? e) (regexp-match? #rx"^drop: not found: " (exn-message e))))
+             (lambda ()
+               (call/refusal 'drop (lambda () (dataframe-select/c owned-frame '("nope")))
+                             (lambda () #f))))
+  (check-exn (lambda (e)
+               (and (exn:fail:contract? e) (regexp-match? #rx"^drop: mine$" (exn-message e))))
+             (lambda ()
+               (call/refusal 'drop (lambda () (dataframe-select/c owned-frame '("nope")))
+                             (lambda () "mine"))))
+  (check-equal? (dataframe-width
+                 (call/refusal 'ref (lambda () (dataframe-select/c owned-frame '("x")))
+                               (lambda () "unused")))
+                1)
   (check-exn #rx"^dataframe-join-asof: [^\n]*\"nope\""
              (lambda () (dataframe-join-asof owned-frame owned-frame #:on "nope")))
 

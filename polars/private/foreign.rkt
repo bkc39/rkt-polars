@@ -208,6 +208,13 @@
 (define (call/polars-reason who thunk)
   (call/foreign-error who thunk))
 
+(define (call/refusal who thunk problem)
+  (define-values (result reason) (call/reason thunk values))
+  (or result
+      (raise-arguments-error who (or (problem)
+                                     (and reason (respell reason))
+                                     "no reason recorded"))))
+
 (begin-for-syntax
   (define-syntax-class reasoned-formal
     #:attributes (arg [formal 1] [actual 1])
@@ -712,29 +719,41 @@
     (_fun _Series-ptr -> _int64)
     #:c-id series_n_unique_v2))
 
-(define-compat series-head
-  (_fun _Series-ptr _size -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-head s n)
+  (define-compat series-head/raw
+    (_fun _Series-ptr _size -> _Series-ptr/null)
+    #:c-id series_head
+    #:wrap (allocator series-drop)))
 
-(define-compat series-tail
-  (_fun _Series-ptr _size -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-tail s n)
+  (define-compat series-tail/raw
+    (_fun _Series-ptr _size -> _Series-ptr/null)
+    #:c-id series_tail
+    #:wrap (allocator series-drop)))
 
-(define-compat series-slice
-  (_fun _Series-ptr _int64 _size -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-slice s offset length)
+  (define-compat series-slice/raw
+    (_fun _Series-ptr _int64 _size -> _Series-ptr/null)
+    #:c-id series_slice
+    #:wrap (allocator series-drop)))
 
-(define-compat series-reverse
-  (_fun _Series-ptr -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-reverse s)
+  (define-compat series-reverse/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_reverse
+    #:wrap (allocator series-drop)))
 
-(define-compat series-drop-nulls
-  (_fun _Series-ptr -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-drop-nulls s)
+  (define-compat series-drop-nulls/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_drop_nulls
+    #:wrap (allocator series-drop)))
 
-(define-compat series-unique
-  (_fun _Series-ptr -> _Series-ptr/null)
-  #:wrap (allocator/or-fail series-drop 'series-unique))
+(define-reasoned (series-unique s)
+  (define-compat series-unique/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_unique
+    #:wrap (allocator series-drop)))
 
 (define-compat series-sort/raw
   (_fun _Series-ptr _stdbool _stdbool -> _Series-ptr/null)
@@ -1395,17 +1414,23 @@
 (define-compat dataframe-width
   (_fun _DataFrame-ptr -> _size))
 
-(define-compat dataframe-head
-  (_fun _DataFrame-ptr _size -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+(define-reasoned (dataframe-head df n)
+  (define-compat dataframe-head/raw
+    (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null)
+    #:c-id dataframe_head
+    #:wrap (allocator dataframe-drop)))
 
-(define-compat dataframe-tail
-  (_fun _DataFrame-ptr _size -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+(define-reasoned (dataframe-tail df n)
+  (define-compat dataframe-tail/raw
+    (_fun _DataFrame-ptr _size -> _DataFrame-ptr/null)
+    #:c-id dataframe_tail
+    #:wrap (allocator dataframe-drop)))
 
-(define-compat dataframe-slice
-  (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr)
-  #:wrap (allocator dataframe-drop))
+(define-reasoned (dataframe-slice df offset length)
+  (define-compat dataframe-slice/raw
+    (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr/null)
+    #:c-id dataframe_slice
+    #:wrap (allocator dataframe-drop)))
 
 (define-compat dataframe-column-names
   (_fun _DataFrame-ptr -> _rsstr-list))
@@ -1440,7 +1465,7 @@
   #:wrap (allocator dataframe-drop))
 
 (define (dataframe-with-column df s)
-  (or (dataframe-with-column/raw df s) (error 'dataframe-with-column "operation failed")))
+  (call/polars-reason 'dataframe-with-column (lambda () (dataframe-with-column/raw df s))))
 
 (define-syntax-parse-rule (define-frame-op/reason (name:id arg:id ...) call:expr compat:expr)
   #:with name/who (format-id #'name "~a/who" #'name)
@@ -1527,13 +1552,17 @@
 (define series-eq-str (series-str-op series-eq/who 'series-eq-str))
 (define series-ne-str (series-str-op series-ne/who 'series-ne-str))
 
-(define-compat series-is-null
-  (_fun _Series-ptr -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-is-null s)
+  (define-compat series-is-null/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_is_null
+    #:wrap (allocator series-drop)))
 
-(define-compat series-is-not-null
-  (_fun _Series-ptr -> _Series-ptr)
-  #:wrap (allocator series-drop))
+(define-reasoned (series-is-not-null s)
+  (define-compat series-is-not-null/raw
+    (_fun _Series-ptr -> _Series-ptr/null)
+    #:c-id series_is_not_null
+    #:wrap (allocator series-drop)))
 
 (define-series-series-op series-and series-and/who series-and/raw series_and)
 (define-series-series-op series-or series-or/who series-or/raw series_or)
@@ -1545,9 +1574,11 @@
     #:c-id series_not
     #:wrap (allocator series-drop)))
 
-(define-compat dataframe-filter
-  (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-filter))
+(define-reasoned (dataframe-filter df mask)
+  (define-compat dataframe-filter/raw
+    (_fun _DataFrame-ptr _Series-ptr -> _DataFrame-ptr/null)
+    #:c-id dataframe_filter
+    #:wrap (allocator dataframe-drop)))
 
 (define-compat dataframe-sort/raw
   (_fun _DataFrame-ptr
@@ -1621,13 +1652,17 @@
 (define-group-by-agg max)
 (define-group-by-agg count)
 
-(define-compat dataframe-unique
-  (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-unique))
+(define-reasoned (dataframe-unique df)
+  (define-compat dataframe-unique/raw
+    (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
+    #:c-id dataframe_unique
+    #:wrap (allocator dataframe-drop)))
 
-(define-compat dataframe-drop-nulls
-  (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
-  #:wrap (allocator/or-fail dataframe-drop 'dataframe-drop-nulls))
+(define-reasoned (dataframe-drop-nulls df)
+  (define-compat dataframe-drop-nulls/raw
+    (_fun _DataFrame-ptr -> _DataFrame-ptr/null)
+    #:c-id dataframe_drop_nulls
+    #:wrap (allocator dataframe-drop)))
 
 (define-frame-op/reason (dataframe-join left right left-on right-on how)
   (dataframe-join/c left right left-on right-on (join-symbol->code how))

@@ -141,14 +141,45 @@ fn sort_of_a_sorted_series_honours_nulls_last() {
     series_drop(s);
 }
 
+type SeriesOp = fn(*mut Series) -> *mut Series;
+
+const SERIES_RESHAPES: [(&str, SeriesOp); 9] = [
+    ("series_head", |s| series_head(s, 1)),
+    ("series_tail", |s| series_tail(s, 1)),
+    ("series_slice", |s| series_slice(s, 0, 1)),
+    ("series_reverse", |s| series_reverse(s)),
+    ("series_drop_nulls", |s| series_drop_nulls(s)),
+    ("series_unique", |s| series_unique(s)),
+    ("series_is_null", |s| series_is_null(s)),
+    ("series_is_not_null", |s| series_is_not_null(s)),
+    ("series_sort_with_options", |s| {
+        series_sort_with_options(s, 0, 0)
+    }),
+];
+
 #[test]
-fn reshaping_null_series_returns_null() {
-    assert!(series_head(ptr::null_mut(), 1).is_null());
-    assert!(series_tail(ptr::null_mut(), 1).is_null());
-    assert!(series_slice(ptr::null_mut(), 0, 1).is_null());
-    assert!(series_reverse(ptr::null_mut()).is_null());
-    assert!(series_drop_nulls(ptr::null_mut()).is_null());
-    assert!(series_unique(ptr::null_mut()).is_null());
-    assert!(series_sort_with_options(ptr::null_mut(), 0, 0).is_null());
-    assert_eq!(recorded_error().as_deref(), Some("series is null"));
+fn reshaping_null_series_reports_it() {
+    for (name, op) in SERIES_RESHAPES {
+        set_last_error("stale");
+        assert!(op(ptr::null_mut()).is_null(), "{}", name);
+        assert_eq!(
+            recorded_error().as_deref(),
+            Some("series is null"),
+            "{}",
+            name
+        );
+    }
+}
+
+#[test]
+fn reshaping_clears_a_stale_reason() {
+    let s = make_opt_i32("xs", &[Some(3), None, Some(3), Some(1)]);
+    for (name, op) in SERIES_RESHAPES {
+        set_last_error("stale");
+        let out = op(s);
+        assert!(!out.is_null(), "{}", name);
+        assert_eq!(recorded_error(), None, "{}", name);
+        series_drop(out);
+    }
+    series_drop(s);
 }

@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use crate::slice_or_empty;
+use crate::{boxed_result, deref_arg, slice_or_empty};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static DROPPED: AtomicUsize = AtomicUsize::new(0);
@@ -73,11 +73,10 @@ pub extern "C" fn dataframe_head(
     df_ptr: *mut DataFrame,
     n: usize,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    Box::into_raw(Box::new(df.head(Some(n))))
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        Ok(df.head(Some(n)))
+    })
 }
 
 #[no_mangle]
@@ -85,11 +84,10 @@ pub extern "C" fn dataframe_tail(
     df_ptr: *mut DataFrame,
     n: usize,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    Box::into_raw(Box::new(df.tail(Some(n))))
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        Ok(df.tail(Some(n)))
+    })
 }
 
 #[no_mangle]
@@ -98,9 +96,8 @@ pub extern "C" fn dataframe_slice(
     offset: i64,
     length: usize,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    Box::into_raw(Box::new(df.slice(offset, length)))
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        Ok(df.slice(offset, length))
+    })
 }

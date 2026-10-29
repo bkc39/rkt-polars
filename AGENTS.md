@@ -182,10 +182,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic` (given no format, the reason alone follows the verb;
-  `call/polars-reason` is that call, and `define-reasoned` binds a
-  keyword-free public name with a `name/who` variant taking the verb, as for
-  the series operators): the slot is per OS thread and every Racket thread in a
-  place shares one. Only wrap an entry point whose Rust side participates —
+  `call/polars-reason` is that call, and `define-reasoned` binds a public
+  name, keyword formals allowed, over `call/foreign-error`, with optional
+  `#:ok?` and `#:result`, and a `name/who` variant taking the verb when
+  `#:who-variant` names one, as for the series operators): the slot is per
+  OS thread and every Racket thread in a place shares one. Only wrap an
+  entry point whose Rust side participates —
   today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
   `scan_*` family, `lazyframe_collect`, `lazyframe_explain_v2`,
   `dataframe_to_string_v2`, `expr_to_string_v2`, `series_cast`,
@@ -200,7 +202,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`series_{sum,min,max,mean}_<dtype>_v2` over the ten numeric dtypes,
   `series_n_unique_v2`, `series_std_v2`, `series_var_v2`,
   `series_quantile_v2`), which mark a failure in the result (`valid` -1, or
-  -1 for `series_n_unique_v2`) and are read with `#:ok?`, `dataframe_vstack`,
+  -1 for `series_n_unique_v2`) and are read with `#:ok?`, the series and
+  frame reshapes and masks
+  (`series_{head,tail,slice,reverse,drop_nulls,unique,is_null,is_not_null}`,
+  `dataframe_{head,tail,slice,filter,unique,drop_nulls,with_column}`),
+  `dataframe_vstack`,
   `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
   `dataframe_join_asof_options_v2`, every other entry point that takes a
   `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,
@@ -215,8 +221,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `expr_lit_datetime_tz`, `series_dt_convert_time_zone`,
   `series_dt_replace_time_zone`, `expr_dt_convert_time_zone`,
   `expr_dt_replace_time_zone`, `expr_str_to_datetime_tz_v2`) — or it
-  attaches a stale reason from an unrelated call. `call/foreign-error`
-  also respells the Python keyword names in Polars' "You might want to try"
+  attaches a stale reason from an unrelated call. A fluent verb that
+  diagnoses a refusal itself (`ref` with a list of columns, `drop`,
+  `with-column`, `rename` on a frame) reads it with `call/refusal`
+  (`foreign.rkt`, not public): on a failure it raises `exn:fail:contract`
+  under the verb with its own diagnosis, or else the respelled reason.
+  `call/foreign-error` also respells the Python keyword names in Polars' "You might want to try"
   hints (`null_values` → `#:null-values`, `missing_columns='insert'` →
   `#:missing-columns 'insert`, `ambiguous` → `#:ambiguous`, ...;
   `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
@@ -243,7 +253,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   reaches the previous hook. The worker test is process-wide, which assumes
   one place calls polars: while a guard runs in one place, a panic on a
   worker from an unguarded entry point in another prints nothing and then
-  aborts, a case guarding the `todo-129` entry points (#129) removes. A
+  aborts. #129 guarded the eager compute entry points; whether a `builder`
+  or `constructor` entry point runs polars on a worker is not checked. A
   streaming task that panics after an earlier error cancelled it is dropped
   with its payload, so the reason is that error's and the panic prints
   nothing. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
@@ -264,10 +275,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   that sense. It does not check what runs before the guard or in an adapter
   after it. Every other entry point is listed in `rust/src/tests/unguarded.txt`,
   one `name class` per line: `drop` and `count` (which must be the `_drop`
-  and `_drop_count` names), `accessor`, `builder`, `constructor`, `error`,
-  and `todo-129`, the eager compute entry points that run polars on caller
-  data unguarded until #129 (L7 of #223) guards them with a reason reported
-  to Racket. The audit fails on a stale or misclassified line, so guarding an
+  and `_drop_count` names), `accessor`, `builder`, `constructor` and
+  `error`. The audit fails on a stale or misclassified line, so guarding an
   entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
   `series_drop_count` count native releases; the reclamation tests assert on
