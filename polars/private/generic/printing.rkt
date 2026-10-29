@@ -16,7 +16,7 @@
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/resource with-release)
          polars/private/foreign
-         (only-in (submod polars/private/foreign internal) series-slice/who)
+         (only-in (submod polars/private/foreign internal) dataframe-column/who series-slice/who)
          (only-in threading ~>>))
 
 (provide series->printed series->string)
@@ -147,7 +147,8 @@
   (cond
     [collected
      (with-release ([out collected dataframe-drop]
-                    [names (dataframe-column out (dataframe-column-name out 0)) series-drop])
+                    [names (dataframe-column/who 'series out (dataframe-column-name out 0))
+                           series-drop])
        (for/list ([i (in-range count)])
          (series-ref names i)))]
     [(= count 1) (list #f)]

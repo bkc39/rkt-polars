@@ -6,7 +6,8 @@
          syntax/parse/define
          polars/private/foreign
          (only-in (submod polars/private/foreign internal)
-                  series-n-unique/who series-std/who series-var/who typed-reductions)
+                  dataframe-column/who series-n-unique/who series-std/who series-var/who
+                  typed-reductions)
          (except-in polars/private/expr expr-std expr-var)
          (only-in (submod polars/private/expr internal) expr-std expr-var)
          (only-in polars/private/c-integer uint8/c)
@@ -42,7 +43,7 @@
                  [reduced (expr-op all) expr-drop]
                  [named (expr-alias reduced "v") expr-drop]
                  [out (dataframe-select-exprs frame (list named)) dataframe-drop]
-                 [column (dataframe-column out "v") series-drop])
+                 [column (dataframe-column/who who out "v") series-drop])
     (series-value who column 0)))
 
 (define (reduce-series op s #:ddof [ddof 1])

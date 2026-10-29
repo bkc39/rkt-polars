@@ -12,8 +12,10 @@
 (require racket/contract/base
          polars/private/foreign
          polars/private/expr
+         (only-in polars/private/expr-core time-unit/c)
          (only-in polars/private/expr-dt expr-dt-convert-time-zone expr-dt-replace-time-zone)
          (only-in polars/private/generic/core series? wrap-series)
+         (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/expr-util)
 
 (provide dt-year dt-month dt-day dt-hour dt-minute dt-second
@@ -22,10 +24,8 @@
          dt-millisecond dt-microsecond dt-nanosecond
          dt-truncate
          (contract-out
-          [dt-timestamp (->* (col-expr/c)
-                             (#:unit (or/c 'milliseconds 'microseconds 'nanoseconds))
-                             Expr-ptr?)]
-          [dt-strftime (-> col-expr/c string? Expr-ptr?)]
+          [dt-timestamp (->* (col-expr/c) (#:unit time-unit/c) Expr-ptr?)]
+          [dt-strftime (-> col-expr/c utf-8-name/c Expr-ptr?)]
           [dt-convert-time-zone (-> (or/c series? col-expr/c) time-zone-name/c
                                     (or/c series? Expr-ptr?))]
           [dt-replace-time-zone (->* ((or/c series? col-expr/c) (or/c #f time-zone-name/c))

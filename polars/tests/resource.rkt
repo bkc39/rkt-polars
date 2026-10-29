@@ -6,6 +6,7 @@
            racket/match
            (only-in racket/file file->string)
            (only-in racket/list append-map flatten remove-duplicates)
+           (only-in racket/path file-name-from-path)
            (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
                     _str _str-list _str/null with-raw-buffer with-release with-release-pool
@@ -398,4 +399,35 @@
                                      (path->string name)))
                        (sort (inline-test-offenders (polars-sources root #:dirs '("private")))
                              path<?))
-                  '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt"))))
+                  '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
+
+  (define (who-variant-plain-names file)
+    (define root `(file ,(path->string file)))
+    (for*/list ([mod (in-list (list root `(submod ,root internal)))]
+                #:when (module-declared? mod #t)
+                [phase+exports (in-list (call-with-values (lambda () (module->exports mod)) append))]
+                [export (in-list (cdr phase+exports))]
+                [name (in-value (symbol->string (car export)))]
+                #:when (regexp-match? #rx"/who$" name))
+      (string->symbol (regexp-replace #rx"/who$" name ""))))
+  (define (plain-uses form names)
+    (match form
+      [(list (or 'require 'provide 'quote) _ ...) '()]
+      [(? symbol? name) (if (memq name names) (list name) '())]
+      [(cons head rest) (append (plain-uses head names) (plain-uses rest names))]
+      [_ '()]))
+  (define who-plain-names
+    (remove-duplicates (append-map who-variant-plain-names (polars-sources #:dirs '("private")))))
+  (check-not-false (memq 'series-head who-plain-names))
+  (check-not-false (memq 'series-std who-plain-names))
+  (check-equal? (plain-uses '(define (spread s op)
+                               (if (eq? op 'std) series-std (series-var s)))
+                            '(series-std series-var))
+                '(series-std series-var))
+  (check-equal? (plain-uses '((require series-std) (provide series-var) 'series-std (f 'series-var))
+                            '(series-std series-var))
+                '())
+  (check-equal? (for*/list ([file (in-list (polars-sources #:dirs '("private/generic")))]
+                            [name (in-list (plain-uses (read-source file) who-plain-names))])
+                  (list (path->string (file-name-from-path file)) name))
+                '()))

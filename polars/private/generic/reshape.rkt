@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/match
+         syntax/parse/define
          (only-in racket/contract/base
                   -> ->* ->i and/c any/c contract-out flat-contract-predicate listof or/c
                   unsupplied-arg?)
@@ -16,15 +17,16 @@
          (only-in (submod polars/private/foreign internal)
                   dataframe-drop-nulls/who dataframe-head/who dataframe-slice/who
                   dataframe-tail/who dataframe-unique/who series-drop-nulls/who series-head/who
-                  series-reverse/who series-slice/who series-tail/who series-unique/who)
+                  named series-reverse/who series-slice/who series-tail/who series-unique/who)
          (only-in polars/private/resource utf-8-name->string utf-8-name/c utf-8-names/c with-release)
-         (only-in polars/private/expr-core explain/c lazyframe-explainer)
+         (only-in polars/private/expr-core explain/c lazyframe-explain/who)
          polars/private/generic/core
          (only-in polars/private/c-integer int64/c size/c)
          (only-in polars/private/generic/dtype dtype-spec?)
          (only-in polars/private/generic/expr-util col-expr/c))
 
-(provide (except-out (all-defined-out) cast clone-series explain head tail slice drop pivot
+(provide (except-out (all-defined-out) cast clone-series define-frame-verb explain head tail slice
+                     drop pivot
                      unpivot group-by agg rename rename! with-column)
          (contract-out
           [cast (-> (or/c Expr-ptr? series? string?) cast-target/c (or/c Expr-ptr? series?))]
@@ -84,34 +86,32 @@
      (expr-filter e pred)]   ; column-level filter; length-changing, use in select
     [_ (apply base:filter args)]))
 
-(define (head x n)
-  (cond [(series? x)    (wrap-series    (series-head/who 'head x n))]
-        [(dataframe? x) (wrap-dataframe (dataframe-head/who 'head x n))]
-        [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
-        [else           (expr-head x #:n n)]))
+(define-syntax-parse-rule (define-frame-verb (verb:id x:id arg:id ...)
+                           series-op:id dataframe-op:id
+                           [test:expr result:expr] ...)
+  (define (verb x arg ...)
+    (cond [(series? x)    (wrap-series    (series-op 'verb x arg ...))]
+          [(dataframe? x) (wrap-dataframe (dataframe-op 'verb x arg ...))]
+          [test result] ...)))
 
-(define (tail x n)
-  (cond [(series? x)    (wrap-series    (series-tail/who 'tail x n))]
-        [(dataframe? x) (wrap-dataframe (dataframe-tail/who 'tail x n))]
-        [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
-        [else           (expr-tail x #:n n)]))
+(define-frame-verb (head x n) series-head/who dataframe-head/who
+  [(lazyframe? x) (wrap-lazyframe (lazyframe-head x n))]
+  [else           (expr-head x #:n n)])
 
-(define (slice x offset length)
-  (cond [(series? x)    (wrap-series    (series-slice/who 'slice x offset length))]
-        [(dataframe? x) (wrap-dataframe (dataframe-slice/who 'slice x offset length))]
-        [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
-        [else           (expr-slice x offset length)]))
+(define-frame-verb (tail x n) series-tail/who dataframe-tail/who
+  [(lazyframe? x) (wrap-lazyframe (lazyframe-tail x n))]
+  [else           (expr-tail x #:n n)])
 
-(define (unique x)
-  (cond [(series? x)    (wrap-series    (series-unique/who 'unique x))]
-        [(dataframe? x) (wrap-dataframe (dataframe-unique/who 'unique x))]
-        [else (error 'unique "expected a series or dataframe, got ~v" x)]))
+(define-frame-verb (slice x offset length) series-slice/who dataframe-slice/who
+  [(lazyframe? x) (wrap-lazyframe (lazyframe-slice x offset length))]
+  [else           (expr-slice x offset length)])
 
-(define (drop-nulls x)
-  (cond [(series? x)    (wrap-series    (series-drop-nulls/who 'drop-nulls x))]
-        [(dataframe? x) (wrap-dataframe (dataframe-drop-nulls/who 'drop-nulls x))]
-        [(Expr-ptr? x)  (expr-drop-nulls x)]   ; length-changing; use inside select
-        [else (error 'drop-nulls "expected a series, dataframe, or Expr, got ~v" x)]))
+(define-frame-verb (unique x) series-unique/who dataframe-unique/who
+  [else (error 'unique "expected a series or dataframe, got ~v" x)])
+
+(define-frame-verb (drop-nulls x) series-drop-nulls/who dataframe-drop-nulls/who
+  [(Expr-ptr? x) (expr-drop-nulls x)]
+  [else (error 'drop-nulls "expected a series, dataframe, or Expr, got ~v" x)])
 
 (define (reverse x)
   (cond [(series? x)   (wrap-series (series-reverse/who 'reverse x))]
@@ -204,10 +204,10 @@
     (error 'collect "expected a lazyframe, got ~v" lf))
   (wrap-dataframe (lazyframe-collect/who 'collect lf)))
 
-(define explain (lazyframe-explainer 'explain))
+(define (explain lf #:optimized [optimized #t] #:format [format 'plain])
+  (lazyframe-explain/who 'explain lf #:optimized optimized #:format format))
 
 ;; --- clone / rename ---------------------------------------------------------
-;; series-slice already returns a fresh series, so a full-length slice clones.
 (define (clone-series who s)
   (wrap-series (series-slice/who who s 0 (series-len s))))
 
@@ -226,9 +226,7 @@
   (define name (utf-8-name->string a))
   (cond
     [(series? x)
-     (define c (clone-series 'rename x))
-     (series-rename/who 'rename c name)
-     c]
+     ((named 'rename name) (clone-series 'rename x))]
     [else
      (define new (utf-8-name->string b))
      (wrap-dataframe

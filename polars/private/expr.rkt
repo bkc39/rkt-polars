@@ -147,8 +147,6 @@
   (_fun _DataFrame-ptr -> _LazyFrame-ptr)
   #:wrap (allocator lazyframe-drop))
 
-(define lazyframe-explain (lazyframe-explainer 'lazyframe-explain "failed to explain the query"))
-
 (define-compat lazyframe-with-columns/c
   (_fun _LazyFrame-ptr
         (exprs : (_list i _Expr-ptr))
@@ -638,9 +636,6 @@
   #:c-id expr_when_then
   #:wrap (allocator expr-drop))
 
-;; (expr-when (list (list pred value) ...) #:otherwise default)
-;; Builds the chained when().then()...otherwise() expression.  Both
-;; predicates and values are lifted with ->expr/who, so Racket scalars work.
 (define (expr-when clauses #:otherwise otherwise)
   (when (null? clauses)
     (error 'expr-when "requires at least one [pred value] clause"))

@@ -186,19 +186,6 @@ pub extern "C" fn expr_sort_with_options(
     Box::into_raw(Box::new(sorted))
 }
 
-/// The input of a cast to an Enum, which polars runs as a function that
-/// sorts as the cast it stands for.
-fn enum_cast_input(e: &Expr) -> Option<&Expr> {
-    match e {
-        Expr::AnonymousFunction { input, fmt_str, .. }
-            if fmt_str.as_str() == ENUM_CAST_FMT && input.len() == 1 =>
-        {
-            Some(&input[0])
-        }
-        _ => None,
-    }
-}
-
 /// Whether `e` is one value, or one per group in `agg` or `over`, by its
 /// structure alone, so that sorting it changes nothing.
 fn is_one_value(e: &Expr) -> bool {

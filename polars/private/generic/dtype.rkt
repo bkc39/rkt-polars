@@ -5,7 +5,10 @@
 
 (require racket/match
          (only-in racket/contract flat-contract-with-explanation raise-blame-error)
-         (only-in racket/contract/base and/c contract-name integer-in or/c unsupplied-arg?)
+         (only-in racket/contract/base
+                  and/c contract-name flat-contract-predicate integer-in or/c rename-contract
+                  unsupplied-arg?)
+         (only-in racket/function negate)
          (only-in racket/sequence sequence-length)
          (only-in polars/private/c-integer
                   int16/c int32/c int64-min int64/c int8/c uint16/c uint32/c uint64-max uint64/c
@@ -78,55 +81,52 @@
                  "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 
 (define integer-dtype-ranges
-  (hash 'int8 (cons 'int8/c int8/c) 'int16 (cons 'int16/c int16/c)
-        'int32 (cons 'int32/c int32/c) 'int64 (cons 'int64/c int64/c)
-        'uint8 (cons 'uint8/c uint8/c) 'uint16 (cons 'uint16/c uint16/c)
-        'uint32 (cons 'uint32/c uint32/c) 'uint64 (cons 'uint64/c uint64/c)))
+  (for/hash ([dtype (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64))]
+             [range (in-list (list int8/c int16/c int32/c int64/c uint8/c uint16/c uint32/c
+                                   uint64/c))])
+    (values dtype (rename-contract range (string->symbol (format "~a/c" dtype))))))
 
 (define series-integer/c (integer-in int64-min uint64-max))
 
-(define (in-elements elements)
-  (if (vector? elements) (in-vector elements) (in-list elements)))
+(define elements/c (or/c list? vector?))
 
-(define (first-element elements keep?)
-  (for/first ([x (in-elements elements)] #:when (keep? x))
-    (list x)))
+(define (element-list elements)
+  (if (vector? elements) (vector->list elements) elements))
 
 (define ((refuse-element elements expected given) blame)
   (raise-blame-error blame elements '(expected: "~a" given: "~e") expected given))
 
 (define (inferred-integers-explanation elements)
-  (define present
-    (for/list ([x (in-elements elements)] #:unless (polars-null? x))
-      x))
+  (define present (filter (negate polars-null?) (element-list elements)))
+  (define integers? (andmap exact-integer? present))
+  (define wide (and integers? (memf (negate series-integer/c) present)))
   (cond
-    [(not (andmap exact-integer? present)) #t]
+    [(not integers?) #t]
+    [wide (refuse-element elements (contract-name series-integer/c) (car wide))]
     [(or (andmap int64/c present) (andmap uint64/c present)) #t]
-    [(first-element present (lambda (x) (not (series-integer/c x))))
-     => (lambda (wide) (refuse-element elements (contract-name series-integer/c) (car wide)))]
-    [else
-     (refuse-element elements
-                     (format "~a, beside a negative integer" (contract-name int64/c))
-                     (car (first-element present (lambda (x) (not (int64/c x))))))]))
+    [else (refuse-element elements
+                          (format "~a, beside a negative integer" (contract-name int64/c))
+                          (findf (negate int64/c) present))]))
 
 (define inferred-integers/c
   (flat-contract-with-explanation inferred-integers-explanation #:name 'series-elements/c))
 
-(define ((ranged-explanation name in-range?) elements)
-  (match (first-element elements (lambda (x) (not (or (polars-null? x) (in-range? x)))))
+(define ((ranged-explanation range) elements)
+  (define in-range? (flat-contract-predicate range))
+  (match (memf (lambda (x) (not (or (polars-null? x) (in-range? x)))) (element-list elements))
     [#f #t]
-    [(list x) (refuse-element elements name x)]))
+    [(cons x _) (refuse-element elements (contract-name range) x)]))
 
 (define (series-elements/c dtype)
-  (define range (and (symbol? dtype)
-                     (hash-ref integer-dtype-ranges (hash-ref dtype-aliases dtype #f) #f)))
   (cond
-    [(or (unsupplied-arg? dtype) (not dtype)) (and/c (or/c list? vector?) inferred-integers/c)]
-    [range
-     (and/c (or/c list? vector?)
-            (flat-contract-with-explanation (ranged-explanation (car range) (cdr range))
-                                            #:name 'series-elements/c))]
-    [else (or/c list? vector?)]))
+    [(or (unsupplied-arg? dtype) (not dtype)) (and/c elements/c inferred-integers/c)]
+    [(and (symbol? dtype)
+          (hash-ref integer-dtype-ranges (hash-ref dtype-aliases dtype #f) #f))
+     => (lambda (range)
+          (and/c elements/c
+                 (flat-contract-with-explanation (ranged-explanation range)
+                                                 #:name 'series-elements/c)))]
+    [else elements/c]))
 
 (define (dtype->constructor canonical vec?)
   (case canonical

@@ -5,6 +5,7 @@
 
 (require (for-syntax racket/base)
          (only-in file/gzip gzip-through-ports)
+         (only-in gregor/private/moment-base make-moment)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file
                   delete-directory/files display-to-file file->bytes make-temporary-directory)
@@ -15,10 +16,11 @@
          (only-in racket/string string-contains? string-prefix?)
          syntax/parse/define)
 
-(provide apply-keywords contains-all? contract-violation-of drops-during
-         drops-once gzip-file keyword-rejected? message-of module-text not-utf-8-expected
-         not-utf-8-names polars-dir polars-sources read-source refusal refusal-misses refused
-         scratch-file settle! staging-files with-environment-variable with-planted-sources)
+(provide apply-keywords contains-all? contract-violation-of drops-during drops-once
+         explain-failure gzip-file keyword-rejected? make-moment message-of module-text
+         not-utf-8-expected not-utf-8-names polars-dir polars-sources read-source refusal
+         refusal-misses refused scratch-file settle! staging-files who-prefix
+         with-environment-variable with-planted-sources)
 
 (define-runtime-path polars-dir "..")
 
@@ -77,6 +79,13 @@
   (and (exn:fail:contract:blame? e)
        (regexp-match? (regexp (format "^~a: contract violation" (regexp-quote (symbol->string who))))
                       (exn-message e))))
+
+(define (who-prefix who)
+  (string-append "^" (regexp-quote (format "~a: " who))))
+
+(define (explain-failure who column)
+  (regexp (string-append (who-prefix who) "not found: unable to find column "
+                         (regexp-quote (format "~s" column)) "; valid columns: [[][^\n]*[]]$")))
 
 (define (refused who given #:expected [expected "[^\n]*"])
   (regexp (string-append "^" (regexp-quote (format "~a: contract violation\n  expected: " who))

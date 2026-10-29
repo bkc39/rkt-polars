@@ -533,7 +533,8 @@ total
   in a cast to an Enum, which raises as Python's default @tt{strict=True}
   does. The error names the values outside the categories (the first ten in
   sorted order); on an expression it raises when the plan runs, under the
-  verb that runs it.
+  verb that runs it, and counts the whole column, except inside
+  @racket[agg] or @racket[over], where it counts the group it failed on.
 
   A cast to a zoned @racket['(datetime unit "Zone/Name")] keeps each
   instant: a naive datetime, or an integer count since the epoch, is read

@@ -13,7 +13,9 @@
          polars/private/foreign
          polars/private/expr
          syntax/parse/define
-         (for-syntax racket/base))
+         (for-syntax racket/base
+                     racket/syntax
+                     (only-in syntax/parse/lib/function-header formals)))
 
 (provide ->col-expr col-expr/c define-expr-unop define-math-unop define-named)
 
@@ -30,15 +32,15 @@
 (define-syntax-parse-rule (define-expr-unop name:id who:expr expr-op:expr)
   (define (name x) (expr-op (->col-expr who x))))
 
-;; A procedure bound to `name` whose object-name is `public`, the name it is
-;; exported under, so its arity errors name that.
-(define-syntax-parse-rule (define-named (name:id public:id . formals) body:expr ...+)
-  #:with procedure (syntax-property (syntax/loc this-syntax (lambda formals body ...))
+(define-syntax-parse-rule (define-named (name:id public:id . (~or* fs:id fs:formals))
+                           body:expr ...+)
+  #:with procedure (syntax-property (syntax/loc this-syntax (lambda fs body ...))
                                     'inferred-name (syntax-e #'public))
   (define name procedure))
 
 ;; unary, racket/base-shadowing: Expr/colname -> Expr; number -> racket/base.
-(define-syntax-parse-rule (define-math-unop name:id public:id expr-op:expr base-op:expr)
+(define-syntax-parse-rule (define-math-unop public:id expr-op:expr base-op:expr)
+  #:with name (format-id #'public "p-~a" #'public)
   (define-named (name public x)
     (cond [(Expr-ptr? x) (expr-op x)]
           [(string? x)   (expr-op (col x))]

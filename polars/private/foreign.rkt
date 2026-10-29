@@ -19,6 +19,7 @@
          (only-in racket/string non-empty-string? string-replace)
          racket/runtime-path
          syntax/parse/define
+         (only-in polars/private/enum-misses enum-misses-reason)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
@@ -52,7 +53,7 @@
                      series-ne-i32
                      series-add-f64 series-sub-f64 series-mul-f64 series-div-f64 series-mod-f64
                      series-lt-f64 series-le-f64 series-gt-f64 series-ge-f64 series-eq-f64
-                     series-ne-f64 typed-reductions
+                     series-ne-f64 typed-reductions spelling-rules expanded-reason
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
                      (matching-identifiers-out
                       #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
@@ -183,58 +184,27 @@
     ("The predicate passed to 'LazyFrame.filter' expanded" . "The predicate expanded")
     ("Try to combine the predicates with the 'all_horizontal' or `any_horizontal' expression."
      . "Combine them into one predicate with and or or.")
-    (#rx", hint: pass cast_options=pl\\.ScanCastOptions\\([^)]*\\)" . "")))
+    (#rx", hint: (?:specify this field in the schema, or )?pass cast_options=pl\\.ScanCastOptions\\([^)]*\\)"
+     . "")))
 
 (define empty-expansion
   #rx"^failed to retrieve [^:]*: expanded paths were empty \\(path expansion input: .*\\)\\.")
 
-(module enum-misses racket/base
-  (require (only-in json read-json)
-           racket/match
-           (only-in racket/string string-join))
-  (provide enum-misses-message enum-misses-reason enum-misses-shown)
+(define spelling-rules
+  (for/list ([(python racket) (in-dict racket-spellings)])
+    (cons (if (regexp? python) python (regexp (regexp-quote python)))
+          (regexp-replace-quote racket))))
 
-  (define enum-misses-shown 10)
-
-  (define enum-misses-tag "\u0001enum-misses\u0001")
-
-  (define (spell value)
-    (cond
-      [(for/or ([c (in-string value)]) (char-iso-control? c)) (format "~s" value)]
-      [else (format "~s" (string->symbol value))]))
-
-  (define (enum-misses-message dtype missing total named distinct)
-    (define noun (if (= total 1) "value" "values"))
-    (define verb (if (= missing 1) "is" "are"))
-    (define listed (string-join (map spell named)))
-    (define more (- distinct (length named)))
-    (define tail (if (positive? more) (format "~a, and ~a more" listed more) listed))
-    (format "~a of ~a ~a ~a not in ~v: ~a" missing total noun verb dtype tail))
-
-  (define (enum-misses-reason reason)
-    (match (regexp-match-positions (regexp-quote enum-misses-tag) reason)
-      [(list (cons _ end))
-       (match (read-json (open-input-string (substring reason end)))
-         [(hash-table ['categories categories] ['missing missing] ['total total]
-                      ['distinct distinct] ['shown shown])
-          (enum-misses-message (cons 'enum (map string->symbol categories))
-                               missing total shown distinct)]
-         [_ #f])]
-      [#f #f])))
-
-(require 'enum-misses)
+(define (expanded-reason reason)
+  (if (or (regexp-match? empty-expansion reason)
+          (equal? reason "no paths specified for this reader"))
+      "no files match the pattern"
+      reason))
 
 (define (respell reason)
-  (or (enum-misses-reason reason)
-      (for/fold ([reason (cond
-                           [(or (regexp-match? empty-expansion reason)
-                                (equal? reason "no paths specified for this reader"))
-                            "no files match the pattern"]
-                           [else reason])])
-                ([(python racket) (in-dict racket-spellings)])
-        (if (regexp? python)
-            (regexp-replace* python reason racket)
-            (string-replace reason python racket)))))
+  (for/fold ([reason (expanded-reason reason)])
+            ([rule (in-list spelling-rules)])
+    (regexp-replace* (car rule) reason (cdr rule))))
 
 ;; only for entry points that call clear_last_error; elsewhere the slot is stale
 (define (call/reason thunk ok?)
@@ -775,7 +745,7 @@
       (_fun _Series-ptr -> opt-type)
       #:c-id c-id)))
 
-(define-syntax-parse-rule (define-typed-reductions t:reduction-dtype ...)
+(define-syntax-parse-rule (define-typed-reductions table:id t:reduction-dtype ...)
   #:with (op ...) #'(sum min max mean)
   #:with ((op/who ...) ...) (for/list ([op (in-list (syntax->list #'(op ...)))])
                               (for/list ([t (in-list (syntax->list #'(t ...)))])
@@ -787,10 +757,10 @@
       (define-typed-reduction max t t.opt-type t.valid t.opt->datum)
       (define-typed-reduction mean t _CompatOptF64 CompatOptF64-valid compat-opt-f64->datum))
     ...
-    (define typed-reductions
+    (define table
       (hash (~@ 'op (hash (~@ 't.dtype op/who) ...)) ...))))
 
-(define-typed-reductions i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
+(define-typed-reductions typed-reductions i8 i16 i32 i64 u8 u16 u32 u64 f32 f64)
 
 (define-reasoned (series-n-unique s) #:who-variant series-n-unique/who
   #:ok? (negate negative?)
@@ -1741,7 +1711,7 @@
   (provide dataframe-drop-nulls/who dataframe-head/who dataframe-slice/who dataframe-tail/who
            dataframe-unique/who series-drop-nulls/who series-head/who series-n-unique/who
            series-reverse/who series-slice/who series-std/who series-tail/who series-unique/who
-           series-var/who typed-reductions)
+           series-var/who typed-reductions define-reasoned named)
   (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
            dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
            dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-rename/who

@@ -8,8 +8,9 @@
                   column-names dataframe dtype len ref series wrap-series)
          (only-in polars/tests/test-helpers
                   apply-keywords contains-all? contract-violation-of drops-during drops-once
-                  gzip-file keyword-rejected? message-of not-utf-8-expected not-utf-8-names
-                  refusal refusal-misses refused scratch-file settle! staging-files)
+                  explain-failure gzip-file keyword-rejected? message-of not-utf-8-expected
+                  not-utf-8-names refusal refusal-misses refused scratch-file settle!
+                  staging-files who-prefix)
          (only-in polars/private/expr col Expr-ptr? expr-add)
          (only-in polars/private/foreign
                   dataframe-column polars-null polars-null? series-cast series-new-i32

@@ -10,8 +10,15 @@
          polars/private/foreign
          polars/private/expr
          (only-in polars/private/c-integer int64/c nonnegative-int64/c size/c)
+         (only-in polars/private/expr-core time-unit/c)
          (only-in polars/private/expr-str parse-datetime)
+         (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/expr-util)
+
+(define str-parse/c
+  (->* (col-expr/c)
+       (#:format (or/c #f utf-8-name/c) #:strict boolean? #:exact boolean? #:cache boolean?)
+       Expr-ptr?))
 
 (provide str-to-lowercase str-to-uppercase
          str-contains str-starts-with str-ends-with
@@ -28,18 +35,13 @@
                           Expr-ptr?)]
           [str->datetime (->* (col-expr/c)
                               (#:format (or/c #f string?)
-                               #:unit (or/c 'milliseconds 'microseconds 'nanoseconds)
+                               #:unit time-unit/c
                                #:time-zone (or/c #f time-zone-name/c)
                                #:ambiguous (or/c 'raise 'earliest 'latest 'null)
                                #:strict boolean?
                                #:exact boolean?
                                #:cache boolean?)
                               Expr-ptr?)]))
-
-(define str-parse/c
-  (->* (col-expr/c)
-       (#:format (or/c #f string?) #:strict boolean? #:exact boolean? #:cache boolean?)
-       Expr-ptr?))
 
 (define-expr-unop str-to-lowercase 'str-to-lowercase expr-str-to-lowercase)
 (define-expr-unop str-to-uppercase 'str-to-uppercase expr-str-to-uppercase)

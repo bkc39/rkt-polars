@@ -3,12 +3,13 @@
 (module+ test
   (require rackunit
            racket/match
+           syntax/parse/define
+           (for-syntax racket/base)
            (only-in gregor datetime)
-           (only-in gregor/private/moment-base make-moment)
            (prefix-in rkt: (only-in racket/base max min))
            (only-in racket/contract/base contract-name has-contract? or/c)
+           (only-in racket/future processor-count)
            (only-in racket/list remove-duplicates)
-           (only-in racket/path file-name-from-path)
            (only-in racket/string string-contains? string-prefix?)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer int64/c size/c uint32/c)
@@ -19,7 +20,7 @@
                     series-dt-replace-time-zone/raw series-name time-unit-symbol->code
                     time-zone-name/c)
            (only-in (submod polars/private/foreign internal)
-                    series-mean-f64/who series-sum-i32/who)
+                    series-n-unique/who series-std/who series-var/who typed-reductions)
            (only-in polars/private/expr
                     col dataframe-filter-expr dataframe-group-by-agg dataframe-select-exprs
                     dataframe-sort-exprs dataframe-with-columns expr-cast expr-clip
@@ -38,6 +39,7 @@
            (only-in (submod polars/private/expr-dt internal)
                     expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw)
            (only-in (submod polars/private/expr-str internal) expr-str->datetime-tz/raw)
+           (only-in polars/private/generic/combine vstack)
            (only-in polars/private/generic/core
                     column-names dataframe dataframe? dtype height lazyframe? len ref series series?
                     shape)
@@ -55,6 +57,7 @@
            (only-in polars/private/generic/ordering gather sort)
            (only-in polars/private/generic/predicates is-between)
            (only-in polars/private/generic/reductions alias count first last max min sum)
+           (only-in polars/private/generic/window over)
            (only-in polars/private/generic/reshape
                     agg cast collect drop explain filter group-by head lazy pivot rename select
                     slice tail unpivot with-column with-columns)
@@ -64,9 +67,10 @@
                     str-replace-all str-starts-with str-strip-chars str-strip-prefix
                     str-strip-suffix str-tail)
            (only-in polars/tests/generic/test-fixtures nul-expected)
+           (only-in (submod polars/tests/generic/test-fixtures test) call-in-child)
            (only-in polars/tests/test-helpers
-                    not-utf-8-expected not-utf-8-names polars-sources read-source refusal
-                    refusal-misses refused))
+                    make-moment not-utf-8-expected not-utf-8-names refusal refusal-misses refused
+                    who-prefix with-environment-variable))
 
   (define (raised thunk)
     (with-handlers ([exn:fail? (lambda (e) (list (if (exn:fail:contract? e) 'contract 'polars)
@@ -74,12 +78,22 @@
       (thunk)
       #f))
 
-  (define (check-raises kind rx thunk)
+  (define (raised-message kind rx thunk)
     (match (raised thunk)
       [(list got message)
        (check-equal? got kind message)
-       (check-regexp-match rx message)]
+       (check-regexp-match rx message)
+       message]
       [#f (fail (format "expected ~a ~s, nothing raised" kind rx))]))
+  (define (check-raises kind rx thunk)
+    (void (raised-message kind rx thunk)))
+
+  (define-syntax-parser calls
+    [(_ (~and call:expr (head:id _ ...)) ...)
+     #:with (who ...) (for/list ([head (in-list (syntax->list #'(head ...)))])
+                        (string->symbol (regexp-replace #rx"^p-" (symbol->string (syntax-e head))
+                                                        "")))
+     (syntax/loc this-syntax (list (cons 'who (lambda () call)) ...))])
 
   (define frame (dataframe (list (series '(1 2 3) #:name "v") (series '("a" "b" "c") #:name "s"))))
 
@@ -330,39 +344,36 @@
   (define not-a-literal
     (string-append "contract violation\n  expected: "
                    (regexp-quote (format "(or/c boolean? ~s " (contract-name lit-integer/c)))))
-  (for ([call (list (cons 'fill-null (lambda () (fill-null (col "v") #\a)))
-                    (cons 'fill-nan (lambda () (fill-nan (col "v") #\a)))
-                    (cons 'is-between (lambda () (is-between (col "v") #\a 3)))
-                    (cons 'is-between (lambda () (is-between (col "v") 1 #\a)))
-                    (cons 'pow (lambda () (pow (col "v") #\a)))
-                    (cons 'clip (lambda () (clip (col "v") #:lower #\a)))
-                    (cons 'clip (lambda () (clip (col "v") #:upper #\a)))
-                    (cons 'shift (lambda () (shift (col "v") #:fill-value #\a)))
-                    (cons 'dt-truncate (lambda () (dt-truncate (col "v") #\a)))
-                    (cons 'str-contains (lambda () (str-contains "s" #\a)))
-                    (cons 'str-starts-with (lambda () (str-starts-with "s" #\a)))
-                    (cons 'str-ends-with (lambda () (str-ends-with "s" #\a)))
-                    (cons 'str-strip-chars (lambda () (str-strip-chars "s" #\a)))
-                    (cons 'str-strip-prefix (lambda () (str-strip-prefix "s" #\a)))
-                    (cons 'str-strip-suffix (lambda () (str-strip-suffix "s" #\a)))
-                    (cons 'str-replace (lambda () (str-replace "s" #\a "b")))
-                    (cons 'str-replace (lambda () (str-replace "s" "a" #\b)))
-                    (cons 'str-replace-all (lambda () (str-replace-all "s" #\a "b")))
-                    (cons 'str-extract (lambda () (str-extract "s" #\a)))
-                    (cons 'str-head (lambda () (str-head "s" #\a)))
-                    (cons 'str-tail (lambda () (str-tail "s" #\a)))
-                    (cons 'str-find (lambda () (str-find "s" #\a)))
-                    (cons 'str-find-literal (lambda () (str-find-literal "s" #\a)))
-                    (cons 'str-count-matches (lambda () (str-count-matches "s" #\a)))
-                    (cons 'then (lambda () (then (p-when (> (col "v") 1)) #\a)))
-                    (cons 'otherwise (lambda () (otherwise (then (p-when (> (col "v") 1)) 1) #\a)))
-                    (cons 'else-when
-                          (lambda () (else-when (then (p-when (> (col "v") 1)) 1) #\a)))
-                    (cons 'when (lambda () (p-when #\a))))])
+  (for ([call (calls (fill-null (col "v") #\a)
+                     (fill-nan (col "v") #\a)
+                     (is-between (col "v") #\a 3)
+                     (is-between (col "v") 1 #\a)
+                     (pow (col "v") #\a)
+                     (clip (col "v") #:lower #\a)
+                     (clip (col "v") #:upper #\a)
+                     (shift (col "v") #:fill-value #\a)
+                     (dt-truncate (col "v") #\a)
+                     (str-contains "s" #\a)
+                     (str-starts-with "s" #\a)
+                     (str-ends-with "s" #\a)
+                     (str-strip-chars "s" #\a)
+                     (str-strip-prefix "s" #\a)
+                     (str-strip-suffix "s" #\a)
+                     (str-replace "s" #\a "b")
+                     (str-replace "s" "a" #\b)
+                     (str-replace-all "s" #\a "b")
+                     (str-extract "s" #\a)
+                     (str-head "s" #\a)
+                     (str-tail "s" #\a)
+                     (str-find "s" #\a)
+                     (str-find-literal "s" #\a)
+                     (str-count-matches "s" #\a)
+                     (then (p-when (> (col "v") 1)) #\a)
+                     (otherwise (then (p-when (> (col "v") 1)) 1) #\a)
+                     (else-when (then (p-when (> (col "v") 1)) 1) #\a)
+                     (p-when #\a))])
     (match-define (cons who thunk) call)
-    (check-raises 'contract (regexp (string-append "^" (regexp-quote (symbol->string who)) ": "
-                                                   not-a-literal))
-                  thunk))
+    (check-raises 'contract (regexp (string-append (who-prefix who) not-a-literal)) thunk))
   (check-raises 'contract #rx"^is-between: contract violation\n  expected: [(]or/c [(]quote both[)]"
                 (lambda () (is-between (col "v") 1 2 #:closed 'bogus)))
   (check-raises 'contract #rx"^alias: contract violation\n  expected: col-expr/c\n  given: #\\\\a\n"
@@ -370,18 +381,15 @@
   (check-equal? (column-names (select frame (alias "v" "z"))) '("z"))
   (check-equal? (series->list (ref (select frame (str-strip-chars "s")) "s")) '("a" "b" "c"))
 
-  (for ([call (list (cons 'dataframe-select-exprs
-                          (lambda () (dataframe-select-exprs frame (list (col "nope")))))
-                    (cons 'dataframe-with-columns
-                          (lambda () (dataframe-with-columns frame (list (col "nope")))))
-                    (cons 'dataframe-filter-expr
-                          (lambda () (dataframe-filter-expr frame (col "nope"))))
-                    (cons 'dataframe-group-by-agg
-                          (lambda () (dataframe-group-by-agg frame (list "nope") (list (sum "v")))))
-                    (cons 'dataframe-sort-exprs
-                          (lambda () (dataframe-sort-exprs frame (list "nope")))))])
+  (for ([call (calls (dataframe-select-exprs frame (list (col "nope")))
+                     (dataframe-with-columns frame (list (col "nope")))
+                     (dataframe-filter-expr frame (col "nope"))
+                     (dataframe-group-by-agg frame (list "nope") (list (sum "v")))
+                     (dataframe-sort-exprs frame (list "nope")))])
     (match-define (cons who thunk) call)
-    (check-raises 'polars (regexp (format "^~a: [^\n]*unable to find column \"nope\"" who)) thunk))
+    (check-raises 'polars
+                  (regexp (string-append (who-prefix who) "[^\n]*unable to find column \"nope\""))
+                  thunk))
 
   (define nul-zone "UTC\u0000x")
   (define nul-zoned `(datetime microseconds ,nul-zone))
@@ -440,6 +448,7 @@
                   raw)
     (check-equal? (last-error-message) before))
 
+
   (define (message-after prefix message)
     (and (string-prefix? message prefix) (substring message (string-length prefix))))
   (define (present-strings elements)
@@ -453,40 +462,92 @@
     (list (cons 'select (lambda () (select table (cast "c" target))))
           (cons 'with-columns (lambda () (with-columns table (cast "c" target))))
           (cons 'filter (lambda () (filter table (is-null (cast "c" target)))))
-          (cons 'agg (lambda () (agg (group-by table "g") (cast "c" target))))
           (cons 'collect (lambda () (collect (with-columns (lazy table) (cast "c" target)))))))
+  (define (grouped-verbs table target)
+    (list (cons 'agg (lambda () (agg (group-by table "g") (cast "c" target))))
+          (cons 'select (lambda () (select table (over (cast "c" target) "g"))))))
   (define (with-groups source)
     (dataframe (list source
                      (series (for/list ([i (in-range (len source))]) (modulo i 2)) #:name "g"))))
+  (define (cast-message source target)
+    (message-after "cast: " (raised-message 'polars #rx"^cast: " (lambda () (cast source target)))))
+  (define (group-messages table target)
+    (define column (ref table "c"))
+    (for*/list ([g (in-list '(0 1))]
+                [group (in-value (ref (filter table (series (for/list ([i (in-range (len column))])
+                                                              (= (modulo i 2) g))))
+                                      "c"))]
+                #:when (raised (lambda () (cast group target))))
+      (cast-message group target)))
   (define carrier-enum '(enum UA AA))
   (define enum-cases
     (list (list carrier-enum (list "UA" polars-null "B6" "B6" "AA" polars-null))
+          (list carrier-enum (list "UA" "B6"))
           (list carrier-enum (cons "UA" (for/list ([i (in-range 12)]) (format "m~a" i))))
           (list carrier-enum (list "UA" "a\u0000b" "c\nd"))
           (list carrier-enum (list "Very High" "UA" "Very High"))
-          (list '(enum) (list "x" "y" polars-null))
-          (list carrier-enum (for/list ([i (in-range 200000)])
-                               (if (zero? (modulo i 49999)) "B6" "UA")))))
+          (list '(enum) (list "x" "y" polars-null))))
   (define lazy-enum-messages
     (for*/list ([row (in-list enum-cases)]
                 [source (in-list (enum-sources (cadr row)))]
-                [verb (in-list (enum-verbs (with-groups source) (car row)))])
+                [table (in-value (with-groups source))]
+                [grouped? (in-list '(#f #t))]
+                [verb (in-list ((if grouped? grouped-verbs enum-verbs) table (car row)))])
       (match-define (list target elements) row)
       (match-define (cons who run) verb)
-      (match-define (list 'polars eager) (raised (lambda () (cast source target))))
-      (match-define (list 'polars message) (raised run))
-      (check-equal? (message-after (format "~a: " who) message)
-                    (message-after "cast: " eager)
-                    (format "~s on ~s" who elements))
+      (define message
+        (message-after (format "~a: " who) (raised-message 'polars (who-prefix who) run)))
+      (define expected
+        (if grouped?
+            (group-messages table target)
+            (list (cast-message source target))))
+      (check-not-false (member message expected) (format "~s on ~s" who elements))
       message))
-  (check-equal? (cadr (raised (lambda ()
-                                (select (dataframe (list (series '("UA" "B6") #:name "c")))
-                                        (cast "c" carrier-enum)))))
-                (string-append "select: "
-                               (message-after "cast: "
-                                              (cadr (raised (lambda ()
-                                                              (cast (series '("UA" "B6"))
-                                                                    carrier-enum)))))))
+
+  (define carriers
+    (dataframe (list (series '("UA" "AA" "UA" "AA" "AA") #:name "c")
+                     (series '(0 1 1 0 1) #:name "g"))))
+  (define over-carriers (ref (select carriers (over (cast "c" carrier-enum) "g")) "c"))
+  (check-equal? (dtype over-carriers) carrier-enum)
+  (check-equal? (series->list over-carriers)
+                (series->list (cast (ref carriers "c") carrier-enum)))
+  (define agg-carriers
+    (sort (agg (group-by carriers "g")
+               (alias (first (cast "c" carrier-enum)) "first")
+               (alias (last (cast "c" carrier-enum)) "last")
+               (alias (count (cast "c" carrier-enum)) "count"))
+          "g"))
+  (check-equal? (dtype (ref agg-carriers "first")) carrier-enum)
+  (check-equal? (for/list ([name '("first" "last" "count")]) (series->list (ref agg-carriers name)))
+                '((UA AA) (AA AA) (2 3)))
+
+  (define (cycle elements n)
+    (for/list ([i (in-range n)]) (list-ref elements (modulo i (length elements)))))
+  (define top-carriers (cycle '("UA" "B6" "AA" "JFK") 1000))
+  (define bottom-carriers (cycle '("LGA" "UA" "TEB" "AA") 1000))
+  (define wide-carriers '("UA" "B6" "AA" "JFK" "LGA" "UA" "TEB" "UA"))
+  (define chunked-program
+    `(let* ([target ',carrier-enum]
+            [tall (vstack (dataframe (list (series ',top-carriers #:name "c")))
+                          (dataframe (list (series ',bottom-carriers #:name "c"))))]
+            [wide (dataframe (cons (series ',wide-carriers #:name "c")
+                                   (for/list ([i (in-range ,(add1 (* 2 (processor-count))))])
+                                     (series (build-list 8 (lambda (_) i))
+                                             #:name (format "w~a" i)))))])
+       (write (for*/list ([table (list tall wide)]
+                          [run (list (lambda () (select table (cast "c" target)))
+                                     (lambda () (with-columns table (cast "c" target)))
+                                     (lambda () (filter table (is-null (cast "c" target)))))])
+                (with-handlers ([exn:fail? exn-message]) (run) #f)))))
+  (define chunked-expected
+    (for*/list ([elements (list (append top-carriers bottom-carriers) wide-carriers)]
+                [who (in-list '(select with-columns filter))])
+      (format "~a: ~a" who (cast-message (series elements) carrier-enum))))
+  (for ([threads (list #"1" #f)])
+    (define-values (status output errors)
+      (with-environment-variable #"POLARS_MAX_THREADS" threads (call-in-child chunked-program)))
+    (check-equal? (list status errors) (list 0 "") (format "~s" threads))
+    (check-equal? (read (open-input-string output)) chunked-expected (format "~s" threads)))
 
   (define ranks '(enum c b a))
   (define ranked-sort (sort (cast "o" ranks)))
@@ -505,85 +566,68 @@
     (check-equal? (ref (ref ranked-ends "lo") i) (car sorted))
     (check-equal? (ref (ref ranked-ends "hi") i) (car (reverse sorted))))
 
-  (define who-plain-names
-    (for*/list ([phase+exports (in-list (let-values ([(variables syntaxes)
-                                                      (module->exports
-                                                       '(submod polars/private/foreign internal))])
-                                          variables))]
-                [export (in-list (cdr phase+exports))]
-                #:when (regexp-match? #rx"/who$" (symbol->string (car export))))
-      (string->symbol (regexp-replace #rx"/who$" (symbol->string (car export)) ""))))
-  (define (plain-calls form)
-    (match form
-      [(cons (? symbol? head) rest)
-       (append (if (memq head who-plain-names) (list head) '()) (plain-calls rest))]
-      [(cons head rest) (append (plain-calls head) (plain-calls rest))]
-      [_ '()]))
-  (check-not-false (memq 'series-head who-plain-names))
-  (check-equal? (for*/list ([file (in-list (polars-sources #:dirs '("private/generic")))]
-                            [name (in-list (plain-calls (read-source file)))])
-                  (list (path->string (file-name-from-path file)) name))
-                '())
-
   (define floats (series '(1.5 2.5) #:name "f"))
   (define strings (series '("a" "b") #:name "s"))
-  (for ([call (list (lambda () (series-sum-i32/who 'v floats))
-                    (lambda () (series-mean-f64/who 'v strings))
+  (define (typed-reduction op dtype) (hash-ref (hash-ref typed-reductions op) dtype))
+  (for ([call (list (lambda () ((typed-reduction 'sum 'int32) 'v floats))
+                    (lambda () ((typed-reduction 'mean 'float64) 'v strings))
                     (lambda () (series-add/who 'v floats (series '(1.0 2.0 3.0) #:name "g"))))])
-    (check-raises 'polars #rx"^v: [^\n]" call))
+    (check-raises 'polars (who-prefix 'v) call))
+  (define spread (series '(1.0 2.0 4.0) #:name "x"))
+  (check-equal? (map (lambda (n) (/ (round (* n 1e6)) 1e6))
+                     (list (series-std/who 'v spread) (series-std/who 'v spread #:ddof 0)
+                           (series-var/who 'v spread) (series-var/who 'v spread #:ddof 0)))
+                (list 1.527525 1.247219 2.333333 1.555556))
+  (check-equal? (series-n-unique/who 'v (series '(1 1 2))) 2)
+  (for* ([source (list strings (series '(a b)) (cast strings '(enum a b)))]
+         [reduce (list series-std/who series-var/who)])
+    (check-false (reduce 'v source)))
 
-  (for ([call (list (cons 'expr-fill-null (lambda () (expr-fill-null (col "v") #\a)))
-                    (cons 'expr-fill-nan (lambda () (expr-fill-nan (col "v") #\a)))
-                    (cons 'expr-pow (lambda () (expr-pow (col "v") #\a)))
-                    (cons 'expr-clip (lambda () (expr-clip (col "v") #:lower #\a)))
-                    (cons 'expr-clip (lambda () (expr-clip (col "v") #:upper #\a)))
-                    (cons 'expr-is-between (lambda () (expr-is-between (col "v") #\a 3)))
-                    (cons 'expr-is-between (lambda () (expr-is-between (col "v") 1 #\a)))
-                    (cons 'expr-shift (lambda () (expr-shift (col "v") #:fill-value #\a)))
-                    (cons 'expr-filter (lambda () (expr-filter (col "v") #\a)))
-                    (cons 'expr-when (lambda () (expr-when (list (list #\a 1)) #:otherwise 2)))
-                    (cons 'expr-when (lambda () (expr-when (list (list #t #\a)) #:otherwise 2)))
-                    (cons 'expr-when (lambda () (expr-when (list (list #t 1)) #:otherwise #\a)))
-                    (cons 'expr-dt-truncate (lambda () (expr-dt-truncate (col "v") #\a)))
-                    (cons 'expr-str-contains (lambda () (expr-str-contains (col "s") #\a)))
-                    (cons 'expr-str-starts-with (lambda () (expr-str-starts-with (col "s") #\a)))
-                    (cons 'expr-str-ends-with (lambda () (expr-str-ends-with (col "s") #\a)))
-                    (cons 'expr-str-replace (lambda () (expr-str-replace (col "s") #\a "b")))
-                    (cons 'expr-str-replace (lambda () (expr-str-replace (col "s") "a" #\b)))
-                    (cons 'expr-str-replace-all
-                          (lambda () (expr-str-replace-all (col "s") #\a "b")))
-                    (cons 'expr-str-replace-all
-                          (lambda () (expr-str-replace-all (col "s") "a" #\b)))
-                    (cons 'expr-str-extract (lambda () (expr-str-extract (col "s") #\a)))
-                    (cons 'expr-str-strip-chars (lambda () (expr-str-strip-chars (col "s") #\a)))
-                    (cons 'expr-str-strip-chars-start
-                          (lambda () (expr-str-strip-chars-start (col "s") #\a)))
-                    (cons 'expr-str-strip-chars-end
-                          (lambda () (expr-str-strip-chars-end (col "s") #\a)))
-                    (cons 'expr-str-strip-prefix (lambda () (expr-str-strip-prefix (col "s") #\a)))
-                    (cons 'expr-str-strip-suffix (lambda () (expr-str-strip-suffix (col "s") #\a)))
-                    (cons 'expr-str-slice (lambda () (expr-str-slice (col "s") #\a)))
-                    (cons 'expr-str-slice (lambda () (expr-str-slice (col "s") 0 #\a)))
-                    (cons 'expr-str-head (lambda () (expr-str-head (col "s") #\a)))
-                    (cons 'expr-str-tail (lambda () (expr-str-tail (col "s") #\a)))
-                    (cons 'expr-str-find (lambda () (expr-str-find (col "s") #\a)))
-                    (cons 'expr-str-find-literal (lambda () (expr-str-find-literal (col "s") #\a)))
-                    (cons 'expr-str-count-matches
-                          (lambda () (expr-str-count-matches (col "s") #\a))))])
+  (for ([call (calls (expr-fill-null (col "v") #\a)
+                     (expr-fill-nan (col "v") #\a)
+                     (expr-pow (col "v") #\a)
+                     (expr-clip (col "v") #:lower #\a)
+                     (expr-clip (col "v") #:upper #\a)
+                     (expr-is-between (col "v") #\a 3)
+                     (expr-is-between (col "v") 1 #\a)
+                     (expr-shift (col "v") #:fill-value #\a)
+                     (expr-filter (col "v") #\a)
+                     (expr-when (list (list #\a 1)) #:otherwise 2)
+                     (expr-when (list (list #t #\a)) #:otherwise 2)
+                     (expr-when (list (list #t 1)) #:otherwise #\a)
+                     (expr-dt-truncate (col "v") #\a)
+                     (expr-str-contains (col "s") #\a)
+                     (expr-str-starts-with (col "s") #\a)
+                     (expr-str-ends-with (col "s") #\a)
+                     (expr-str-replace (col "s") #\a "b")
+                     (expr-str-replace (col "s") "a" #\b)
+                     (expr-str-replace-all (col "s") #\a "b")
+                     (expr-str-replace-all (col "s") "a" #\b)
+                     (expr-str-extract (col "s") #\a)
+                     (expr-str-strip-chars (col "s") #\a)
+                     (expr-str-strip-chars-start (col "s") #\a)
+                     (expr-str-strip-chars-end (col "s") #\a)
+                     (expr-str-strip-prefix (col "s") #\a)
+                     (expr-str-strip-suffix (col "s") #\a)
+                     (expr-str-slice (col "s") #\a)
+                     (expr-str-slice (col "s") 0 #\a)
+                     (expr-str-head (col "s") #\a)
+                     (expr-str-tail (col "s") #\a)
+                     (expr-str-find (col "s") #\a)
+                     (expr-str-find-literal (col "s") #\a)
+                     (expr-str-count-matches (col "s") #\a))])
     (match-define (cons who thunk) call)
-    (check-raises 'contract (regexp (string-append "^" (regexp-quote (symbol->string who)) ": "
-                                                   not-a-literal))
-                  thunk))
+    (check-raises 'contract (regexp (string-append (who-prefix who) not-a-literal)) thunk))
   (define mars (make-moment (datetime 2021 3 27) 0 "Mars/Base"))
-  (for ([call (list (cons 'expr-is-between (lambda () (expr-is-between (col "t") mars mars)))
-                    (cons 'expr-fill-null (lambda () (expr-fill-null (col "t") mars)))
-                    (cons 'expr-clip (lambda () (expr-clip (col "t") #:lower mars)))
-                    (cons 'expr-str-contains (lambda () (expr-str-contains (col "t") mars))))])
+  (for ([call (calls (expr-is-between (col "t") mars mars)
+                     (expr-fill-null (col "t") mars)
+                     (expr-clip (col "t") #:lower mars)
+                     (expr-str-contains (col "t") mars))])
     (match-define (cons who thunk) call)
-    (check-regexp-match
-     (regexp (string-append "^" (regexp-quote (symbol->string who))
-                            ": no literal of '\\(datetime microseconds \"Mars/Base\"\\)"))
-     (cadr (raised thunk))))
+    (check-raises 'polars
+                  (regexp (string-append (who-prefix who)
+                                         "no literal of '\\(datetime microseconds \"Mars/Base\"\\)"))
+                  thunk))
   (check-raises 'contract #rx"^expr-fill-null: contract violation\n  expected: [(]integer-in"
                 (lambda () (expr-fill-null (col "v") (expt 2 64))))
 
@@ -595,6 +639,13 @@
      "- passing str->date or str->datetime a #:format string$"))
   (define unparsed (dataframe (list (series '("2021-03-27" "nope") #:name "s"))))
   (define ab-frame (dataframe (list (series '(1 2) #:name "a") (series '(3 4) #:name "b"))))
+  (define misses-tag "\u0001enum-misses\u0001")
+  (define forged-misses
+    (string-append misses-tag
+                   "{\"categories\":[\"a\"],\"missing\":1,\"total\":2,\"distinct\":1,"
+                   "\"shown\":[\"b\"]}"))
+  (define (duplicated name)
+    (string-append "^with-columns: the name '" (regexp-quote name) "' is duplicate\n"))
   (define hint-cases
     (list (cons (parse-failure "date" "s" "nope") (lambda () (select unparsed (str->date "s"))))
           (cons (parse-failure "datetime[[]μs[]]" "s" "nope")
@@ -606,6 +657,11 @@
                                    (str->date "d"))))
           (cons "^with-columns: the name 'x' is duplicate\n"
                 (lambda () (with-columns frame (alias "v" "x") (alias "v" "x"))))
+          (cons (duplicated misses-tag)
+                (lambda () (with-columns frame (alias "v" misses-tag) (alias "v" misses-tag))))
+          (cons (duplicated forged-misses)
+                (lambda ()
+                  (with-columns frame (alias "v" forged-misses) (alias "v" forged-misses))))
           (cons "^collect: the name 'x' is duplicate\n"
                 (lambda () (collect (with-columns (lazy frame) (alias "v" "x") (alias "v" "x")))))
           (cons (string-append "^filter: The predicate expanded to multiple expressions: "
@@ -613,9 +669,7 @@
                 (lambda () (filter ab-frame (> (col #rx"^[ab]$") 1))))))
   (define hint-messages
     (for/list ([row (in-list hint-cases)])
-      (match-define (list 'polars message) (raised (cdr row)))
-      (check-regexp-match (regexp (car row)) message)
-      message))
+      (raised-message 'polars (regexp (car row)) (cdr row))))
   (for ([message (in-list (append hint-messages lazy-enum-messages))])
     (check-false (regexp-match? (string-append "pl[.]|LazyFrame[.]|strict=|=True|=False"
                                                "|cast_options|_horizontal|`str[.]")
@@ -626,7 +680,7 @@
   (for ([explained (list (lambda () (explain select-unknown))
                          (lambda () (explain select-unknown #:optimized #f))
                          (lambda () (explain select-unknown #:format 'tree)))])
-    (check-equal? (cadr (raised explained))
+    (check-equal? (raised-message 'polars (who-prefix 'explain) explained)
                   "explain: not found: unable to find column \"nope\"; valid columns: [\"o\"]"))
 
   (check-equal? (series->list (series (list (expt 2 63)))) (list (expt 2 63)))
@@ -653,49 +707,20 @@
   (check-raises 'contract #rx"^gather: contract violation\n" (lambda () (gather (col "v") "x")))
   (check-raises 'contract #rx"^expr-gather: " (lambda () (expr-gather (col "v") "x")))
 
-  (for ([call (list (cons 'abs (lambda () (p-abs 1 2)))
-                    (cons 'floor (lambda () (p-floor 1 2)))
-                    (cons 'sqrt (lambda () (p-sqrt 1 2)))
-                    (cons 'exp (lambda () (p-exp 1 2)))
-                    (cons 'log (lambda () (p-log 1 2 3)))
-                    (cons 'not (lambda () (p-not 1 2)))
-                    (cons 'xor (lambda () (p-xor 1))))])
+  (for ([call (calls (p-abs 1 2) (p-floor 1 2) (p-sqrt 1 2) (p-exp 1 2) (p-log 1 2 3) (p-not 1 2)
+                     (p-xor 1))])
     (match-define (cons who thunk) call)
-    (check-raises 'contract (regexp (format "^~a: arity mismatch;" who)) thunk))
+    (check-raises 'contract (regexp (string-append (who-prefix who) "arity mismatch;")) thunk))
   (check-equal? (map object-name (list p+ p- p* p/)) '(+ - * /))
-  (for ([call (list (cons 'log (lambda () (p-log "v" #:base "e")))
-                    (cons 'dt-strftime (lambda () (dt-strftime "t" 5)))
-                    (cons 'dt-timestamp (lambda () (dt-timestamp "t" #:unit 'bogus)))
-                    (cons 'str->date (lambda () (str->date "s" #:format 5)))
-                    (cons 'str->date (lambda () (str->date "s" #:strict 'x)))
-                    (cons 'str->time (lambda () (str->time "s" #:format 5)))
-                    (cons 'str->time (lambda () (str->time "s" #:strict 'x))))])
+  (for ([call (calls (p-log "v" #:base "e")
+                     (p-log #\a)
+                     (dt-strftime "t" 5)
+                     (dt-timestamp "t" #:unit 'bogus)
+                     (str->date "s" #:format 5)
+                     (str->date "s" #:strict 'x)
+                     (str->time "s" #:format 5)
+                     (str->time "s" #:strict 'x))])
     (match-define (cons who thunk) call)
-    (check-raises 'contract
-                  (regexp (format "^~a: contract violation\n" (regexp-quote (symbol->string who))))
-                  thunk))
-  (check-equal? (p-log 8 #:base 2) 3.0)
-
-  (define (phase-0-variables mod)
-    (check-true (module-declared? mod #t))
-    (define-values (variables syntaxes) (module->exports mod))
-    (for*/list ([phase+names (in-list variables)]
-                #:when (eqv? (car phase+names) 0)
-                [name (in-list (cdr phase+names))])
-      (car name)))
-  (define fluent-names (phase-0-variables 'polars/private/generic))
-  (define (alias-of name)
-    (match (regexp-match #rx"^polars:(.+)$" (symbol->string name))
-      [(list _ public) (string->symbol public)]
-      [#f #f]))
-  (define misnamed
-    (for*/list ([name (in-list (phase-0-variables 'polars))]
-                #:when (memq name fluent-names)
-                [value (in-value (dynamic-require 'polars name))]
-                #:when (procedure? value)
-                #:unless (eq? (object-name value) name)
-                #:unless (and (alias-of name)
-                              (eq? value (dynamic-require 'polars (alias-of name)))))
-      (list name (object-name value))))
-  (check-equal? misnamed '())
-  (check-equal? (object-name (dynamic-require 'polars 'log)) 'log))
+    (check-raises 'contract (regexp (string-append (who-prefix who) "contract violation\n")) thunk))
+  (check-false (has-contract? p-log))
+  (check-equal? (p-log 8 #:base 2) 3.0))

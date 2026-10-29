@@ -406,8 +406,8 @@ fn an_enum_cast_reports_its_misses_from_any_string_source() {
         assert_eq!(
             misses_payload(source, &["EWR", "JFK", "LGA"]),
             concat!(
-                r#"{"categories":["EWR","JFK","LGA"],"missing":3,"#,
-                r#""total":4,"distinct":2,"shown":["TEB","XYZ"]}"#
+                r#"{"categories":["EWR","JFK","LGA"],"distinct":2,"missing":3,"#,
+                r#""shown":["TEB","XYZ"],"total":4}"#
             )
         );
     }
@@ -419,8 +419,8 @@ fn the_misses_payload_escapes_what_json_must() {
     assert_eq!(
         misses_payload(&s, &["\"", "\\"]),
         concat!(
-            r#"{"categories":["\"","\\"],"missing":3,"total":3,"#,
-            r#""distinct":3,"shown":["\u001f","a\u0000b","q\"\\"]}"#
+            r#"{"categories":["\"","\\"],"distinct":3,"missing":3,"#,
+            r#""shown":["\u001f","a\u0000b","q\"\\"],"total":3}"#
         )
     );
 }
@@ -432,9 +432,10 @@ fn the_misses_payload_shows_ten_sorted_misses() {
     let payload = misses_payload(&Series::new("s".into(), &values), &["a"]);
     let shown: Vec<String> =
         (0..10).map(|i| format!("\"v{:02}\"", i)).collect();
+    assert!(payload.contains(r#""distinct":12,"#), "{}", payload);
     assert!(
         payload.ends_with(&format!(
-            "\"distinct\":12,\"shown\":[{}]}}",
+            "\"shown\":[{}],\"total\":12}}",
             shown.join(",")
         )),
         "{}",
@@ -476,11 +477,71 @@ fn a_lazy_enum_cast_records_the_tagged_reason() {
         recorded_error().as_deref(),
         Some(concat!(
             "\u{1}enum-misses\u{1}",
-            r#"{"categories":["EWR"],"missing":1,"total":2,"#,
-            r#""distinct":1,"shown":["LGA"]}"#
+            r#"{"categories":["EWR"],"distinct":1,"missing":1,"#,
+            r#""shown":["LGA"],"total":2}"#
         ))
     );
     series_drop(s);
     expr_drop(column);
     expr_drop(cast);
+}
+
+#[test]
+fn the_misses_payload_counts_many_rows_of_few_misses() {
+    let values: Vec<&str> = (0..200_000)
+        .map(|i| match i % 50_000 {
+            0 => "B6",
+            1 => "AA",
+            _ => "UA",
+        })
+        .collect();
+    let payload = misses_payload(&Series::new("s".into(), &values), &["UA"]);
+    assert_eq!(
+        payload,
+        concat!(
+            r#"{"categories":["UA"],"distinct":2,"missing":8,"#,
+            r#""shown":["AA","B6"],"total":200000}"#
+        )
+    );
+}
+
+fn lazy_enum_cast(name: &str, categories: &[&str]) -> Expr {
+    let column = expr_col_v2(str_block(name).as_ptr());
+    let block = str_list_block(categories);
+    let cast = expr_cast_enum_v2(column, block.as_ptr());
+    let out = unsafe { (*cast).clone() };
+    expr_drop(column);
+    expr_drop(cast);
+    out
+}
+
+#[test]
+fn a_lazy_enum_cast_sees_every_chunk() {
+    let width = 2 * std::thread::available_parallelism().map_or(8, |n| n.get());
+    let piece = |values: &[&str]| {
+        let columns: Vec<Column> = (0..width)
+            .map(|i| Series::new(format!("o{}", i).into(), values).into())
+            .collect();
+        DataFrame::new(values.len(), columns).unwrap()
+    };
+    let mut frame = piece(&["EWR", "LGA", "EWR", "JFK"]);
+    frame
+        .vstack_mut(&piece(&["JFK", "EWR", "TEB", "EWR"]))
+        .unwrap();
+    assert_eq!(frame.first_col_n_chunks(), 2);
+    let expected = concat!(
+        "\u{1}enum-misses\u{1}",
+        r#"{"categories":["EWR"],"distinct":3,"missing":4,"#,
+        r#""shown":["JFK","LGA","TEB"],"total":8}"#
+    );
+    let cast = lazy_enum_cast("o0", &["EWR"]);
+    let plans = [
+        frame.clone().lazy().select([cast.clone()]),
+        frame.clone().lazy().with_columns([cast.clone()]),
+        frame.clone().lazy().filter(cast.clone().is_null()),
+    ];
+    for plan in plans {
+        let reason = plan.collect().unwrap_err().to_string();
+        assert!(reason.ends_with(expected), "{}", reason);
+    }
 }

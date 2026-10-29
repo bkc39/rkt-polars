@@ -18,8 +18,8 @@
            (only-in polars/private/foreign dataframe-select dataframe-sort series-name)
            (only-in polars/private/generic/reductions alias count mean n-unique sum)
            (only-in polars/tests/generic/test-fixtures
-                    check-cells col column expr-add frame named-frame nul-frame nul-names ops-df
-                    polars-null series-cells settle! v64)
+                    check-cells col column explain-failure expr-add frame named-frame nul-frame
+                    nul-names ops-df polars-null series-cells settle! v64)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -305,7 +305,7 @@
   (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:format 'dot)))
   (check-exn exn:fail:contract:blame? (lambda () (contracted:explain iris-plan #:optimized 1)))
   (check-regexp-match
-   #rx"^explain: [^\n]*\"nope\"[^\n]*$"
+   (explain-failure 'explain "nope")
    (with-handlers ([exn:fail? exn-message])
      (contracted:explain (select (lazy ops-df) "nope"))))
 

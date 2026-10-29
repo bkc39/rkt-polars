@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::*;
+use std::collections::BTreeSet;
 
 pub(crate) fn enum_dtype(categories: StrListArg) -> Option<DataType> {
     let names = record(unsafe { str_list_arg(categories) })?;
@@ -11,32 +12,6 @@ pub(crate) fn enum_dtype(categories: StrListArg) -> Option<DataType> {
 pub(crate) const ENUM_MISSES_TAG: &str = "\u{1}enum-misses\u{1}";
 
 const ENUM_MISSES_SHOWN: usize = 10;
-
-fn json_string(out: &mut String, value: &str) {
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32))
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-fn json_strings<'a>(out: &mut String, values: impl Iterator<Item = &'a str>) {
-    out.push('[');
-    for (i, value) in values.enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        json_string(out, value);
-    }
-    out.push(']');
-}
 
 /// The cast of a String, Categorical or Enum series to the Enum `dtype`,
 /// failing with the tagged payload when a value is not a category. Any
@@ -61,24 +36,26 @@ pub(crate) fn enum_cast_checked(
     }
     let missed_mask = out.is_null() & strings.is_not_null();
     let missed = strings.str()?.filter(&missed_mask)?;
-    let mut distinct: Vec<&str> = missed.iter().flatten().collect();
-    distinct.sort_unstable();
-    distinct.dedup();
-    let mut payload = String::from(ENUM_MISSES_TAG);
-    payload.push_str("{\"categories\":");
-    json_strings(&mut payload, categories.categories().values_iter());
-    payload.push_str(&format!(
-        ",\"missing\":{},\"total\":{},\"distinct\":{},\"shown\":",
-        missed.len(),
-        strings.len() - strings.null_count(),
-        distinct.len()
-    ));
-    json_strings(
-        &mut payload,
-        distinct.iter().copied().take(ENUM_MISSES_SHOWN),
-    );
-    payload.push('}');
-    Err(PolarsError::ComputeError(payload.into()))
+    let mut distinct = PlHashSet::new();
+    let mut shown = BTreeSet::new();
+    for value in missed.iter().flatten() {
+        if distinct.insert(value) {
+            shown.insert(value);
+            if shown.len() > ENUM_MISSES_SHOWN {
+                shown.pop_last();
+            }
+        }
+    }
+    let payload = serde_json::json!({
+        "categories": categories.categories().values_iter().collect::<Vec<_>>(),
+        "missing": missed.len(),
+        "total": strings.len() - strings.null_count(),
+        "distinct": distinct.len(),
+        "shown": shown,
+    });
+    Err(PolarsError::ComputeError(
+        format!("{ENUM_MISSES_TAG}{payload}").into(),
+    ))
 }
 
 #[no_mangle]

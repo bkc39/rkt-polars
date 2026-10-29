@@ -23,8 +23,8 @@
            (only-in polars/private/generic/reshape
                     collect explain lazy select [filter frame-filter])
            (only-in polars/tests/generic/test-fixtures
-                    apply-keywords column contains-all? dtypes-of frame frame=? keyword-rejected?
-                    message-of polars-null)
+                    apply-keywords column contains-all? dtypes-of explain-failure frame frame=?
+                    keyword-rejected? message-of polars-null)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     check-nul-names-round-trip check-staged-write eager-and-scan eager-reader))
 
@@ -146,7 +146,7 @@
   (check-equal? (column-names cached) '("row" "item" "grade" "price"))
   (check-equal? (column cached "row") '(0 1 2 3))
   (check-regexp-match
-   #rx"^explain: [^\n]*\"colour\"[^\n]*$"
+   (explain-failure 'explain "colour")
    (message-of (lambda () (explain (select (lazy produce) "colour")))))
   (define inserted (read-parquet mixed #:missing-columns 'insert))
   (check-equal? (shape inserted) '(8 3))
