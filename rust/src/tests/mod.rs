@@ -11,6 +11,7 @@ mod formats;
 mod guard_audit;
 mod last_error;
 mod names_in;
+mod results;
 mod row_counts;
 mod series;
 mod slices;

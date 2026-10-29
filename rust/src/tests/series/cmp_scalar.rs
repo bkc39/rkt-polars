@@ -40,8 +40,33 @@ fn cmp_f64_all_ops_against_scalar() {
     series_drop(s);
 }
 
+const CMP_SCALAR_OPS: &[ScalarRow] = scalar_ops![
+    "Int32" 1: [
+        series_lt_i32, series_le_i32, series_gt_i32, series_ge_i32,
+        series_eq_i32, series_ne_i32,
+    ],
+    "Float64" 1.0: [
+        series_lt_f64, series_le_f64, series_gt_f64, series_ge_f64,
+        series_eq_f64, series_ne_f64,
+    ],
+];
+
 #[test]
-fn cmp_scalar_null_series_returns_null() {
-    assert!(series_lt_i32(ptr::null_mut(), 0).is_null());
-    assert!(series_eq_f64(ptr::null_mut(), 0.0).is_null());
+fn the_cmp_table_holds_every_operator() {
+    assert_eq!(CMP_SCALAR_OPS.len(), 12);
+}
+
+#[test]
+fn cmp_scalar_ops_clear_a_stale_reason() {
+    assert_ops_clear_a_stale_reason(CMP_SCALAR_OPS);
+}
+
+#[test]
+fn cmp_scalar_ops_report_the_wrong_dtype() {
+    assert_ops_report_the_wrong_dtype(CMP_SCALAR_OPS);
+}
+
+#[test]
+fn cmp_scalar_null_series_reports_it() {
+    assert_ops_report_a_null_series(CMP_SCALAR_OPS);
 }

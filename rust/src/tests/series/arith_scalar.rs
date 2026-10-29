@@ -79,8 +79,94 @@ fn arith_u32_mul_smoke() {
     series_drop(s);
 }
 
+const ARITH_SCALAR_OPS: &[ScalarRow] = scalar_ops![
+    "Int32" 1: [
+        series_add_i32, series_sub_i32, series_mul_i32, series_div_i32,
+        series_mod_i32,
+    ],
+    "Int64" 1: [
+        series_add_i64, series_sub_i64, series_mul_i64, series_div_i64,
+        series_mod_i64,
+    ],
+    "UInt32" 1: [
+        series_add_u32, series_sub_u32, series_mul_u32, series_div_u32,
+        series_mod_u32,
+    ],
+    "UInt64" 1: [
+        series_add_u64, series_sub_u64, series_mul_u64, series_div_u64,
+        series_mod_u64,
+    ],
+    "Float64" 1.0: [
+        series_add_f64, series_sub_f64, series_mul_f64, series_div_f64,
+        series_mod_f64,
+    ],
+];
+
+const BY_ZERO: &[ScalarRow] = scalar_ops![
+    "Int32" 0: [series_div_i32, series_mod_i32],
+    "Int64" 0: [series_div_i64, series_mod_i64],
+    "UInt32" 0: [series_div_u32, series_mod_u32],
+    "UInt64" 0: [series_div_u64, series_mod_u64],
+];
+
 #[test]
-fn arith_scalar_null_series_returns_null() {
-    assert!(series_add_i32(ptr::null_mut(), 1).is_null());
-    assert!(series_div_f64(ptr::null_mut(), 1.0).is_null());
+fn the_arith_table_holds_every_operator() {
+    assert_eq!(ARITH_SCALAR_OPS.len(), 25);
+}
+
+#[test]
+fn arith_scalar_ops_clear_a_stale_reason() {
+    assert_ops_clear_a_stale_reason(ARITH_SCALAR_OPS);
+}
+
+#[test]
+fn arith_scalar_ops_report_the_wrong_dtype() {
+    assert_ops_report_the_wrong_dtype(ARITH_SCALAR_OPS);
+}
+
+#[test]
+fn arith_scalar_null_series_reports_it() {
+    assert_ops_report_a_null_series(ARITH_SCALAR_OPS);
+}
+
+#[test]
+fn integer_division_by_zero_is_null_and_no_failure() {
+    for &(name, op, dtype) in BY_ZERO {
+        let s = make_of(dtype, "xs");
+        set_last_error("stale");
+        let out = op(s);
+        assert!(!out.is_null(), "{}", name);
+        assert_eq!(recorded_error(), None, "{}", name);
+        assert_eq!(series_null_count(out), series_len(out), "{}", name);
+        series_drop(out);
+        series_drop(s);
+    }
+}
+
+#[test]
+fn signed_minimum_by_minus_one_and_no_failure() {
+    let s = make_i32("xs", &[i32::MIN, 7]);
+    set_last_error("stale");
+    let div = series_div_i32(s, -1);
+    let rem = series_mod_i32(s, -1);
+    assert_eq!(recorded_error(), None);
+    assert_eq!(opt_i32s(div), vec![Some(i32::MIN), Some(-7)]);
+    assert_eq!(opt_i32s(rem), vec![Some(0), Some(0)]);
+    series_drop(div);
+    series_drop(rem);
+    series_drop(s);
+    let s = make_i64("ys", &[i64::MIN, 7]);
+    let div = series_div_i64(s, -1);
+    let rem = series_mod_i64(s, -1);
+    assert_eq!(recorded_error(), None);
+    let read = |p: *mut Series| -> Vec<i64> {
+        (0..series_len(p))
+            .map(|i| series_ref_i64(p, i).value)
+            .collect()
+    };
+    assert_eq!(read(div), vec![i64::MIN, -7]);
+    assert_eq!(read(rem), vec![0, 0]);
+    series_drop(div);
+    series_drop(rem);
+    series_drop(s);
 }

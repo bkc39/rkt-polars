@@ -46,7 +46,7 @@
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
-                    series-xor str-block-drop-count zoned-datetime-dtype?
+                    series-xor str-block-drop-count zoned-datetime-dtype? last-error-message
                     _c-string _c-string/null)
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
@@ -62,14 +62,16 @@
                     series-std series-strings series-sub-i32 series-sub-i64 series-sub-u32
                     series-sub-u64 series-tail series-var)
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/resource with-raw-buffer)
+           (only-in polars/private/resource with-raw-buffer with-release)
            (only-in threading ~>)
            (only-in (submod polars/private/resource internal) str-block->string)
+           (only-in racket/list append-map)
            (only-in racket/string string-join)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: polars/private/foreign)
            (only-in polars/tests/test-helpers
-                    drops-during not-utf-8-expected polars-sources read-source refusal refusal-misses
+                    drops-during not-utf-8-expected polars-dir polars-sources read-source refusal
+                    refusal-misses
                     refused settle!
                     with-planted-sources)
            (only-in polars/tests/generic/test-fixtures nul-expected nul-names))
@@ -734,7 +736,7 @@
                 3.0)
   (check-equal? (series-ref (series-mod-f64 (series-new-f64 "f" '(3.0 7.5)) 2.0) 1)
                 1.5)
-  (check-exn #rx"operation failed"
+  (check-exn #rx"^series-add-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
              (lambda () (series-add-i32 (series-new-f64 "f" '(1.0 2.0)) 3)))
 
   ;; Use a small dataframe so we can read mask results back via dataframe-filter.
@@ -1297,6 +1299,9 @@
                             (lambda () (series-cast owned-i32 'float64)))
                 1)
   (check-equal? (drops-once series-drop-count series-drop
+                            (lambda () (series-add-i32 owned-i32 1)))
+                1)
+  (check-equal? (drops-once series-drop-count series-drop
                             (lambda () (series-new-i32 "c" '(1 2))))
                 1)
   (check-equal? (drops-once series-drop-count series-drop
@@ -1320,10 +1325,52 @@
              (lambda () (series-not owned-i32)))
   (check-exn #rx"^series-and: invalid series dtype: expected `Boolean`, got `i32`"
              (lambda () (series-and owned-i32 owned-bool)))
-  (check-exn #rx"^series-lt-i32: operation failed$" (lambda () (series-lt-i32 owned-f64 1)))
+  (check-exn #rx"^series-lt-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
+             (lambda () (series-lt-i32 owned-f64 1)))
   (check-exn #rx"^series-eq-str: cannot compare string with numeric type \\(i32\\)$"
              (lambda () (series-eq-str owned-i32 "a")))
-  (check-exn #rx"^series-add-i32: operation failed$" (lambda () (series-add-i32 owned-f64 1)))
+  (check-exn #rx"^series-add-i32: invalid series dtype: expected `Int32`, got `f64` .*`f`$"
+             (lambda () (series-add-i32 owned-f64 1)))
+
+  (define scalar-op-rows
+    '((Int32 f64 1 series-add-i32 series-sub-i32 series-mul-i32 series-div-i32 series-mod-i32
+             series-lt-i32 series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32 series-ne-i32)
+      (Int64 f64 1 series-add-i64 series-sub-i64 series-mul-i64 series-div-i64 series-mod-i64)
+      (UInt32 f64 1 series-add-u32 series-sub-u32 series-mul-u32 series-div-u32 series-mod-u32)
+      (UInt64 f64 1 series-add-u64 series-sub-u64 series-mul-u64 series-div-u64 series-mod-u64)
+      (Float64 i32 1.0 series-add-f64 series-sub-f64 series-mul-f64 series-div-f64
+               series-mod-f64 series-lt-f64 series-le-f64 series-gt-f64 series-ge-f64
+               series-eq-f64 series-ne-f64)))
+  (define wrong-series
+    (hash 'f64 (lambda () (series-new-f64 "wrong" '(1.0 2.0)))
+          'i32 (lambda () (series-new-i32 "wrong" '(1 2)))))
+  (settle!)
+  (define drops-before-wrong-dtypes (series-drop-count))
+  (define scalar-op-count
+    (for/sum ([row (in-list scalar-op-rows)])
+      (match-define (list* dtype wrong v ops) row)
+      (with-release ([s ((hash-ref wrong-series wrong)) series-drop])
+        (for ([op (in-list ops)])
+          (check-exn (regexp (format "^~a: invalid series dtype: expected `~a`, got `~a` .*`wrong`$"
+                                     op dtype wrong))
+                     (lambda () ((dynamic-require 'polars/private/foreign op) s v))
+                     (symbol->string op))))
+      (length ops)))
+  (check-equal? scalar-op-count 37)
+  (check >= (- (series-drop-count) drops-before-wrong-dtypes) (length scalar-op-rows)
+         "each wrong-dtype series is released at the end of its row")
+
+  (check-exn #rx"^series-not: " (lambda () (series-not owned-i32)))
+  (check-not-false (last-error-message) "series-not leaves its reason in the slot")
+  (series-drop (series-add-i32 owned-i32 1))
+  (check-false (last-error-message) "series-add-i32 clears the slot on entry")
+  (check-equal? (series->list (series-add-f64 owned-f64 1)) '(4.0 2.0 5.0 2.0 6.0))
+  (check-equal? (series->list (series-mul-f64 owned-f64 1/2)) '(1.5 0.5 2.0 0.5 2.5))
+  (check-equal? (series->list (series-lt-f64 owned-f64 3)) '(#f #t #f #t #f))
+  (check-exn #rx"^series-add-f64: contract violation\n  expected: real\\?"
+             (lambda () (series-add-f64 owned-f64 'x)))
+  (check-exn #rx"^series-eq-f64: contract violation\n  expected: Series-ptr\\?"
+             (lambda () (series-eq-f64 'x 1.0)))
   (check-exn #rx"^series-new-i32/vec: contract violation"
              (lambda () (series-new-i32/vec #f (vector 1))))
   (check-exn #rx"^dataframe-new: operation failed$"
@@ -1408,6 +1455,61 @@
   (check-equal? (for/list ([form (in-list bindings)] #:when (discards-reason? form)) (cadr form))
                 '()
                 "a v2 entry point records its reason: read it with call/foreign-error")
+  (define (fails-without-reason? form)
+    (match form
+      [(list 'define-compat _ ... '#:wrap (list 'allocator/or-fail _ ...) _ ...) #t]
+      [_ #f]))
+  (define (macro-name form)
+    (match form
+      [(list* (or 'define-syntax-parse-rule 'define-syntax-parser) (or (cons name _) name) _)
+       #:when (symbol? name)
+       name]
+      [_ #f]))
+  (define (elements v)
+    (match v
+      [(cons a d) (cons a (elements d))]
+      [_ '()]))
+  (define (subforms v)
+    (if (pair? v) (cons v (append-map subforms (elements v))) '()))
+  (define (or-fail-sites sources)
+    (define tops (map read-source sources))
+    (define definitions
+      (for*/list ([top (in-list tops)] [form (in-list (subforms top))] #:when (macro-name form))
+        form))
+    (define (generates? body generators)
+      (for/or ([form (in-list (subforms body))])
+        (or (fails-without-reason? form) (and (memq (car form) generators) #t))))
+    (define generators
+      (let grow ([names '()])
+        (define next
+          (for/list ([definition (in-list definitions)]
+                     #:when (generates? (cddr definition) names))
+            (macro-name definition)))
+        (if (= (length next) (length names)) names (grow next))))
+    (define (sites v)
+      (cond
+        [(or (not (pair? v)) (macro-name v)) '()]
+        [(fails-without-reason? v) (list (cadr v))]
+        [(memq (car v) generators) (list v)]
+        [else (append-map sites (elements v))]))
+    (append-map sites tops))
+  (check-equal? (sort (or-fail-sites (polars-sources #:dirs '("private"))) string<?
+                      #:key (lambda (site) (format "~s" site)))
+                (call-with-input-file (build-path polars-dir "tests" "allocator-or-fail-sites.rktd")
+                  read)
+                "a new allocator/or-fail discards any reason the entry point records")
+  (with-planted-sources (root ["private/planted.rkt"
+                               (format "#lang racket/base\n~s\n~s\n~s\n~s\n~s"
+                                       `(define-syntax-parse-rule (gen n:id)
+                                          (,compat n (_fun -> _Series-ptr/null)
+                                                   #:wrap (allocator/or-fail series-drop 'n)))
+                                       '(define-syntax-parse-rule (gen2 n:id) (gen n))
+                                       '(gen a)
+                                       '(gen2 b)
+                                       `(,compat direct (_fun -> _Series-ptr/null)
+                                                 #:wrap (allocator/or-fail series-drop 'direct)))])
+    (check-equal? (or-fail-sites (polars-sources root #:dirs '("private")))
+                  '((gen a) (gen2 b) direct)))
   (with-planted-sources (root ["tests/planted.rkt"
                                (format "#lang racket/base\n~s"
                                        `(,compat planted (_fun -> _DataFrame-ptr)))])
