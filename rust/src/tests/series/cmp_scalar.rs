@@ -40,68 +40,33 @@ fn cmp_f64_all_ops_against_scalar() {
     series_drop(s);
 }
 
-type ScalarOp = fn(*mut Series) -> *mut Series;
-
-const CMP_SCALAR_OPS: [(&str, ScalarOp, &str); 12] = [
-    ("series_lt_i32", |s| series_lt_i32(s, 1), "Int32"),
-    ("series_le_i32", |s| series_le_i32(s, 1), "Int32"),
-    ("series_gt_i32", |s| series_gt_i32(s, 1), "Int32"),
-    ("series_ge_i32", |s| series_ge_i32(s, 1), "Int32"),
-    ("series_eq_i32", |s| series_eq_i32(s, 1), "Int32"),
-    ("series_ne_i32", |s| series_ne_i32(s, 1), "Int32"),
-    ("series_lt_f64", |s| series_lt_f64(s, 1.0), "Float64"),
-    ("series_le_f64", |s| series_le_f64(s, 1.0), "Float64"),
-    ("series_gt_f64", |s| series_gt_f64(s, 1.0), "Float64"),
-    ("series_ge_f64", |s| series_ge_f64(s, 1.0), "Float64"),
-    ("series_eq_f64", |s| series_eq_f64(s, 1.0), "Float64"),
-    ("series_ne_f64", |s| series_ne_f64(s, 1.0), "Float64"),
+const CMP_SCALAR_OPS: &[ScalarRow] = scalar_ops![
+    "Int32" 1: [
+        series_lt_i32, series_le_i32, series_gt_i32, series_ge_i32,
+        series_eq_i32, series_ne_i32,
+    ],
+    "Float64" 1.0: [
+        series_lt_f64, series_le_f64, series_gt_f64, series_ge_f64,
+        series_eq_f64, series_ne_f64,
+    ],
 ];
 
-fn make_of(dtype: &str, name: &str) -> *mut Series {
-    match dtype {
-        "Int32" => make_i32(name, &[3, 4]),
-        _ => make_f64(name, &[3.0, 4.0]),
-    }
+#[test]
+fn the_cmp_table_holds_every_operator() {
+    assert_eq!(CMP_SCALAR_OPS.len(), 12);
 }
 
 #[test]
 fn cmp_scalar_ops_clear_a_stale_reason() {
-    for (name, op, dtype) in CMP_SCALAR_OPS {
-        let s = make_of(dtype, "xs");
-        set_last_error("stale");
-        let out = op(s);
-        assert!(!out.is_null(), "{}", name);
-        assert_eq!(recorded_error(), None, "{}", name);
-        series_drop(out);
-        series_drop(s);
-    }
+    assert_ops_clear_a_stale_reason(CMP_SCALAR_OPS);
 }
 
 #[test]
 fn cmp_scalar_ops_report_the_wrong_dtype() {
-    for (name, op, dtype) in CMP_SCALAR_OPS {
-        let wrong = if dtype == "Int32" { "Float64" } else { "Int32" };
-        let s = make_of(wrong, "wrong");
-        clear_last_error();
-        assert!(op(s).is_null(), "{}", name);
-        let reason = recorded_error().unwrap_or_else(|| panic!("{}", name));
-        let expected = format!("invalid series dtype: expected `{}`", dtype);
-        assert!(reason.contains(&expected), "{}: {}", name, reason);
-        assert!(reason.contains("`wrong`"), "{}: {}", name, reason);
-        series_drop(s);
-    }
+    assert_ops_report_the_wrong_dtype(CMP_SCALAR_OPS);
 }
 
 #[test]
 fn cmp_scalar_null_series_reports_it() {
-    for (name, op, _) in CMP_SCALAR_OPS {
-        clear_last_error();
-        assert!(op(ptr::null_mut()).is_null(), "{}", name);
-        assert_eq!(
-            recorded_error().as_deref(),
-            Some("series is null"),
-            "{}",
-            name
-        );
-    }
+    assert_ops_report_a_null_series(CMP_SCALAR_OPS);
 }

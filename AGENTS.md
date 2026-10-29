@@ -140,9 +140,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/private` and `polars/tests` and fails on one of these four result
   types without its allocator, or on a `_pointer` result. It also fails on
   `allocator/or-fail` around a `_v2` (or later) entry point, which records a
-  reason that `operation failed` would discard, and the set of bindings
-  under `polars/private` that `allocator/or-fail` wraps is a literal list
-  there, so a new one fails until it is listed.
+  reason that `operation failed` would discard, and on a site under
+  `polars/private` that binds through `allocator/or-fail` and is not in
+  `polars/tests/allocator-or-fail-sites.rktd`: a `define-compat` outside a
+  macro, by its name, or a use of a macro whose template holds one (or a
+  use of such a macro, at any depth), as the whole form.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -158,10 +160,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   raises `series: series has been dropped` (`expr: expression has been
   dropped`; the kind is the `who`, since no verb is known there), a second
   drop raises under the drop's own name, and the native release still runs
-  once (#131). The check is made as a call converts its arguments, outside
-  any atomic region, so a drop must not run while another thread uses the
-  same value: a drop between the conversion and the native call frees memory
-  the call then reads.
+  once (#131). The check is made as a call converts its arguments, inside
+  `call/foreign-error`'s `call-as-atomic` for a reasoned call and outside
+  any atomic region otherwise, so a drop must not run while another thread
+  uses the same value: a drop between the conversion and the native call of
+  an unreasoned one frees memory the call then reads.
 - Strings from Rust come back as a block (`str_out` / `str_list_out`,
   `rust/src/ffi/strings.rs`). A block is native-endian 64-bit words, and
   word 0 is its size in words. A single string has its UTF-8 length in word

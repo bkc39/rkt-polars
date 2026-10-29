@@ -27,7 +27,7 @@
          (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
-         (for-syntax racket/base racket/syntax syntax/parse))
+         (for-syntax racket/base racket/syntax (only-in racket/string string-replace) syntax/parse))
 
 (provide (except-out (all-defined-out)
                      series-sort dataframe-sort series-ref-cat series-ref-str series-ref-string
@@ -47,10 +47,10 @@
                      series-add-u64 series-sub-u64 series-mul-u64 series-div-u64 series-mod-u64
                      series-lt-i32 series-le-i32 series-gt-i32 series-ge-i32 series-eq-i32
                      series-ne-i32
+                     series-add-f64 series-sub-f64 series-mul-f64 series-div-f64 series-mod-f64
+                     series-lt-f64 series-le-f64 series-gt-f64 series-ge-f64 series-eq-f64
+                     series-ne-f64
                      (matching-identifiers-out #rx"^series-ref-.*/raw$" (all-defined-out))
-                     (matching-identifiers-out
-                      #rx"^series-(?:add|sub|mul|div|mod|lt|le|gt|ge|eq|ne)-(?:[iu](?:32|64)|f64)/raw$"
-                      (all-defined-out))
                      (matching-identifiers-out
                       #rx"^series-new-(?:[iu](?:8|16|32|64)|f32|f64|bool|str)(?:/vec)?$"
                       (all-defined-out))
@@ -1391,20 +1391,19 @@
     (pattern (~literal _int64) #:with range #'int64/c)
     (pattern (~literal _uint32) #:with range #'uint32/c)
     (pattern (~literal _uint64) #:with range #'uint64/c)
-    (pattern (~literal _double) #:attr range #f)))
+    (pattern (~literal _double*) #:with range #'real?)))
 
 (define-syntax-parse-rule (define-series-scalar-op name:id ctype:scalar-ctype)
-  #:with raw (format-id #'name "~a/raw" #'name)
-  #:do [(define base (symbol->string (syntax-e #'name)))]
-  #:with c-id (format-id #'name "~a" (regexp-replace* #rx"-" base "_"))
+  #:with raw (format-id #'here "~a/raw" #'name)
+  #:with name/who (format-id #'here "~a/who" #'name)
+  #:with c-id (format-id #'name "~a" (string-replace (symbol->string (syntax-e #'name)) "-" "_"))
   (begin
-    (define-compat raw
-      (_fun _Series-ptr ctype -> _Series-ptr/null)
-      #:c-id c-id
-      #:wrap (allocator series-drop))
-    (define (name s v)
-      (call/polars-reason 'name (lambda () (raw s v))))
-    (~? (provide (contract-out [name (->/c Series-ptr? ctype.range Series-ptr?)])))))
+    (define-reasoned (name s v) #:who-variant name/who
+      (define-compat raw
+        (_fun _Series-ptr ctype -> _Series-ptr/null)
+        #:c-id c-id
+        #:wrap (allocator series-drop)))
+    (provide (contract-out [name (->/c Series-ptr? ctype.range Series-ptr?)]))))
 
 (define-series-scalar-op series-add-i32 _int32)
 (define-series-scalar-op series-sub-i32 _int32)
@@ -1430,11 +1429,11 @@
 (define-series-scalar-op series-div-u64 _uint64)
 (define-series-scalar-op series-mod-u64 _uint64)
 
-(define-series-scalar-op series-add-f64 _double)
-(define-series-scalar-op series-sub-f64 _double)
-(define-series-scalar-op series-mul-f64 _double)
-(define-series-scalar-op series-div-f64 _double)
-(define-series-scalar-op series-mod-f64 _double)
+(define-series-scalar-op series-add-f64 _double*)
+(define-series-scalar-op series-sub-f64 _double*)
+(define-series-scalar-op series-mul-f64 _double*)
+(define-series-scalar-op series-div-f64 _double*)
+(define-series-scalar-op series-mod-f64 _double*)
 
 (define-owned-cpointer-type _DataFrame-ptr dataframe
   (define-compat dataframe-drop/raw
@@ -1586,12 +1585,12 @@
 (define-series-scalar-op series-eq-i32 _int32)
 (define-series-scalar-op series-ne-i32 _int32)
 
-(define-series-scalar-op series-lt-f64 _double)
-(define-series-scalar-op series-le-f64 _double)
-(define-series-scalar-op series-gt-f64 _double)
-(define-series-scalar-op series-ge-f64 _double)
-(define-series-scalar-op series-eq-f64 _double)
-(define-series-scalar-op series-ne-f64 _double)
+(define-series-scalar-op series-lt-f64 _double*)
+(define-series-scalar-op series-le-f64 _double*)
+(define-series-scalar-op series-gt-f64 _double*)
+(define-series-scalar-op series-ge-f64 _double*)
+(define-series-scalar-op series-eq-f64 _double*)
+(define-series-scalar-op series-ne-f64 _double*)
 
 (define ((series-str-op op/who who) s v)
   (with-release ([rhs (strings->series who "" (list v)) series-drop])
