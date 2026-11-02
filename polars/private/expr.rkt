@@ -7,8 +7,11 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in racket/contract/base [-> ->/c] ->* any/c contract-name contract-out or/c)
+         (only-in racket/contract flat-contract-with-explanation raise-blame-error)
+         (only-in racket/contract/base
+                  [-> ->/c] ->* and/c any/c contract-name contract-out listof or/c)
          (only-in racket/list filter-not index-of)
+         (only-in racket/match match)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          polars/private/expr-core
          polars/private/expr-dt
@@ -72,11 +75,12 @@
          expr-fill-null expr-fill-nan
          expr-abs expr-sign expr-floor expr-ceil expr-sqrt expr-exp expr-log1p
          expr-log expr-pow expr-clip
-         expr-lit-series expr-is-in expr-is-between
+         expr-lit-series expr-is-between
          expr-is-unique expr-is-duplicated
          expr-is-first-distinct expr-is-last-distinct
          expr-cum-sum expr-cum-prod expr-cum-min expr-cum-max expr-cum-count
-         expr-reverse expr-filter expr-gather
+         expr-reverse expr-filter
+         index-list/c membership-list/c
          expr-sum expr-mean expr-min expr-max
          expr-count expr-n-unique expr-first expr-last expr-median
          expr-over
@@ -98,7 +102,11 @@
                           Expr-ptr?)]
           [expr-head (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
           [expr-tail (->* (Expr-ptr?) (#:n (or/c #f size/c)) Expr-ptr?)]
-          [expr-slice (->/c Expr-ptr? int64/c int64/c Expr-ptr?)]
+          [expr-slice (->/c Expr-ptr? int64/c size/c Expr-ptr?)]
+          [expr-is-in (->* (Expr-ptr? (and/c (or/c Expr-ptr? Series-ptr? list?) membership-list/c))
+                           (#:who symbol?)
+                           Expr-ptr?)]
+          [expr-gather (->/c Expr-ptr? (or/c Expr-ptr? Series-ptr? index-list/c) Expr-ptr?)]
           [expr-std (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [expr-var (->* (Expr-ptr?) (#:ddof uint8/c) Expr-ptr?)]
           [lazyframe-explain (explain/c LazyFrame-ptr?)]
@@ -349,15 +357,13 @@
   (cond
     [(Expr-ptr? rhs) rhs]
     [(Series-ptr? rhs) (expr-lit-series rhs)]
-    [(list? rhs)
+    [else
      (define vals (filter-not polars-null? rhs))
      (define s
        (cond
          [(null? vals) (series-new-null "" (length rhs))]
          [(andmap int64/c vals) (series-new-i64 "" rhs)]
          [(andmap uint64/c vals) (series-new-u64 "" rhs)]
-         [(andmap exact-integer? vals)
-          (raise-argument-error who (format "~s" membership-integers/c) rhs)]
          [(andmap real? vals) (series-new-f64 "" (map-non-null exact->inexact rhs))]
          [(andmap string? vals) (series-new-str "" rhs)]
          [(andmap symbol? vals) (series-new-str "" (map-non-null symbol->string rhs))]
@@ -367,11 +373,36 @@
                (check-one-zone who vals)
                (series-new-temporal who "" rhs dtype))]
          [else (error who "is-in list must be homogeneous ints/reals/strings/symbols/booleans/gregor values, got ~v" rhs)]))
-     (expr-lit-series s)]
-    [else (error who "is-in expects an Expr, Series, or list of scalars, got ~v" rhs)]))
+     (expr-lit-series s)]))
 
-(define membership-integers/c
-  `(or/c (listof ,(contract-name int64/c)) (listof ,(contract-name uint64/c))))
+(define (integer-and-float vals)
+  (for/fold ([integer #f] [float #f] #:result (and integer float (list integer float)))
+            ([v (in-list vals)])
+    (values (or integer (and (exact-integer? v) v))
+            (or float (and (real? v) (not (exact-integer? v)) v)))))
+
+(define membership-integers/c (or/c (listof int64/c) (listof uint64/c)))
+
+(define (membership-explanation v)
+  (define vals (if (list? v) (filter-not polars-null? v) '()))
+  (match (integer-and-float vals)
+    [(list integer float)
+     (lambda (blame)
+       (raise-blame-error blame v
+                          (string-append "the list mixes integers and floats, which have no"
+                                         " common dtype\n  integer: ~e\n  float: ~e\n  given: ~e")
+                          integer float v))]
+    [_ #:when (and (andmap exact-integer? vals)
+                   (not (or (andmap int64/c vals) (andmap uint64/c vals))))
+     (lambda (blame)
+       (raise-blame-error blame v '(expected: "~s" given: "~e")
+                          (contract-name membership-integers/c) v))]
+    [_ #t]))
+
+(define membership-list/c
+  (flat-contract-with-explanation membership-explanation #:name 'membership-list/c))
+
+(define index-list/c (listof (or/c int64/c polars-null?)))
 
 (define (map-non-null f xs)
   (for/list ([x (in-list xs)])
@@ -460,9 +491,14 @@
   #:c-id expr_gather
   #:wrap (allocator expr-drop))
 
-;; indices may be an Expr, a Series, or a Racket list of integers
 (define (expr-gather e indices)
-  (expr-gather/raw e (->membership-expr 'expr-gather indices)))
+  (expr-gather/raw e (->index-expr indices)))
+
+(define (->index-expr indices)
+  (cond
+    [(Expr-ptr? indices) indices]
+    [(Series-ptr? indices) (expr-lit-series indices)]
+    [else (expr-lit-series (series-new-i64 "" indices))]))
 
 (define-compat expr-sort-by/raw
   (_fun _Expr-ptr
@@ -519,7 +555,8 @@
   (expr-tail/raw e (if n 1 0) (or n 0)))
 
 (define-compat expr-slice
-  (_fun _Expr-ptr _int64 _int64 -> _Expr-ptr)
+  (_fun _Expr-ptr _int64 _size -> _Expr-ptr)
+  #:c-id expr_slice_v2
   #:wrap (allocator expr-drop))
 
 ;; --- Phase A4: aggregations (collapse a column to one value) ---

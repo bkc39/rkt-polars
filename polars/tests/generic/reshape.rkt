@@ -267,6 +267,12 @@
       (match-define (list label sliced) via)
       (check-equal? (series->list (ref (sliced) "value")) expected
                     (format "~a ~a ~a" label offset length))))
+  (let ([nums (dataframe (list (series '(1 2 3 4 5) #:name "v")))])
+    (check-equal? (~> nums
+                      (select (slice (col "v") (- (expt 2 63)) (sub1 (expt 2 64))))
+                      (ref "v")
+                      series->list)
+                  '(1 2 3 4 5)))
 
   (define-runtime-path iris-csv "../../scribblings/guide/iris.csv")
   (define iris-plan

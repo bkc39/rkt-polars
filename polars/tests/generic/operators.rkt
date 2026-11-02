@@ -2,11 +2,13 @@
 
 (module+ test
   (require rackunit
+           racket/runtime-path
            (only-in ffi/unsafe/atomic call-as-atomic)
+           (only-in racket/file file->value)
            (only-in gregor date)
            (only-in gregor/period hours minutes)
            (only-in gregor/time time)
-           (only-in racket/match match-define)
+           (only-in racket/match match match-define)
            (prefix-in base: (only-in racket/base - /))
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr
@@ -19,11 +21,13 @@
            (only-in polars/private/resource with-release)
            (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
+           (only-in polars/private/generic/reshape select)
            (only-in polars/private/generic/operators
                     != < <= = > >= else-when mod otherwise p* p+ p- p-when p/ then when-pending)
+           (only-in (submod polars/private/generic/operands internal) on-side)
            (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col datetime drops-during floats ints ops-df polars-null prices
-                    settle! v64 withnull)
+                    Expr-ptr? col datetime drops-during floats ints ops-df polars-null polars-null?
+                    prices settle! v64 withnull)
            (only-in threading ~>))
 
   (define operand-ints (series '(1 2) #:name "x"))
@@ -251,4 +255,171 @@
                   (otherwise 0)))
   (check-exn exn:fail? (lambda () (else-when (when-pending '() #t) #t)))
   (check-equal? (let ([acc 0]) (p-when #t (set! acc 1)) acc) 1)
-  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0))
+  (check-equal? (let ([acc 0]) (p-when #f (set! acc 1)) acc) 0)
+  (let ()
+    (define tens (series '(10 20) #:dtype 'i8 #:name "n"))
+    (check-exn (regexp (string-append "^[+]: the result does not fit its dtype\n"
+                                      "  value: 9223372036854775807\n"
+                                      "  series dtype: 'int8\n  result dtype: 'int64"))
+               (lambda () (p+ tens (sub1 (expt 2 63)))))
+    (check-exn #rx"^-: the result does not fit its dtype\n  value: 300\n  series dtype: 'uint8\n"
+               (lambda () (p- (series '(1 2) #:dtype 'u8) 300)))
+    (define result-ranges
+      (hash 'int16 '(-32768 . 32767) 'int64 (cons (- (expt 2 63)) (sub1 (expt 2 63)))
+            'uint16 '(0 . 65535) 'uint64 (cons 0 (sub1 (expt 2 64)))))
+    (define (floor-div x y) (floor (base:/ x y)))
+    (define operator-procedures (hasheq '+ (list p+ +) '- (list p- -) '* (list p* *)
+                                        '/ (list p/ floor-div)))
+    (define (row name dt side v tag #:cells [cells '(10 20)])
+      (list name dt cells side v tag))
+    (define nulls (list polars-null polars-null))
+    (for ([row (list (row '+ 'i8 'right 300 'fits)
+                     (row '+ 'i8 'left (sub1 (expt 2 63)) 'overflows)
+                     (row '- 'i8 'right 300 'fits)
+                     (row '- 'i8 'left (- (sub1 (expt 2 63))) 'overflows)
+                     (row '* 'i8 'right -300 'fits)
+                     (row '* 'i8 'left (expt 2 62) 'overflows)
+                     (row '+ 'i32 'right (expt 2 40) 'fits)
+                     (row '+ 'i32 'right (sub1 (expt 2 63)) 'overflows)
+                     (row '- 'i32 'left (expt 2 40) 'fits)
+                     (row '- 'i32 'right (- (sub1 (expt 2 63))) 'overflows)
+                     (row '* 'i32 'right (- (expt 2 40)) 'fits)
+                     (row '* 'i32 'right (- (expt 2 62)) 'overflows)
+                     (row '+ 'u8 'right 300 'fits)
+                     (row '- 'u8 'right 300 'overflows)
+                     (row '- 'u8 'left 300 'fits)
+                     (row '- 'u8 'right (expt 2 40) 'overflows)
+                     (row '* 'u8 'left (expt 2 40) 'fits)
+                     (row '* 'u8 'right (expt 2 62) 'overflows)
+                     (row '+ 'u32 'right (expt 2 40) 'fits)
+                     (row '- 'u32 'right (expt 2 40) 'overflows)
+                     (row '* 'u32 'right (expt 2 40) 'fits)
+                     (row '* 'u32 'left (expt 2 62) 'overflows)
+                     (row '/ 'i8 'left -32768 'overflows #:cells '(-1 2))
+                     (row '/ 'i8 'left -32768 'fits #:cells '(1 2))
+                     (row '/ 'i8 'left -32767 'fits #:cells '(-1 2))
+                     (row '/ 'i8 'left (- (expt 2 63)) 'overflows #:cells '(-1))
+                     (row '/ 'i8 'right -32768 'fits #:cells '(-1 2))
+                     (row '/ 'i8 'right (- (expt 2 63)) 'fits #:cells '(-1 2))
+                     (row '+ 'i8 'right 300 'fits #:cells '())
+                     (row '+ 'i8 'right 300 'fits #:cells nulls)
+                     (row '/ 'i8 'left -32768 'fits #:cells '())
+                     (row '/ 'i8 'left -32768 'fits #:cells nulls)
+                     (row '/ 'i8 'left -32768 'overflows #:cells (list polars-null -1))
+                     (row '/ 'i8 'left -32768 'fits #:cells (list polars-null 2)))])
+      (match-define (list name dt cells side v tag) row)
+      (match-define (list op exact) (hash-ref operator-procedures name))
+      (define s (series cells #:dtype dt #:name "n"))
+      (define result-dtype
+        (~> (dataframe (list s)) (select (expr-alias (on-side side op (col "n") v) "n")) (ref "n")
+            dtype))
+      (define exact-values
+        (for/list ([x cells]) (if (polars-null? x) x (on-side side exact x v))))
+      (match-define (cons low high) (hash-ref result-ranges result-dtype))
+      (define label (format "~a ~a ~a ~a ~a" dt cells name side v))
+      (check-equal? (if (for/and ([r exact-values] #:unless (polars-null? r)) (<= low r high))
+                        'fits
+                        'overflows)
+                    tag
+                    label)
+      (match tag
+        ['fits
+         (define got (on-side side op s v))
+         (check-equal? (list (series-name got) (dtype got) (series->list got))
+                       (list "n" result-dtype exact-values)
+                       label)]
+        ['overflows
+         (check-exn (lambda (e)
+                      (and (exn:fail:contract? e)
+                           (regexp-match?
+                            (format (string-append "^~a: the result does not fit its dtype\n"
+                                                   "  value: ~a\n  series dtype: '~a\n"
+                                                   "  result dtype: '~a$")
+                                    (regexp-quote (symbol->string name)) v (dtype s) result-dtype)
+                            (exn-message e))))
+                    (lambda () (on-side side op s v))
+                    label)]))
+    (define (refused-drops count)
+      (drops-during count
+                    (lambda ()
+                      (check-exn exn:fail:contract? (lambda () (p+ tens (sub1 (expt 2 63))))))))
+    (check-equal? (list (refused-drops series-drop-count) (refused-drops dataframe-drop-count))
+                  '(3 4))
+    (define negatives (series '(-1 2) #:dtype 'i8 #:name "n"))
+    (define ((refused thunk))
+      (check-exn #rx"the result does not fit its dtype" thunk))
+    (for ([row (list (list "refused +" (refused (lambda () (p+ tens (sub1 (expt 2 63))))) 9)
+                     (list "fitting +" (lambda () (series-drop (p+ tens 300))) 9)
+                     (list "refused / left" (refused (lambda () (p/ -32768 negatives))) 9))])
+      (match-define (list label call expected) row)
+      (check-equal? (drops-during expr-drop-count call) expected label)
+      (check-equal? (drops-during expr-drop-count (lambda () (call) (settle!))) expected label)))
+
+  (define-runtime-path division-expected-path "division-expected.rktd")
+  (let ()
+    (match-define `((python-polars ,_) (rows ,division-rows ...))
+      (file->value division-expected-path))
+    (define division-values
+      (hash 'left (hash 'signed '(10 -7 null) 'unsigned '(10 7 null) 'boolean '(#t #f null)
+                        'null '(null null null) 'float '(10.0 -7.0 null))
+            'right (hash 'signed '(3 -2 0) 'unsigned '(3 2 0) 'boolean '(#t #t #f)
+                         'null '(null null null) 'float '(3.0 -2.0 0.0))))
+    (define (division-kind dt)
+      (match dt
+        [(or 'int64 'int32) 'signed]
+        [(or 'uint8 'uint64) 'unsigned]
+        [(or 'boolean 'null) dt]
+        ['float64 'float]))
+    (define (division-column side name dt)
+      (series (for/list ([v (hash-ref (hash-ref division-values side) (division-kind dt))])
+                (if (eq? v 'null) polars-null v))
+              #:name name #:dtype dt))
+    (define (division-outcome thunk)
+      (with-handlers ([exn:fail? (lambda (e)
+                                   (list 'raises (if (exn:fail:contract? e) 'contract 'polars)))])
+        (define got (thunk))
+        (list 'series (series-name got) (dtype got)
+              (for/list ([v (series->list got)]) (if (eq? v polars-null) 'null v)))))
+    (define (python-division-outcome out)
+      (match out
+        [(list 'raises (or 'TypeError 'ValueError 'OverflowError)) '(raises contract)]
+        [(list 'raises _) '(raises polars)]
+        [_ out]))
+    (for ([row (in-list division-rows)])
+      (match row
+        [(list 'series left right expected)
+         (check-equal? (division-outcome
+                        (lambda () (p/ (division-column 'left "a" left)
+                                       (division-column 'right "b" right))))
+                       (python-division-outcome expected)
+                       (format "~a / ~a" left right))]
+        [(list 'value left side v eager expression)
+         (define a (division-column 'left "a" left))
+         (define ours (division-outcome (lambda () (on-side side p/ a v))))
+         (define accepted
+           (cond
+             [(and (equal? ours '(raises contract)) (exact-integer? v) (>= v (expt 2 63))
+                   (memq left '(int64 int32 uint8 boolean null)))
+              ours]
+             [(and (eq? (car eager) 'raises) (equal? ours (python-division-outcome expression)))
+              ours]
+             [else (python-division-outcome eager)]))
+         (check-equal? ours accepted (format "~a ~a ~a" left side v))])))
+
+  (let ()
+    (define v-u64 (p/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64)))
+    (check-equal? (list (series-name v-u64) (dtype v-u64) (series->list v-u64))
+                  '("v" float64 (3.0 -4.0)))
+    (define (division-drops divisor)
+      (drops-during series-drop-count
+                    (lambda () (series-drop (p/ (series '(10 -7) #:name "v") divisor)))))
+    (define u64-divisor (series '(3 2) #:dtype 'u64))
+    (define i64-divisor (series '(3 2)))
+    (check-equal? (division-drops u64-divisor) (add1 (division-drops i64-divisor)))
+    (define signed-unsigned
+      (dataframe (list (series '(10 -7) #:name "i") (series '(3 2) #:dtype 'u64 #:name "u"))))
+    (check-equal? (~> signed-unsigned (select (p/ (col "i") (col "u"))) (ref "i") series->list)
+                  (list (exact->inexact 10/3) -3.5))
+    (check-equal? (~> signed-unsigned (select (p/ (col "i") (expt 2 63))) (ref "i") series->list)
+                  (list (exact->inexact (base:/ 10 (expt 2 63)))
+                        (exact->inexact (base:/ -7 (expt 2 63)))))))

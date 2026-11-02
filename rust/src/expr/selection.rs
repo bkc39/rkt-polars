@@ -94,16 +94,20 @@ pub extern "C" fn expr_tail(
 }
 
 #[no_mangle]
-pub extern "C" fn expr_slice(
+pub extern "C" fn expr_slice_v2(
     e: *const Expr,
     offset: i64,
-    length: i64,
+    length: usize,
 ) -> *mut Expr {
     if e.is_null() {
         return ptr::null_mut();
     }
     let ee = unsafe { (*e).clone() };
-    Box::into_raw(Box::new(ee.slice(lit(offset), lit(length))))
+    let start = offset.max(-i64::MAX);
+    let skipped = usize::try_from(start.abs_diff(offset)).unwrap_or(usize::MAX);
+    let rows =
+        u64::try_from(length.saturating_sub(skipped)).unwrap_or(u64::MAX);
+    Box::into_raw(Box::new(ee.slice(lit(start), lit(rows))))
 }
 
 #[no_mangle]

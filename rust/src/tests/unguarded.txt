@@ -79,7 +79,7 @@ expr_over builder
 expr_rank builder
 expr_shift builder
 expr_shift_and_fill builder
-expr_slice builder
+expr_slice_v2 builder
 expr_sort_by_with_options builder
 expr_sort_with_options builder
 expr_str_contains builder

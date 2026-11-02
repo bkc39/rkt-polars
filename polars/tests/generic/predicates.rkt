@@ -46,10 +46,38 @@
     (~> gappy (select (is-in "x" rhs)) (ref "x") series->list))
   (check-equal? (membership (list polars-null)) (list #f polars-null #f))
   (check-equal? (membership (list 1 polars-null)) (list #t polars-null #f))
-  (check-equal? (membership (list 1.0 polars-null 3)) (list #t polars-null #t))
+  (check-exn #rx"^is-in: contract violation;\n the list mixes integers and floats"
+             (lambda () (membership (list 1.0 polars-null 3))))
+  (for ([rhs (list (list 1 2.5) (list 2.5 1) (list 1 1/2) (list (expt 2 63) 2.5) (list 1 +nan.0))])
+    (match-define (or (list (? exact-integer? integer) float) (list float integer)) rhs)
+    (check-exn (lambda (e)
+                 (and (exn:fail:contract? e)
+                      (regexp-match?
+                       (regexp (format (string-append "^is-in: contract violation;\n"
+                                                      " the list mixes integers and floats, "
+                                                      "which have no common dtype\n"
+                                                      "  integer: ~a\n  float: ~a\n  given: ")
+                                       integer
+                                       (regexp-quote (format "~a" float))))
+                       (exn-message e))))
+               (lambda () (membership rhs))
+               (format "~a" rhs)))
+  (check-equal? (membership (list 1.0 2.5)) (list #t polars-null #f))
+  (check-equal? (membership (list 1.0 polars-null 3.0)) (list #t polars-null #t))
+  (check-equal? (~> (dataframe (list (series '(0.5 1.0) #:name "f")))
+                    (select (is-in "f" (list 0.25 1/2)))
+                    (ref "f")
+                    series->list)
+                '(#t #f))
+  (check-exn exn:fail:contract?
+             (lambda ()
+               (~> (dataframe (list (series (list (add1 (expt 2 63))) #:name "u" #:dtype 'u64)))
+                   (select (is-in "u" (list (expt 2 63) 2.5))))))
   (check-equal? (membership '()) (list #f polars-null #f))
   (check-equal? (membership (list (expt 2 63) 3)) (list #f polars-null #t))
   (check-exn #rx"^is-in: contract violation\n" (lambda () (membership (list -1 (expt 2 63)))))
+  (check-exn #rx"^is-in: contract violation\n  expected: [(]or/c Expr-ptr[?] series[?] "
+             (lambda () (is-in "x" 5)))
   (for ([column (list (series (list "a" polars-null) #:name "x")
                       (series (list #t polars-null) #:name "x")
                       (series (list polars-null polars-null) #:name "x"))]

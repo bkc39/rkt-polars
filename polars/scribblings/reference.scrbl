@@ -360,7 +360,13 @@ total
   infinity, with a null where the divisor is 0: @racket[(/ (col "v") 2)] gives
   -4 for -7, unlike @racket[quotient], and the one-argument reciprocal of an
   integer column is 1, -1, 0 or null. Python's @tt{/} gives floats there;
-  @racket[cast] an operand to @racket['f64] first for the same result.
+  @racket[cast] an operand to @racket['f64] first for the same result. A
+  signed integer series beside a @racket['uint64] one has no integer
+  supertype, so the quotient is @racket['float64], floored, as Python's
+  @tt{//} gives it. API gap: the expression form does not floor there yet, so
+  @racket[(/ (col "i") (col "u"))] of an Int64 and a UInt64 column, or of an
+  integer column and an integer from @racket[(expt 2 63)], is the unfloored
+  @racket['float64] quotient (#303).
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -373,6 +379,7 @@ total
 (/ (series '(1 2 4)))
 (/ (series '(1 -1 2 -2 0)))
 (/ (series '(-7 7 1)) (series '(2 2 0)))
+(/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64))
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
 (+ (series '(1 2)) 2.5)
@@ -613,6 +620,7 @@ far-zoned
 (head nums 2)
 (tail nums 2)
 (slice nums -2 (expt 2 40))
+(~> nums (select (slice (col "v") (- (expt 2 63)) (sub1 (expt 2 64)))))
 (eval:error (head nums -1))]}
 
 @deftogether[(@defproc[(unique [x (or/c series? dataframe?)]) (or/c series? dataframe?)]
@@ -1417,13 +1425,15 @@ stations
                              [#:seed seed (or/c uint64/c #f) #f])
                        Expr-ptr?]
               @defproc[(gather [x (or/c Expr-ptr? string?)]
-                               [indices (or/c Expr-ptr? series? (listof exact-integer?))])
+                               [indices (or/c Expr-ptr? series?
+                                              (listof (or/c int64/c polars-null?)))])
                        Expr-ptr?])]{
   Ordering within a column (@tt{.rank}, @tt{.gather}); @racket[sort-by] is
   documented with the other sorts. @racket[rank] numbers each
   value by its place in the sorted order, ties resolved by
   @racket[#:method]; the result is @racket['uint32], or @racket['float64]
-  for @racket['average]. @racket[gather] picks values by position. Each
+  for @racket['average]. @racket[gather] picks values by position, and a
+  @racket[polars-null] position gives a null. Each
   lifts a column name with @racket[col], and each is computed per group
   under @racket[over].
 
@@ -1434,6 +1444,7 @@ stations
     (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
 (~> scores (select (gather "name" '(3 0))))
+(~> scores (select (gather "score" (list 0 polars-null))))
 (eval:error (rank "score" #:method 'first))]}
 
 @deftogether[(@defproc[(shift [x (or/c Expr-ptr? string?)]
@@ -1600,10 +1611,14 @@ stations
   A null is never a member, so a null element of @racket[x] gives null.
   Its integers all fit Int64 or all lie from 0 to @racket[(sub1 (expt 2 64))]
   (UInt64); any other, such as a negative integer beside one past Int64,
-  which Python reads as Int128, is a contract error. Its datetimes share one zone, or
-  none: a list that mixes naive datetimes and moments, or moments in two
-  zones, raises, as Python's @tt{is_in} does, although @racket[series] builds
-  a column from the same list.
+  which Python reads as Int128, is a contract error. Integers and floats do not
+  mix: a list holding an exact integer and a flonum (or an exact non-integer) is
+  a contract error, as Python's @tt{is_in} raises a @tt{TypeError}; write the
+  integers as floats (@racket[3.0]). Python reads @tt{[2.5, 1]}, whose first
+  element is a float, as floats; either order is refused here. Its datetimes
+  share one zone, or none: a list that mixes naive datetimes and moments, or
+  moments in two zones, raises, as Python's @tt{is_in} does, although
+  @racket[series] builds a column from the same list.
 
   @examples[#:eval ev
 (define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
@@ -1612,6 +1627,8 @@ stations
 (~> gappy (select (is-in "x" '())))
 (~> gappy (select (is-in "x" (list (expt 2 63) 3))))
 (eval:error (~> gappy (select (is-in "x" (list -1 (expt 2 63))))))
+(~> gappy (select (is-in "x" (list 1.0 2.5))))
+(eval:error (~> gappy (select (is-in "x" (list 1 2.5)))))
 (~> gappy (select (is-between "x" 2 5)))]}
 
 @deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
@@ -2188,7 +2205,10 @@ a @racket['null] series (where Python's eager operators raise) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
-an integer series an integer within Int64 past the dtype's range, in
+an integer series an integer within Int64 past the dtype's range (unless a
+row's exact result falls outside the dtype that form gives, which raises
+@racket[exn:fail:contract] naming the value, as Python's eager operator raises
+an @tt{OverflowError} for any such integer), in
 @racket[/] a negative integer beside an unsigned series, and beside a
 @racket['boolean] series an integer in @racket[/]. An integer from
 @racket[(expt 2 63)] to @racket[(sub1 (expt 2 64))], which only @racket[lit]'s
@@ -2207,7 +2227,9 @@ datetime series aside), a time in arithmetic, a date in @racket[mod] of a
 float series, a negative integer beside an unsigned series, or a value no
 literal takes. @racket[mod] refuses a temporal series, the left one when both
 are series, whatever the other operand, as Python's @tt{%} does. A
-@racket[/] of integer, boolean or null operands is integer division (two
+@racket[/] of integer, boolean or null operands is integer division (the
+floored @racket['float64] quotient for a signed integer series beside a
+UInt64 one; two
 Null operands aside, which give @racket['float64]); any other is Python's
 true division, which first casts an integer, boolean or null series, a
 Decimal series under a boolean or a temporal value on its left, and a series
@@ -2221,6 +2243,8 @@ where they still differ.
 
 @examples[#:eval ev #:label #f
 (+ (series '(1 2) #:dtype 'u8) 300)
+(eval:error (+ (series '(10 20) #:dtype 'i8) (sub1 (expt 2 63))))
+(eval:error (- (series '(1 2) #:dtype 'u8) 300))
 (+ (series '(1 2) #:dtype 'u64) (expt 2 63))
 (eval:error (+ (series '(1 2)) (expt 2 63)))
 (+ (series '(1 2)) "x")

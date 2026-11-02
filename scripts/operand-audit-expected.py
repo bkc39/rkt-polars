@@ -7,100 +7,22 @@ rows where it differs (--accept admits new and changed rows; see AGENTS.md).
 """
 
 import datetime as dt
-import decimal
 import fractions
-import json
 import pathlib
+import sys
 import warnings
 import zoneinfo
 
 import polars as pl
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from rktd import Sym, datum, outcome
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DATA = ROOT / "polars" / "scribblings" / "data"
 OUT = ROOT / "polars" / "tests" / "generic" / "operand-audit.rktd"
 PARIS = zoneinfo.ZoneInfo("Europe/Paris")
 warnings.simplefilter("ignore")
-
-
-class Sym(str):
-    pass
-
-
-def datum(v):
-    if v is None:
-        return "null"
-    if isinstance(v, Sym):
-        return str(v)
-    if isinstance(v, bool):
-        return "#t" if v else "#f"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, fractions.Fraction):
-        return f"{v.numerator}/{v.denominator}" if v.denominator != 1 else str(v.numerator)
-    if isinstance(v, float):
-        if v != v:
-            return "+nan.0"
-        if v in (float("inf"), float("-inf")):
-            return "+inf.0" if v > 0 else "-inf.0"
-        return repr(v)
-    if isinstance(v, decimal.Decimal):
-        return datum(fractions.Fraction(v))
-    if isinstance(v, str):
-        return json.dumps(v, ensure_ascii=False)
-    if isinstance(v, (list, tuple)):
-        return "(" + " ".join(datum(x) for x in v) + ")"
-    if isinstance(v, dt.datetime):
-        fields = [v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond * 1000]
-        if v.tzinfo is None:
-            return datum([Sym("datetime"), *fields])
-        return datum([Sym("moment"), *fields, v.tzinfo.key])
-    if isinstance(v, dt.date):
-        return datum([Sym("date"), v.year, v.month, v.day])
-    if isinstance(v, dt.time):
-        return datum([Sym("time"), v.hour, v.minute, v.second, v.microsecond * 1000])
-    if isinstance(v, dt.timedelta):
-        return datum([Sym("duration-us"), v // dt.timedelta(microseconds=1)])
-    raise TypeError(repr(v))
-
-
-UNITS = {"ms": "milliseconds", "us": "microseconds", "ns": "nanoseconds"}
-DTYPES = {
-    pl.Int8: "int8", pl.Int16: "int16", pl.Int32: "int32", pl.Int64: "int64",
-    pl.Int128: "int128", pl.UInt8: "uint8", pl.UInt16: "uint16", pl.UInt32: "uint32",
-    pl.UInt64: "uint64", pl.Float32: "float32", pl.Float64: "float64",
-    pl.String: "string", pl.Boolean: "boolean", pl.Date: "date", pl.Time: "time",
-    pl.Categorical: "categorical", pl.Null: "null", pl.Binary: "binary",
-}
-
-
-def dtype_datum(d):
-    if isinstance(d, pl.Datetime):
-        return [Sym("datetime"), Sym(UNITS[d.time_unit]), d.time_zone or False]
-    if isinstance(d, pl.Duration):
-        return [Sym("duration"), Sym(UNITS[d.time_unit])]
-    if isinstance(d, pl.Decimal):
-        return [Sym("decimal"), d.precision, d.scale]
-    if isinstance(d, pl.Enum):
-        return [Sym("enum"), *map(Sym, d.categories.to_list())]
-    return Sym(DTYPES[d.base_type()])
-
-
-def cell(v, categorical):
-    return Sym(v) if categorical and v is not None else v
-
-
-def outcome(f):
-    try:
-        s = f()
-    except Exception as e:
-        return [Sym("raises"), Sym(type(e).__name__)]
-    if not isinstance(s, pl.Series):
-        return [Sym("value"), s]
-    categorical = isinstance(s.dtype, (pl.Categorical, pl.Enum))
-    return [Sym("series"), s.name, dtype_datum(s.dtype),
-            [cell(v, categorical) for v in s.to_list()]]
-
 
 prices = pl.read_parquet(DATA / "produce.parquet")["price"].head(2).alias("n")
 NUMBER_TEXT = [1e-05, 0.0001, 1e16, 1e22, float("inf"), float("-inf"), float("nan"), -0.0,
@@ -132,9 +54,9 @@ FIXTURES = SERIES + [
 ]
 BY_LABEL = dict(FIXTURES)
 
-PLAIN = [1, -1, 300, 2**40, 2**63, 2**64 - 1, fractions.Fraction(1, 3), 2.5, "x", Sym("x"), True, None,
-         dt.date(2024, 1, 1), dt.time(1), dt.timedelta(hours=1), dt.datetime(2024, 1, 1),
-         dt.datetime(2024, 1, 1, tzinfo=PARIS)]
+PLAIN = [1, -1, 300, 2**40, 2**63 - 1, 2**63, 2**64 - 1, fractions.Fraction(1, 3), 2.5, "x",
+         Sym("x"), True, None, dt.date(2024, 1, 1), dt.time(1), dt.timedelta(hours=1),
+         dt.datetime(2024, 1, 1), dt.datetime(2024, 1, 1, tzinfo=PARIS)]
 
 
 def python_value(v):

@@ -6,16 +6,17 @@
          (only-in racket/math infinite? nan?)
          (only-in polars/private/foreign
                   call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
-                  polars-null? series-drop series-dtype series-len series-name)
+                  polars-null? series-drop series-dtype series-len series-name series-value)
          (only-in polars/private/expr
-                  expr-alias expr-all expr-drop lazyframe-collect/raw lazyframe-select lit/who)
+                  expr-alias expr-all expr-drop expr-eq expr-max expr-min lazyframe-collect/raw
+                  lazyframe-select lit/who)
          (only-in (submod polars/private/expr internal) call-with-plan)
          (only-in polars/private/c-integer int64/c)
          (only-in polars/private/expr-core lit-integer/c)
          (only-in polars/private/generic/core series? wrap-series)
          (only-in polars/private/generic/dtype
                   coerce-elements dtype->constructor numeric-dtype? temporal-dtype?)
-         (only-in polars/private/resource with-release)
+         (only-in polars/private/resource with-release with-releases)
          (only-in polars/private/series series-repeat-temporal)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
 
@@ -24,7 +25,8 @@
          const-series
          expression-form-op
          operand-action
-         series-through-expr)
+         series-through-expr
+         series-through-expr/raw)
 
 (define (const-series who dt n value #:name [name ""])
   (wrap-series
@@ -41,14 +43,30 @@
               ['int (cons (- (quotient limit 2)) (sub1 (quotient limit 2)))]
               ['uint (cons 0 (sub1 limit))]))))
 
-(define (operator-classes who)
-  (match who
-    ['+ '(add arithmetic)]
-    ['* '(mul arithmetic)]
-    ['/ '(div arithmetic)]
-    ['mod '(mod arithmetic)]
-    ['- '(arithmetic)]
-    [(or '= '!= '< '> '<= '>=) '(compare)]))
+(struct operator (classes exact))
+
+(define (operator-row classes #:exact [exact #f])
+  (operator classes exact))
+
+(define comparison (operator-row '(compare)))
+
+(define operators
+  (hasheq '+ (operator-row '(add arithmetic) #:exact +)
+          '- (operator-row '(sub arithmetic) #:exact -)
+          '* (operator-row '(mul arithmetic) #:exact *)
+          '/ (operator-row '(div arithmetic))
+          'mod (operator-row '(mod arithmetic))
+          '= comparison
+          '!= comparison
+          '< comparison
+          '> comparison
+          '<= comparison
+          '>= comparison))
+
+(define expression-actions '(expression integer-expression checked-expression checked-quotient))
+
+(define (expression-action? action)
+  (and (memq action expression-actions) #t))
 
 (define (dtype-classes dt)
   (match dt
@@ -107,6 +125,9 @@
     [div        float                 (integer real)                      (sided float64 expression)]
     [div        boolean               integer                             expression]
     [div        integer               real                                (sided float64 expression)]
+    [(add sub mul) integer            wide-integer                        checked-expression]
+    [div        integer               wide-integer
+                                      (sided checked-quotient expression)]
     [_          integer               wide-integer                        expression]
     [div        integer               negative-integer                    expression]
     [compare    (string categorical)  text                                same]
@@ -138,7 +159,7 @@
     [(? list?) (ormap (lambda (p) (and (memq p classes) #t)) pattern)]))
 
 (define (operand-action who dt v side)
-  (define ops (operator-classes who))
+  (define ops (operator-classes (hash-ref operators who)))
   (define dts (dtype-classes dt))
   (define value (list (operand-class dt v)))
   (define rule
@@ -263,34 +284,87 @@
 (define (call-with-logical-operand who s other proc)
   (call-with-lifted (logical-operand who s other) other proc))
 
+(define ((collect-for who) plan)
+  (call/foreign-error who (lambda () (lazyframe-collect/raw plan))))
+
 (define (series-through-expr who s build)
+  (wrap-series (series-through-expr/raw who s build)))
+
+(define (series-through-expr/raw who s build)
   (define name (series-name s))
-  (define (collect plan)
-    (call/foreign-error who (lambda () (lazyframe-collect/raw plan))))
   (with-release ([frame (dataframe-new (list s)) dataframe-drop]
                  [all (expr-all) expr-drop]
                  [built (build all) expr-drop]
                  [named (expr-alias built name) expr-drop]
                  [out (call-with-plan frame
                                       (lambda (source) (lazyframe-select source (list named)))
-                                      collect)
+                                      (collect-for who))
                       dataframe-drop])
-    (wrap-series (dataframe-column out name))))
+    (dataframe-column out name)))
+
+(define (series-scalars who s reducers)
+  (define names (for/list ([i (in-range (length reducers))]) (number->string i)))
+  (with-release ([all (expr-all) expr-drop])
+    (with-releases ([named ([reduce (in-list reducers)] [name (in-list names)])
+                           (with-release ([reduced (reduce all) expr-drop])
+                             (expr-alias reduced name))
+                           expr-drop])
+      (with-release ([frame (dataframe-new (list s)) dataframe-drop]
+                     [out (call-with-plan frame
+                                          (lambda (source) (lazyframe-select source named))
+                                          (collect-for who))
+                          dataframe-drop])
+        (for/list ([name (in-list names)])
+          (with-release ([column (dataframe-column out name) series-drop])
+            (series-value who column 0)))))))
+
+(define (on-side side op x value)
+  (match side
+    ['right (op x value)]
+    ['left (op value x)]))
 
 (define (expression-form-op who expr-op a b)
   (define (literal s v side)
     (match (and (series? s) (not (series? v)) (operand-action who (series-dtype s) v side))
-      ['expression (list v)]
-      ['integer-expression (list (if v 1 0))]
+      ['integer-expression (list (if v 1 0) 'expression)]
+      [(? expression-action? action) (list v action)]
       [_ #f]))
+  (define (run s value action side)
+    (with-release ([v (lit/who who value) expr-drop])
+      (fitting-result who s value action side
+                      (series-through-expr who s (lambda (e) (on-side side expr-op e v))))))
   (match* ((literal a b 'right) (literal b a 'left))
-    [((list value) _)
-     (with-release ([v (lit/who who value) expr-drop])
-       (series-through-expr who a (lambda (e) (expr-op e v))))]
-    [(_ (list value))
-     (with-release ([v (lit/who who value) expr-drop])
-       (series-through-expr who b (lambda (e) (expr-op v e))))]
+    [((list value action) _) (run a value action 'right)]
+    [(_ (list value action)) (run b value action 'left)]
     [(_ _) #f]))
 
+(define (series-extremes who s)
+  (series-scalars who s (list expr-min expr-max)))
+
+(define (holds-minus-one? who s)
+  (define (any-minus-one all)
+    (with-release ([minus-one (lit/who who -1) expr-drop]
+                   [is-minus-one (expr-eq all minus-one) expr-drop])
+      (expr-max is-minus-one)))
+  (equal? (series-scalars who s (list any-minus-one)) '(#t)))
+
+(define (fitting-result who s value action side out)
+  (define result-dtype (series-dtype out))
+  (define exact (operator-exact (hash-ref operators who)))
+  (define overflows?
+    (match* (action (hash-ref integer-ranges result-dtype #f))
+      [('checked-expression (cons low high))
+       (for/or ([x (in-list (series-extremes who s))] #:unless (polars-null? x))
+         (not (<= low (on-side side exact x value) high)))]
+      [('checked-quotient (cons low _)) (and (= value low) (holds-minus-one? who s))]
+      [(_ _) #f]))
+  (cond
+    [overflows?
+     (with-release ([refused out series-drop])
+       (raise-arguments-error who "the result does not fit its dtype"
+                              "value" value "series dtype" (series-dtype s)
+                              "result dtype" result-dtype))]
+    [else out]))
+
 (module+ internal
-  (provide python-str))
+  (provide expression-action? on-side python-str))

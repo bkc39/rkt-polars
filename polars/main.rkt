@@ -31,7 +31,8 @@
 (provide-public
  #:internal internal-names
  [polars/private/expr ->expr/who expr-cast-to expr-lit-u64 expr-meta-output-name/raw
-  expr-name-keep lit/who lazyframe-collect/raw null-behavior/c rank-method/c]
+  expr-name-keep index-list/c lit/who lazyframe-collect/raw membership-list/c null-behavior/c
+  rank-method/c]
  [polars/private/foreign
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
