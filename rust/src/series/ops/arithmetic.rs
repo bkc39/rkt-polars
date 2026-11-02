@@ -1,5 +1,8 @@
 use crate::prelude::*;
-use crate::{clear_last_error, guard_panic, record, set_last_error};
+use crate::{
+    boxed_result, clear_last_error, deref_arg, guard_panic, record,
+    set_last_error,
+};
 
 pub(crate) fn series_arith_result<F>(
     left_ptr: *mut Series,
@@ -77,14 +80,10 @@ macro_rules! arith_scalar {
             s_ptr: *mut Series,
             rhs: $rhs_ty,
         ) -> *mut Series {
-            if s_ptr.is_null() {
-                return ptr::null_mut();
-            }
-            let s = unsafe { &*s_ptr };
-            match s.$downcast() {
-                Ok(ca) => Box::into_raw(Box::new($op(ca, rhs).into_series())),
-                Err(_) => ptr::null_mut(),
-            }
+            boxed_result(|| {
+                let s = unsafe { deref_arg(s_ptr, "series") }?;
+                Ok($op(s.$downcast()?, rhs).into_series())
+            })
         }
     };
 }

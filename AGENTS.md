@@ -140,7 +140,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/private` and `polars/tests` and fails on one of these four result
   types without its allocator, or on a `_pointer` result. It also fails on
   `allocator/or-fail` around a `_v2` (or later) entry point, which records a
-  reason that `operation failed` would discard.
+  reason that `operation failed` would discard, and on a site under
+  `polars/private` that binds through `allocator/or-fail` and is not in
+  `polars/tests/allocator-or-fail-sites.rktd`: a `define-compat` outside a
+  macro, by its name, or a use of a macro whose template holds one (or a
+  use of such a macro, at any depth), as the whole form.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -156,10 +160,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   raises `series: series has been dropped` (`expr: expression has been
   dropped`; the kind is the `who`, since no verb is known there), a second
   drop raises under the drop's own name, and the native release still runs
-  once (#131). The check is made as a call converts its arguments, outside
-  any atomic region, so a drop must not run while another thread uses the
-  same value: a drop between the conversion and the native call frees memory
-  the call then reads.
+  once (#131). The check is made as a call converts its arguments, inside
+  `call/foreign-error`'s `call-as-atomic` for a reasoned call and outside
+  any atomic region otherwise, so a drop must not run while another thread
+  uses the same value: a drop between the conversion and the native call of
+  an unreasoned one frees memory the call then reads.
 - Strings from Rust come back as a block (`str_out` / `str_list_out`,
   `rust/src/ffi/strings.rs`). A block is native-endian 64-bit words, and
   word 0 is its size in words. A single string has its UTF-8 length in word
@@ -189,7 +194,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series_new_str_packed`, the series-by-series operators (`series_add`,
   `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
   `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
-  `series_and`, `series_or`, `series_xor`, `series_not`), `dataframe_vstack`,
+  `series_and`, `series_or`, `series_xor`, `series_not`), the scalar
+  operators (`series_{add,sub,mul,div,mod}_{i32,i64,u32,u64,f64}` and
+  `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`), `dataframe_vstack`,
   `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
   `dataframe_join_asof_options_v2`, every other entry point that takes a
   `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,

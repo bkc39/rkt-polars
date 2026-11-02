@@ -716,6 +716,8 @@ fn the_audit_reads_every_entry_point() {
         "dataframe_write_csv_with_options_v2",
         "dataframe_read_csv_v3",
         "series_cast",
+        "series_add_i32",
+        "series_ne_f64",
     ] {
         assert!(
             guarded_block(&entry(name).block, &guarding),
@@ -723,7 +725,7 @@ fn the_audit_reads_every_entry_point() {
             name
         );
     }
-    for name in ["series_len", "series_add_i32", "expr_sum"] {
+    for name in ["series_len", "series_null_count", "expr_sum"] {
         assert!(
             !guarded_block(&entry(name).block, &guarding),
             "{} guarded",

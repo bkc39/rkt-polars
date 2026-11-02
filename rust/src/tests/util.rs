@@ -85,6 +85,10 @@ pub(super) fn recorded_error() -> Option<String> {
     (!p.is_null()).then(|| take_str(p))
 }
 
+pub(super) fn take_box<T>(p: *mut T) -> Option<T> {
+    (!p.is_null()).then(|| *unsafe { Box::from_raw(p) })
+}
+
 pub(super) fn make_i32(name: &str, values: &[i32]) -> *mut Series {
     let n = cstr(name);
     let s = series_new_i32(n.as_ptr(), values.as_ptr(), values.len());
