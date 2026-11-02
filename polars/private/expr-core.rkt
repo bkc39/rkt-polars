@@ -15,7 +15,7 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
-                  allocator/or-fail call/foreign-error
+                  _c-string allocator/or-fail call/foreign-error datetime-zone/c
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
@@ -43,9 +43,9 @@
           [expr-lit-i64 (->/c int64/c Expr-ptr?)]
           [expr-lit-u64 (->/c uint64/c Expr-ptr?)]
           [lit (->/c lit-value/c Expr-ptr?)]
-          [col (->/c col-spec/c Expr-ptr?)]
+          [col (->/c (and/c datetime-zone/c col-spec/c) Expr-ptr?)]
           [expr-all (->/c Expr-ptr?)]
-          [expr-dtype-col (->/c dtype-spec? Expr-ptr?)]
+          [expr-dtype-col (->/c (and/c datetime-zone/c dtype-spec?) Expr-ptr?)]
           [expr-exclude (->/c multi-column-expr? (non-empty-listof column-pattern/c) Expr-ptr?)]
           [multi-column-expr? (->/c any/c boolean?)]))
 
@@ -168,7 +168,7 @@
   #:wrap (allocator/or-fail expr-drop 'expr-lit-temporal))
 
 (define-compat expr-lit-datetime-tz/raw
-  (_fun _int64 _int32 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _int64 _int32 _c-string -> _Expr-ptr/null)
   #:c-id expr_lit_datetime_tz
   #:wrap (allocator expr-drop))
 
@@ -244,7 +244,7 @@
   #:wrap (allocator expr-drop))
 
 (define-compat expr-dtype-col-datetime-tz/raw
-  (_fun _int32 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _int32 _c-string -> _Expr-ptr/null)
   #:c-id expr_dtype_col_datetime_tz
   #:wrap (allocator expr-drop))
 
@@ -297,4 +297,5 @@
 
 (module+ internal
   (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
-           multi-column-expr?))
+           multi-column-expr?
+           expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw))

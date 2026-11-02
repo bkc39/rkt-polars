@@ -2,7 +2,7 @@
 
 (require racket/match
          (only-in racket/contract/base
-                  -> ->* ->i any/c contract-out flat-contract-predicate listof or/c
+                  -> ->* ->i and/c any/c contract-out flat-contract-predicate listof or/c
                   unsupplied-arg?)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
@@ -44,7 +44,7 @@
                                      [result (or/c series? dataframe?)]))
           [explain (explain/c lazyframe?)]))
 
-(define cast-target/c (or/c dtype-spec? 'binary 'duration))
+(define cast-target/c (and/c datetime-zone/c (or/c dtype-spec? 'binary 'duration)))
 
 (define rows-source/c (or/c series? dataframe? lazyframe? Expr-ptr?))
 

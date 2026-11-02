@@ -5,7 +5,10 @@
 (require ffi/unsafe
          ffi/unsafe/alloc
          polars/private/expr-core
-         (only-in polars/private/foreign call/foreign-error replace-zone-failure))
+         (only-in polars/private/foreign
+                  _c-string _c-string/null call/foreign-error call/polars-reason
+                  replace-zone-failure)
+         (only-in polars/private/resource _str))
 
 (provide expr-dt-year expr-dt-month expr-dt-day
          expr-dt-hour expr-dt-minute expr-dt-second
@@ -122,10 +125,13 @@
 (define (expr-dt-timestamp e #:unit [unit 'microseconds])
   (expr-dt-timestamp/raw e (time-unit-symbol->code 'expr-dt-timestamp unit)))
 
-(define-compat expr-dt-strftime
-  (_fun _Expr-ptr _string -> _Expr-ptr)
-  #:c-id expr_dt_strftime
+(define-compat expr-dt-strftime/raw
+  (_fun _Expr-ptr _str -> _Expr-ptr/null)
+  #:c-id expr_dt_strftime_v2
   #:wrap (allocator expr-drop))
+
+(define (expr-dt-strftime e format)
+  (call/polars-reason 'expr-dt-strftime (lambda () (expr-dt-strftime/raw e format))))
 
 (define-compat expr-dt-truncate/raw
   (_fun _Expr-ptr _Expr-ptr -> _Expr-ptr)
@@ -136,7 +142,7 @@
   (expr-dt-truncate/raw e (->expr every)))
 
 (define-compat expr-dt-convert-time-zone/raw
-  (_fun _Expr-ptr _string/utf-8 -> _Expr-ptr/null)
+  (_fun _Expr-ptr _c-string -> _Expr-ptr/null)
   #:c-id expr_dt_convert_time_zone
   #:wrap (allocator expr-drop))
 
@@ -146,7 +152,7 @@
                       "cannot convert to the time zone ~s" zone))
 
 (define-compat expr-dt-replace-time-zone/raw
-  (_fun _Expr-ptr _string/utf-8 _string/utf-8 _string/utf-8 -> _Expr-ptr/null)
+  (_fun _Expr-ptr _c-string/null _c-string _c-string -> _Expr-ptr/null)
   #:c-id expr_dt_replace_time_zone
   #:wrap (allocator expr-drop))
 
@@ -159,3 +165,6 @@
                         (expr-dt-replace-time-zone/raw e zone (symbol->string ambiguous)
                                                        (symbol->string non-existent)))
                       "~a" (replace-zone-failure zone)))
+
+(module+ internal
+  (provide expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw))

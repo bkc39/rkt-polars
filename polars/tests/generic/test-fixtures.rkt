@@ -74,8 +74,8 @@
     [(? list?) (map rktd-value v)]
     [_ v]))
 
-(define nul-expected
-  (for/list ([row (in-list (file->value nul-expected-file))])
+(define (nul-expected section)
+  (for/list ([row (in-list (cdr (assq section (file->value nul-expected-file))))])
     (cons (car row) (map rktd-value (cdr row)))))
 
 (define-runtime-path produce-parquet "../../scribblings/data/produce.parquet")

@@ -64,7 +64,7 @@
              (lambda () (series '(1) #:dtype '(datetime weeks))))
   (check-exn #rx"series: expected a gregor datetime or moment for this dtype"
              (lambda () (series '(1) #:dtype '(datetime microseconds "UTC"))))
-  (check-exn #rx"series: unsupported dtype '\\(datetime microseconds \"\"\\)"
+  (check-exn #rx"^series: contract violation\n  expected: time-zone-name/c\n  given: \"\"\n"
              (lambda () (series '(1) #:dtype '(datetime microseconds ""))))
   (check-exn #rx"series: unsupported dtype '\\(datetime #f \"UTC\"\\)"
              (lambda () (series '(1) #:dtype '(datetime #f "UTC"))))

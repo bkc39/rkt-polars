@@ -197,7 +197,7 @@
         (select (alias (make "s") "s"))
         (ref "s")
         series->list))
-  (for ([row (in-list nul-expected)])
+  (for ([row (in-list (nul-expected 'values))])
     (match-define (list op args ... expected) row)
     (define xs (match op ['lit '("x")] [_ (car args)]))
     (define make
@@ -211,7 +211,7 @@
         [(list 'eq _ v _) (lambda (c) (p= (col c) v))]
         [(list 'ne _ v _) (lambda (c) (p!= (col c) v))]))
     (check-equal? (strings-through xs make) expected (format "~s" row)))
-  (for ([row (in-list nul-expected)] #:when (memq (car row) '(eq ne)))
+  (for ([row (in-list (nul-expected 'values))] #:when (memq (car row) '(eq ne)))
     (match row
       [(list 'eq xs v expected) (check-equal? (series->list (p= (series xs) v)) expected)]
       [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)])))

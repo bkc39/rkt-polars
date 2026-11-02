@@ -1679,7 +1679,7 @@ stations
               @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
                                       [#:format format (or/c string? #f) #f]
                                       [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
-                                      [#:time-zone time-zone (or/c non-empty-string? #f) #f]
+                                      [#:time-zone time-zone (or/c time-zone-name/c #f) #f]
                                       [#:ambiguous ambiguous
                                        (or/c 'raise 'earliest 'latest 'null) 'raise]
                                       [#:strict strict boolean? #t]
@@ -1694,7 +1694,8 @@ stations
   on unparseable values. A UTC offset parsed with @litchar{%z} converts each
   value to UTC, so the column is @racket['(datetime unit "UTC")], as in
   Python; without a @racket[#:format] or a @racket[#:time-zone], an offset
-  in the data is an error, as it is on Python's expressions.
+  in the data is an error, as it is on Python's expressions. A format may
+  hold a NUL, which matches a NUL in the text.
   @racket[#:time-zone] parses into that zone: a value with an offset
   converts to it, and one without is read as a wall-clock time there, with
   @racket[#:ambiguous] as @racket[dt-replace-time-zone] takes it (a
@@ -1717,13 +1718,16 @@ stations
 (select (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock")))
         (~> (str->datetime "clock")
             (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
+(~> (dataframe (list (series (list (string-append "2020" "\u0000" "01" "\u0000" "02"))
+                             #:name "d")))
+    (select (str->date "d" #:format "%Y\u0000%m\u0000%d")))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 
 @deftogether[(@defproc[(dt-convert-time-zone [x (or/c series? Expr-ptr? string?)]
-                                             [zone non-empty-string?])
+                                             [zone time-zone-name/c])
                        (or/c series? Expr-ptr?)]
               @defproc[(dt-replace-time-zone [x (or/c series? Expr-ptr? string?)]
-                                             [zone (or/c non-empty-string? #f)]
+                                             [zone (or/c time-zone-name/c #f)]
                                              [#:ambiguous ambiguous
                                               (or/c 'raise 'earliest 'latest 'null) 'raise]
                                              [#:non-existent non-existent (or/c 'raise 'null)
@@ -1769,6 +1773,12 @@ stations
 (dt-replace-time-zone skipped "Europe/Brussels" #:non-existent 'null)
 (eval:error (dt-replace-time-zone skipped "Europe/Brussels"))
 (eval:error (dt-convert-time-zone "clock" "Asia/Kathmando"))]}
+
+@defthing[time-zone-name/c flat-contract?]{
+  A @racket[time-zone-name/c] is a non-empty string without a NUL.
+
+@examples[#:eval ev #:label #f
+(eval:error (dt-convert-time-zone (ref clocks "clock") "UTC\u0000x"))]}
 
 @subsection[#:tag "fluent-shadowing"]{Shadowed bindings}
 
