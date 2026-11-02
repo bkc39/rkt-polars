@@ -4,11 +4,14 @@
   (require rackunit
            (only-in gregor ->datetime/local ->tzid ->utc-offset date datetime)
            (only-in racket/sequence sequence->list)
-           (only-in polars/private/bulk in-dataframe-rows in-series series->list series->vector)
+           (only-in polars/private/bulk
+                    dataframe->columns dataframe->f64vector in-dataframe-rows in-series series->list
+                    series->vector)
            (only-in polars/private/foreign
                     dataframe-new polars-null polars-null? series-cast series-drop-count
                     series-new-i32 series-new-i64 series-new-str series-new-str/vec series-ref)
-           (only-in polars/tests/gc-pressure call-with-collections))
+           (only-in polars/tests/gc-pressure call-with-collections)
+           (only-in polars/tests/test-helpers drops-during))
 
   (define (gappy-ints n)
     (for/list ([i (in-range n)])
@@ -84,6 +87,17 @@
     (for ([_ (in-range 4)]) (collect-garbage) (sleep 0.1))
     (- (series-drop-count) before))
   (check >= (released-by (lambda () (series->list carriers))) 20)
+
+  (define two-columns
+    (dataframe-new (list (series-new-i32 "x" '(1 2)) (series-new-str "s" '("a" "b")))))
+  (check-equal? (drops-during series-drop-count (lambda () (dataframe->columns two-columns))) 2)
+  (check-exn #rx"^dataframe->f64vector: not a numeric column"
+             (lambda () (dataframe->f64vector two-columns)))
+  (check-equal? (drops-during series-drop-count
+                              (lambda ()
+                                (with-handlers ([exn:fail:contract? void])
+                                  (dataframe->f64vector two-columns))))
+                2)
 
   (define past-chrono-date (series-cast (series-new-i32 "d" '(2000000000)) 'date))
   (check-equal? (series-ref past-chrono-date 0) (date 5477784 1 6))

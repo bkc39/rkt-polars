@@ -1,11 +1,9 @@
 #lang racket/base
 
-;; Requires no polars module: the test submodules of foreign.rkt, expr.rkt and
-;; generic/core.rkt require this one, which would otherwise be a module cycle.
-
 (require (for-syntax racket/base)
          (only-in file/gzip gzip-through-ports)
          (only-in gregor/private/moment-base make-moment)
+         (only-in polars/private/resource with-release)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file
                   delete-directory/files display-to-file file->bytes make-temporary-directory)
@@ -36,16 +34,12 @@
     (call-with-input-file file read)))
 
 (define (call-with-planted-sources files proc)
-  (define root (make-temporary-directory "rkt-polars-audit-~a"))
-  (dynamic-wind
-   void
-   (lambda ()
-     (for ([dir (in-list '("private" "tests"))])
-       (make-directory (build-path root dir)))
-     (for ([file (in-list files)])
-       (display-to-file (cdr file) (build-path root (car file))))
-     (proc root))
-   (lambda () (delete-directory/files root))))
+  (with-release ([root (make-temporary-directory "rkt-polars-audit-~a") delete-directory/files])
+    (for ([dir (in-list '("private" "tests"))])
+      (make-directory (build-path root dir)))
+    (for ([file (in-list files)])
+      (display-to-file (cdr file) (build-path root (car file))))
+    (proc root)))
 
 (define (call-with-environment-variable name value thunk)
   (define env (current-environment-variables))

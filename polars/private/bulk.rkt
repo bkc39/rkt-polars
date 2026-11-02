@@ -16,7 +16,7 @@
                   series-copy-i64 series-copy-i8 series-copy-str series-copy-u16
                   series-copy-u32 series-copy-u64 series-copy-u8 series-drop series-dtype
                   series-len series-name series-null-count series-str-byte-len)
-         (only-in polars/private/resource with-raw-buffer with-release)
+         (only-in polars/private/resource with-raw-buffer with-release with-releases)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time))
 
@@ -255,14 +255,8 @@
 
 (define (call-with-columns who d names proc)
   (check-column-names who d names)
-  (define fetched '())
-  (dynamic-wind
-   void
-   (lambda ()
-     (for ([name (in-list names)])
-       (set! fetched (cons (dataframe-column d name) fetched)))
-     (proc (reverse fetched)))
-   (lambda () (for-each series-drop fetched))))
+  (with-releases ([columns ([name (in-list names)]) (dataframe-column d name) series-drop])
+    (proc columns)))
 
 (define (frame-columns who d names null-value)
   (call-with-columns
