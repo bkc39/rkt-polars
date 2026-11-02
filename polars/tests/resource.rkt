@@ -4,10 +4,10 @@
   (require rackunit
            (for-syntax racket/base)
            racket/match
-           (only-in racket/file file->string)
-           (only-in racket/list append-map flatten remove-duplicates take)
+           (only-in racket/file file->string file->value)
+           (only-in racket/list append-map filter-not flatten remove-duplicates take)
            (only-in racket/path file-name-from-path find-relative-path)
-           (only-in racket/string non-empty-string? string-replace)
+           (only-in racket/string non-empty-string?)
            (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
                     _str _str-list _str/null with-raw-buffer with-release with-release-pool
@@ -403,60 +403,98 @@
                   '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
 
   (define (definition-name spec)
-    (if (pair? spec) (definition-name (car spec)) spec))
+    (match spec
+      [(cons head _) (definition-name head)]
+      [_ spec]))
   (define (dynamic-wind-owners datum [owner #f])
     (match datum
-      [(list 'quote _) '()]
       ['dynamic-wind (list owner)]
-      [(list* 'define (and spec (or (? symbol?) (? pair?))) body)
-       (dynamic-wind-owners body (or owner (definition-name spec)))]
+      [(list* 'define spec body) (dynamic-wind-owners body (or owner (definition-name spec)))]
       [(cons head tail) (append (dynamic-wind-owners head owner) (dynamic-wind-owners tail owner))]
       [(? vector?) (dynamic-wind-owners (vector->list datum) owner)]
       [_ '()]))
-  (define (unlisted-dynamic-winds root sites)
-    (define listed (for/list ([site (in-list sites)]) (take site 2)))
-    (define exempt (simplify-path (build-path root "private" "resource.rkt")))
-    (remove-duplicates
-     (for*/list ([f (in-list (polars-sources root))]
-                 #:unless (equal? f exempt)
-                 [owner (in-list (dynamic-wind-owners (read-source f)))]
-                 [site (in-value (list (path->string (find-relative-path root f)) owner))]
-                 #:unless (member site listed))
-       site)))
-  (define dynamic-wind-sites
-    (call-with-input-file (build-path polars-dir "tests" "dynamic-wind-sites.rktd") read))
-  (check-equal? (unlisted-dynamic-winds (simplify-path polars-dir) dynamic-wind-sites) '()
+  (define (dynamic-wind-sites-in root)
+    (define exempt (map (lambda (file) (simplify-path (build-path root file)))
+                        '("private/resource.rkt" "tests/resource.rkt")))
+    (for*/list ([f (in-list (polars-sources root))]
+                #:unless (member f exempt)
+                [owner (in-list (dynamic-wind-owners (read-source f)))])
+      (list (path->string (find-relative-path root f)) owner)))
+  (define (well-formed-entry? entry)
+    (match entry
+      [(list (? string?) (? symbol?) (? non-empty-string?)) #t]
+      [_ #f]))
+  (define (malformed-dynamic-wind-entries entries)
+    (filter-not well-formed-entry? entries))
+  (define (entry-sites entries)
+    (map (lambda (entry) (take entry 2)) (filter well-formed-entry? entries)))
+  (define (sites-less sites less)
+    (for/fold ([sites sites]) ([site (in-list less)])
+      (remove site sites)))
+  (define (unlisted-dynamic-winds sites entries)
+    (sites-less sites (entry-sites entries)))
+  (define (stale-dynamic-wind-entries sites entries)
+    (sites-less (entry-sites entries) sites))
+  (define (in-site-order sites)
+    (sort sites string<? #:key (lambda (site) (format "~s" site))))
+
+  (define dynamic-wind-entries
+    (file->value (build-path polars-dir "tests" "dynamic-wind-sites.rktd")))
+  (define polars-dynamic-winds (dynamic-wind-sites-in (simplify-path polars-dir)))
+  (check-equal? (malformed-dynamic-wind-entries dynamic-wind-entries) '()
+                "an entry of dynamic-wind-sites.rktd is (file definition reason)")
+  (check-equal? (unlisted-dynamic-winds polars-dynamic-winds dynamic-wind-entries) '()
                 (string-append "dynamic-wind outside polars/private/resource.rkt: pair the resource "
                                "with with-release, with-releases, with-raw-buffer or "
                                "with-release-pool, or list the site in dynamic-wind-sites.rktd"))
-  (for ([site (in-list dynamic-wind-sites)])
-    (match-define (list file owner reason) site)
-    (check-pred non-empty-string? reason)
-    (check-not-false (member owner (dynamic-wind-owners
-                                    (read-source (build-path polars-dir file))))
-                     (format "~a lists ~a, which holds no dynamic-wind" file owner)))
-  (define (wind text) (string-replace text "WIND" "dynamic-wind"))
+  (check-equal? (stale-dynamic-wind-entries polars-dynamic-winds dynamic-wind-entries) '()
+                "an entry of dynamic-wind-sites.rktd names no dynamic-wind of its own")
+  (define planted-entries
+    '(("tests/listed.rkt" call-with-x "a reason")
+      ("tests/twice.rkt" twice "a reason")
+      ("tests/applied.rkt" applied "a reason")
+      ("tests/duplicate.rkt" once "a reason")
+      ("tests/duplicate.rkt" once "the same site again")
+      ("tests/stale.rkt" gone "a reason")
+      ("tests/top.rkt" #f "outside any definition")
+      ("tests/listed.rkt" "other" "a string for a definition")))
   (with-planted-sources
-      (root ["private/hit.rkt" (wind "#lang racket/base\n(define (f) (WIND void void void))")]
-            ["private/resource.rkt" (wind "#lang racket/base\n(define (f) (WIND void void void))")]
-            ["tests/top.rkt" (wind "#lang racket/base\n(WIND void void void)")]
+      (root ["private/hit.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
+            ["private/resource.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
+            ["tests/resource.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
+            ["tests/top.rkt" (module-text '(dynamic-wind void void void))]
             ["tests/reference.rkt"
-             (wind "#lang racket/base\n(define g (lambda () (apply WIND (list void void void))))")]
+             (module-text '(define g (lambda () (apply dynamic-wind (list void void void)))))]
             ["tests/nested.rkt"
-             (wind "#lang racket/base\n(module+ test (define ((h) x) (let () (WIND void x void))))")]
+             (module-text '(module+ test (define ((h) x) (let () (dynamic-wind void x void)))))]
             ["tests/listed.rkt"
-             (wind (string-append "#lang racket/base\n"
-                                  "(define (call-with-x x) (define r (WIND void x void)) r)\n"
-                                  "(define (other) (WIND void void void))"))]
+             (module-text '(define (call-with-x x) (define r (dynamic-wind void x void)) r)
+                          '(define (other) (dynamic-wind void void void)))]
+            ["tests/twice.rkt"
+             (module-text '(define (twice x) (dynamic-wind void x void) (dynamic-wind void x void)))]
+            ["tests/applied.rkt"
+             (module-text '(define (applied x)
+                             (dynamic-wind void x void)
+                             (apply dynamic-wind (list void x void))))]
+            ["tests/quoted.rkt" (module-text '(define program '(dynamic-wind void void void)))]
+            ["tests/duplicate.rkt" (module-text '(define (once x) (dynamic-wind void x void)))]
+            ["tests/stale.rkt" (module-text '(define (gone) 1))]
             ["tests/mentions.rkt"
-             (wind (string-append "#lang racket/base\n;; (WIND void void void)\n"
-                                  "#| (WIND void void void) |#\n#;(WIND void void void)\n"
-                                  "(define s \"(WIND void void void)\")\n"
-                                  "(define q '(WIND void void void))\n(define dynamic-winds 1)"))])
-    (check-equal? (sort (unlisted-dynamic-winds root '(("tests/listed.rkt" call-with-x "a reason")))
-                        string<? #:key car)
-                  '(("private/hit.rkt" f) ("tests/listed.rkt" other) ("tests/nested.rkt" h)
-                    ("tests/reference.rkt" g) ("tests/top.rkt" #f))))
+             (string-append (module-text '(define s "(dynamic-wind void void void)")
+                                         '(define dynamic-winds 1))
+                            ";; (dynamic-wind void void void)\n"
+                            "#| (dynamic-wind void void void) |#\n"
+                            "#;(dynamic-wind void void void)\n")])
+    (define planted-sites (dynamic-wind-sites-in root))
+    (check-equal? (in-site-order (unlisted-dynamic-winds planted-sites planted-entries))
+                  '(("private/hit.rkt" f) ("tests/applied.rkt" applied) ("tests/listed.rkt" other)
+                    ("tests/nested.rkt" h) ("tests/quoted.rkt" program) ("tests/reference.rkt" g)
+                    ("tests/top.rkt" #f) ("tests/twice.rkt" twice)))
+    (check-equal? (in-site-order (stale-dynamic-wind-entries planted-sites planted-entries))
+                  '(("tests/duplicate.rkt" once) ("tests/stale.rkt" gone)))
+    (check-equal? (malformed-dynamic-wind-entries planted-entries)
+                  '(("tests/top.rkt" #f "outside any definition")
+                    ("tests/listed.rkt" "other" "a string for a definition"))))
 
   (define (who-variant-plain-names file)
     (define root `(file ,(path->string file)))

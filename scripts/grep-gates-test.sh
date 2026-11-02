@@ -78,13 +78,16 @@ tree
 expect "a clean tree" no-dynamic-wind 0 "no-dynamic-wind: none in"
 printf ';; (dynamic-wind void void void)\n' > "$work/tree/polars/private/comment.rkt"
 printf '%s\n' "$wind" > "$work/tree/polars/private/resource.rkt"
-printf '%s\n' "$wind" > "$work/tree/polars/tests/allowed.rkt"
-expect "a comment, resource.rkt and a listed site" no-dynamic-wind 0 "no-dynamic-wind: none in"
+printf '%s\n' "$wind" > "$work/tree/polars/tests/resource.rkt"
+printf '%s\n%s\n' "$wind" "$wind" > "$work/tree/polars/tests/allowed.rkt"
+expect "a comment, the resource.rkt files and a listed file" no-dynamic-wind 0 \
+  "no-dynamic-wind: none in"
 printf '%s\n' "$wind" > "$work/tree/polars/private/hit.rkt"
 expect "a hit" no-dynamic-wind 1 "polars/private/hit.rkt:1: pair the resource with with-release"
 tree
-printf '%s\n%s\n' "$wind" "$wind" > "$work/tree/polars/tests/allowed.rkt"
-expect "more sites than listed" no-dynamic-wind 1 "polars/tests/allowed.rkt:2: pair the resource"
+printf '(define (g) (apply dynamic-wind (list void void void)))\n' \
+  > "$work/tree/polars/tests/reference.rkt"
+expect "a reference" no-dynamic-wind 1 "polars/tests/reference.rkt:1: pair the resource"
 tree
 printf '()\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
 printf '%s\n' "$wind" > "$work/tree/polars/tests/allowed.rkt"
@@ -94,6 +97,6 @@ rm -r "$work/tree/polars/private"
 expect "a missing directory" no-dynamic-wind 2 "no-dynamic-wind: grep failed (exit 2)"
 tree
 rm "$work/tree/polars/tests/dynamic-wind-sites.rktd"
-expect "a missing list of sites" no-dynamic-wind 2 "no-dynamic-wind: cannot read the allowed sites"
+expect "a missing list of sites" no-dynamic-wind 2 "no-dynamic-wind: cannot read the listed sites"
 
 exit $status

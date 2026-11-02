@@ -46,8 +46,10 @@
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
   ;; No dynamic-wind under polars/private or polars/tests outside
-  ;; polars/private/resource.rkt and the sites polars/tests/dynamic-wind-sites.rktd
-  ;; lists: a scoped resource is paired by its with- forms.  A grep, so no shell.
+  ;; polars/private/resource.rkt, polars/tests/resource.rkt and the files
+  ;; polars/tests/dynamic-wind-sites.rktd names: a scoped resource is paired by
+  ;; its with- forms.  A grep, so no shell; the read audit in
+  ;; polars/tests/resource.rkt is the per-site check.
   (no-dynamic-wind ("bash scripts/no-dynamic-wind.sh" #:shell ""))
   ;; The four grep gates above on a scratch tree: a hit fails with 1, and a
   ;; missing directory or lock file with 2, never a pass.  Plain bash.

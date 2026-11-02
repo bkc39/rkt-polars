@@ -403,14 +403,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series-drop` does.
   No `(malloc …)` or `(free …)` appears under `polars/private` or
   `polars/tests` outside `polars/private/resource.rkt`: a test in
-  `polars/tests/resource.rkt` fails on one. Nor does `dynamic-wind`, but in
-  the definitions `polars/tests/dynamic-wind-sites.rktd` lists, each with
-  its reason (a thread kill, an environment variable restored): the
-  `no-dynamic-wind` gate (`scripts/no-dynamic-wind.sh`, a push gate, a
-  flake check and a step of CI's Lint job) is a grep, which counts the
-  sites in each file, and a test in `polars/tests/resource.rkt` reads each
-  module as data and fails on a `dynamic-wind` outside a listed definition,
-  or on a listed one that holds none.
+  `polars/tests/resource.rkt` fails on one. Nor does `dynamic-wind`, but
+  at the sites `polars/tests/dynamic-wind-sites.rktd` lists, one entry
+  `(file definition reason)` per site, the definition a symbol, so a site
+  outside any `define` cannot be listed (a thread kill, an environment
+  variable restored). A test in `polars/tests/resource.rkt` reads each
+  module as data, quoted programs included, finds every `dynamic-wind`, a
+  call or a reference such as `(apply dynamic-wind ...)`, under its
+  outermost definition, and holds those sites and the entries to each
+  other exactly: an unlisted site, an entry without its own site and a
+  malformed entry each fail. The `no-dynamic-wind` gate
+  (`scripts/no-dynamic-wind.sh`, a push gate, a flake check and a step of
+  CI's Lint job) is a grep that exempts the files the list names. Both
+  exempt `polars/tests/resource.rkt`, whose audit plants sites.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
@@ -1075,7 +1080,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   racket-dev plugin's runner.
 - The lint gates are `scripts/no-syntax-rule.sh`,
   `scripts/no-inline-tests.sh` and `scripts/no-dynamic-wind.sh` (greps; no
-  shell needed), and
+  shell needed; the last exempts the files
+  `polars/tests/dynamic-wind-sites.rktd` names, and the read audit in
+  `polars/tests/resource.rkt` holds each of its `(file definition reason)`
+  entries to one site), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
