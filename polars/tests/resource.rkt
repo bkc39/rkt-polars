@@ -406,19 +406,34 @@
     (match spec
       [(cons head _) (definition-name head)]
       [_ spec]))
-  (define (dynamic-wind-owners datum [owner #f])
-    (match datum
-      ['dynamic-wind (list owner)]
-      [(list* 'define spec body) (dynamic-wind-owners body (or owner (definition-name spec)))]
-      [(cons head tail) (append (dynamic-wind-owners head owner) (dynamic-wind-owners tail owner))]
-      [(? vector?) (dynamic-wind-owners (vector->list datum) owner)]
-      [_ '()]))
+  (define (dynamic-wind-owners datum #:skip-quote? [skip-quote? #f])
+    (define (walk datum owner)
+      (match datum
+        ['dynamic-wind (list owner)]
+        [(list 'quote _) #:when skip-quote? '()]
+        [(list* 'define spec body) (walk-all (cons spec body) (or owner (definition-name spec)))]
+        [(cons _ _) (walk-all datum owner)]
+        [(box content) (walk content owner)]
+        [(? hash?) (walk-all (for*/list ([(key value) (in-hash datum)]
+                                         [part (in-list (list key value))])
+                               part)
+                             owner)]
+        [(? vector?) (walk-all (vector->list datum) owner)]
+        [(? prefab-struct-key) (walk-all (cdr (vector->list (struct->vector datum))) owner)]
+        [_ '()]))
+    (define (walk-all data owner)
+      (match data
+        [(cons head tail) (append (walk head owner) (walk-all tail owner))]
+        ['() '()]
+        [_ (walk data owner)]))
+    (walk datum #f))
   (define (dynamic-wind-sites-in root)
-    (define exempt (map (lambda (file) (simplify-path (build-path root file)))
-                        '("private/resource.rkt" "tests/resource.rkt")))
+    (define (under-root file) (simplify-path (build-path root file)))
     (for*/list ([f (in-list (polars-sources root))]
-                #:unless (member f exempt)
-                [owner (in-list (dynamic-wind-owners (read-source f)))])
+                #:unless (equal? f (under-root "private/resource.rkt"))
+                [owner (in-list (dynamic-wind-owners
+                                 (read-source f)
+                                 #:skip-quote? (equal? f (under-root "tests/resource.rkt"))))])
       (list (path->string (find-relative-path root f)) owner)))
   (define (well-formed-entry? entry)
     (match entry
@@ -461,7 +476,9 @@
   (with-planted-sources
       (root ["private/hit.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
             ["private/resource.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
-            ["tests/resource.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
+            ["tests/resource.rkt"
+             (module-text '(define (f) (dynamic-wind void void void))
+                          '(define planted '(dynamic-wind void void void)))]
             ["tests/top.rkt" (module-text '(dynamic-wind void void void))]
             ["tests/reference.rkt"
              (module-text '(define g (lambda () (apply dynamic-wind (list void void void)))))]
@@ -469,7 +486,15 @@
              (module-text '(module+ test (define ((h) x) (let () (dynamic-wind void x void)))))]
             ["tests/listed.rkt"
              (module-text '(define (call-with-x x) (define r (dynamic-wind void x void)) r)
-                          '(define (other) (dynamic-wind void void void)))]
+                          '(define (other) (dynamic-wind void void void))
+                          '(define (defaulted [w dynamic-wind]) w)
+                          '(define (keyworded #:w [w dynamic-wind]) w)
+                          '(define ((curried [w dynamic-wind]) x) x))]
+            ["tests/literals.rkt"
+             (module-text '(define boxed #&(dynamic-wind void void void))
+                          '(define hashed #hash((k . (dynamic-wind void void void))))
+                          '(define hash-keyed #hash(((dynamic-wind void void void) . v)))
+                          '(define prefab #s(key (dynamic-wind void void void))))]
             ["tests/twice.rkt"
              (module-text '(define (twice x) (dynamic-wind void x void) (dynamic-wind void x void)))]
             ["tests/applied.rkt"
@@ -487,9 +512,13 @@
                             "#;(dynamic-wind void void void)\n")])
     (define planted-sites (dynamic-wind-sites-in root))
     (check-equal? (in-site-order (unlisted-dynamic-winds planted-sites planted-entries))
-                  '(("private/hit.rkt" f) ("tests/applied.rkt" applied) ("tests/listed.rkt" other)
+                  '(("private/hit.rkt" f) ("tests/applied.rkt" applied)
+                    ("tests/listed.rkt" curried) ("tests/listed.rkt" defaulted)
+                    ("tests/listed.rkt" keyworded) ("tests/listed.rkt" other)
+                    ("tests/literals.rkt" boxed) ("tests/literals.rkt" hash-keyed)
+                    ("tests/literals.rkt" hashed) ("tests/literals.rkt" prefab)
                     ("tests/nested.rkt" h) ("tests/quoted.rkt" program) ("tests/reference.rkt" g)
-                    ("tests/top.rkt" #f) ("tests/twice.rkt" twice)))
+                    ("tests/resource.rkt" f) ("tests/top.rkt" #f) ("tests/twice.rkt" twice)))
     (check-equal? (in-site-order (stale-dynamic-wind-entries planted-sites planted-entries))
                   '(("tests/duplicate.rkt" once) ("tests/stale.rkt" gone)))
     (check-equal? (malformed-dynamic-wind-entries planted-entries)
