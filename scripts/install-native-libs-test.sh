@@ -6,7 +6,10 @@
 # cp, mv or read-only directory leaves no temporary file and the target as it
 # was; a read-only source installs as 0755. Every libcompat.* the glob matches
 # is handled on its own, and .gitignore covers the temporary file. The first
-# check is also run against `cp -f`, which it must catch.
+# check is also run against `cp -f`, which it must catch. The dev marker
+# (#306) holds the installed library's sha256, is replaced by a rename, and
+# keeps its inode and mtime when it already holds that hash; .gitignore
+# covers it.
 #
 # Usage: scripts/install-native-libs-test.sh
 set -euo pipefail
@@ -39,7 +42,13 @@ fresh() {
 }
 
 leftovers() {
-  find "$1" -name '.libcompat.*' | wc -l
+  find "$1" -name '.libcompat.*' ! -name '.libcompat.*.dev' | wc -l
+}
+
+sha() {
+  local sum
+  sum=$(sha256sum "$1")
+  printf '%s' "${sum%% *}"
 }
 
 # Prints nothing when INSTALLER replaces the target as #265 requires.
@@ -144,6 +153,46 @@ else
   echo "ok: a source with no library is an error"
 fi
 
+fresh
+printf 'dev library bytes\n' > "$work/src/libcompat.so"
+if ! bash "$script" "$work/src" "$work/dest"; then
+  fail "first marker: status $?"
+elif [ "$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)" != "$(sha "$work/dest/libcompat.so")" ]; then
+  fail "first marker: [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)] is not the library's sha256"
+else
+  echo "ok: an install writes the library's sha256 to its marker"
+fi
+
+fresh
+printf 'old library bytes\n' > "$work/dest/libcompat.so"
+printf 'stale hash\n' > "$work/dest/.libcompat.so.dev"
+printf 'new library bytes, longer\n' > "$work/src/libcompat.so"
+before=$(inode "$work/dest/.libcompat.so.dev")
+exec {marker_fd}< "$work/dest/.libcompat.so.dev"
+if ! bash "$script" "$work/src" "$work/dest"; then
+  fail "stale marker: status $?"
+elif [ "$(cat "$work/dest/.libcompat.so.dev")" != "$(sha "$work/dest/libcompat.so")" ]; then
+  fail "stale marker: [$(cat "$work/dest/.libcompat.so.dev")] is not the new library's sha256"
+elif [ "$(inode "$work/dest/.libcompat.so.dev")" = "$before" ] \
+  || [ "$(cat <&"$marker_fd")" != "stale hash" ]; then
+  fail "stale marker: rewritten in place, not renamed"
+elif [ "$(leftovers "$work/dest")" -ne 0 ]; then
+  fail "stale marker: a temporary file is left: [$(ls -A "$work/dest")]"
+else
+  echo "ok: a stale marker is replaced by a rename with the new library's sha256"
+fi
+exec {marker_fd}<&-
+
+touch -d @1000000000 "$work/dest/.libcompat.so.dev"
+before="$(inode "$work/dest/.libcompat.so.dev") $(mtime "$work/dest/.libcompat.so.dev")"
+if ! bash "$script" "$work/src" "$work/dest"; then
+  fail "current marker: status $?"
+elif [ "$(inode "$work/dest/.libcompat.so.dev") $(mtime "$work/dest/.libcompat.so.dev")" != "$before" ]; then
+  fail "current marker: inode and mtime moved from [$before]"
+else
+  echo "ok: a marker that holds the identical library's sha256 keeps its inode and mtime"
+fi
+
 stub() {
   mkdir -p "$work/$1"
   printf '#!%s\n%s\n' "$(command -v bash)" "$3" > "$work/$1/$2"
@@ -183,19 +232,20 @@ else
 fi
 
 repo=$(cd "$here/.." && pwd -P)
-sample=polars/native-libs/.libcompat.so.Ab12Cd
 ignore_repo=$work/ignore-repo
 if ! command -v git > /dev/null; then
-  fail "git is needed to check that .gitignore covers $sample"
+  fail "git is needed to check that .gitignore covers the temporary file and the marker"
 else
   git init -q --template= "$ignore_repo"
   cp "$repo/.gitignore" "$ignore_repo/.gitignore"
-  if git -C "$ignore_repo" -c core.excludesFile=/dev/null \
-    check-ignore -q "$sample"; then
-    echo "ok: .gitignore covers a killed install's temporary file $sample"
-  else
-    fail ".gitignore does not cover $sample"
-  fi
+  for sample in polars/native-libs/.libcompat.so.Ab12Cd polars/native-libs/.libcompat.so.dev; do
+    if git -C "$ignore_repo" -c core.excludesFile=/dev/null \
+      check-ignore -q "$sample"; then
+      echo "ok: .gitignore covers $sample"
+    else
+      fail ".gitignore does not cover $sample"
+    fi
+  done
 fi
 
 exit $status

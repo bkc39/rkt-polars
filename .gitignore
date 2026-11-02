@@ -12,6 +12,9 @@ polars/private/compat/target/
 # Ignore the staged copy of the shared object, but keep the committed
 # per-platform prebuilt candidates that pkgs.rkt-lang.org installs from.
 polars/native-libs/libcompat.*
+# The dev install's marker beside the library it installed (#306); never
+# committed, so a catalog install has none.
+polars/native-libs/.libcompat.*.dev
 # scripts/install-native-libs.sh's temporary copy, left by a killed install.
 polars/native-libs/.libcompat.*
 !polars/native-libs/candidates/

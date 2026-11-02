@@ -8,6 +8,12 @@
 # mtime. On any failure the temporary file is removed and the target is as it
 # was.
 #
+# Beside each library it writes a marker, .<name>.dev, holding the
+# installed library's sha256, also by rename and left alone when it already
+# holds that hash. The pre-installer (polars/private/install-compat.rkt)
+# keeps a library whose marker matches it instead of copying the committed
+# candidate over it (#306).
+#
 # Called by the dev shell's hook (flake.nix's devSetup) and by
 # `nix run .#copy-native-libs`; tested by scripts/install-native-libs-test.sh.
 #
@@ -38,12 +44,21 @@ mkdir -p "$dest"
 for lib in "${libs[@]}"; do
   name=${lib##*/}
   target=$dest/$name
-  if [ -f "$target" ] && cmp -s "$lib" "$target"; then
-    continue
+  marker=$dest/.$name.dev
+  if ! { [ -f "$target" ] && cmp -s "$lib" "$target"; }; then
+    tmp=$(mktemp "$dest/.$name.XXXXXX")
+    cp "$lib" "$tmp"
+    chmod 0755 "$tmp"
+    mv -f "$tmp" "$target"
+    tmp=
   fi
-  tmp=$(mktemp "$dest/.$name.XXXXXX")
-  cp "$lib" "$tmp"
-  chmod 0755 "$tmp"
-  mv -f "$tmp" "$target"
-  tmp=
+  hash=$(sha256sum "$target")
+  hash=${hash%% *}
+  if [ "$(cat "$marker" 2> /dev/null)" != "$hash" ]; then
+    tmp=$(mktemp "$dest/.$name.dev.XXXXXX")
+    printf '%s\n' "$hash" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$marker"
+    tmp=
+  fi
 done

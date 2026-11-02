@@ -1060,7 +1060,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   `install-native-libs` gate and flake check hold it there. The
   pre-installer (`polars/private/install-compat.rkt`) does the same on every
   `raco setup`: it writes a replacement at mode `0755`, and an identical
-  library keeps its mode (#267).
+  library keeps its mode (#267). The script also writes a marker beside each
+  library, `.<name>.dev` (gitignored), holding the installed bytes'
+  sha256, by rename, and leaves it alone when it already holds that hash.
+  Without `RKT_POLARS_COMPAT_LIB_PATH`, the pre-installer keeps a library
+  whose marker matches its bytes instead of copying the committed candidate
+  over it, and prints one line naming it; a stale marker is removed when the
+  candidate goes in, and `RKT_POLARS_FORCE_CANDIDATE=1` installs the
+  candidate and removes the marker (#306). A hash, not mtimes, since a
+  checkout or a copy rewrites those.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:

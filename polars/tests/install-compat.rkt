@@ -2,9 +2,10 @@
 
 (module+ test
   (require rackunit
+           (only-in file/sha1 bytes->hex-string)
            (only-in racket/file
                     delete-directory/files file->bytes make-directory* make-temporary-directory)
-           (only-in racket/port port->bytes)
+           (only-in racket/port port->bytes with-output-to-string)
            (only-in polars/private/install-compat pre-installer)
            (only-in polars/private/resource with-release)
            (only-in polars/tests/test-helpers scratch-file))
@@ -157,4 +158,72 @@
      (lambda (lib collection native)
        (scratch-file lib "libcompat.so" "fresh")
        (install! lib collection)
-       (check-equal? (file->bytes (build-path native "libcompat.so")) #"fresh")))))
+       (check-equal? (file->bytes (build-path native "libcompat.so")) #"fresh"))))
+
+  (define (candidate-dir collection)
+    (build-path collection "native-libs" "candidates"
+                (if (eq? (system-type 'os) 'macosx) "darwin" "linux")))
+
+  (define (install-candidate! collection #:force? [force? #f])
+    (parameterize ([current-environment-variables
+                    (environment-variables-copy (current-environment-variables))])
+      (environment-variables-set! (current-environment-variables)
+                                  #"RKT_POLARS_COMPAT_LIB_PATH" #f)
+      (environment-variables-set! (current-environment-variables)
+                                  #"RKT_POLARS_FORCE_CANDIDATE" (and force? #"1"))
+      (with-output-to-string (lambda () (pre-installer #f collection #f)))))
+
+  (define (sha256-hex bs)
+    (bytes->hex-string (sha256-bytes bs)))
+
+  (define (call-with-dev-library marked-bytes proc)
+    (call-with-install-dirs
+     (lambda (lib collection native)
+       (make-directory* (candidate-dir collection))
+       (scratch-file (candidate-dir collection) "libcompat.so" "candidate bytes")
+       (define target (scratch-file native "libcompat.so" "dev bytes"))
+       (define marker (build-path native ".libcompat.so.dev"))
+       (when marked-bytes
+         (scratch-file native ".libcompat.so.dev" (format "~a\n" (sha256-hex marked-bytes))))
+       (proc collection target marker))))
+
+  (test-case "a dev-marked library is kept, in one line naming it"
+    (call-with-dev-library
+     #"dev bytes"
+     (lambda (collection target marker)
+       (define before (file-or-directory-identity target))
+       (define out (install-candidate! collection))
+       (check-equal? (file->bytes target) #"dev bytes")
+       (check-equal? (file-or-directory-identity target) before)
+       (check-true (file-exists? marker))
+       (check-equal? out
+                     (format (string-append "pre-installer: keeping the dev-built ~a; "
+                                            "RKT_POLARS_FORCE_CANDIDATE=1 installs the "
+                                            "committed candidate\n")
+                             (path->string target))))))
+
+  (test-case "a stale marker is ignored and removed with the candidate's install"
+    (call-with-dev-library
+     #"other bytes"
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-false (file-exists? marker)))))
+
+  (test-case "RKT_POLARS_FORCE_CANDIDATE=1 installs the candidate over a dev-marked library"
+    (call-with-dev-library
+     #"dev bytes"
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection #:force? #t) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-false (file-exists? marker)))))
+
+  (test-case "without a marker the candidate replaces the library"
+    (call-with-dev-library
+     #f
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (define before (file-or-directory-identity target))
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file-or-directory-identity target) before)))))
