@@ -23,21 +23,6 @@ fn ref_f64_returns_value() {
 }
 
 #[test]
-fn ref_str_returns_cstring_and_frees() {
-    let s = make_str("ws", &["hi", "there"]);
-    let p0 = series_ref_str(s, 0);
-    assert!(!p0.is_null());
-    assert_eq!(take_cstring(p0), "hi");
-    assert_eq!(take_cstring(series_ref_str(s, 1)), "there");
-    series_drop(s);
-}
-
-#[test]
-fn ref_str_null_series_returns_null_ptr() {
-    assert!(series_ref_str(ptr::null_mut(), 0).is_null());
-}
-
-#[test]
 fn ref_bool_returns_value() {
     let s = make_bool("flags", &[1, 0, 1]);
     assert_eq!(series_ref_bool(s, 0).value, 1);

@@ -13,7 +13,7 @@
          (for-syntax racket/base syntax/parse))
 
 (provide normalize-dtype dtype->constructor infer-dtype coerce-elements
-         check-categorical-values numeric-dtypes numeric-dtype? temporal-dtype?
+         numeric-dtypes numeric-dtype? temporal-dtype?
          dtype-spec? define-enum)
 
 (begin-for-syntax
@@ -21,19 +21,11 @@
     #:description "an enum category (an identifier or a string)"
     (pattern name:id #:with symbol #'name)
     (pattern text:str
-             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text)))
-
-  (define (category-with-nul categories)
-    (for/first ([category (in-list categories)]
-                #:when (for/or ([c (in-string (symbol->string (syntax-e category)))])
-                         (char=? c #\nul)))
-      category)))
+             #:with symbol (datum->syntax #'text (string->symbol (syntax-e #'text)) #'text))))
 
 (define-syntax-parse-rule (define-enum name:id category:enum-category ...+)
   #:fail-when (check-duplicate-identifier (syntax->list #'(category.symbol ...)))
               "duplicate enum category"
-  #:fail-when (category-with-nul (syntax->list #'(category.symbol ...)))
-              "an enum category cannot contain a NUL character"
   (define name '(enum category.symbol ...)))
 
 ;; Accept both the short constructor spellings (i32, f64, str, bool) and the
@@ -112,23 +104,6 @@
                 (series-cast s 'categorical)
                 (series-cast-enum 'series s canonical))))]
        [_ (error 'series "no constructor for dtype ~v" canonical)])]))
-
-;; ref reads categorical and Enum values back as C strings, which end at a NUL (#165).
-(define (check-categorical-values who canonical elements)
-  (define (check value)
-    (define name
-      (cond
-        [(symbol? value) (symbol->string value)]
-        [(string? value) value]
-        [else #f]))
-    (when (and name (string-has-nul? name))
-      (raise-argument-error who "a categorical or enum value without a NUL character" value)))
-  (when (enum-dtype? canonical)
-    (check-enum-categories who canonical))
-  (when (or (eq? canonical 'categorical) (enum-dtype? canonical))
-    (if (vector? elements)
-        (for ([value (in-vector elements)]) (check value))
-        (for ([value (in-list elements)]) (check value)))))
 
 ;; The float constructors want flonums; accept exact reals too by coercing,
 ;; so (series '(1 2 3) #:dtype 'f64) does what the user means.

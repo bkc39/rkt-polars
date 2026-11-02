@@ -329,8 +329,9 @@
       [_ #f]))
   (define (c-string-crossing form)
     (match form
-      [(list* (or '_fun 'define-series-constructors) _) #:when (mentions? form '_rsstring)
-       '_rsstring]
+      [(list* (or '_fun 'define-series-constructors) _)
+       (for/first ([type (in-list '(_rsstring _c-string-result))] #:when (mentions? form type))
+         type)]
       [(list* 'define-compat _ (? list? type) _)
        (define result (fun-result type))
        (and (memq result '(_string _string/utf-8 _string*/utf-8)) result)]
@@ -353,16 +354,16 @@
                                 '(define-compat z (_fun _pointer -> _string))
                                 '(define-compat w (_fun _string -> (r : _string/utf-8) -> r))
                                 '(define-compat v (_fun -> _string*/utf-8) #:c-id v)
+                                '(define-compat u (_fun _Series-ptr _size -> _c-string-result))
                                 '(define-compat kept (_fun _string -> _void)))])
     (define planted (simplify-path (build-path root "private" "planted.rkt")))
     (check-equal? (c-string-crossings (source-forms (polars-sources root #:dirs '("private"))))
                   (for/list ([type '(_rsstring _rsstring _rsstring _string _string/utf-8
-                                     _string*/utf-8)])
+                                     _string*/utf-8 _c-string-result)])
                     (list planted type))))
 
   (define string-list-holders
-    '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw
-      expr-cast-enum/raw expr-dtype-col-enum/raw series-cast-enum/raw))
+    '(_csv-fun _ndjson-fun dataframe-read-json/raw dataframe-read-parquet/raw))
   (define string-list-definers '(define-compat define-syntax-parse-rule define-syntax-parser))
   (define (string-list-users file-forms)
     (sort (for*/list ([file+forms (in-list file-forms)]

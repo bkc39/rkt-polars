@@ -22,7 +22,7 @@ expr_all builder
 expr_backward_fill builder
 expr_cast builder
 expr_cast_datetime_tz builder
-expr_cast_enum builder
+expr_cast_enum_v2 builder
 expr_clip builder
 expr_col_v2 builder
 expr_diff builder
@@ -52,7 +52,7 @@ expr_dt_weekday builder
 expr_dt_year builder
 expr_dtype_col builder
 expr_dtype_col_datetime_tz builder
-expr_dtype_col_enum builder
+expr_dtype_col_enum_v2 builder
 expr_exclude_v2 builder
 expr_forward_fill builder
 expr_head builder
@@ -166,6 +166,7 @@ series_new_ymdhms constructor
 series_null_count accessor
 series_quantile todo-129
 series_ref_bool accessor
+series_ref_cat accessor
 series_ref_date accessor
 series_ref_duration accessor
 series_ref_f32 accessor
@@ -175,7 +176,6 @@ series_ref_i32 accessor
 series_ref_i64 accessor
 series_ref_i8 accessor
 series_ref_is_null accessor
-series_ref_str accessor
 series_ref_time accessor
 series_ref_u16 accessor
 series_ref_u32 accessor

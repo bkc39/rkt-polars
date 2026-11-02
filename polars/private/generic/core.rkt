@@ -152,7 +152,6 @@
 
 (define (series elements #:name [name ""] #:dtype [dtype #f])
   (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
-  (check-categorical-values 'series canonical elements)
   (define ctor (dtype->constructor canonical (vector? elements)))
   (wrap-series (ctor name (coerce-elements canonical elements))))
 

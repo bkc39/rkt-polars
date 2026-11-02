@@ -18,8 +18,8 @@
            (only-in polars/private/foreign dataframe-select dataframe-sort series-name)
            (only-in polars/private/generic/reductions alias count mean n-unique sum)
            (only-in polars/tests/generic/test-fixtures
-                    col column expr-add frame named-frame nul-frame nul-names ops-df polars-null
-                    series-cells settle! v64)
+                    check-cells col column expr-add frame named-frame nul-frame nul-names ops-df
+                    polars-null series-cells settle! v64)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -185,10 +185,17 @@
              (lambda () (cast (ref flights "dest") '(enum JFK))))
   (check-exn #rx"^with-columns: [^\n]*\"IAH\""
              (lambda () (with-columns flights (cast "dest" '(enum JFK MIA)))))
-  (define nul-dests (list 'enum 'JFK (string->symbol "MI\u0000A") 'IAH))
-  (for ([target (list (ref flights "dest") "dest")])
-    (check-exn #rx"^cast: contract violation\n  expected: an enum category without a NUL"
-               (lambda () (cast target nul-dests))))
+  (define nul-mia (string->symbol "MI\u0000A"))
+  (define nul-dests (list 'enum 'JFK nul-mia 'IAH))
+  (define nul-flights (dataframe (list (series (list "IAH" "MI\u0000A" "JFK") #:name "dest"))))
+  (define nul-cast (cast (ref nul-flights "dest") nul-dests))
+  (check-equal? (dtype nul-cast) nul-dests)
+  (check-cells nul-cast (list 'IAH nul-mia 'JFK))
+  (for ([target (in-list (list "dest" (col "dest")))])
+    (define nul-coded (with-columns nul-flights (cast target nul-dests)))
+    (check-equal? (dtype (ref nul-coded "dest")) nul-dests)
+    (check-cells (ref nul-coded "dest") (list 'IAH nul-mia 'JFK))
+    (check-equal? (column-names (select nul-coded (col nul-dests))) '("dest")))
 
   ;; --- operators inside filter / select / when-then (integration) -----------
   (check-equal? (height (filter ops-df (p-and (>= (col "value") 10) (<= (col "value") 25)))) 3)

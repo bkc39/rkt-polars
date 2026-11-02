@@ -32,11 +32,11 @@
                   series-new-null
                   dataframe-drop
                   frame-sort/c provide-row-windows sort-flags
-                  _CompatDType ->compat-dtype check-enum-categories enum-dtype?
+                  _CompatDType ->compat-dtype enum-dtype?
                   time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/join-options
                   frame-join/c join-keys join-symbol->code)
-         (only-in polars/private/resource _str-list _string-list with-release)
+         (only-in polars/private/resource _str-list with-release)
          (only-in polars/private/series series-new-temporal)
          (only-in polars/private/temporal
                   temporal-value-dtype temporal-values-dtype zone-conflict)
@@ -791,11 +791,8 @@
   #:wrap (allocator expr-drop))
 
 (define-compat expr-cast-enum/raw
-  (_fun _Expr-ptr
-        (categories : _string-list)
-        (_size = (length categories))
-        -> _Expr-ptr/null)
-  #:c-id expr_cast_enum
+  (_fun _Expr-ptr _str-list -> _Expr-ptr/null)
+  #:c-id expr_cast_enum_v2
   #:wrap (allocator expr-drop))
 
 (define-compat expr-cast-datetime-tz/raw
@@ -809,7 +806,6 @@
 (define (expr-cast-to who e dtype)
   (cond
     [(enum-dtype? dtype)
-     (check-enum-categories who dtype)
      (call/foreign-error who
                          (lambda () (expr-cast-enum/raw e (map symbol->string (cdr dtype))))
                          "cannot convert to ~v" dtype)]

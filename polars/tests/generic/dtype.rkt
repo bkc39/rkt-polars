@@ -19,5 +19,6 @@
              (lambda () (convert-compile-time-error (let () (define-enum twice a "a") twice))))
   (check-exn #rx"expected more terms"
              (lambda () (convert-compile-time-error (let () (define-enum none) none))))
-  (check-exn #rx"an enum category cannot contain a NUL character"
-             (lambda () (convert-compile-time-error (let () (define-enum held a "b\u0000c") held)))))
+  (define-enum held a "b\u0000c")
+  (check-equal? held (list 'enum 'a (string->symbol "b\u0000c")))
+  (check-true (enum-dtype? held)))

@@ -45,8 +45,8 @@ fn cast_i32_to_string_produces_string_series() {
         series_cast(s, dtype(CompatDTypeTag::String, CompatTimeUnit::None));
     assert!(!out.is_null());
     assert_dtype(out, CompatDTypeTag::String, CompatTimeUnit::None);
-    assert_eq!(take_cstring(series_ref_str(out, 0)), "1");
-    assert_eq!(take_cstring(series_ref_str(out, 2)), "3");
+    assert_eq!(ref_str(out, 0).as_deref(), Some("1"));
+    assert_eq!(ref_str(out, 2).as_deref(), Some("3"));
     series_drop(out);
     series_drop(s);
 }

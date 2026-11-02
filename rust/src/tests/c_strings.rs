@@ -3,8 +3,6 @@ use proc_macro2::Ident;
 use syn::visit::{self, Visit};
 use syn::ReturnType;
 
-const C_STRING_RESULTS: &[&str] = &["series_ref_str"];
-
 #[derive(Default)]
 struct CChar(bool);
 
@@ -21,33 +19,24 @@ fn returns_c_char(output: &ReturnType) -> bool {
     found.0
 }
 
-fn c_string_results(files: &[String], exempt: &[&str]) -> Vec<String> {
+fn c_string_results(files: &[String]) -> Vec<String> {
     let krate = walk(files);
     let mut problems = krate.problems;
-    let returning: Vec<&str> = krate
-        .functions
-        .iter()
-        .filter(|f| f.entry && returns_c_char(&f.output))
-        .map(|f| f.name.as_str())
-        .collect();
-    for name in returning.iter().filter(|n| !exempt.contains(n)) {
-        problems.push(format!(
-            "{} returns a C string: return a StrOut block",
-            name
-        ));
-    }
-    for name in exempt.iter().filter(|n| !returning.contains(n)) {
-        problems.push(format!(
-            "{} is exempt but returns no C string: remove its exemption",
-            name
-        ));
-    }
+    problems.extend(
+        krate
+            .functions
+            .iter()
+            .filter(|f| f.entry && returns_c_char(&f.output))
+            .map(|f| {
+                format!("{} returns a C string: return a StrOut block", f.name)
+            }),
+    );
     problems
 }
 
 #[test]
 fn no_entry_point_returns_a_c_string() {
-    let problems = c_string_results(&tree(), C_STRING_RESULTS);
+    let problems = c_string_results(&tree());
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
@@ -70,9 +59,6 @@ macro_rules! export_c_string {
 export_c_string!(planted_by_macro);
 
 #[no_mangle]
-pub extern "C" fn exempted() -> *const c_char { ptr::null() }
-
-#[no_mangle]
 pub extern "C" fn block() -> StrOut { ptr::null_mut() }
 
 #[no_mangle]
@@ -82,12 +68,11 @@ fn internal() -> *const c_char { ptr::null() }
 "#,
     );
     assert_eq!(
-        c_string_results(&planted, &["exempted", "stale"]),
+        c_string_results(&planted),
         [
             "planted_const returns a C string: return a StrOut block",
             "planted_mut returns a C string: return a StrOut block",
             "planted_by_macro returns a C string: return a StrOut block",
-            "stale is exempt but returns no C string: remove its exemption",
         ]
     );
 }
