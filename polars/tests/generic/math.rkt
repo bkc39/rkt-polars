@@ -7,7 +7,7 @@
            (only-in polars/private/generic/reshape select with-columns)
            (only-in polars/tests/generic/test-fixtures column)
            (only-in polars/private/generic/math
-                    ceil clip p-abs p-floor p-log p-sqrt pow round sign))
+                    ceil clip p-abs p-floor [log p-log] p-sqrt pow round sign))
   ;; numeric fall-through keeps racket/base behaviour for the shadowing ops
   (check-equal? (p-abs -3) 3)
   (check-equal? (p-floor 2.7) 2.0)

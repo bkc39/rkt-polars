@@ -2,7 +2,7 @@
 
 (require (only-in racket/contract/base -> contract-out or/c)
          racket/match
-         (only-in polars/private/expr lazyframe-join)
+         (only-in (submod polars/private/expr internal) lazyframe-join/who)
          (only-in (submod polars/private/foreign internal)
                   dataframe-hstack/who dataframe-join-asof/who dataframe-join/who
                   dataframe-vstack/who)
@@ -22,12 +22,10 @@
 (define (join left right
               #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]
               #:how [how 'inner])
+  (define-values (lon ron) (join-keys how on left-on right-on))
   (match left
-    [(? dataframe?)
-     (define-values (lon ron) (join-keys how on left-on right-on))
-     (wrap-dataframe (dataframe-join/who 'join left right lon ron how))]
-    [_ (wrap-lazyframe
-        (lazyframe-join left right #:on on #:left-on left-on #:right-on right-on #:how how))]))
+    [(? dataframe?) (wrap-dataframe (dataframe-join/who 'join left right lon ron how))]
+    [_ (wrap-lazyframe (lazyframe-join/who 'join left right lon ron how))]))
 
 (define (join-asof left right
                    #:on [on #f] #:left-on [left-on #f] #:right-on [right-on #f]

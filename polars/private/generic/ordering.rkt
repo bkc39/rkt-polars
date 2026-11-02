@@ -10,8 +10,8 @@
                   Expr-ptr? expr-gather expr-rank expr-sort expr-sort-by index-list/c lazyframe-sort
                   rank-method/c)
          (only-in polars/private/expr-core sort-by/c)
-         (only-in polars/private/foreign series-sort sort-flags-mismatch sort-flags/c)
-         (only-in (submod polars/private/foreign internal) dataframe-sort/who)
+         (only-in polars/private/foreign sort-flags-mismatch sort-flags/c)
+         (only-in (submod polars/private/foreign internal) dataframe-sort/who series-sort/who)
          (only-in polars/private/generic/core
                   dataframe? lazyframe? series? wrap-dataframe wrap-lazyframe wrap-series)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
@@ -85,7 +85,7 @@
       (lazyframe-sort x (->keys by) #:descending descending #:nulls-last nulls-last
                       #:maintain-order maintain-order))]
     [(series? x)
-     (wrap-series (series-sort x #:descending descending #:nulls-last nulls-last))]
+     (wrap-series (series-sort/who 'sort x descending nulls-last))]
     [(list? x)
      (base:sort x (if descending (lambda (a b) (by b a)) by)
                 #:key extract-key #:cache-keys? cache-keys?)]

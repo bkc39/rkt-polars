@@ -1,5 +1,6 @@
 use super::test_util::*;
 use super::*;
+use serde_json::json;
 
 fn boxed(s: Series) -> *mut Series {
     Box::into_raw(Box::new(s))
@@ -375,5 +376,212 @@ fn enum_dtype_col_selects_the_enum_column() {
     assert_eq!(read_column_names(out), vec!["level"]);
     for p in [s, e, other] {
         series_drop(p);
+    }
+}
+
+fn enum_of(categories: &[&str]) -> DataType {
+    DataType::from_frozen_categories(
+        FrozenCategories::new(categories.iter().copied()).unwrap(),
+    )
+}
+
+fn parsed_payload(reason: &str) -> serde_json::Value {
+    match reason.strip_prefix(ENUM_MISSES_TAG) {
+        Some(payload) => serde_json::from_str(payload).unwrap(),
+        None => panic!("an untagged reason: {}", reason),
+    }
+}
+
+fn misses_payload(s: &Series, categories: &[&str]) -> serde_json::Value {
+    parsed_payload(
+        &enum_cast_checked(s, &enum_of(categories))
+            .unwrap_err()
+            .to_string(),
+    )
+}
+
+#[test]
+fn an_enum_cast_reports_its_misses_from_any_string_source() {
+    let s =
+        strings(&[Some("TEB"), None, Some("XYZ"), Some("TEB"), Some("EWR")]);
+    let cat = s
+        .cast(&DataType::from_categories(Categories::global()))
+        .unwrap();
+    let other = s.cast(&enum_of(&["EWR", "TEB", "XYZ"])).unwrap();
+    for source in [&s, &cat, &other] {
+        assert_eq!(
+            misses_payload(source, &["EWR", "JFK", "LGA"]),
+            json!({
+                "categories": ["EWR", "JFK", "LGA"],
+                "distinct": 2,
+                "missing": 3,
+                "shown": ["TEB", "XYZ"],
+                "total": 4
+            })
+        );
+    }
+}
+
+#[test]
+fn the_misses_payload_escapes_what_json_must() {
+    let s = strings(&[Some("a\0b"), Some("q\"\\"), Some("\u{1f}")]);
+    let reason = enum_cast_checked(&s, &enum_of(&["\"", "\\"]))
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        parsed_payload(&reason),
+        json!({
+            "categories": ["\"", "\\"],
+            "distinct": 3,
+            "missing": 3,
+            "shown": ["\u{1f}", "a\0b", "q\"\\"],
+            "total": 3
+        })
+    );
+    for escaped in [r#"\u001f"#, r#"a\u0000b"#, r#"q\"\\"#] {
+        assert!(reason.contains(escaped), "{}", reason);
+    }
+}
+
+#[test]
+fn the_misses_payload_shows_ten_sorted_misses() {
+    let values: Vec<String> =
+        (0..12).rev().map(|i| format!("v{:02}", i)).collect();
+    let shown: Vec<String> = (0..10).map(|i| format!("v{:02}", i)).collect();
+    assert_eq!(
+        misses_payload(&Series::new("s".into(), &values), &["a"]),
+        json!({
+            "categories": ["a"],
+            "distinct": 12,
+            "missing": 12,
+            "shown": shown,
+            "total": 12
+        })
+    );
+}
+
+#[test]
+fn an_enum_cast_without_misses_is_the_strict_cast() {
+    let dtype = enum_of(&["EWR", "TEB"]);
+    let s = strings(&[Some("TEB"), None, Some("EWR")]);
+    let cat = s
+        .cast(&DataType::from_categories(Categories::global()))
+        .unwrap();
+    for source in [&s, &cat] {
+        let checked = enum_cast_checked(source, &dtype).unwrap();
+        assert!(checked.equals_missing(&source.strict_cast(&dtype).unwrap()));
+        assert_eq!(checked.dtype(), &dtype);
+        assert_eq!(checked.name(), source.name());
+    }
+    let bools = Series::new("b".into(), &[true]);
+    assert_eq!(
+        enum_cast_checked(&bools, &dtype).unwrap_err().to_string(),
+        bools.strict_cast(&dtype).unwrap_err().to_string()
+    );
+}
+
+const ENUM_HINT: &str = "\n\nEnsure that all values in the input column \
+    are present in the categories of the enum datatype.";
+
+#[test]
+fn a_lazy_enum_cast_is_polars_strict_cast() {
+    let s = make_str("o", &["EWR", "LGA"]);
+    let df = make_df(&[s]);
+    let column = expr_col_v2(str_block("o").as_ptr());
+    let categories = str_list_block(&["EWR"]);
+    let cast = expr_cast_enum_v2(column, categories.as_ptr());
+    assert!(matches!(
+        unsafe { &*cast },
+        Expr::Cast {
+            options: polars::chunked_array::cast::CastOptions::Strict,
+            ..
+        }
+    ));
+    let exprs = [cast as *const Expr];
+    let lf = lazyframe_select(dataframe_lazy(df), exprs.as_ptr(), 1);
+    assert!(lazyframe_collect(lf).is_null());
+    assert_eq!(
+        recorded_error().unwrap(),
+        format!(
+            "conversion from `str` to `enum` failed in column 'o' for 1 out \
+             of 2 values: [\"LGA\"]{ENUM_HINT}"
+        )
+    );
+    series_drop(s);
+    expr_drop(column);
+    expr_drop(cast);
+}
+
+#[test]
+fn the_misses_payload_counts_many_rows_of_few_misses() {
+    let values: Vec<&str> = (0..200_000)
+        .map(|i| match i % 50_000 {
+            0 => "B6",
+            1 => "AA",
+            _ => "UA",
+        })
+        .collect();
+    assert_eq!(
+        misses_payload(&Series::new("s".into(), &values), &["UA"]),
+        json!({
+            "categories": ["UA"],
+            "distinct": 2,
+            "missing": 8,
+            "shown": ["AA", "B6"],
+            "total": 200000
+        })
+    );
+}
+
+fn lazy_enum_cast(name: &str, categories: &[&str]) -> Expr {
+    let column = expr_col_v2(str_block(name).as_ptr());
+    let block = str_list_block(categories);
+    let cast = expr_cast_enum_v2(column, block.as_ptr());
+    let out = unsafe { (*cast).clone() };
+    expr_drop(column);
+    expr_drop(cast);
+    out
+}
+
+#[test]
+fn a_lazy_enum_cast_counts_one_chunk_as_polars_does() {
+    let threads = std::thread::available_parallelism()
+        .map_or(8, |n| n.get())
+        .max(polars_core::runtime::THREAD_POOL.current_num_threads())
+        .max(4);
+    let width = 2 * threads;
+    let piece = |pattern: [&str; 4]| {
+        let values: Vec<&str> =
+            pattern.iter().copied().cycle().take(4 * threads).collect();
+        let columns: Vec<Column> = (0..width)
+            .map(|i| Series::new(format!("o{}", i).into(), &values).into())
+            .collect();
+        DataFrame::new(values.len(), columns).unwrap()
+    };
+    let mut frame = piece(["EWR", "LGA", "EWR", "JFK"]);
+    frame
+        .vstack_mut(&piece(["JFK", "LGA", "TEB", "EWR"]))
+        .unwrap();
+    assert_eq!(frame.first_col_n_chunks(), 2);
+    let rows = 4 * threads;
+    let chunks = [
+        (2 * threads, "\"LGA\", \"JFK\", … \"JFK\""),
+        (3 * threads, "\"JFK\", \"LGA\", … \"JFK\""),
+    ]
+    .map(|(missing, listing)| {
+        format!(
+            "conversion from `str` to `enum` failed in column 'o0' for {missing} out of {rows} \
+             values: [{listing}]{ENUM_HINT}"
+        )
+    });
+    let cast = lazy_enum_cast("o0", &["EWR"]);
+    let plans = [
+        frame.clone().lazy().select([cast.clone()]),
+        frame.clone().lazy().with_columns([cast.clone()]),
+        frame.clone().lazy().filter(cast.clone().is_null()),
+    ];
+    for plan in plans {
+        let reason = plan.collect().unwrap_err().to_string();
+        assert!(chunks.contains(&reason), "{reason}");
     }
 }

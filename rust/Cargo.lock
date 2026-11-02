@@ -406,6 +406,7 @@ dependencies = [
  "polars-core",
  "proc-macro2",
  "rayon",
+ "serde_json",
  "syn 2.0.72",
  "tempfile",
  "tokio",

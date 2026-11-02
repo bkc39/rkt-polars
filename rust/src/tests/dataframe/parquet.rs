@@ -485,6 +485,12 @@ fn explain_reports_a_plan_that_cannot_resolve() {
             "{}",
             message
         );
+        assert!(
+            !message.contains("Resolved plan")
+                && !message.contains("FAILED HERE"),
+            "{}",
+            message
+        );
     }
     let plain = take_str(lazyframe_explain_v2(lf, false, false));
     let tree = take_str(lazyframe_explain_v2(lf, false, true));

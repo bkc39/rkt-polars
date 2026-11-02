@@ -50,7 +50,7 @@
                     series-xor str-block-drop-count zoned-datetime-dtype? last-error-message
                     _c-string _c-string/null)
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
-           (only-in (submod polars/private/foreign enum-misses) enum-misses-shown)
+           (only-in polars/private/enum-misses enum-misses-shown)
            (only-in (submod polars/private/foreign internal)
                     block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-join
                     dataframe-select/who
@@ -679,6 +679,12 @@
                                " #:non-existent 'null to return `null`"))
   (check-equal? (respell "try renaming the columns with `.alias(\"new_name\")` to avoid")
                 "try renaming the columns with `(alias expr \"new-name\")` to avoid")
+  (for ([hint (list (string-append ", hint: specify this field in the schema, or pass"
+                                   " cast_options=pl.ScanCastOptions(extra_struct_fields='ignore')")
+                    ", hint: pass cast_options=pl.ScanCastOptions(integer_cast='upcast')")])
+    (check-equal? (respell (string-append "encountered extra struct field: x" hint))
+                  "encountered extra struct field: x"))
+  (check-equal? (respell "a `.` and a \\1 and a & survive") "a `.` and a \\1 and a & survive")
   (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 

@@ -233,9 +233,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   → `#:null-values`, `missing_columns='insert'` → `#:missing-columns 'insert`,
   `ambiguous` → `#:ambiguous`, ...; `non_existent='null'` becomes
   `dt-replace-time-zone`'s `#:non-existent 'null`, since `str->datetime` and
-  the other verbs that can raise it lack the keyword) and in the JSON readers'
-  advice to increase `infer_schema_length` or give a schema. It drops the
-  multi-file scan's hint to pass `extra_columns` or a schema, which the
+  the other verbs that can raise it lack the keyword, `strict=False` →
+  `#:strict #f`, `str.strptime` → `str->date` or `str->datetime` with a
+  `#:format`) and in the JSON readers' advice to increase
+  `infer_schema_length` or give a schema. It drops the `LazyFrame.` names
+  from the duplicate-name and multiple-predicate messages, and turns
+  `all_horizontal` into `and` or `or`. It drops the multi-file scan's hints
+  to pass `extra_columns` or a schema and to pass `cast_options`, which the
   bindings lack, and the hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the
   nine take a zone's name through `named_time_zone`, which checks it with
   `TimeZone::validate_time_zone` after `opt_try_new`, and only `opt_try_new`
@@ -801,8 +805,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
   is refused.
-- `series` infers int64 / float64 / string / bool, `'categorical` from a list
-  of symbols, and the temporal dtypes from gregor values (#63): `'date`,
+- `series` infers int64 / float64 / string / bool, uint64 for integers when
+  one is 2^63 or more and none is negative (as Python does; a list of
+  integers neither holds, or an integer outside `#:dtype`'s range, is a
+  contract violation naming `series`), `'categorical` from a list of
+  symbols, and the temporal dtypes from gregor values (#63): `'date`,
   `'time`, `'(datetime microseconds #f)`, and `'(duration microseconds)` from
   a `period` without years or months (a day is 24 hours). A datetime or period
   that carries nanoseconds makes the column nanoseconds instead, where
@@ -878,7 +885,37 @@ it. Racket side: `define-compat` with `#:c-id`.
   last categorical column drops: the codes never leave Rust, and
   `series_copy_cat` re-encodes each copy densely with its own category table.
   A cast to an Enum is strict, as Python's default is; every other `cast`
-  stays non-strict (a value that does not convert becomes null).
+  stays non-strict (a value that does not convert becomes null). The eager
+  form, `series_cast_enum_v2`, runs `enum_cast_checked`
+  (`series/categorical.rs`), which records the misses as a tagged payload
+  that `call/foreign-error` renders: it counts the whole column's non-null
+  values and names the first ten distinct missed values in sorted order,
+  counting the other distinct ones as `, and K more`. The lazy
+  form, `expr_cast_enum_v2`, is polars' own strict cast, so the optimizer
+  treats it as fallible, as Python's does: a filter on another column is
+  pushed past it, a filter that casts stays above an earlier filter, and
+  inside `agg` or `over` it casts only the values the groups keep after a
+  `filter`, `head` or `slice`. Its failure is polars' reason, which
+  `enum-cast-reason` (`enum-misses.rkt`) respells, under the verb that runs
+  the plan, as `M of N values are not in the enum: v ...` when polars' value
+  list parses unambiguously (no value holds a `"` or a NUL, the column's name
+  holds no `'`, and the list has polars' default length), and otherwise
+  leaves as polars' text. It counts what polars' cast was given at once, as
+  Python does. On a frame of several chunks (a `vstack` does not rechunk)
+  `with-columns` counts each chunk, `select` each chunk once the frame is
+  taller than twice polars' thread count, and `filter` each chunk;
+  otherwise `select` and `with-columns` count the whole column, and
+  `filter` the whole column of a frame narrower than the thread pool and
+  each thread's part of one at least as wide. That holds when every
+  expression the verb is given is elementwise; any other (a `count`, say)
+  makes it count the whole column. In `agg` or `over` it counts all the
+  groups' values together, in row order (or one value per group, for an
+  aggregated input). N counts nulls, and the values are polars' first
+  missed rows in row order, one per row, repeats kept (all of them up to
+  three, else the first two, with the other rows counted as `, and K more
+  rows`; the eager form names distinct values and counts the other
+  distinct ones). The message names no categories, since polars' reason
+  carries none.
 - A Decimal is `'(decimal precision scale)`, which `CompatDType` carries in
   `array_width` and `time_unit`; its values read as exact rationals. It has no
   `#:dtype` or cast-target spelling.

@@ -63,12 +63,15 @@ pub extern "C" fn lazyframe_explain_v2(
     }
     let lf = unsafe { &*lf };
     guard_panic(|| {
-        record(match (optimized, tree) {
-            (true, false) => lf.describe_optimized_plan(),
-            (true, true) => lf.describe_optimized_plan_tree(),
-            (false, false) => lf.describe_plan(),
-            (false, true) => lf.describe_plan_tree(),
-        })
+        record(
+            match (optimized, tree) {
+                (true, false) => lf.describe_optimized_plan(),
+                (true, true) => lf.describe_optimized_plan_tree(),
+                (false, false) => lf.describe_plan(),
+                (false, true) => lf.describe_plan_tree(),
+            }
+            .map_err(cause_alone),
+        )
     })
     .map_or(ptr::null_mut(), |plan| str_out(&plan))
 }

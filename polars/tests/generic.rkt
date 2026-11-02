@@ -2,6 +2,7 @@
 
 (module+ test
   (require rackunit
+           racket/match
            (only-in polars/private/expr-core
                     Expr-ptr? LazyFrame-ptr? col drop-owned expr-drop expr-drop-count
                     lazyframe-drop lazyframe-drop-count)
@@ -124,4 +125,30 @@
   (check-dropped (lambda () (expr-drop threshold)) 'expr-drop "expression")
   (check-dropped (lambda () (expr-alias threshold "w")) 'expr "expression")
   (check-dropped (lambda () (sort threshold)) 'expr "expression")
-  (check-dropped (lambda () (is-in "v" threshold)) 'expr "expression"))
+  (check-dropped (lambda () (is-in "v" threshold)) 'expr "expression")
+
+  (define (phase-0-variables mod)
+    (check-true (module-declared? mod #t))
+    (define-values (variables syntaxes) (module->exports mod))
+    (for*/list ([phase+names (in-list variables)]
+                #:when (eqv? (car phase+names) 0)
+                [name (in-list (cdr phase+names))])
+      (car name)))
+  ;; Only the fluent surface: a low-level name is the C symbol's, and its /raw and allocator
+  ;; procedures are named for the binding they wrap.
+  (define fluent-names (phase-0-variables 'polars/private/generic))
+  (define (alias-of name)
+    (match (regexp-match #rx"^polars:(.+)$" (symbol->string name))
+      [(list _ public) (string->symbol public)]
+      [#f #f]))
+  (define misnamed
+    (for*/list ([name (in-list (phase-0-variables 'polars))]
+                #:when (memq name fluent-names)
+                [value (in-value (dynamic-require 'polars name))]
+                #:when (procedure? value)
+                #:unless (eq? (object-name value) name)
+                #:unless (and (alias-of name)
+                              (eq? value (dynamic-require 'polars (alias-of name)))))
+      (list name (object-name value))))
+  (check-equal? misnamed '())
+  (check-equal? (object-name (dynamic-require 'polars 'log)) 'log))

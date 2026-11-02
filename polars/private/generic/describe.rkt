@@ -7,14 +7,16 @@
          (only-in threading ~>)
          (only-in polars/private/expr
                   col expr-drop expr-sort lazyframe-drop lazyframe-select lazyframe-with-columns
-                  lit)
+                  lit/who)
          (only-in (submod polars/private/expr internal) collect-plan/who)
+         (only-in (submod polars/private/foreign internal) dataframe-column/who)
          (only-in polars/private/expr-dt expr-dt-replace-time-zone)
          (only-in polars/private/foreign
-                  dataframe-column dataframe-column-names dataframe-drop dataframe-height
+                  dataframe-column-names dataframe-drop dataframe-height
                   dataframe-new decimal-dtype?
                   polars-null polars-null? series-drop series-dtype series-null-count
-                  series-rename zoned-datetime-dtype?)
+                  zoned-datetime-dtype?)
+         (only-in (submod polars/private/foreign internal) series-rename/who)
          (only-in polars/private/generic/core
                   dataframe dataframe? ref series series? wrap-dataframe)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
@@ -49,8 +51,8 @@
 
 (define (plan-column d column i height)
   (define name (number->string i))
-  (define s (dataframe-column d column))
-  (series-rename s name)
+  (define s (dataframe-column/who 'describe d column))
+  (series-rename/who 'describe s name)
   (define dt (series-dtype s))
   (define nulls (series-null-count s))
   (define count (- height nulls))
@@ -82,7 +84,7 @@
     [(? quantile-statistic?)
      (define row
        (nearest-row (hash-ref quantiles stat) (column-plan-count plan) (column-plan-nulls plan)))
-     (own (gather c (own (lit row))))]))
+     (own (gather c (own (lit/who 'describe row))))]))
 
 (define (cast-when e own cast? dtype)
   (if cast? (own (cast e dtype)) e))

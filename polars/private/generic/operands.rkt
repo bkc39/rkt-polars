@@ -5,8 +5,9 @@
          (only-in racket/match match match* match-define)
          (only-in racket/math infinite? nan?)
          (only-in polars/private/foreign
-                  call/foreign-error dataframe-column dataframe-drop dataframe-new enum-dtype?
-                  polars-null? series-drop series-dtype series-len series-name series-value)
+                  call/foreign-error dataframe-drop dataframe-new enum-dtype? polars-null?
+                  series-drop series-dtype series-len series-name series-value)
+         (only-in (submod polars/private/foreign internal) dataframe-column/who)
          (only-in polars/private/expr
                   expr-alias expr-all expr-drop expr-eq expr-max expr-min lazyframe-collect/raw
                   lazyframe-select lit/who)
@@ -300,7 +301,7 @@
                                       (lambda (source) (lazyframe-select source (list named)))
                                       (collect-for who))
                       dataframe-drop])
-    (dataframe-column out name)))
+    (dataframe-column/who who out name)))
 
 (define (series-scalars who s reducers)
   (define names (for/list ([i (in-range (length reducers))]) (number->string i)))
@@ -315,7 +316,7 @@
                                           (collect-for who))
                           dataframe-drop])
         (for/list ([name (in-list names)])
-          (with-release ([column (dataframe-column out name) series-drop])
+          (with-release ([column (dataframe-column/who who out name) series-drop])
             (series-value who column 0)))))))
 
 (define (on-side side op x value)

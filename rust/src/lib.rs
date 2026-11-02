@@ -46,6 +46,8 @@ pub(crate) use series::{
     valid_slices,
 };
 #[cfg(test)]
+pub(crate) use series::{enum_cast_checked, ENUM_MISSES_TAG};
+#[cfg(test)]
 pub(crate) use types::compat_time_unit_from_polars;
 pub(crate) use types::{compat_dtype_from_polars, polars_dtype_from_compat};
 

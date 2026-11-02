@@ -24,7 +24,7 @@
          polars/private/generic/printing
          polars/private/generic/reductions
          polars/private/generic/operators
-         (rename-in polars/private/generic/math [round p-round])
+         (rename-in polars/private/generic/math [log p-log] [round p-round])
          polars/private/generic/reshape
          polars/private/generic/combine
          polars/private/generic/strings

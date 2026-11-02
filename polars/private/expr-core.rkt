@@ -19,6 +19,7 @@
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
+         (only-in (submod polars/private/foreign internal) define-reasoned)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _str _str-list)
          (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
@@ -32,7 +33,7 @@
          _LazyFrame-ptr _LazyFrame-ptr/null LazyFrame-ptr?
          expr-drop-count expr-dropped lazyframe-drop-count lazyframe-dropped
          sort-by/c
-         explain/c lazyframe-explainer
+         explain/c lazyframe-explain lazyframe-explain/who time-unit/c
          expr-col expr-lit-f64 expr-lit-bool expr-lit-str expr-lit-null
          expr-alias
          ->expr ->expr/who lit/who
@@ -94,22 +95,20 @@
 (define (expr->string e)
   (call/foreign-error 'expr->string (lambda () (expr->string/raw e)) "cannot print the expression"))
 
-(define-compat lazyframe-explain/raw
-  (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstr)
-  #:c-id lazyframe_explain_v2)
+(define time-unit/c (or/c 'milliseconds 'microseconds 'nanoseconds))
+
+(define _explain-format (make-ctype _stdbool (lambda (format) (eq? format 'tree)) #f))
 
 (define explain-format/c (rename-contract (or/c 'plain 'tree) 'explain-format/c))
 
 (define (explain/c frame/c)
   (->* (frame/c) (#:optimized boolean? #:format explain-format/c) string?))
 
-(define (lazyframe-explainer who)
-  (procedure-rename
-   (lambda (lf #:optimized [optimized #t] #:format [format 'plain])
-     (call/foreign-error who
-                         (lambda () (lazyframe-explain/raw lf optimized (eq? format 'tree)))
-                         "failed to explain the query"))
-   who))
+(define-reasoned (lazyframe-explain lf [#:optimized optimized #t] [#:format format 'plain])
+  #:who-variant lazyframe-explain/who
+  (define-compat lazyframe-explain/raw
+    (_fun _LazyFrame-ptr _stdbool _explain-format -> _rsstr)
+    #:c-id lazyframe_explain_v2))
 
 (define-compat expr-col/raw
   (_fun _str -> _Expr-ptr/null)
@@ -234,9 +233,11 @@
   #:c-id expr_dtype_col
   #:wrap (allocator expr-drop))
 
+(define (expr-exclude/who who e names)
+  (call/foreign-error who (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
+
 (define (expr-exclude e names)
-  (call/foreign-error 'expr-exclude
-                      (lambda () (expr-exclude/raw e (map ->column-pattern names)))))
+  (expr-exclude/who 'expr-exclude e names))
 
 (define-compat expr-dtype-col-enum/raw
   (_fun _str-list -> _Expr-ptr/null)
@@ -296,6 +297,7 @@
    name))
 
 (module+ internal
-  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit lit-value/c
+  (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude expr-exclude/who lit
+           lit-value/c
            multi-column-expr?
            expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw))

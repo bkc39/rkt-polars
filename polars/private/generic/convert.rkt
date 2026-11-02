@@ -7,7 +7,8 @@
                   check-column-names dataframe->columns dataframe->f64vector dataframe->hash
                   dataframe->rows in-dataframe-rows in-series series->f64vector series->list
                   series->vector)
-         (only-in polars/private/foreign dataframe-column dataframe-column-names)
+         (only-in polars/private/foreign dataframe-column-names)
+         (only-in (submod polars/private/foreign internal) dataframe-column/who)
          (only-in polars/private/generic/core dataframe? series? wrap-series))
 
 (provide
@@ -43,7 +44,8 @@
 
 (define (in-dataframe-columns d #:columns [names (dataframe-column-names d)])
   (check-column-names 'in-dataframe-columns d names)
-  (sequence-map (lambda (name) (wrap-series (dataframe-column d name))) names))
+  (sequence-map (lambda (name) (wrap-series (dataframe-column/who 'in-dataframe-columns d name)))
+                names))
 
 (module+ internal
   (provide in-dataframe-columns))

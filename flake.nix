@@ -14,7 +14,7 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      version = "0.1.1";
+      version = "0.2";
       rustVersion =
         (builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).package.version;
       # The Racket release this flake targets; nixpkgs supplies the actual

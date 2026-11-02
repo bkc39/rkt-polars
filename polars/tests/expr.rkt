@@ -44,7 +44,7 @@
                     expr-str-strip-prefix expr-str-strip-suffix expr-str-tail
                     expr-str-to-lowercase expr-str-to-uppercase)
            (only-in polars/tests/test-helpers
-                    drops-during drops-once refusal refusal-misses settle!)
+                    drops-during drops-once explain-failure refusal refusal-misses settle!)
            (only-in polars/private/foreign
                     DataFrame-ptr? dataframe-column dataframe-column-name dataframe-column-names
                     dataframe-drop dataframe-drop-count dataframe-height dataframe-new
@@ -155,7 +155,7 @@
   (check-true (string-contains? (lazyframe-explain narrowed-lf) "PROJECT[\"x\"] 1/2 COLUMNS"))
   (check-not-equal? (lazyframe-explain narrowed-lf #:format 'tree #:optimized #f) written-plan)
   (check-regexp-match
-   #rx"^lazyframe-explain: failed to explain the query: [^\n]*\"nope\""
+   (explain-failure 'lazyframe-explain "nope")
    (with-handlers ([exn:fail? exn-message])
      (lazyframe-explain (lazyframe-select lf (list (col "nope"))))))
 
