@@ -33,12 +33,8 @@ pub extern "C" fn series_drop(s_ptr: *mut Series) {
 }
 
 #[no_mangle]
-pub extern "C" fn series_name(s_ptr: *mut Series) -> *const c_char {
-    if s_ptr.is_null() {
-        return ptr::null();
-    }
-
-    unsafe { rust_string_to_ptr((*s_ptr).name()) }
+pub extern "C" fn series_name_v2(s_ptr: *const Series) -> StrOut {
+    unsafe { s_ptr.as_ref() }.map_or(ptr::null_mut(), |s| str_out(s.name()))
 }
 
 #[no_mangle]

@@ -25,7 +25,8 @@
                   DataFrame-ptr?
                   _Series-ptr
                   Series-ptr?
-                  _rsstring
+                  _rsstr
+                  _rsstr-list
                   polars-null?
                   series-new-i64 series-new-u64 series-new-f64 series-new-str series-new-bool
                   series-new-null
@@ -123,25 +124,17 @@
           [dataframe-sort-exprs (frame-sort/c DataFrame-ptr? 'dataframe-sort-exprs/c)]))
 
 (define-compat expr-meta-output-name/raw
-  (_fun _Expr-ptr -> _rsstring)
-  #:c-id expr_meta_output_name)
+  (_fun _Expr-ptr -> _rsstr)
+  #:c-id expr_meta_output_name_v2)
 
 (define (expr-meta-output-name e)
   (or (expr-meta-output-name/raw e)
       (error 'expr-meta-output-name
              "cannot determine the output name of ~a" e)))
 
-(define-compat expr-meta-root-names-len
-  (_fun _Expr-ptr -> _size)
-  #:c-id expr_meta_root_names_len)
-
-(define-compat expr-meta-root-name
-  (_fun _Expr-ptr _size -> _rsstring)
-  #:c-id expr_meta_root_name)
-
-(define (expr-meta-root-names e)
-  (for/list ([i (in-range (expr-meta-root-names-len e))])
-    (expr-meta-root-name e i)))
+(define-compat expr-meta-root-names
+  (_fun _Expr-ptr -> _rsstr-list)
+  #:c-id expr_meta_root_names)
 
 (define-compat expr-meta-eq/raw
   (_fun _Expr-ptr _Expr-ptr -> _uint8)

@@ -125,12 +125,10 @@ fn boxed(s: Option<Series>) -> *mut Series {
 
 /// The zone of a zoned Datetime series; NULL for any other dtype.
 #[no_mangle]
-pub extern "C" fn series_time_zone(s_ptr: *const Series) -> *const c_char {
+pub extern "C" fn series_time_zone_v2(s_ptr: *const Series) -> StrOut {
     match unsafe { s_ptr.as_ref() }.map(|s| s.dtype()) {
-        Some(DataType::Datetime(_, Some(tz))) => {
-            rust_string_to_ptr(tz.as_str())
-        }
-        _ => ptr::null(),
+        Some(DataType::Datetime(_, Some(tz))) => str_out(tz.as_str()),
+        _ => ptr::null_mut(),
     }
 }
 

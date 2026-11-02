@@ -1,40 +1,21 @@
 use crate::prelude::*;
-use crate::{guard_panic, rust_string_to_ptr};
+use crate::{guard_panic, str_list_out, str_out, StrListOut, StrOut};
 
 #[no_mangle]
-pub extern "C" fn expr_meta_output_name(e: *const Expr) -> *const c_char {
+pub extern "C" fn expr_meta_output_name_v2(e: *const Expr) -> StrOut {
     if e.is_null() {
-        return ptr::null();
+        return ptr::null_mut();
     }
     let expr = unsafe { (*e).clone() };
     guard_panic(|| expr.meta().output_name().ok())
-        .map_or(ptr::null(), |name| rust_string_to_ptr(&name))
-}
-
-fn root_names(e: *const Expr) -> Vec<PlSmallStr> {
-    unsafe { (*e).clone() }.meta().root_names()
+        .map_or(ptr::null_mut(), |name| str_out(&name))
 }
 
 #[no_mangle]
-pub extern "C" fn expr_meta_root_names_len(e: *const Expr) -> usize {
-    if e.is_null() {
-        return 0;
-    }
-    root_names(e).len()
-}
-
-#[no_mangle]
-pub extern "C" fn expr_meta_root_name(
-    e: *const Expr,
-    index: usize,
-) -> *const c_char {
-    if e.is_null() {
-        return ptr::null();
-    }
-    match root_names(e).get(index) {
-        Some(name) => rust_string_to_ptr(&**name),
-        None => ptr::null(),
-    }
+pub extern "C" fn expr_meta_root_names(e: *const Expr) -> StrListOut {
+    unsafe { e.as_ref() }.map_or(ptr::null_mut(), |expr| {
+        str_list_out(expr.clone().meta().root_names())
+    })
 }
 
 #[no_mangle]

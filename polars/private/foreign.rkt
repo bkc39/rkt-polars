@@ -22,6 +22,7 @@
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
          (only-in polars/private/resource _string-list with-raw-buffer with-release)
+         (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
          (only-in polars/private/temporal
                   days->date epoch->datetime epoch->moment nanoseconds->time offset-unit)
          (for-syntax racket/base racket/syntax syntax/parse))
@@ -31,7 +32,8 @@
                      dataframe-drop call/reason define-copies define-series-refs print-dataframe
                      series-date-ref series-index/c series-ref-bytes
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
-                     define-frame-op/reason define-reasoned
+                     define-frame-op/reason define-reasoned block-reader c-string-argument
+                     c-string/null-argument result-only
                      series-std series-var series-new-null
                      series-head series-tail series-slice
                      dataframe-head dataframe-tail dataframe-slice
@@ -82,22 +84,48 @@
   (_fun _pointer -> _void)
   #:wrap (deallocator))
 
-;; heap allocated rust string
-(define _rsstring
-  (make-ctype
-   _pointer
-   (lambda (str)
-     (error '_rsstring
-            "_rsstring should only be used as a result type: ~a"
-            str))
-   (lambda (ptr)
-     (and ptr
-          (let ([str (cast ptr _pointer _string)])
-            (register-finalizer ptr string-drop)
-            str)))))
+(define-compat str-block-drop
+  (_fun _pointer -> _void))
+
+(define-compat str-block-drop-count
+  (_fun -> _size))
+
+(define ((result-only who) v)
+  (raise-argument-error who "a result, never an argument" v))
+
+;; Atomic, so a thread killed in the conversion, which skips with-release's
+;; post thunk, is killed only after the drop.
+(define ((block-reader read) p)
+  (call-as-atomic
+   (lambda () (with-release ([block p str-block-drop]) (and block (read block))))))
+
+(define _rsstr
+  (make-ctype _pointer (result-only '_rsstr) (block-reader str-block->string)))
+
+(define _rsstr-list
+  (make-ctype _pointer (result-only '_rsstr-list) (block-reader str-block->strings)))
+
+(define _c-string-result
+  (make-ctype _pointer
+              (result-only '_c-string-result)
+              (lambda (p)
+                (with-release ([c p string-drop]) (and c (cast c _pointer _string/utf-8))))))
+
+(define (c-string-argument v)
+  (match v
+    [(and (? string?) (not (? string-has-nul?))) v]
+    [_ (raise-argument-error '_c-string "a string without a NUL" v)]))
+
+(define (c-string/null-argument v)
+  (and v (c-string-argument v)))
+
+(define _c-string (make-ctype _string/utf-8 c-string-argument #f))
+
+(define _c-string/null (make-ctype _string/utf-8 c-string/null-argument #f))
 
 (define-compat last-error-message
-  (_fun -> _rsstring))
+  (_fun -> _rsstr)
+  #:c-id last_error_message_v2)
 
 (define racket-spellings
   `(("`infer_schema_length` (e.g. `infer_schema_length=10000`)"
@@ -497,7 +525,8 @@
   #:wrap (allocator series-drop))
 
 (define-compat series-name
-  (_fun _Series-ptr -> _rsstring))
+  (_fun _Series-ptr -> _rsstr)
+  #:c-id series_name_v2)
 
 (define-compat series-dtype/raw
   (_fun _Series-ptr -> _CompatDType)
@@ -515,7 +544,8 @@
           (series-drop names)))
 
 (define-compat series-time-zone
-  (_fun _Series-ptr -> _rsstring))
+  (_fun _Series-ptr -> _rsstr)
+  #:c-id series_time_zone_v2)
 
 (define (series-dtype series)
   (match (compat-dtype->datum (series-dtype/raw series))
@@ -955,7 +985,7 @@
   [f32 _CompatOptF32]
   [f64 _CompatOptF64]
   [bool _CompatOptBool]
-  [str _rsstring]
+  [str _c-string-result]
   [date _CompatOptYMD]
   [duration _CompatOptI64]
   [time _CompatOptI64])
@@ -1396,9 +1426,8 @@
   (_fun _DataFrame-ptr _int64 _size -> _DataFrame-ptr)
   #:wrap (allocator dataframe-drop))
 
-(define (dataframe-column-names df)
-  (for/list ([i (in-range (dataframe-width df))])
-    (dataframe-column-name df i)))
+(define-compat dataframe-column-names
+  (_fun _DataFrame-ptr -> _rsstr-list))
 
 (define-compat dataframe-select/c
   (_fun _DataFrame-ptr
@@ -1468,7 +1497,8 @@
   (or (dataframe-new/raw series-list) (error 'dataframe-new "operation failed")))
 
 (define-compat dataframe-column-name
-  (_fun _DataFrame-ptr _size -> _rsstring))
+  (_fun _DataFrame-ptr _size -> _rsstr)
+  #:c-id dataframe_column_name_v2)
 
 (define-compat dataframe-column/raw
   (_fun _DataFrame-ptr _string -> _Series-ptr/null)
@@ -1480,8 +1510,8 @@
       (error 'dataframe-column "no column named ~s" name)))
 
 (define-compat dataframe->string/raw
-  (_fun _DataFrame-ptr -> _rsstring)
-  #:c-id dataframe_to_string)
+  (_fun _DataFrame-ptr -> _rsstr)
+  #:c-id dataframe_to_string_v2)
 
 (define (print-dataframe who df)
   (call/foreign-error who (lambda () (dataframe->string/raw df)) "cannot print the dataframe"))
@@ -1762,7 +1792,7 @@
   (newline out))
 
 (module+ internal
-  (provide dataframe-drop dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
+  (provide block-reader dataframe-drop dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
            dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-slice
            dataframe-sort dataframe-sort/who dataframe-tail dataframe-vstack
            dataframe-vstack/who series-add-i32 series-add-i64 series-add-u32 series-add-u64

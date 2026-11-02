@@ -57,7 +57,7 @@ fn expr_sort_prints_as_the_crate_sort() {
         let b = column("b");
         let sorted = expr_sort_with_options(b, descending, nulls_last);
         assert_eq!(
-            take_cstring(expr_to_string(sorted)),
+            take_str(expr_to_string_v2(sorted)),
             format!("col(\"b\").sort({order})")
         );
         expr_drop(sorted);

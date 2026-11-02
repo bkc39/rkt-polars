@@ -18,7 +18,8 @@
            (only-in polars/private/foreign dataframe-sort series-name)
            (only-in polars/private/generic/reductions alias count mean n-unique sum)
            (only-in polars/tests/generic/test-fixtures
-                    col column expr-add frame ops-df polars-null series-cells settle! v64)
+                    col column expr-add frame nul-frame nul-names ops-df polars-null series-cells
+                    settle! v64)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -293,4 +294,12 @@
   (check-regexp-match
    #rx"^explain: failed to explain the query: [^\n]*\"nope\""
    (with-handlers ([exn:fail? exn-message])
-     (contracted:explain (select (lazy ops-df) "nope")))))
+     (contracted:explain (select (lazy ops-df) "nope"))))
+
+  (for ([n (in-list nul-names)])
+    (define long (dataframe (list (series '(0 0) #:name "id") (series (list n "x") #:name "k")
+                                  (series '(1 2) #:name "v"))))
+    (check-equal? (sort (column-names (pivot long #:on '("k") #:index '("id") #:values '("v")))
+                        string<?)
+                  (sort (list "id" n "x") string<?))
+    (check-true (string-contains? (contracted:explain (lazy (nul-frame n))) n))))

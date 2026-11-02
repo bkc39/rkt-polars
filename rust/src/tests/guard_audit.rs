@@ -24,16 +24,17 @@ struct Arm {
     body: TokenStream,
 }
 
-struct Function {
-    name: String,
-    entry: bool,
+pub(super) struct Function {
+    pub(super) name: String,
+    pub(super) entry: bool,
+    pub(super) output: syn::ReturnType,
     block: Block,
 }
 
 #[derive(Default)]
-struct Crate {
-    functions: Vec<Function>,
-    problems: Vec<String>,
+pub(super) struct Crate {
+    pub(super) functions: Vec<Function>,
+    pub(super) problems: Vec<String>,
 }
 
 type Bindings = BTreeMap<String, (String, Vec<TokenTree>)>;
@@ -375,6 +376,7 @@ impl Walker<'_> {
         self.out.functions.push(Function {
             name,
             entry: export.is_some() && foreign,
+            output: sig.output.clone(),
             block: block.clone(),
         });
     }
@@ -451,7 +453,7 @@ impl<'ast> Visit<'ast> for Walker<'_> {
     }
 }
 
-fn walk(files: &[String]) -> Crate {
+pub(super) fn walk(files: &[String]) -> Crate {
     let mut out = Crate::default();
     let parsed: Vec<syn::File> = files
         .iter()
@@ -667,7 +669,7 @@ fn crate_sources(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-fn tree() -> Vec<String> {
+pub(super) fn tree() -> Vec<String> {
     let mut sources = Vec::new();
     crate_sources(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
@@ -676,7 +678,7 @@ fn tree() -> Vec<String> {
     sources
 }
 
-fn fixture(text: &str) -> Vec<String> {
+pub(super) fn fixture(text: &str) -> Vec<String> {
     vec![text.to_string()]
 }
 
@@ -699,7 +701,7 @@ fn the_audit_reads_every_entry_point() {
             .unwrap_or_else(|| panic!("{} not found", name))
     };
     for name in [
-        "dataframe_to_string",
+        "dataframe_to_string_v2",
         "lazyframe_collect",
         "dataframe_write_csv_with_options",
         "dataframe_read_csv_v2",

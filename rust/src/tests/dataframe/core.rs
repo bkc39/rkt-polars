@@ -114,7 +114,7 @@ fn column_name_returns_each_name() {
 #[test]
 fn column_name_out_of_range_returns_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    assert!(dataframe_column_name(df, 99).is_null());
+    assert!(dataframe_column_name_v2(df, 99).is_null());
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);

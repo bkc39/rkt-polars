@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn meta_output_name_of_col_is_the_column() {
     let a = column("a");
-    assert_eq!(take_cstring(expr_meta_output_name(a)), "a");
+    assert_eq!(take_str(expr_meta_output_name_v2(a)), "a");
     expr_drop(a);
 }
 
@@ -12,7 +12,7 @@ fn meta_output_name_of_col_is_the_column() {
 fn meta_output_name_of_alias_is_the_alias() {
     let a = column("a");
     let b = aliased(a, "b");
-    assert_eq!(take_cstring(expr_meta_output_name(b)), "b");
+    assert_eq!(take_str(expr_meta_output_name_v2(b)), "b");
     expr_drop(b);
     expr_drop(a);
 }
@@ -22,7 +22,7 @@ fn meta_output_name_of_binary_is_the_left_leaf() {
     let a = column("a");
     let b = column("b");
     let sum = expr_add(a, b);
-    assert_eq!(take_cstring(expr_meta_output_name(sum)), "a");
+    assert_eq!(take_str(expr_meta_output_name_v2(sum)), "a");
     expr_drop(sum);
     expr_drop(b);
     expr_drop(a);
@@ -31,20 +31,20 @@ fn meta_output_name_of_binary_is_the_left_leaf() {
 #[test]
 fn meta_output_name_of_literal_is_literal() {
     let two = expr_lit_i32(2);
-    assert_eq!(take_cstring(expr_meta_output_name(two)), "literal");
+    assert_eq!(take_str(expr_meta_output_name_v2(two)), "literal");
     expr_drop(two);
 }
 
 #[test]
 fn meta_output_name_of_wildcard_returns_null() {
     let w = Box::into_raw(Box::new(all().as_expr()));
-    assert!(expr_meta_output_name(w).is_null());
+    assert!(expr_meta_output_name_v2(w).is_null());
     expr_drop(w);
 }
 
 #[test]
 fn meta_output_name_null_expr_returns_null() {
-    assert!(expr_meta_output_name(ptr::null()).is_null());
+    assert!(expr_meta_output_name_v2(ptr::null()).is_null());
 }
 
 #[test]
@@ -52,9 +52,7 @@ fn meta_root_names_in_tree_order() {
     let a = column("a");
     let b = column("b");
     let sum = expr_add(a, b);
-    assert_eq!(expr_meta_root_names_len(sum), 2);
-    assert_eq!(take_cstring(expr_meta_root_name(sum, 0)), "a");
-    assert_eq!(take_cstring(expr_meta_root_name(sum, 1)), "b");
+    assert_eq!(take_strs(expr_meta_root_names(sum)), ["a", "b"]);
     expr_drop(sum);
     expr_drop(b);
     expr_drop(a);
@@ -64,8 +62,7 @@ fn meta_root_names_in_tree_order() {
 fn meta_root_names_see_through_alias() {
     let a = column("a");
     let t = aliased(a, "t");
-    assert_eq!(expr_meta_root_names_len(t), 1);
-    assert_eq!(take_cstring(expr_meta_root_name(t, 0)), "a");
+    assert_eq!(take_strs(expr_meta_root_names(t)), ["a"]);
     expr_drop(t);
     expr_drop(a);
 }
@@ -73,21 +70,13 @@ fn meta_root_names_see_through_alias() {
 #[test]
 fn meta_root_names_of_literal_is_empty() {
     let two = expr_lit_i32(2);
-    assert_eq!(expr_meta_root_names_len(two), 0);
+    assert!(take_strs(expr_meta_root_names(two)).is_empty());
     expr_drop(two);
 }
 
 #[test]
-fn meta_root_name_out_of_range_returns_null() {
-    let a = column("a");
-    assert!(expr_meta_root_name(a, 1).is_null());
-    expr_drop(a);
-}
-
-#[test]
-fn meta_root_names_len_null_expr_is_zero() {
-    assert_eq!(expr_meta_root_names_len(ptr::null()), 0);
-    assert!(expr_meta_root_name(ptr::null(), 0).is_null());
+fn meta_root_names_of_a_null_expr_is_null() {
+    assert!(expr_meta_root_names(ptr::null()).is_null());
 }
 
 #[test]

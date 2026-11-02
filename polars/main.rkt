@@ -37,6 +37,8 @@
   allocator/or-fail call/foreign-error call/polars-reason check-enum-categories
   dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
   define-owned-cpointer-type dropped? last-error-message
+  _c-string _c-string/null _c-string-result _rsstr _rsstr-list str-block-drop
+  str-block-drop-count
   owned-cpointer-types owned-pointer-accessor owned-pointer-arg
   owned-pointer? prop:owned-pointer raise-dropped release-owned
   series-drop-count series-drop/raw series-dropped write-owned

@@ -209,9 +209,7 @@ fn write_csv_status_codes_null_inputs() {
 fn to_string_returns_non_null_cstring() {
     let xs = make_i32("x", &[1, 2]);
     let df = make_df(&[xs]);
-    let s = dataframe_to_string(df);
-    assert!(!s.is_null());
-    let formatted = take_cstring(s);
+    let formatted = take_str(dataframe_to_string_v2(df));
     assert!(
         formatted.contains("x"),
         "to_string output missing column header: {:?}",
@@ -223,7 +221,7 @@ fn to_string_returns_non_null_cstring() {
 
 #[test]
 fn to_string_null_df_returns_null() {
-    assert!(dataframe_to_string(ptr::null_mut()).is_null());
+    assert!(dataframe_to_string_v2(ptr::null_mut()).is_null());
 }
 
 #[test]

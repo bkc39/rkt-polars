@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Once;
 
-use super::strings::rust_string_to_ptr;
+use super::strings::{str_out, StrOut};
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
@@ -96,9 +96,9 @@ pub(crate) fn decode_path<'a>(path: *const c_char) -> Option<&'a str> {
 }
 
 #[no_mangle]
-pub extern "C" fn last_error_message() -> *const c_char {
+pub extern "C" fn last_error_message_v2() -> StrOut {
     LAST_ERROR.with(|slot| match slot.borrow().as_deref() {
-        Some(msg) => rust_string_to_ptr(msg),
-        None => ptr::null(),
+        Some(msg) => str_out(msg),
+        None => ptr::null_mut(),
     })
 }

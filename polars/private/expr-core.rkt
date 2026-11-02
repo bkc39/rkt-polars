@@ -14,7 +14,7 @@
          (only-in polars/private/c-integer int32/c int64-max int64-min int64/c uint64-max uint64/c)
          polars/private/column-pattern
          (only-in polars/private/foreign
-                  ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstring
+                  ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
                   allocator/or-fail call/foreign-error check-enum-categories
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
@@ -88,15 +88,15 @@
   (_fun -> _size))
 
 (define-compat expr->string/raw
-  (_fun _Expr-ptr -> _rsstring)
-  #:c-id expr_to_string)
+  (_fun _Expr-ptr -> _rsstr)
+  #:c-id expr_to_string_v2)
 
 (define (expr->string e)
   (call/foreign-error 'expr->string (lambda () (expr->string/raw e)) "cannot print the expression"))
 
 (define-compat lazyframe-explain/raw
-  (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstring)
-  #:c-id lazyframe_explain)
+  (_fun _LazyFrame-ptr _stdbool _stdbool -> _rsstr)
+  #:c-id lazyframe_explain_v2)
 
 (define explain-format/c (rename-contract (or/c 'plain 'tree) 'explain-format/c))
 

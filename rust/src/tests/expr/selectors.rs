@@ -200,7 +200,7 @@ fn name_keep_names_each_expanded_column_after_itself() {
     let kept = expr_name_keep(divided);
     assert!(!kept.is_null());
     assert_eq!(
-        take_cstring(expr_to_string(kept)),
+        take_str(expr_to_string_v2(kept)),
         "[(dyn int: 1) rust_div (cs.matches(\"^(x|y)$\"))].name.keep()"
     );
     check_select(&[kept], &["x", "y"]);

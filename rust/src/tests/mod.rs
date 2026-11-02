@@ -2,6 +2,7 @@ use super::*;
 use std::ptr;
 
 mod abi;
+mod c_strings;
 mod chrono_range;
 mod crate_sort;
 mod dataframe;
@@ -11,6 +12,7 @@ mod last_error;
 mod row_counts;
 mod series;
 mod slices;
+mod strings;
 #[path = "util.rs"]
 mod test_util;
 mod test_util_smoke;

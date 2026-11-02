@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn make_i32_builds_named_series() {
     let s = make_i32("xs", &[1, 2, 3, 4]);
-    let n = take_cstring(series_name(s));
+    let n = take_str(series_name_v2(s));
     assert_eq!(n, "xs");
     assert_eq!(series_len(s), 4);
     assert_dtype(s, CompatDTypeTag::Int32, CompatTimeUnit::None);
