@@ -181,7 +181,9 @@ leaves an identical library alone and replaces a differing one by a rename, as
 `scripts/install-native-libs.sh` does (#267). It does not copy the candidate
 over a library `nix run .#copy-native-libs` or the dev shell installed, which
 those mark with `polars/native-libs/.libcompat.*.dev`; set
-`RKT_POLARS_FORCE_CANDIDATE=1` to install the candidate anyway (#306).
+`RKT_POLARS_FORCE_CANDIDATE=1` to install the candidate anyway (#306). The
+keep outlasts a branch switch or a pull, so after a candidate refresh that
+adds an export, set it or re-enter the dev shell.
 
 To (re)build and stage a candidate on the matching platform:
 

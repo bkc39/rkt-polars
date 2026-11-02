@@ -9,8 +9,10 @@
 # was.
 #
 # Beside each library it writes a marker, .<name>.dev, holding the
-# installed library's sha256, also by rename and left alone when it already
-# holds that hash. The pre-installer (polars/private/install-compat.rkt)
+# installed library's sha256 as 64 lowercase hex digits and a newline, also
+# by rename and left alone when it already holds that hash. The source is
+# hashed before anything is written, so a kill leaves a new library behind
+# an old marker only between the two renames. The pre-installer (polars/private/install-compat.rkt)
 # keeps a library whose marker matches it instead of copying the committed
 # candidate over it (#306).
 #
@@ -40,25 +42,27 @@ if [ ${#libs[@]} -eq 0 ]; then
   exit 1
 fi
 
+install_by_rename() {
+  local from=$1 target=$2 mode=$3 base
+  base=${target##*/}
+  tmp=$(mktemp "${target%/*}/.${base#.}.XXXXXX")
+  cp "$from" "$tmp"
+  chmod "$mode" "$tmp"
+  mv -f "$tmp" "$target"
+  tmp=
+}
+
 mkdir -p "$dest"
 for lib in "${libs[@]}"; do
   name=${lib##*/}
   target=$dest/$name
   marker=$dest/.$name.dev
+  sum=$(sha256sum "$lib")
+  sum=${sum%% *}
   if ! { [ -f "$target" ] && cmp -s "$lib" "$target"; }; then
-    tmp=$(mktemp "$dest/.$name.XXXXXX")
-    cp "$lib" "$tmp"
-    chmod 0755 "$tmp"
-    mv -f "$tmp" "$target"
-    tmp=
+    install_by_rename "$lib" "$target" 0755
   fi
-  hash=$(sha256sum "$target")
-  hash=${hash%% *}
-  if [ "$(cat "$marker" 2> /dev/null)" != "$hash" ]; then
-    tmp=$(mktemp "$dest/.$name.dev.XXXXXX")
-    printf '%s\n' "$hash" > "$tmp"
-    chmod 0644 "$tmp"
-    mv -f "$tmp" "$marker"
-    tmp=
+  if [ "$(cat "$marker" 2> /dev/null)" != "$sum" ]; then
+    install_by_rename /dev/stdin "$marker" 0644 <<< "$sum"
   fi
 done

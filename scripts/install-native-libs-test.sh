@@ -7,9 +7,10 @@
 # was; a read-only source installs as 0755. Every libcompat.* the glob matches
 # is handled on its own, and .gitignore covers the temporary file. The first
 # check is also run against `cp -f`, which it must catch. The dev marker
-# (#306) holds the installed library's sha256, is replaced by a rename, and
-# keeps its inode and mtime when it already holds that hash; .gitignore
-# covers it.
+# (#306) holds the installed library's sha256 and a newline, is written for
+# an identical library that has none, is replaced by a rename, and keeps its
+# inode and mtime when it already holds that hash; a failing sha256sum
+# leaves the library as it was; .gitignore covers it.
 #
 # Usage: scripts/install-native-libs-test.sh
 set -euo pipefail
@@ -157,10 +158,25 @@ fresh
 printf 'dev library bytes\n' > "$work/src/libcompat.so"
 if ! bash "$script" "$work/src" "$work/dest"; then
   fail "first marker: status $?"
-elif [ "$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)" != "$(sha "$work/dest/libcompat.so")" ]; then
-  fail "first marker: [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)] is not the library's sha256"
+elif ! grep -qxE '[0-9a-f]{64}' "$work/dest/.libcompat.so.dev" \
+  || ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
+  fail "first marker: [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)] is not the library's sha256 and a newline"
 else
-  echo "ok: an install writes the library's sha256 to its marker"
+  echo "ok: an install writes the library's sha256, 64 lowercase hex digits and a newline, to its marker"
+fi
+
+fresh
+printf 'same bytes\n' > "$work/src/libcompat.so"
+printf 'same bytes\n' > "$work/dest/libcompat.so"
+before=$(inode "$work/dest/libcompat.so")
+if ! bash "$script" "$work/src" "$work/dest"; then
+  fail "unmarked identical library: status $?"
+elif [ "$(inode "$work/dest/libcompat.so")" != "$before" ]; then
+  fail "unmarked identical library: the library was replaced"
+elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
+  fail "unmarked identical library: no marker holding its sha256"
+else
+  echo "ok: an identical library without a marker gets one and keeps its inode"
 fi
 
 fresh
@@ -201,6 +217,7 @@ stub() {
 # shellcheck disable=SC2016
 stub failing-cp cp 'printf partial > "${@: -1}"; exit 1'
 stub failing-mv mv 'exit 1'
+stub failing-sha256sum sha256sum 'exit 1'
 
 refused() {
   local label=$1 before
@@ -225,6 +242,7 @@ refused() {
 
 path_prefix="$work/failing-cp:" refused "a failing cp" true
 path_prefix="$work/failing-mv:" refused "a failing mv" true
+path_prefix="$work/failing-sha256sum:" refused "a failing sha256sum" true
 if [ "$(id -u)" -eq 0 ]; then
   echo "skip: a read-only directory (running as root, which writes through it)"
 else

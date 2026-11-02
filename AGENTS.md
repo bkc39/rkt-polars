@@ -1062,13 +1062,20 @@ it. Racket side: `define-compat` with `#:c-id`.
   `raco setup`: it writes a replacement at mode `0755`, and an identical
   library keeps its mode (#267). The script also writes a marker beside each
   library, `.<name>.dev` (gitignored), holding the installed bytes'
-  sha256, by rename, and leaves it alone when it already holds that hash.
-  Without `RKT_POLARS_COMPAT_LIB_PATH`, the pre-installer keeps a library
-  whose marker matches its bytes instead of copying the committed candidate
-  over it, and prints one line naming it; a stale marker is removed when the
-  candidate goes in, and `RKT_POLARS_FORCE_CANDIDATE=1` installs the
-  candidate and removes the marker (#306). A hash, not mtimes, since a
-  checkout or a copy rewrites those.
+  sha256 as exactly 64 lowercase hex digits and a newline (any other
+  content is a stale marker), by rename after hashing the source, and
+  leaves it alone when it already holds that hash. Without
+  `RKT_POLARS_COMPAT_LIB_PATH`, the pre-installer keeps a library whose
+  marker matches its bytes instead of copying the committed candidate over
+  it, and prints one line naming it; a stale marker (a regular file or a
+  link, never a directory) is removed when the candidate goes in, and a
+  failed removal does not fail `raco setup`;
+  `RKT_POLARS_FORCE_CANDIDATE=1` installs the candidate and removes the
+  marker (#306). A hash, not mtimes, since a checkout or a copy rewrites
+  those. The keep outlasts a branch switch or a pull, so after a candidate
+  refresh that adds an export, set the variable or re-enter the dev shell.
+  It takes no lock: a `raco setup` run concurrently with dev-shell entry in
+  the same tree may install the candidate.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:
