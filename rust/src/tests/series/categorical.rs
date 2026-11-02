@@ -127,7 +127,7 @@ fn duplicate_enum_categories_are_refused() {
     assert!(cast_enum(s, &["a", "a"]).is_null());
     let reason = recorded_error().expect("a reason");
     assert!(reason.contains("duplicate"), "{}", reason);
-    let e = expr_col(cstr("s").as_ptr());
+    let e = expr_col_v2(str_block("s").as_ptr());
     let (_owned, ptrs) = names(&["a", "a"]);
     assert!(expr_cast_enum(e, ptrs.as_ptr(), ptrs.len()).is_null());
     assert!(expr_dtype_col_enum(ptrs.as_ptr(), ptrs.len()).is_null());

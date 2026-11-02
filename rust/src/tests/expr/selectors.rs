@@ -50,20 +50,14 @@ fn select_names(
     names
 }
 
-fn cstrs(names: &[&str]) -> (Vec<CString>, Vec<*const c_char>) {
-    let owned: Vec<CString> = names.iter().map(|n| cstr(n)).collect();
-    let ptrs = owned.iter().map(|c| c.as_ptr()).collect();
-    (owned, ptrs)
-}
-
 fn exclude(e: *mut Expr, names: &[&str]) -> *mut Expr {
-    let (_owned, ptrs) = cstrs(names);
-    expr_exclude(e, ptrs.as_ptr(), ptrs.len())
+    let names = str_list_block(names);
+    expr_exclude_v2(e, names.as_ptr())
 }
 
 fn col(name: &str) -> *mut Expr {
-    let n = cstr(name);
-    let e = expr_col(n.as_ptr());
+    let n = str_block(name);
+    let e = expr_col_v2(n.as_ptr());
     assert!(!e.is_null());
     e
 }
@@ -136,7 +130,8 @@ fn exclude_null_input_returns_null() {
 #[test]
 fn exclude_zero_names_returns_null() {
     let e = expr_all();
-    assert!(expr_exclude(e, ptr::null(), 0).is_null());
+    assert!(expr_exclude_v2(e, ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("exclude needs a name"));
     expr_drop(e);
 }
 
@@ -146,8 +141,8 @@ fn multi_column_recognises_expanding_leaves() {
     let re = col("^s.*$");
     let wild = expr_all();
     let dt = expr_dtype_col(dtype(CompatDTypeTag::Int32));
-    let alias = cstr("z");
-    let over_wild = expr_alias(wild, alias.as_ptr());
+    let alias = str_block("z");
+    let over_wild = expr_alias_v2(wild, alias.as_ptr());
     assert_eq!(expr_multi_column(plain), 0);
     assert_eq!(expr_multi_column(re), 1);
     assert_eq!(expr_multi_column(wild), 1);

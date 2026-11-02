@@ -2,19 +2,31 @@
 
 (module+ test
   (require rackunit
-           (only-in ffi/unsafe _fun cpointer?)
+           (only-in ffi/unsafe _fun _int64 _pointer cpointer? ptr-set!)
            (only-in ffi/unsafe/alloc allocator)
            (only-in racket/contract contract-name)
            (prefix-in contracted: polars/private/expr-core)
            (only-in polars/private/c-integer int64-max int64-min uint64-max)
            (only-in polars/private/expr-core
-                    ->expr/who Expr-ptr? _Expr-ptr define-compat expr-alias expr-col
+                    ->expr/who Expr-ptr? _Expr-ptr _Expr-ptr/null define-compat expr-alias expr-col
                     expr-drop-count lit-integer/c)
            (only-in (submod polars/private/expr-core internal)
                     col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit
                     lit-value/c multi-column-expr?)
-           (only-in polars/private/foreign polars-null))
+           (only-in racket/string string-contains?)
+           (only-in polars/private/foreign call/foreign-error polars-null)
+           (only-in polars/private/resource with-raw-buffer)
+           (only-in polars/tests/generic/test-fixtures nul-names))
 
+  (define-compat col/block
+    (_fun _pointer -> _Expr-ptr/null)
+    #:c-id expr_col_v2
+    #:wrap (allocator expr-drop))
+  (with-raw-buffer ([truncated 2 _int64])
+    (ptr-set! truncated _int64 0 1)
+    (ptr-set! truncated _int64 1 0)
+    (check-exn #rx"^col: a string block is shorter than its header says$"
+               (lambda () (call/foreign-error 'col (lambda () (col/block truncated))))))
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))
@@ -101,4 +113,8 @@
   (for ([_ (in-range 10)])
     (collect-garbage)
     (sleep 0.01))
-  (check-true (>= (- (expr-drop-count) drop-before) 200)))
+  (check-true (>= (- (expr-drop-count) drop-before) 200))
+  (for ([n (in-list nul-names)])
+    (check-true (string-contains? (expr->string (col n)) n))
+    (check-true (string-contains? (expr->string (expr-alias (col "a") n)) n))
+    (check-true (string-contains? (expr->string (lit n)) n))))

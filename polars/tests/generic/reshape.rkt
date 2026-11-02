@@ -15,11 +15,11 @@
            (only-in polars/private/generic/operators
                     < <= = > >= else-when otherwise p+ p-and p-not p-or p-when p/ then)
            (only-in polars/private/expr-core expr-drop-count)
-           (only-in polars/private/foreign dataframe-sort series-name)
+           (only-in polars/private/foreign dataframe-select dataframe-sort series-name)
            (only-in polars/private/generic/reductions alias count mean n-unique sum)
            (only-in polars/tests/generic/test-fixtures
-                    col column expr-add frame nul-frame nul-names ops-df polars-null series-cells
-                    settle! v64)
+                    col column expr-add frame named-frame nul-frame nul-names ops-df polars-null
+                    series-cells settle! v64)
            (only-in polars/private/generic/reshape
                     cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
                     unique with-columns)
@@ -37,6 +37,11 @@
   (check-equal? (series-name renamed) "copy")
   (check-pred void? (rename! original "mutated"))
   (check-equal? (series-name original) "mutated")
+  (for ([bad (list #f 'x #"\377")])
+    (check-exn #rx"^rename!: contract violation\n  expected: [^\n]*utf-8\\?[^\n]*"
+               (lambda () (rename! original bad))))
+  (check-exn #rx"^rename!: contract violation\n  expected: series\\?"
+             (lambda () (rename! "orig" "new")))
 
   ;; filter: Expr predicate, mask series, racket/base fallback
   (define mask (> v64 15))
@@ -302,4 +307,34 @@
     (check-equal? (sort (column-names (pivot long #:on '("k") #:index '("id") #:values '("v")))
                         string<?)
                   (sort (list "id" n "x") string<?))
-    (check-true (string-contains? (contracted:explain (lazy (nul-frame n))) n))))
+    (check-true (string-contains? (contracted:explain (lazy (nul-frame n))) n)))
+
+  (for ([n (in-list nul-names)])
+    (define named (named-frame n))
+    (check-equal? (series-name (rename (series '(1)) n)) n)
+    (define renamed! (series '(1)))
+    (rename! renamed! n)
+    (check-equal? (series-name renamed!) n)
+    (for ([m (in-list nul-names)] #:unless (equal? m n))
+      (check-equal? (column-names (rename named "a" m)) (list n m)))
+    (check-equal? (column-names (rename (dataframe (list (series '(1) #:name "a"))) "a" n))
+                  (list n))
+    (check-equal? (column-names (rename named n "z")) '("z" "a"))
+    (check-equal? (column-names (select named (col n))) (list n))
+    (check-equal? (~> named (select (col n)) (ref 0) series->list) '(1 2))
+    (check-equal? (column-names (select named (alias (col "a") n))) (list n))
+    (check-equal? (column-names (drop named n)) '("a"))
+    (check-equal? (column-names (drop named (string->bytes/utf-8 n))) '("a"))
+    (check-equal? (column-names (drop named (list (string->bytes/utf-8 n)))) '("a"))
+    (define selected (~> named (dataframe-select (list n)) wrap-dataframe))
+    (check-equal? (column-names selected) (list n))
+    (check-equal? (~> selected (ref 0) series->list) '(1 2))
+    (define on-n (dataframe (list (series '(0 0) #:name "id") (series '("x" "y") #:name n)
+                                  (series '(1 2) #:name "v"))))
+    (check-equal? (column-names (pivot on-n #:on (list n) #:index '("id") #:values '("v")))
+                  '("id" "x" "y"))
+    (check-equal? (column-names (pivot on-n #:on '("id") #:index (list n) #:values '("v")))
+                  (list n "0"))
+    (define melted (unpivot named #:on '("a") #:index (list n)))
+    (check-equal? (column-names melted) (list n "variable" "value"))
+    (check-equal? (~> melted (ref 0) series->list) '(1 2))))

@@ -1,7 +1,6 @@
-dataframe_column accessor
+dataframe_column_v2 accessor
 dataframe_column_name_v2 accessor
 dataframe_drop drop
-dataframe_drop_columns todo-129
 dataframe_drop_count count
 dataframe_drop_nulls todo-129
 dataframe_empty constructor
@@ -11,15 +10,13 @@ dataframe_height accessor
 dataframe_lazy builder
 dataframe_make constructor
 dataframe_new constructor
-dataframe_rename todo-129
-dataframe_select todo-129
 dataframe_shape accessor
 dataframe_slice todo-129
 dataframe_tail todo-129
 dataframe_unique todo-129
 dataframe_width accessor
 dataframe_with_column todo-129
-expr_alias builder
+expr_alias_v2 builder
 expr_name_keep builder
 expr_all builder
 expr_backward_fill builder
@@ -27,7 +24,7 @@ expr_cast builder
 expr_cast_datetime_tz builder
 expr_cast_enum builder
 expr_clip builder
-expr_col builder
+expr_col_v2 builder
 expr_diff builder
 expr_drop drop
 expr_drop_count count
@@ -56,7 +53,7 @@ expr_dt_year builder
 expr_dtype_col builder
 expr_dtype_col_datetime_tz builder
 expr_dtype_col_enum builder
-expr_exclude builder
+expr_exclude_v2 builder
 expr_forward_fill builder
 expr_head builder
 expr_is_between builder
@@ -67,7 +64,7 @@ expr_lit_i32 builder
 expr_lit_i64 builder
 expr_lit_null builder
 expr_lit_series builder
-expr_lit_str builder
+expr_lit_str_v2 builder
 expr_lit_temporal builder
 expr_lit_u64 builder
 expr_log builder
@@ -118,10 +115,10 @@ lazyframe_drop_nulls builder
 lazyframe_filter builder
 lazyframe_group_by_agg builder
 lazyframe_head builder
-lazyframe_join builder
+lazyframe_join_v2 builder
 lazyframe_select builder
 lazyframe_slice builder
-lazyframe_sort_with_options builder
+lazyframe_sort_with_options_v2 builder
 lazyframe_tail builder
 lazyframe_unique builder
 lazyframe_with_columns builder
@@ -138,7 +135,6 @@ series_drop_nulls todo-129
 series_dtype accessor
 series_empty constructor
 series_enum_categories accessor
-series_eq_str todo-129
 series_head todo-129
 series_is_not_null todo-129
 series_is_null todo-129
@@ -152,7 +148,6 @@ series_min_f64 todo-129
 series_min_i32 todo-129
 series_n_unique todo-129
 series_name_v2 accessor
-series_ne_str todo-129
 series_new_bool constructor
 series_new_f32 constructor
 series_new_f64 constructor
@@ -186,7 +181,6 @@ series_ref_u16 accessor
 series_ref_u32 accessor
 series_ref_u64 accessor
 series_ref_u8 accessor
-series_rename todo-129
 series_reverse todo-129
 series_slice todo-129
 series_std todo-129
@@ -198,11 +192,6 @@ series_time_zone_v2 accessor
 series_unique todo-129
 series_var todo-129
 string_drop drop
-dataframe_group_by_sum todo-129
-dataframe_group_by_mean todo-129
-dataframe_group_by_min todo-129
-dataframe_group_by_max todo-129
-dataframe_group_by_count todo-129
 expr_sum builder
 expr_mean builder
 expr_min builder

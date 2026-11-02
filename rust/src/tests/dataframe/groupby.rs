@@ -7,24 +7,14 @@ fn run_group_by(
     df: *mut DataFrame,
     agg_name: &str,
     f: extern "C" fn(
-        *mut DataFrame,
-        *const *const c_char,
-        usize,
-        *const *const c_char,
-        usize,
+        *const DataFrame,
+        StrListArg,
+        StrListArg,
     ) -> *mut DataFrame,
 ) -> *mut DataFrame {
-    let by_g = cstr("g");
-    let by_arr: [*const c_char; 1] = [by_g.as_ptr()];
-    let agg = cstr(agg_name);
-    let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
-    let out = f(
-        df,
-        by_arr.as_ptr(),
-        by_arr.len(),
-        agg_arr.as_ptr(),
-        agg_arr.len(),
-    );
+    let by_arr = str_list_block(&["g"]);
+    let agg_arr = str_list_block(&[agg_name]);
+    let out = f(df, by_arr.as_ptr(), agg_arr.as_ptr());
     assert!(!out.is_null(), "group_by returned null");
     out
 }
@@ -33,15 +23,14 @@ fn run_group_by(
 /// deterministic order — Polars' group_by output ordering is
 /// not guaranteed.
 fn sorted_by_g(df: *mut DataFrame) -> *mut DataFrame {
-    let g = cstr("g");
-    let by: [*const c_char; 1] = [g.as_ptr()];
+    let by = str_list_block(&["g"]);
     let flags: [u8; 1] = [0];
-    dataframe_sort_with_options(
+    dataframe_sort_with_options_v2(
         df,
         by.as_ptr(),
         flags.as_ptr(),
         flags.as_ptr(),
-        by.len(),
+        1,
         0,
     )
 }
@@ -52,7 +41,7 @@ fn sorted_by_g(df: *mut DataFrame) -> *mut DataFrame {
 #[test]
 fn group_by_sum_aggregates_per_key() {
     let (df, gs, xs) = make_gx();
-    let raw = run_group_by(df, "x", dataframe_group_by_sum);
+    let raw = run_group_by(df, "x", dataframe_group_by_sum_v2);
     let out = sorted_by_g(raw);
     assert_eq!(dataframe_height(out), 2);
     // a -> 10+20 = 30; b -> 30+40+50 = 120.
@@ -67,13 +56,13 @@ fn group_by_sum_aggregates_per_key() {
 #[test]
 fn group_by_min_and_max() {
     let (df, gs, xs) = make_gx();
-    let raw_min = run_group_by(df, "x", dataframe_group_by_min);
+    let raw_min = run_group_by(df, "x", dataframe_group_by_min_v2);
     let out_min = sorted_by_g(raw_min);
     assert_eq!(read_i32_col(out_min, "x_min"), vec![10, 30]);
     dataframe_drop(out_min);
     dataframe_drop(raw_min);
 
-    let raw_max = run_group_by(df, "x", dataframe_group_by_max);
+    let raw_max = run_group_by(df, "x", dataframe_group_by_max_v2);
     let out_max = sorted_by_g(raw_max);
     assert_eq!(read_i32_col(out_max, "x_max"), vec![20, 50]);
     dataframe_drop(out_max);
@@ -87,11 +76,11 @@ fn group_by_min_and_max() {
 #[test]
 fn group_by_mean_produces_f64_column() {
     let (df, gs, xs) = make_gx();
-    let raw = run_group_by(df, "x", dataframe_group_by_mean);
+    let raw = run_group_by(df, "x", dataframe_group_by_mean_v2);
     let out = sorted_by_g(raw);
     // a -> 15.0, b -> 40.0
-    let n = cstr("x_mean");
-    let col = dataframe_column(out, n.as_ptr());
+    let n = str_block("x_mean");
+    let col = dataframe_column_v2(out, n.as_ptr());
     assert!(!col.is_null(), "x_mean column missing");
     assert_eq!(series_ref_f64(col, 0).value, 15.0);
     assert_eq!(series_ref_f64(col, 1).value, 40.0);
@@ -108,17 +97,10 @@ fn group_by_count_emits_count_column() {
     let (df, gs, xs) = make_gx();
     // count produces a "<col>_count" column of u32 — the
     // outgoing column name carries the agg suffix from Polars.
-    let by = cstr("g");
-    let by_arr: [*const c_char; 1] = [by.as_ptr()];
-    let agg = cstr("x");
-    let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
-    let raw = dataframe_group_by_count(
-        df,
-        by_arr.as_ptr(),
-        by_arr.len(),
-        agg_arr.as_ptr(),
-        agg_arr.len(),
-    );
+    let by_arr = str_list_block(&["g"]);
+    let agg_arr = str_list_block(&["x"]);
+    let raw =
+        dataframe_group_by_count_v2(df, by_arr.as_ptr(), agg_arr.as_ptr());
     assert!(!raw.is_null());
     let out = sorted_by_g(raw);
     assert_eq!(dataframe_height(out), 2);
@@ -127,8 +109,8 @@ fn group_by_count_emits_count_column() {
     // hard-coded name.
     let names = read_column_names(out);
     assert_eq!(names.len(), 2);
-    let val_name = cstr(&names[1]);
-    let col = dataframe_column(out, val_name.as_ptr());
+    let val_name = str_block(&names[1]);
+    let col = dataframe_column_v2(out, val_name.as_ptr());
     // group `a` has 2 rows, group `b` has 3 rows. The exact int
     // type Polars picks (u32) is read via the u32 accessor.
     assert_eq!(series_ref_u32(col, 0).value, 2);
@@ -144,17 +126,9 @@ fn group_by_count_emits_count_column() {
 #[test]
 fn group_by_unknown_key_returns_null() {
     let (df, gs, xs) = make_gx();
-    let by = cstr("nope");
-    let by_arr: [*const c_char; 1] = [by.as_ptr()];
-    let agg = cstr("x");
-    let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
-    let out = dataframe_group_by_sum(
-        df,
-        by_arr.as_ptr(),
-        by_arr.len(),
-        agg_arr.as_ptr(),
-        agg_arr.len(),
-    );
+    let by_arr = str_list_block(&["nope"]);
+    let agg_arr = str_list_block(&["x"]);
+    let out = dataframe_group_by_sum_v2(df, by_arr.as_ptr(), agg_arr.as_ptr());
     assert!(out.is_null());
     dataframe_drop(df);
     series_drop(gs);
@@ -163,16 +137,12 @@ fn group_by_unknown_key_returns_null() {
 
 #[test]
 fn group_by_null_df_returns_null() {
-    let by = cstr("g");
-    let by_arr: [*const c_char; 1] = [by.as_ptr()];
-    let agg = cstr("x");
-    let agg_arr: [*const c_char; 1] = [agg.as_ptr()];
-    assert!(dataframe_group_by_sum(
+    let by_arr = str_list_block(&["g"]);
+    let agg_arr = str_list_block(&["x"]);
+    assert!(dataframe_group_by_sum_v2(
         ptr::null_mut(),
         by_arr.as_ptr(),
-        by_arr.len(),
-        agg_arr.as_ptr(),
-        agg_arr.len()
+        agg_arr.as_ptr()
     )
     .is_null());
 }

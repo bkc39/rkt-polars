@@ -9,6 +9,7 @@ mod dataframe;
 mod expr;
 mod guard_audit;
 mod last_error;
+mod names_in;
 mod row_counts;
 mod series;
 mod slices;

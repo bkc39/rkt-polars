@@ -123,8 +123,8 @@ fn column_name_out_of_range_returns_null() {
 #[test]
 fn column_returns_cloned_series_by_name() {
     let (df, xs, gs) = make_xg(&[10, 20, 30], &["a", "b", "c"]);
-    let n = cstr("x");
-    let col = dataframe_column(df, n.as_ptr());
+    let n = str_block("x");
+    let col = dataframe_column_v2(df, n.as_ptr());
     assert!(!col.is_null());
     assert_eq!(series_len(col), 3);
     assert_eq!(series_ref_i32(col, 1).value, 20);
@@ -140,8 +140,12 @@ fn column_returns_cloned_series_by_name() {
 #[test]
 fn column_unknown_name_returns_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    let n = cstr("nope");
-    assert!(dataframe_column(df, n.as_ptr()).is_null());
+    let n = str_block("nope");
+    assert!(dataframe_column_v2(df, n.as_ptr()).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("not found: \"nope\" not found")
+    );
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -150,8 +154,11 @@ fn column_unknown_name_returns_null() {
 #[test]
 fn column_null_inputs_return_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    assert!(dataframe_column(df, ptr::null()).is_null());
-    assert!(dataframe_column(ptr::null_mut(), cstr("x").as_ptr()).is_null());
+    assert!(dataframe_column_v2(df, ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("the name is null"));
+    let x = str_block("x");
+    assert!(dataframe_column_v2(ptr::null_mut(), x.as_ptr()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("dataframe is null"));
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -208,10 +215,8 @@ fn row_shaping_on_null_df_returns_null() {
 #[test]
 fn select_returns_named_columns_in_order() {
     let (df, xs, gs) = make_xg(&[1, 2], &["a", "b"]);
-    let g_name = cstr("g");
-    let x_name = cstr("x");
-    let names: [*const c_char; 2] = [g_name.as_ptr(), x_name.as_ptr()];
-    let out = dataframe_select(df, names.as_ptr(), names.len());
+    let names = str_list_block(&["g", "x"]);
+    let out = dataframe_select_v2(df, names.as_ptr());
     assert!(!out.is_null());
     assert_eq!(read_column_names(out), vec!["g", "x"]);
     dataframe_drop(out);
@@ -223,10 +228,10 @@ fn select_returns_named_columns_in_order() {
 #[test]
 fn select_unknown_name_returns_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    let n = cstr("nope");
-    let names: [*const c_char; 1] = [n.as_ptr()];
-    let out = dataframe_select(df, names.as_ptr(), names.len());
+    let names = str_list_block(&["nope"]);
+    let out = dataframe_select_v2(df, names.as_ptr());
     assert!(out.is_null());
+    assert!(recorded_error().unwrap().contains("nope"));
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -235,9 +240,8 @@ fn select_unknown_name_returns_null() {
 #[test]
 fn drop_columns_removes_named() {
     let (df, xs, gs) = make_xg(&[1, 2], &["a", "b"]);
-    let g_name = cstr("g");
-    let names: [*const c_char; 1] = [g_name.as_ptr()];
-    let out = dataframe_drop_columns(df, names.as_ptr(), names.len());
+    let names = str_list_block(&["g"]);
+    let out = dataframe_drop_columns_v2(df, names.as_ptr());
     assert!(!out.is_null());
     assert_eq!(read_column_names(out), vec!["x"]);
     dataframe_drop(out);
@@ -249,10 +253,10 @@ fn drop_columns_removes_named() {
 #[test]
 fn drop_columns_unknown_returns_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    let n = cstr("nope");
-    let names: [*const c_char; 1] = [n.as_ptr()];
-    let out = dataframe_drop_columns(df, names.as_ptr(), names.len());
+    let names = str_list_block(&["nope"]);
+    let out = dataframe_drop_columns_v2(df, names.as_ptr());
     assert!(out.is_null());
+    assert!(recorded_error().unwrap().contains("nope"));
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -261,9 +265,9 @@ fn drop_columns_unknown_returns_null() {
 #[test]
 fn rename_changes_column_name() {
     let (df, xs, gs) = make_xg(&[1, 2], &["a", "b"]);
-    let old = cstr("g");
-    let new = cstr("group");
-    let out = dataframe_rename(df, old.as_ptr(), new.as_ptr());
+    let old = str_block("g");
+    let new = str_block("group");
+    let out = dataframe_rename_v2(df, old.as_ptr(), new.as_ptr());
     assert!(!out.is_null());
     assert_eq!(read_column_names(out), vec!["x", "group"]);
     dataframe_drop(out);
@@ -275,10 +279,11 @@ fn rename_changes_column_name() {
 #[test]
 fn rename_unknown_column_returns_null() {
     let (df, xs, gs) = make_xg(&[1], &["a"]);
-    let old = cstr("nope");
-    let new = cstr("group");
-    let out = dataframe_rename(df, old.as_ptr(), new.as_ptr());
+    let old = str_block("nope");
+    let new = str_block("group");
+    let out = dataframe_rename_v2(df, old.as_ptr(), new.as_ptr());
     assert!(out.is_null());
+    assert!(recorded_error().unwrap().contains("nope"));
     dataframe_drop(df);
     series_drop(xs);
     series_drop(gs);
@@ -362,14 +367,13 @@ fn sort_frame(
     nulls_last: &[u8],
     maintain_order: u8,
 ) -> *mut DataFrame {
-    let owned: Vec<CString> = keys.iter().map(|k| cstr(k)).collect();
-    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
-    dataframe_sort_with_options(
+    let by = str_list_block(keys);
+    dataframe_sort_with_options_v2(
         df,
-        ptrs.as_ptr(),
+        by.as_ptr(),
         descending.as_ptr(),
         nulls_last.as_ptr(),
-        ptrs.len(),
+        keys.len(),
         maintain_order,
     )
 }

@@ -414,8 +414,8 @@ fn collect_records_the_cause_without_the_plan() {
     let x = make_i32("x", &[1, 2]);
     let df = make_df(&[x]);
     let lf = dataframe_lazy(df);
-    let name = cstr("nope");
-    let missing = expr_col(name.as_ptr());
+    let name = str_block("nope");
+    let missing = expr_col_v2(name.as_ptr());
     let exprs = [missing as *const Expr];
     let projected = lazyframe_select(lf, exprs.as_ptr(), exprs.len());
     assert!(lazyframe_collect(projected).is_null());

@@ -18,6 +18,40 @@ pub(super) fn take_cstring(p: *const c_char) -> String {
     s
 }
 
+fn words(bytes: &[u8]) -> Vec<u64> {
+    bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            u64::from_ne_bytes(word)
+        })
+        .collect()
+}
+
+/// A single argument block holding `value`, as Racket's `_str` builds it.
+pub(super) fn str_block(value: &str) -> Vec<u64> {
+    let data = words(value.as_bytes());
+    let mut block = vec![(2 + data.len()) as u64, value.len() as u64];
+    block.extend(data);
+    block
+}
+
+/// A list argument block holding `values`, as Racket's `_str-list` builds
+/// it.
+pub(super) fn str_list_block(values: &[&str]) -> Vec<u64> {
+    let mut offsets = vec![0u64];
+    for value in values {
+        offsets.push(offsets[offsets.len() - 1] + value.len() as u64);
+    }
+    let data = words(values.concat().as_bytes());
+    let mut block =
+        vec![(2 + offsets.len() + data.len()) as u64, values.len() as u64];
+    block.extend(offsets);
+    block.extend(data);
+    block
+}
+
 /// The string a result block holds, the block freed.
 pub(super) fn take_str(p: StrOut) -> String {
     assert!(!p.is_null(), "expected a non-null string block");
@@ -151,8 +185,8 @@ pub(super) fn read_column_names(df: *mut DataFrame) -> Vec<String> {
 /// Pull a string column out by name and materialize it as a
 /// `Vec<String>`. Each element is freed via `take_cstring`.
 pub(super) fn read_str_col(df: *mut DataFrame, name: &str) -> Vec<String> {
-    let n = cstr(name);
-    let s = dataframe_column(df, n.as_ptr());
+    let n = str_block(name);
+    let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name,);
     let out: Vec<String> = (0..series_len(s))
         .map(|i| {
@@ -169,8 +203,8 @@ pub(super) fn read_str_col(df: *mut DataFrame, name: &str) -> Vec<String> {
 /// CSV / JSON-Lines readers infer integer columns as i64, so
 /// round-trip tests need to read with this variant.
 pub(super) fn read_i64_col(df: *mut DataFrame, name: &str) -> Vec<i64> {
-    let n = cstr(name);
-    let s = dataframe_column(df, n.as_ptr());
+    let n = str_block(name);
+    let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name,);
     let out: Vec<i64> = (0..series_len(s))
         .map(|i| {
@@ -185,8 +219,8 @@ pub(super) fn read_i64_col(df: *mut DataFrame, name: &str) -> Vec<i64> {
 
 /// Pull an i32 column out by name and materialize it as a Vec.
 pub(super) fn read_i32_col(df: *mut DataFrame, name: &str) -> Vec<i32> {
-    let n = cstr(name);
-    let s = dataframe_column(df, n.as_ptr());
+    let n = str_block(name);
+    let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name,);
     let out: Vec<i32> = (0..series_len(s))
         .map(|i| {
@@ -239,8 +273,8 @@ pub(super) fn read_opt_bool_col(
     df: *mut DataFrame,
     name: &str,
 ) -> Vec<Option<bool>> {
-    let n = cstr(name);
-    let s = dataframe_column(df, n.as_ptr());
+    let n = str_block(name);
+    let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name);
     let out = opt_bools(s);
     series_drop(s);
@@ -251,8 +285,8 @@ pub(super) fn read_opt_i32_col(
     df: *mut DataFrame,
     name: &str,
 ) -> Vec<Option<i32>> {
-    let n = cstr(name);
-    let s = dataframe_column(df, n.as_ptr());
+    let n = str_block(name);
+    let s = dataframe_column_v2(df, n.as_ptr());
     assert!(!s.is_null(), "dataframe_column({:?}) returned null", name);
     let out = opt_i32s(s);
     series_drop(s);

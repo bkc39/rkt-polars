@@ -46,8 +46,8 @@ pub enum CompatJoinKind {
 fn join_frames(
     left: &DataFrame,
     right: &DataFrame,
-    left_on: &[String],
-    right_on: &[String],
+    left_on: &[&str],
+    right_on: &[&str],
     how: i32,
 ) -> PolarsResult<DataFrame> {
     use polars::prelude::{CrossJoin, JoinType};
@@ -82,32 +82,18 @@ fn join_frames(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_join(
-    left_ptr: *mut DataFrame,
-    right_ptr: *mut DataFrame,
-    left_on_ptrs: *const *const c_char,
-    n_left_on: usize,
-    right_on_ptrs: *const *const c_char,
-    n_right_on: usize,
+pub extern "C" fn dataframe_join_v2(
+    left_ptr: *const DataFrame,
+    right_ptr: *const DataFrame,
+    left_on: StrListArg,
+    right_on: StrListArg,
     how: i32,
 ) -> *mut DataFrame {
-    clear_last_error();
-    let (Some(left), Some(right)) =
-        (unsafe { left_ptr.as_ref() }, unsafe { right_ptr.as_ref() })
-    else {
-        set_last_error("dataframe is null");
-        return ptr::null_mut();
-    };
-    let keys = unsafe {
-        (
-            collect_c_strings(left_on_ptrs, n_left_on),
-            collect_c_strings(right_on_ptrs, n_right_on),
-        )
-    };
-    let (Some(left_on), Some(right_on)) = keys else {
-        set_last_error("a join key is null or not valid UTF-8");
-        return ptr::null_mut();
-    };
-    guard_panic(|| record(join_frames(left, right, &left_on, &right_on, how)))
-        .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
+    boxed_result(|| {
+        let left = unsafe { deref_arg(left_ptr, "dataframe") }?;
+        let right = unsafe { deref_arg(right_ptr, "dataframe") }?;
+        let left_on = unsafe { str_list_arg(left_on) }?;
+        let right_on = unsafe { str_list_arg(right_on) }?;
+        join_frames(left, right, &left_on, &right_on, how)
+    })
 }

@@ -2,72 +2,43 @@ use crate::prelude::*;
 use crate::*;
 
 #[no_mangle]
-pub extern "C" fn dataframe_select(
-    df_ptr: *mut DataFrame,
-    name_ptrs: *const *const c_char,
-    n: usize,
+pub extern "C" fn dataframe_select_v2(
+    df_ptr: *const DataFrame,
+    names: StrListArg,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let names = match unsafe { collect_c_strings(name_ptrs, n) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let df = unsafe { &*df_ptr };
-    match df.select(&names) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        df.select(unsafe { str_list_arg(names) }?)
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_drop_columns(
-    df_ptr: *mut DataFrame,
-    name_ptrs: *const *const c_char,
-    n: usize,
+pub extern "C" fn dataframe_drop_columns_v2(
+    df_ptr: *const DataFrame,
+    names: StrListArg,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let names = match unsafe { collect_c_strings(name_ptrs, n) } {
-        Some(v) => v,
-        None => return ptr::null_mut(),
-    };
-    let df = unsafe { &*df_ptr };
-    let mut out = df.clone();
-    for name in &names {
-        match out.drop_in_place(name) {
-            Ok(_) => {}
-            Err(_) => return ptr::null_mut(),
+    boxed_result(|| {
+        let mut out = unsafe { deref_arg(df_ptr, "dataframe") }?.clone();
+        for name in unsafe { str_list_arg(names) }? {
+            out.drop_in_place(name)?;
         }
-    }
-    Box::into_raw(Box::new(out))
+        Ok(out)
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_rename(
-    df_ptr: *mut DataFrame,
-    old: *const c_char,
-    new: *const c_char,
+pub extern "C" fn dataframe_rename_v2(
+    df_ptr: *const DataFrame,
+    old: StrArg,
+    new: StrArg,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() || old.is_null() || new.is_null() {
-        return ptr::null_mut();
-    }
-    let old_str = match unsafe { CStr::from_ptr(old).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let new_str = match unsafe { CStr::from_ptr(new).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let df = unsafe { &*df_ptr };
-    let mut out = df.clone();
-    match out.rename(old_str, new_str.into()) {
-        Ok(_) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let mut out = unsafe { deref_arg(df_ptr, "dataframe") }?.clone();
+        let old = unsafe { name_arg(old, "the old name") }?;
+        let new = unsafe { name_arg(new, "the new name") }?;
+        out.rename(old, new.into())?;
+        Ok(out)
+    })
 }
 
 #[no_mangle]
@@ -106,20 +77,13 @@ pub extern "C" fn dataframe_column_names(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_column(
-    df_ptr: *mut DataFrame,
-    name: *const c_char,
+pub extern "C" fn dataframe_column_v2(
+    df_ptr: *const DataFrame,
+    name: StrArg,
 ) -> *mut Series {
-    if df_ptr.is_null() || name.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    let name_str = match unsafe { CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    match df.column(name_str) {
-        Ok(s) => Box::into_raw(Box::new(s.as_materialized_series().clone())),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_unguarded(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let column = df.column(unsafe { name_arg(name, "the name") }?)?;
+        Ok(column.as_materialized_series().clone())
+    })
 }

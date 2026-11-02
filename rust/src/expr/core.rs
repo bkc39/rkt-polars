@@ -1,7 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    clear_last_error, datetime_tz_dtype, guard_panic, polars_dtype_from_compat,
-    str_out, CompatDType, StrOut,
+    boxed_unguarded, clear_last_error, datetime_tz_dtype, deref_arg,
+    guard_panic, name_arg, polars_dtype_from_compat, str_out, CompatDType,
+    StrArg, StrOut,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -32,15 +33,8 @@ pub extern "C" fn expr_to_string_v2(e: *const Expr) -> StrOut {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_col(name: *const c_char) -> *mut Expr {
-    if name.is_null() {
-        return ptr::null_mut();
-    }
-    let n = match unsafe { CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    Box::into_raw(Box::new(col(n)))
+pub extern "C" fn expr_col_v2(name: StrArg) -> *mut Expr {
+    boxed_unguarded(|| Ok(col(unsafe { name_arg(name, "the column name") }?)))
 }
 
 #[no_mangle]
@@ -69,15 +63,8 @@ pub extern "C" fn expr_lit_bool(v: u8) -> *mut Expr {
 }
 
 #[no_mangle]
-pub extern "C" fn expr_lit_str(v: *const c_char) -> *mut Expr {
-    if v.is_null() {
-        return ptr::null_mut();
-    }
-    let s = match unsafe { CStr::from_ptr(v).to_str() } {
-        Ok(s) => s.to_string(),
-        Err(_) => return ptr::null_mut(),
-    };
-    Box::into_raw(Box::new(lit(s)))
+pub extern "C" fn expr_lit_str_v2(value: StrArg) -> *mut Expr {
+    boxed_unguarded(|| Ok(lit(unsafe { name_arg(value, "the string") }?)))
 }
 
 /// Python's `pl.lit(None)`: a null literal of dtype Null.
@@ -130,16 +117,11 @@ pub extern "C" fn expr_lit_datetime_tz(
 }
 
 #[no_mangle]
-pub extern "C" fn expr_alias(e: *const Expr, name: *const c_char) -> *mut Expr {
-    if e.is_null() || name.is_null() {
-        return ptr::null_mut();
-    }
-    let n = match unsafe { CStr::from_ptr(name).to_str() } {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-    let inner = unsafe { (*e).clone() };
-    Box::into_raw(Box::new(inner.alias(n)))
+pub extern "C" fn expr_alias_v2(e: *const Expr, name: StrArg) -> *mut Expr {
+    boxed_unguarded(|| {
+        let e = unsafe { deref_arg(e, "expression") }?;
+        Ok(e.clone().alias(unsafe { name_arg(name, "the name") }?))
+    })
 }
 
 expr_unop!(expr_name_keep, |e| e.name().keep());

@@ -74,8 +74,8 @@ fn asof_frames(
     left_on: &str,
     right_on: &str,
     strategy: i32,
-    left_by: &[String],
-    right_by: &[String],
+    left_by: &[&str],
+    right_by: &[&str],
     tolerance: (i32, i64, f64),
 ) -> PolarsResult<DataFrame> {
     let Some(strategy) = compat_asof_strategy(strategy) else {
@@ -121,23 +121,21 @@ fn asof_frames(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_join_asof(
-    left_ptr: *mut DataFrame,
-    right_ptr: *mut DataFrame,
-    left_on: *const c_char,
-    right_on: *const c_char,
+pub extern "C" fn dataframe_join_asof_v2(
+    left_ptr: *const DataFrame,
+    right_ptr: *const DataFrame,
+    left_on: StrArg,
+    right_on: StrArg,
     strategy: i32,
 ) -> *mut DataFrame {
-    dataframe_join_asof_options(
+    dataframe_join_asof_options_v2(
         left_ptr,
         right_ptr,
         left_on,
         right_on,
         strategy,
         ptr::null(),
-        0,
         ptr::null(),
-        0,
         CompatAsofToleranceKind::None as i32,
         0,
         0.0,
@@ -145,61 +143,29 @@ pub extern "C" fn dataframe_join_asof(
 }
 
 #[no_mangle]
-pub extern "C" fn dataframe_join_asof_options(
-    left_ptr: *mut DataFrame,
-    right_ptr: *mut DataFrame,
-    left_on: *const c_char,
-    right_on: *const c_char,
+pub extern "C" fn dataframe_join_asof_options_v2(
+    left_ptr: *const DataFrame,
+    right_ptr: *const DataFrame,
+    left_on: StrArg,
+    right_on: StrArg,
     strategy: i32,
-    left_by_ptrs: *const *const c_char,
-    n_left_by: usize,
-    right_by_ptrs: *const *const c_char,
-    n_right_by: usize,
+    left_by: StrListArg,
+    right_by: StrListArg,
     tolerance_kind: i32,
     tolerance_integer: i64,
     tolerance_float: f64,
 ) -> *mut DataFrame {
-    clear_last_error();
-    let (Some(left), Some(right)) =
-        (unsafe { left_ptr.as_ref() }, unsafe { right_ptr.as_ref() })
-    else {
-        set_last_error("dataframe is null");
-        return ptr::null_mut();
-    };
-    let (Some(left_on), Some(right_on)) = (
-        decode_c_str(left_on, "the left key"),
-        decode_c_str(right_on, "the right key"),
-    ) else {
-        return ptr::null_mut();
-    };
-    let keys = unsafe {
-        (
-            collect_c_strings(left_by_ptrs, n_left_by),
-            collect_c_strings(right_by_ptrs, n_right_by),
-        )
-    };
-    let (Some(left_by), Some(right_by)) = keys else {
-        set_last_error("a by-key is null or not valid UTF-8");
-        return ptr::null_mut();
-    };
-    let tolerance = (tolerance_kind, tolerance_integer, tolerance_float);
-    guard_panic(|| {
-        record(asof_frames(
+    boxed_result(|| {
+        let left = unsafe { deref_arg(left_ptr, "dataframe") }?;
+        let right = unsafe { deref_arg(right_ptr, "dataframe") }?;
+        let left_on = unsafe { name_arg(left_on, "the left key") }?;
+        let right_on = unsafe { name_arg(right_on, "the right key") }?;
+        let left_by = unsafe { str_list_arg(left_by) }?;
+        let right_by = unsafe { str_list_arg(right_by) }?;
+        let tolerance = (tolerance_kind, tolerance_integer, tolerance_float);
+        asof_frames(
             left, right, left_on, right_on, strategy, &left_by, &right_by,
             tolerance,
-        ))
+        )
     })
-    .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
-}
-
-fn decode_c_str<'a>(p: *const c_char, what: &str) -> Option<&'a str> {
-    if p.is_null() {
-        set_last_error(format!("{} is null", what));
-        return None;
-    }
-    record(
-        unsafe { CStr::from_ptr(p) }
-            .to_str()
-            .map_err(|err| format!("{} is not valid UTF-8: {}", what, err)),
-    )
 }

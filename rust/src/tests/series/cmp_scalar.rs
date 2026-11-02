@@ -41,29 +41,7 @@ fn cmp_f64_all_ops_against_scalar() {
 }
 
 #[test]
-fn cmp_str_eq_and_ne() {
-    let s = make_str("ws", &["a", "b", "a"]);
-    let rhs = cstr("a");
-    let eq = series_eq_str(s, rhs.as_ptr());
-    assert_eq!(read_bool_series(eq), vec![true, false, true]);
-    series_drop(eq);
-    let ne = series_ne_str(s, rhs.as_ptr());
-    assert_eq!(read_bool_series(ne), vec![false, true, false]);
-    series_drop(ne);
-    series_drop(s);
-}
-
-#[test]
 fn cmp_scalar_null_series_returns_null() {
     assert!(series_lt_i32(ptr::null_mut(), 0).is_null());
     assert!(series_eq_f64(ptr::null_mut(), 0.0).is_null());
-    let rhs = cstr("a");
-    assert!(series_eq_str(ptr::null_mut(), rhs.as_ptr()).is_null());
-}
-
-#[test]
-fn cmp_str_null_rhs_returns_null() {
-    let s = make_str("ws", &["a"]);
-    assert!(series_eq_str(s, ptr::null()).is_null());
-    series_drop(s);
 }

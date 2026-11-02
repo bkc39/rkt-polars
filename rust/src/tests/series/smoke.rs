@@ -1,4 +1,4 @@
-use super::test_util::take_str;
+use super::test_util::{recorded_error, str_block, take_str};
 use super::*;
 use std::ptr;
 
@@ -47,48 +47,34 @@ fn test_empty_series_name() {
 #[test]
 fn test_rename_series_non_null() {
     let series = series_make();
-
-    let new_name = CString::new("new_name").unwrap();
-    let new_name_ptr = new_name.as_ptr();
-
-    series_rename(series, new_name_ptr);
-
+    let name = str_block("new_name");
+    assert_eq!(series_rename_v2(series, name.as_ptr()), 0);
     assert_eq!(take_str(series_name_v2(series)), "new_name");
-
     series_drop(series);
 }
 
 #[test]
 fn test_rename_series_with_empty_string() {
     let series = series_make();
-
-    let new_name = CString::new("").unwrap();
-    let new_name_ptr = new_name.as_ptr();
-
-    series_rename(series, new_name_ptr);
-
+    let name = str_block("");
+    assert_eq!(series_rename_v2(series, name.as_ptr()), 0);
     assert_eq!(take_str(series_name_v2(series)), "");
-
     series_drop(series);
 }
 
 #[test]
 fn test_rename_series_null_series_pointer() {
-    let new_name = CString::new("new_name").unwrap();
-    let new_name_ptr = new_name.as_ptr();
-
-    series_rename(ptr::null_mut(), new_name_ptr);
+    let name = str_block("new_name");
+    assert_eq!(series_rename_v2(ptr::null_mut(), name.as_ptr()), -1);
+    assert_eq!(recorded_error().as_deref(), Some("series is null"));
 }
 
 #[test]
 fn test_rename_series_null_new_name_pointer() {
     let series = series_make();
-
-    series_rename(series, ptr::null());
-
-    // Ensure the original name remains unchanged
+    assert_eq!(series_rename_v2(series, ptr::null()), -1);
+    assert_eq!(recorded_error().as_deref(), Some("the name is null"));
     assert_eq!(take_str(series_name_v2(series)), "example");
-
     series_drop(series);
 }
 
