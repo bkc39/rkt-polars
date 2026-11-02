@@ -1077,13 +1077,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   there; anything else becomes a grep gate. The Resyntax run takes minutes
   (one large file alone takes about four), so it is not a push gate; CI runs
   it on every PR.
-- A grep gate keeps grep's exit status: 1 is no match, and above 1 (a
-  missing directory or file, an unreadable one) fails the gate with 2 and
-  says so, never `|| true`. `scripts/grep-gates-test.sh` (the
+- A grep that reads files never hides its exit status: in a grep gate 1 is
+  no match, and above 1 (a missing directory or file, an unreadable one)
+  fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
   `grep-gates-test` gate, a push gate and a flake check) runs
   `no-syntax-rule`, `no-inline-tests` and `rustls-only` on a scratch tree
-  to hold them there; `docs-check-test` holds `docs-check.sh`'s badlink
-  grep and its log to the same.
+  to hold them there. `docs-check.sh`'s `scan` fails with 1, as for any
+  warning, on a log it cannot read or a grep error over the rendered
+  manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
   nycflights file into `bench/data/` (gitignored) and prints the scoreboard
   (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table

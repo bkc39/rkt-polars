@@ -20,8 +20,6 @@ fail() {
   echo "FAIL: $*" >&2
 }
 
-# tree: a fresh scratch tree at $work/tree holding every directory and file
-# the gates read, with nothing for them to flag.
 tree() {
   rm -rf "$work/tree"
   mkdir -p "$work/tree/scripts" "$work/tree/rust"
@@ -34,8 +32,6 @@ tree() {
     "$work/tree/scripts/"
 }
 
-# expect LABEL GATE WANT-STATUS TEXT: runs GATE's script on the scratch tree,
-# holding its exit status to WANT-STATUS and its output to holding TEXT.
 expect() {
   local label=$1 gate=$2 want=$3 text=$4 got=0 out
   out=$(bash "$work/tree/scripts/$gate.sh" 2>&1) || got=$?
