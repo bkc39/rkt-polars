@@ -131,6 +131,22 @@ if expect "clean render" 0 scan "$fixtures/clean-render.log" "$dir"; then
     || fail "clean render: the record does not start with the manual's stamp.sxref"
 fi
 
+dir=$(manual missing-log)
+if expect "a recorded render" 0 scan "$fixtures/clean-render.log" "$dir" \
+    && expect "a missing log" 1 scan "$work/no-such.log" "$dir"; then
+  has "a missing log" "cannot read the raco setup log $work/no-such.log"
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  dir=$(manual unreadable)
+  : > "$dir/unreadable.html"
+  chmod 000 "$dir/unreadable.html"
+  if expect "an unreadable page" 1 scan "$fixtures/clean-render.log" "$dir"; then
+    has "an unreadable page" "grep failed (exit 2) reading the manual at $dir"
+  fi
+  chmod 644 "$dir/unreadable.html"
+fi
+
 mkdir -p "$work/empty"
 if expect "no index.html" 1 scan "$fixtures/clean-render.log" "$work/empty"; then
   has "no index.html" "no rendered manual at $work/empty (no index.html)"

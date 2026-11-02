@@ -17,11 +17,16 @@ after='([^-[:alnum:]!?*<>=/+:.$%&^~_]|$)'
 
 status=0
 flag() {
-  local form=$1 message=$2 hits
+  local form=$1 message=$2 hits found=0
   hits=$(grep -rnE --include='*.rkt' --include='*.scrbl' \
-           "$before$form$after" "${dirs[@]}" || true)
+           "$before$form$after" "${dirs[@]}") || found=$?
+  if [ "$found" -gt 1 ]; then
+    echo "no-syntax-rule: grep failed (exit $found) on ${dirs[*]}" >&2
+    status=2
+    return 0
+  fi
   [ -n "$hits" ] || return 0
-  status=1
+  [ "$status" -eq 2 ] || status=1
   while IFS=: read -r file line _; do
     echo "$file:$line: $message"
     if [ -n "${GITHUB_ACTIONS:-}" ]; then
