@@ -93,6 +93,13 @@ printf '(require (prefix-in base: racket/base))\n(define (f t) (base:dynamic-win
   > "$work/tree/polars/private/prefixed.rkt"
 expect "a prefixed name" no-dynamic-wind 1 "polars/private/prefixed.rkt:2: pair the resource"
 tree
+printf ':dynamic-wind\n' > "$work/tree/polars/private/colon.rkt"
+expect "a line-initial colon prefix" no-dynamic-wind 1 "polars/private/colon.rkt:1: pair the resource"
+tree
+printf '(define (f #:dynamic-wind [w void]) w)\n(f #:dynamic-wind void)\n' \
+  > "$work/tree/polars/private/keyword.rkt"
+expect "a keyword" no-dynamic-wind 0 "no-dynamic-wind: none in"
+tree
 printf '()\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
 printf '%s\n' "$wind" > "$work/tree/polars/tests/allowed.rkt"
 expect "no sites listed" no-dynamic-wind 1 "polars/tests/allowed.rkt:1: pair the resource"

@@ -431,12 +431,13 @@
       [(list 'except-in inner _ ...) (import-names inner)]
       [(list (or 'for-syntax 'for-template 'for-label 'combine-in) specs ...)
        (append-map import-names specs)]
-      [(list (or 'for-meta 'relative-in) _ specs ...) (append-map import-names specs)]
+      [(list (or 'for-meta 'for-space 'only-meta-in 'only-space-in 'relative-in) _ specs ...)
+       (append-map import-names specs)]
       [_ (list dynamic-wind-name)]))
   (define (dynamic-wind-names datum)
     (define (requires datum)
       (match datum
-        [(list 'require specs ...) (append-map import-names specs)]
+        [(list (or 'require 'local-require) specs ...) (append-map import-names specs)]
         [(? list?) (append-map requires datum)]
         [_ '()]))
     (remove-duplicates (cons dynamic-wind-name (requires datum))))
@@ -526,10 +527,22 @@
              (module-text '(define (f) (dynamic-wind void void void))
                           '(define planted (module-text '(dynamic-wind void void void)))
                           '(define (h t)
-                             ((dynamic-require (quote racket/base) (quote dynamic-wind)) void t void)))]
+                             ((dynamic-require (quote racket/base) (quote dynamic-wind)) void t void))
+                          '(define (u) (module-text (list (quote dynamic-wind)))))]
             ["tests/prefixed.rkt"
              (module-text '(require (prefix-in base: racket/base))
                           '(define (f t) (base:dynamic-wind void t void)))]
+            ["tests/local-require.rkt"
+             (module-text '(define (f t)
+                             (local-require (prefix-in r- racket/base))
+                             (r-dynamic-wind void t void)))]
+            ["tests/meta-space.rkt"
+             (module-text '(require (only-meta-in 0 (prefix-in m- racket/base))
+                                    (for-space s (prefix-in s- racket/base))
+                                    (only-space-in s (prefix-in o- racket/base)))
+                          '(define (m t) (m-dynamic-wind void t void))
+                          '(define (s t) (s-dynamic-wind void t void))
+                          '(define (o t) (o-dynamic-wind void t void)))]
             ["tests/renamed.rkt"
              (module-text '(require (rename-in racket/base [dynamic-wind dw]))
                           '(define (f t) (dw void t void)))]
@@ -577,13 +590,15 @@
                     ("tests/listed.rkt" keyworded) ("tests/listed.rkt" other)
                     ("tests/literals.rkt" boxed) ("tests/literals.rkt" hash-keyed)
                     ("tests/literals.rkt" hashed) ("tests/literals.rkt" prefab)
+                    ("tests/local-require.rkt" f) ("tests/meta-space.rkt" m)
+                    ("tests/meta-space.rkt" o) ("tests/meta-space.rkt" s)
                     ("tests/nested-prefix.rkt" #f) ("tests/nested-prefix.rkt" f)
                     ("tests/nested.rkt" h) ("tests/only-renamed.rkt" #f)
                     ("tests/only-renamed.rkt" #f) ("tests/only-renamed.rkt" f)
                     ("tests/prefixed.rkt" f) ("tests/quoted.rkt" program) ("tests/reference.rkt" g)
                     ("tests/renamed.rkt" #f) ("tests/renamed.rkt" #f) ("tests/renamed.rkt" f)
-                    ("tests/resource.rkt" f) ("tests/resource.rkt" h) ("tests/top.rkt" #f)
-                    ("tests/twice.rkt" twice)))
+                    ("tests/resource.rkt" f) ("tests/resource.rkt" h) ("tests/resource.rkt" u)
+                    ("tests/top.rkt" #f) ("tests/twice.rkt" twice)))
     (check-equal? (in-site-order (stale-dynamic-wind-entries planted-sites planted-entries))
                   '(("tests/duplicate.rkt" once) ("tests/stale.rkt" gone)))
     (check-equal? (malformed-dynamic-wind-entries planted-entries)
