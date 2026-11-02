@@ -396,10 +396,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   does; its release sees the name bound to what the acquire returned, and
   that value is the one released. `with-release`,
   `with-releases` and `with-release-pool` are one-shot, through one helper
-  (`call-with-one-shot-extent`), and `with-raw-buffer` is a `with-release`:
+  (`one-shot-binding`), and `with-raw-buffer` is a `with-release`:
   the name each binds (a `with-releases` list, a `with-release-pool`
   procedure) is `#f` once released, and the extent is entered once: a
-  continuation that re-enters it raises under the form's name. A value that may or may not be owned (a variadic operator's
+  continuation that re-enters it raises under the form's name. A
+  `with-release-pool` procedure that escaped its extent raises when called
+  after the release, so no value it is handed goes unreleased. A value that
+  may or may not be owned (a variadic operator's
   running result) is released with `drop-owned` (`expr-core.rkt`), which
   dispatches on the four pointer types' predicates and ignores any other
   value; a pointer already dropped raises under that type's drop name, as
