@@ -307,7 +307,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   part way through a `with-releases` loop releases what it acquired, and a
   release that raises does not stop the others, as with nested
   `with-release`s); the buffer's finalizer backs up a thread killed inside
-  the extent. A value that may or may not be owned (a variadic operator's
+  the extent. Each clause's acquire sees the bindings outside it, as `let*`
+  does; its release sees the name bound to what the acquire returned, and
+  that value is the one released. A `with-release` name is `#f` once
+  released, and its extent is entered once: a continuation that re-enters it
+  raises. A value that may or may not be owned (a variadic operator's
   running result) is released with `drop-owned` (`expr-core.rkt`), which
   dispatches on the four pointer types' predicates and ignores any other
   value; a pointer already dropped raises under that type's drop name, as
@@ -866,7 +870,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `scripts/install-native-libs.sh`, which leaves an identical library alone
   and replaces a differing one by a rename, never in place, so a racket in
   another shell that has the old one mapped keeps running (#265); the
-  `install-native-libs` gate and flake check hold it there.
+  `install-native-libs` gate and flake check hold it there. The
+  pre-installer (`polars/private/install-compat.rkt`) does the same on every
+  `raco setup`: it writes a replacement at mode `0755`, and an identical
+  library keeps its mode (#267).
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:

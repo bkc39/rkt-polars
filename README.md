@@ -176,7 +176,9 @@ objects are committed per platform under `polars/native-libs/candidates/`
 `darwin/libcompat.dylib` for arm64). The `pre-install-collection` hook
 (`polars/private/install-compat.rkt`) selects a library at `raco pkg install`
 time, preferring `RKT_POLARS_COMPAT_LIB_PATH`, then the committed candidate for
-the platform, then an already-staged `polars/native-libs/libcompat.*`.
+the platform, then an already-staged `polars/native-libs/libcompat.*`. It
+leaves an identical library alone and replaces a differing one by a rename, as
+`scripts/install-native-libs.sh` does (#267).
 
 To (re)build and stage a candidate on the matching platform:
 
