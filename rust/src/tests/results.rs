@@ -11,9 +11,13 @@ const HELPERS: &[(&str, Helper)] = &[
         Some(scalar_result(-1, f)).filter(|&v| v != -1)
     }),
     ("boxed_unguarded", |f| take_box(boxed_unguarded(f))),
+    ("with_series", |f| {
+        let s = Series::new_empty("".into(), &DataType::Int32);
+        Some(with_series(&s, -1, |_| f())).filter(|&v| v != -1)
+    }),
 ];
 
-const GUARDING: [&str; 2] = ["boxed_result", "scalar_result"];
+const GUARDING: [&str; 3] = ["boxed_result", "scalar_result", "with_series"];
 
 #[test]
 fn every_helper_records_an_error_and_fails() {

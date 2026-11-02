@@ -2356,21 +2356,67 @@ temps
               @defproc[(series-min-f64  [s Series-ptr?]) (or/c flonum? #f)]
               @defproc[(series-max-f64  [s Series-ptr?]) (or/c flonum? #f)]
               @defproc[(series-mean-f64 [s Series-ptr?]) (or/c flonum? #f)])]{
-  Typed reductions. The suffix names the dtype the series must have
-  (@racket['int32] or @racket['float64]); applied to a series of any other
-  dtype they return @racket[#f] rather than converting, so
-  @racket[(series-sum-i32 (series '(1 2)))] is @racket[#f] because
-  @racket[series] infers @racket['int64] for those elements. They also return
-  @racket[#f] when the reduction is undefined — the min, max or mean of a
-  series whose entries are all null — while the sum of such a series is
-  @racket[0]. The generic @racket[sum], @racket[min], @racket[max] and
-  @racket[mean] dispatch on the dtype for you, return @racket[polars-null]
-  where these return @racket[#f] for an undefined reduction, and are the
-  preferred surface.
+  Typed reductions: @racketid[series-sum-], @racketid[series-min-],
+  @racketid[series-max-] and @racketid[series-mean-] with each dtype suffix,
+  @tt{i8}, @tt{i16}, @tt{i32}, @tt{i64}, @tt{u8}, @tt{u16}, @tt{u32},
+  @tt{u64}, @tt{f32} and @tt{f64} (@racketid[series-max-u16],
+  @racketid[series-mean-f32], …). The series must have the dtype the suffix
+  names; any other raises rather than converting, so
+  @racket[(series-sum-i32 (series '(1 2)))] raises because @racket[series]
+  infers @racket['int64] for those elements. Each mean is a flonum. They
+  return @racket[#f] for an undefined reduction, the min, max or mean of a
+  series whose entries are all null, whose sum is @racket[0]. The generic
+  @racket[sum], @racket[min], @racket[max] and @racket[mean] dispatch on the
+  dtype for you, return @racket[polars-null] there, and are the preferred
+  surface.
 
   @examples[#:eval ev
 (define gaps (series (list polars-null polars-null) #:dtype 'float64))
-(list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))]}
+(list (series-min-f64 gaps) (series-sum-f64 gaps) (min gaps))
+(eval:error (series-sum-i32 (series '(1 2))))]}
+
+@defproc[(series-n-unique [s Series-ptr?]) exact-nonnegative-integer?]{
+  The number of distinct values in @racket[s], a null among them. The fluent
+  @racket[n-unique] wraps it.
+
+  @examples[#:eval ev #:label #f
+(series-n-unique (series (list 1 2 2 polars-null)))
+(eval:error (series-n-unique '(1 2 2)))]}
+
+@deftogether[(@defproc[(series-std [s Series-ptr?] [#:ddof ddof uint8/c 1])
+                       (or/c flonum? #f)]
+              @defproc[(series-var [s Series-ptr?] [#:ddof ddof uint8/c 1])
+                       (or/c flonum? #f)])]{
+  The standard deviation and the variance of @racket[s] with @racket[ddof]
+  delta degrees of freedom, or @racket[#f] where they are undefined: a series
+  that is not numeric, or one with no more than @racket[ddof] values. The
+  fluent @racket[std] and @racket[var] wrap them.
+
+  @examples[#:eval ev #:label #f
+(define spread (series '(1.0 2.0 3.0 4.0)))
+(list (series-std spread) (series-var spread #:ddof 0) (series-std (series '("a" "b"))))
+(eval:error (series-var spread #:ddof 256))]}
+
+@defproc[(series-quantile [s Series-ptr?]
+                          [quantile (real-in 0 1)]
+                          [#:interpolation interpolation
+                           (or/c 'nearest 'linear 'lower 'higher 'midpoint)
+                           'nearest])
+         (or/c flonum? #f)]{
+  The @racket[quantile] of @racket[s] read as Float64, between neighbouring
+  values as @racket[interpolation] says, or @racket[#f] when no value is
+  left. A series that does not cast to Float64, a list column say, raises.
+
+  @examples[#:eval ev #:label #f
+(define ranks (series '(1 2 3 4 5)))
+(list (series-quantile ranks 0.3) (series-quantile ranks 0.3 #:interpolation 'linear))
+(eval:error (series-quantile ranks 0.3 #:interpolation 'cubic))
+(define nested
+  (~> (dataframe (list (series '(1 1 2) #:name "g") (series '(3.0 4.0 5.0) #:name "v")))
+      (group-by "g")
+      (agg (col "v"))
+      (ref "v")))
+(eval:error (series-quantile nested 0.5))]}
 
 @defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical

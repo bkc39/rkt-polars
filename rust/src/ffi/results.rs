@@ -19,6 +19,15 @@ pub(crate) fn scalar_result<T>(
     guard_panic(|| record(f())).unwrap_or(failed)
 }
 
+/// `f` of the series `s_ptr` points to, as `scalar_result`.
+pub(crate) fn with_series<T>(
+    s_ptr: *const Series,
+    failed: T,
+    f: impl FnOnce(&Series) -> PolarsResult<T>,
+) -> T {
+    scalar_result(failed, || f(unsafe { deref_arg(s_ptr, "series") }?))
+}
+
 /// As `boxed_result`, for an entry point that runs no polars code on the
 /// caller's data.
 pub(crate) fn boxed_unguarded<T>(

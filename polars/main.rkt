@@ -96,6 +96,8 @@
   (check-not-false (memq 'cast exported))
   (check-not-false (memq 'time-zone-name/c exported))
   (check-not-false (memq 'series-new-str exported))
+  (for ([name (in-list '(series-sum-u16 series-mean-f32 series-n-unique series-quantile))])
+    (check-not-false (memq name exported) (format "~a is public" name)))
   (check-not-false (memq 'uint32/c c-integer-contracts))
   (for ([internal (in-list (append internal-names
                                     c-integer-contracts
@@ -106,7 +108,15 @@
                                       dataframe-select/c dataframe-drop-columns/c
                                       dataframe-rename/raw dataframe-with-column/raw
                                       dataframe-new/raw expr-lit-u64 null-behavior/c
-                                      rank-method/c provide-row-windows)))])
+                                      rank-method/c provide-row-windows
+                                      valid-opt? call/f64-reduction define-typed-reduction
+                                      define-typed-reductions define-int-reductions
+                                      series-n-unique/raw series-std/raw series-var/raw
+                                      series-quantile/raw)
+                                    (for*/list ([op (in-list '(sum min max mean))]
+                                                [t (in-list '(i8 i16 i32 i64 u8 u16 u32 u64
+                                                              f32 f64))])
+                                      (string->symbol (format "series-~a-~a/raw" op t)))))])
     (check-false (memq internal exported) (format "~a is internal" internal)))
   (for ([name (in-list exported)])
     (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"
