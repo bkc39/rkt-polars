@@ -406,11 +406,55 @@
     (match spec
       [(cons head _) (definition-name head)]
       [_ spec]))
-  (define (dynamic-wind-owners datum #:skip-quote? [skip-quote? #f])
+  (define dynamic-wind-name (string->symbol "dynamic-wind"))
+  (define (prefixed prefix name)
+    (string->symbol (string-append (symbol->string prefix) (symbol->string name))))
+  (define (import-names spec)
+    (match spec
+      [(list 'prefix-in (? symbol? prefix) inner)
+       (map (lambda (name) (prefixed prefix name)) (import-names inner))]
+      [(list 'rename-in inner renames ...)
+       (for/list ([name (in-list (import-names inner))])
+         (match (assq name (filter pair? renames))
+           [(list _ (? symbol? new)) new]
+           [_ name]))]
+      [(list 'only-in inner picks ...)
+       (for*/list ([name (in-list (import-names inner))]
+                   [pick (in-list picks)]
+                   #:when (match pick
+                            [(== name) #t]
+                            [(list (== name) (? symbol?)) #t]
+                            [_ #f]))
+         (match pick
+           [(list _ new) new]
+           [_ name]))]
+      [(list 'except-in inner _ ...) (import-names inner)]
+      [(list (or 'for-syntax 'for-template 'for-label 'combine-in) specs ...)
+       (append-map import-names specs)]
+      [(list (or 'for-meta 'relative-in) _ specs ...) (append-map import-names specs)]
+      [_ (list dynamic-wind-name)]))
+  (define (dynamic-wind-names datum)
+    (define (requires datum)
+      (match datum
+        [(list 'require specs ...) (append-map import-names specs)]
+        [(? list?) (append-map requires datum)]
+        [_ '()]))
+    (remove-duplicates (cons dynamic-wind-name (requires datum))))
+  (define (quoted? form)
+    (match form
+      [(list 'quote _) #t]
+      [_ #f]))
+  (define (without-planted-modules datum)
+    (match datum
+      [(list 'module-text forms ...)
+       (cons 'module-text (map without-planted-modules (filter-not quoted? forms)))]
+      [(? list?) (map without-planted-modules datum)]
+      [_ datum]))
+  (define (dynamic-wind-owners datum)
+    (define names (dynamic-wind-names datum))
     (define (walk datum owner)
       (match datum
-        ['dynamic-wind (list owner)]
-        [(list 'quote _) #:when skip-quote? '()]
+        [(? symbol? name) #:when (memq name names) (list owner)]
         [(list* 'define spec body) (walk-all (cons spec body) (or owner (definition-name spec)))]
         [(cons _ _) (walk-all datum owner)]
         [(box content) (walk content owner)]
@@ -429,11 +473,13 @@
     (walk datum #f))
   (define (dynamic-wind-sites-in root)
     (define (under-root file) (simplify-path (build-path root file)))
+    (define (audited-source f)
+      (if (equal? f (under-root "tests/resource.rkt"))
+          (without-planted-modules (read-source f))
+          (read-source f)))
     (for*/list ([f (in-list (polars-sources root))]
                 #:unless (equal? f (under-root "private/resource.rkt"))
-                [owner (in-list (dynamic-wind-owners
-                                 (read-source f)
-                                 #:skip-quote? (equal? f (under-root "tests/resource.rkt"))))])
+                [owner (in-list (dynamic-wind-owners (audited-source f)))])
       (list (path->string (find-relative-path root f)) owner)))
   (define (well-formed-entry? entry)
     (match entry
@@ -478,7 +524,21 @@
             ["private/resource.rkt" (module-text '(define (f) (dynamic-wind void void void)))]
             ["tests/resource.rkt"
              (module-text '(define (f) (dynamic-wind void void void))
-                          '(define planted '(dynamic-wind void void void)))]
+                          '(define planted (module-text '(dynamic-wind void void void)))
+                          '(define (h t)
+                             ((dynamic-require (quote racket/base) (quote dynamic-wind)) void t void)))]
+            ["tests/prefixed.rkt"
+             (module-text '(require (prefix-in base: racket/base))
+                          '(define (f t) (base:dynamic-wind void t void)))]
+            ["tests/renamed.rkt"
+             (module-text '(require (rename-in racket/base [dynamic-wind dw]))
+                          '(define (f t) (dw void t void)))]
+            ["tests/only-renamed.rkt"
+             (module-text '(require (only-in racket/base [dynamic-wind wind]))
+                          '(define (f t) (wind void t void)))]
+            ["tests/nested-prefix.rkt"
+             (module-text '(require (prefix-in a: (rename-in racket/base [dynamic-wind dw])))
+                          '(define (f t) (a:dw void t void)))]
             ["tests/top.rkt" (module-text '(dynamic-wind void void void))]
             ["tests/reference.rkt"
              (module-text '(define g (lambda () (apply dynamic-wind (list void void void)))))]
@@ -517,8 +577,13 @@
                     ("tests/listed.rkt" keyworded) ("tests/listed.rkt" other)
                     ("tests/literals.rkt" boxed) ("tests/literals.rkt" hash-keyed)
                     ("tests/literals.rkt" hashed) ("tests/literals.rkt" prefab)
-                    ("tests/nested.rkt" h) ("tests/quoted.rkt" program) ("tests/reference.rkt" g)
-                    ("tests/resource.rkt" f) ("tests/top.rkt" #f) ("tests/twice.rkt" twice)))
+                    ("tests/nested-prefix.rkt" #f) ("tests/nested-prefix.rkt" f)
+                    ("tests/nested.rkt" h) ("tests/only-renamed.rkt" #f)
+                    ("tests/only-renamed.rkt" #f) ("tests/only-renamed.rkt" f)
+                    ("tests/prefixed.rkt" f) ("tests/quoted.rkt" program) ("tests/reference.rkt" g)
+                    ("tests/renamed.rkt" #f) ("tests/renamed.rkt" #f) ("tests/renamed.rkt" f)
+                    ("tests/resource.rkt" f) ("tests/resource.rkt" h) ("tests/top.rkt" #f)
+                    ("tests/twice.rkt" twice)))
     (check-equal? (in-site-order (stale-dynamic-wind-entries planted-sites planted-entries))
                   '(("tests/duplicate.rkt" once) ("tests/stale.rkt" gone)))
     (check-equal? (malformed-dynamic-wind-entries planted-entries)

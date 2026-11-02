@@ -7,7 +7,8 @@
 # files polars/tests/dynamic-wind-sites.rktd lists.  A grep, so a form split
 # across lines escapes it and a listed file may hold any site; the read-based
 # audit in polars/tests/resource.rkt is the exact one, which holds each site
-# to an entry for its definition and each entry to a site.
+# to an entry for its definition and each entry to a site.  A prefixed name
+# (base:dynamic-wind) is a hit; a rename-in or only-in rename is the audit's.
 #
 # Usage: scripts/no-dynamic-wind.sh
 set -euo pipefail
@@ -16,7 +17,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 dirs=(polars/private polars/tests)
 sites=polars/tests/dynamic-wind-sites.rktd
-before='(^|[^-[:alnum:]!?*<>=/+:.$%&^~_])'
+before='(^|[^-[:alnum:]!?*<>=/+.$%&^~_])'
 after='([^-[:alnum:]!?*<>=/+:.$%&^~_]|$)'
 
 found=0

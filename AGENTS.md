@@ -408,17 +408,21 @@ it. Racket side: `define-compat` with `#:c-id`.
   `(file definition reason)` per site, the definition a symbol, so a site
   outside any `define` cannot be listed (a thread kill, an environment
   variable restored). A test in `polars/tests/resource.rkt` reads each
-  module as data and finds every `dynamic-wind`, a call or a reference
-  such as `(apply dynamic-wind ...)`, in a definition's formals (a default
-  such as `[w dynamic-wind]`) and body, in quoted data and in box, hash and
-  prefab literals, under its outermost definition, and holds those sites
-  and the entries to each other exactly: an unlisted site, an entry
-  without its own site and a malformed entry each fail. The
-  `no-dynamic-wind` gate (`scripts/no-dynamic-wind.sh`, a push gate, a
-  flake check and a step of CI's Lint job) is a grep that exempts the
-  files the list names and `polars/tests/resource.rkt`, whose audit plants
-  sites. The audit reads that file too, skipping its `quote` forms, which
-  hold the planted modules, so its live code has no site.
+  module as data and finds each reference to `dynamic-wind`, a call or a
+  reference such as `(apply dynamic-wind ...)`, under that name and under the names
+  the module's `prefix-in`, `rename-in` and `only-in` give it
+  (`base:dynamic-wind`), in a definition's formals (a default such as
+  `[w dynamic-wind]`) and body, in quoted data and in box, hash and prefab
+  literals, under its outermost definition, and holds those sites and the
+  entries to each other exactly: an unlisted site, an entry without its
+  own site and a malformed entry each fail. It reads
+  `polars/tests/resource.rkt` too, all but the quoted modules it hands
+  `module-text` to plant. It does not see `dynamic-wind` reached through
+  `eval`, `dynamic-require` or `namespace-variable-value` with a computed
+  name. The `no-dynamic-wind` gate (`scripts/no-dynamic-wind.sh`, a push
+  gate, a flake check and a step of CI's Lint job) is a grep that exempts
+  the files the list names and `polars/tests/resource.rkt`, whose audit
+  plants sites; it catches a prefixed name, not a renamed one.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
