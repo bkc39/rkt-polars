@@ -150,6 +150,41 @@
                  (for ([i (in-range 3)]) (own i)))))
   (check-equal? released '(0 1 2))
 
+  (set! released '())
+  (define re-enter-releases #f)
+  (check-equal? (call-with-continuation-prompt
+                 (lambda ()
+                   (with-releases ([tags ([i (in-range 2)]) i release!])
+                     (call-with-composable-continuation (lambda (k) (set! re-enter-releases k)))
+                     tags)))
+                '(0 1))
+  (check-exn #rx"^with-releases: cannot re-enter the extent after its release$"
+             (lambda () (call-with-continuation-prompt (lambda () (re-enter-releases #f)))))
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (define escaped-tags (with-releases ([tags ([i (in-range 2)]) i release!]) (lambda () tags)))
+  (check-equal? (escaped-tags) #f)
+  (check-equal? released '(0 1))
+
+  (set! released '())
+  (define re-enter-pool #f)
+  (check-equal? (call-with-continuation-prompt
+                 (lambda ()
+                   (with-release-pool ([own release!])
+                     (own 'a)
+                     (call-with-composable-continuation (lambda (k) (set! re-enter-pool k)))
+                     (own 'b))))
+                'b)
+  (check-exn #rx"^with-release-pool: cannot re-enter the extent after its release$"
+             (lambda () (call-with-continuation-prompt (lambda () (re-enter-pool #f)))))
+  (check-equal? released '(a b))
+
+  (set! released '())
+  (define escaped-own (with-release-pool ([own release!]) (own 'a) (lambda () own)))
+  (check-equal? (escaped-own) #f)
+  (check-equal? released '(a))
+
   (check-equal? (with-raw-buffer ([words 3 _int64])
                   (for ([i (in-range 3)]) (ptr-set! words _int64 i (* 10 i)))
                   (for/list ([i (in-range 3)]) (ptr-ref words _int64 i)))
