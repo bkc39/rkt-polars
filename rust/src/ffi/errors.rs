@@ -5,6 +5,7 @@
 
 use crate::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::ffi::CStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Once;
 

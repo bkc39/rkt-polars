@@ -1,8 +1,8 @@
 use crate::prelude::*;
 use crate::{
-    clear_last_error, collect_c_strings, collect_frame, decode_parquet_names,
-    parquet_scan_with, record, write_frame, CompatParquetReadOptions,
-    CompatParquetWriteOptions, PathRules, IO_BAD_OPTIONS,
+    clear_last_error, collect_frame, decode_parquet_names, parquet_scan_with,
+    record, str_list_arg, write_frame, CompatParquetReadOptions,
+    CompatParquetWriteOptions, PathRules, StrArg, StrListArg, IO_BAD_OPTIONS,
 };
 use polars::polars_utils::compression::{BrotliLevel, GzipLevel, ZstdLevel};
 
@@ -17,24 +17,36 @@ pub(crate) enum ColumnSelection {
 
 pub(crate) fn decode_columns(
     kind: u8,
-    names: *const *const c_char,
+    names: StrListArg,
     indices: *const i64,
     len: usize,
 ) -> PolarsResult<Option<ColumnSelection>> {
+    let names = unsafe { str_list_arg(names) }?;
+    polars_ensure!(
+        kind == COLUMNS_BY_NAME || names.is_empty(),
+        ComputeError: "column names are given with column selection {}",
+        kind
+    );
     let selection = match kind {
         COLUMNS_ALL => return Ok(None),
-        COLUMNS_BY_NAME => unsafe { collect_c_strings(names, len) }
-            .map(ColumnSelection::Names)
-            .ok_or_else(
-                || polars_err!(ComputeError: "column names are not valid UTF-8 strings"),
-            )?,
+        COLUMNS_BY_NAME => {
+            polars_ensure!(
+                names.len() == len,
+                ComputeError: "{} column names are given for {} columns",
+                names.len(),
+                len
+            );
+            ColumnSelection::Names(
+                names.into_iter().map(str::to_string).collect(),
+            )
+        }
         COLUMNS_BY_INDEX if len == 0 => ColumnSelection::Indices(Vec::new()),
         COLUMNS_BY_INDEX => {
             polars_ensure!(!indices.is_null(), ComputeError: "column indices are null");
             ColumnSelection::Indices(
                 unsafe { std::slice::from_raw_parts(indices, len) }.to_vec(),
             )
-        },
+        }
         _ => polars_bail!(ComputeError: "unknown column selection {}", kind),
     };
     Ok(Some(selection))
@@ -105,13 +117,13 @@ pub(crate) fn select_columns(
 
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub extern "C" fn dataframe_read_parquet_with_options(
+pub extern "C" fn dataframe_read_parquet_with_options_v2(
     path: *const c_char,
     options: CompatParquetReadOptions,
-    row_index_name: *const c_char,
-    include_file_paths: *const c_char,
+    row_index_name: StrArg,
+    include_file_paths: StrArg,
     columns_kind: u8,
-    column_names: *const *const c_char,
+    column_names: StrListArg,
     column_indices: *const i64,
     columns_len: usize,
 ) -> *mut DataFrame {

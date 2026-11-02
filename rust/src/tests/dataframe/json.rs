@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Default)]
 struct Json {
     options: CompatJsonOptions,
-    schema: Option<Vec<(CString, CompatDType)>>,
-    overrides: Vec<(CString, CompatDType)>,
+    schema: Option<Vec<(String, CompatDType)>>,
+    overrides: Vec<(String, CompatDType)>,
 }
 
 fn dtype(tag: CompatDTypeTag) -> CompatDType {
@@ -18,10 +18,10 @@ fn dtype(tag: CompatDTypeTag) -> CompatDType {
     }
 }
 
-fn fields(pairs: &[(&str, CompatDTypeTag)]) -> Vec<(CString, CompatDType)> {
+fn fields(pairs: &[(&str, CompatDTypeTag)]) -> Vec<(String, CompatDType)> {
     pairs
         .iter()
-        .map(|(name, tag)| (cstr(name), dtype(*tag)))
+        .map(|(name, tag)| (name.to_string(), dtype(*tag)))
         .collect()
 }
 
@@ -45,12 +45,14 @@ impl Json {
     fn outcome(&self, path: &Path) -> Result<DataFrame, String> {
         let p = cstr(path.to_str().unwrap());
         let schema = self.schema.clone().unwrap_or_default();
-        let schema_names: Vec<*const c_char> =
-            schema.iter().map(|(n, _)| n.as_ptr()).collect();
+        let schema_names: Vec<&str> =
+            schema.iter().map(|(n, _)| n.as_str()).collect();
+        let schema_names = str_list_block(&schema_names);
         let schema_dtypes: Vec<CompatDType> =
             schema.iter().map(|(_, d)| *d).collect();
-        let override_names: Vec<*const c_char> =
-            self.overrides.iter().map(|(n, _)| n.as_ptr()).collect();
+        let override_names: Vec<&str> =
+            self.overrides.iter().map(|(n, _)| n.as_str()).collect();
+        let override_names = str_list_block(&override_names);
         let override_dtypes: Vec<CompatDType> =
             self.overrides.iter().map(|(_, d)| *d).collect();
         let options = CompatJsonOptions {
@@ -59,7 +61,7 @@ impl Json {
             overrides_len: self.overrides.len(),
             ..self.options
         };
-        let out = dataframe_read_json_with_options(
+        let out = dataframe_read_json_with_options_v2(
             p.as_ptr(),
             options,
             schema_names.as_ptr(),

@@ -21,8 +21,6 @@ fn slice_or_empty_reads_non_null() {
 
 #[test]
 fn collectors_take_null_and_zero() {
-    assert_eq!(unsafe { collect_c_strings(ptr::null(), 0) }, Some(vec![]));
-    assert_eq!(unsafe { collect_c_strings(ptr::null(), 2) }, None);
     assert!(
         unsafe { collect_exprs(ptr::null(), 0) }.is_some_and(|v| v.is_empty())
     );

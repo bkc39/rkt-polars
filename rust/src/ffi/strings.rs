@@ -55,6 +55,12 @@ pub(crate) unsafe fn name_arg<'a>(
         .ok_or_else(|| polars_err!(ComputeError: "{} is null", what))
 }
 
+/// The name a block holds, owned; `None` for NULL. As safe as `str_arg`:
+/// Racket hands every block to Rust for the length of the call.
+pub(crate) fn optional_name(p: StrArg) -> PolarsResult<Option<PlSmallStr>> {
+    Ok(unsafe { str_arg(p) }?.map(PlSmallStr::from))
+}
+
 /// # Safety
 /// `p` points to at least `i + 1` words.
 unsafe fn word(p: *const u64, i: usize) -> u64 {
@@ -198,11 +204,4 @@ pub extern "C" fn str_block_drop(p: StrOut) {
 #[no_mangle]
 pub extern "C" fn str_block_drop_count() -> usize {
     STR_BLOCK_DROPS.load(Ordering::Relaxed)
-}
-
-#[no_mangle]
-pub extern "C" fn string_drop(s: *mut c_char) {
-    if !s.is_null() {
-        unsafe { drop(CString::from_raw(s)) };
-    }
 }

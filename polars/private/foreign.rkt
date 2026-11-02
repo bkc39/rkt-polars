@@ -101,10 +101,6 @@
   (ffi-lib (build-path native-libs-dir "libcompat"))
   #:make-c-id convention:hyphen->underscore)
 
-(define-compat string-drop
-  (_fun _pointer -> _void)
-  #:wrap (deallocator))
-
 (define-compat str-block-drop
   (_fun _pointer -> _void))
 

@@ -191,7 +191,6 @@ series_tail todo-129
 series_time_zone_v2 accessor
 series_unique todo-129
 series_var todo-129
-string_drop drop
 expr_sum builder
 expr_mean builder
 expr_min builder

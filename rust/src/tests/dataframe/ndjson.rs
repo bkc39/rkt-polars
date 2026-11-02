@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Default)]
 struct Ndjson {
     options: CompatNdjsonOptions,
-    schema: Option<Vec<(CString, CompatDType)>>,
-    overrides: Vec<(CString, CompatDType)>,
-    row_index_name: Option<CString>,
-    include_file_paths: Option<CString>,
+    schema: Option<Vec<(String, CompatDType)>>,
+    overrides: Vec<(String, CompatDType)>,
+    row_index_name: Option<String>,
+    include_file_paths: Option<String>,
 }
 
 fn dtype(tag: CompatDTypeTag) -> CompatDType {
@@ -20,22 +20,22 @@ fn dtype(tag: CompatDTypeTag) -> CompatDType {
     }
 }
 
-fn fields(pairs: &[(&str, CompatDTypeTag)]) -> Vec<(CString, CompatDType)> {
+fn fields(pairs: &[(&str, CompatDTypeTag)]) -> Vec<(String, CompatDType)> {
     pairs
         .iter()
-        .map(|(name, tag)| (cstr(name), dtype(*tag)))
+        .map(|(name, tag)| (name.to_string(), dtype(*tag)))
         .collect()
 }
 
 type Entry<T> = extern "C" fn(
     *const c_char,
     CompatNdjsonOptions,
-    *const *const c_char,
+    StrListArg,
     *const CompatDType,
-    *const *const c_char,
+    StrListArg,
     *const CompatDType,
-    *const c_char,
-    *const c_char,
+    StrArg,
+    StrArg,
 ) -> *mut T;
 
 impl Ndjson {
@@ -55,29 +55,33 @@ impl Ndjson {
     }
 
     fn row_index(mut self, name: &str, offset: usize) -> Self {
-        self.row_index_name = Some(cstr(name));
+        self.row_index_name = Some(name.to_string());
         self.options.row_index_offset = offset;
         self
     }
 
     fn file_paths(mut self, name: &str) -> Self {
-        self.include_file_paths = Some(cstr(name));
+        self.include_file_paths = Some(name.to_string());
         self
     }
 
     fn call<T>(&self, path: &Path, entry: Entry<T>) -> *mut T {
         let p = cstr(path.to_str().unwrap());
         let schema = self.schema.clone().unwrap_or_default();
-        let schema_names: Vec<*const c_char> =
-            schema.iter().map(|(n, _)| n.as_ptr()).collect();
+        let schema_names: Vec<&str> =
+            schema.iter().map(|(n, _)| n.as_str()).collect();
+        let schema_names = str_list_block(&schema_names);
         let schema_dtypes: Vec<CompatDType> =
             schema.iter().map(|(_, d)| *d).collect();
-        let override_names: Vec<*const c_char> =
-            self.overrides.iter().map(|(n, _)| n.as_ptr()).collect();
+        let override_names: Vec<&str> =
+            self.overrides.iter().map(|(n, _)| n.as_str()).collect();
+        let override_names = str_list_block(&override_names);
         let override_dtypes: Vec<CompatDType> =
             self.overrides.iter().map(|(_, d)| *d).collect();
-        let name = |s: &Option<CString>| {
-            s.as_ref().map_or(ptr::null(), |s| s.as_ptr())
+        let row_index = self.row_index_name.as_deref().map(str_block);
+        let file_paths = self.include_file_paths.as_deref().map(str_block);
+        let name = |b: &Option<Vec<u64>>| {
+            b.as_ref().map_or(ptr::null(), |b| b.as_ptr())
         };
         entry(
             p.as_ptr(),
@@ -91,13 +95,13 @@ impl Ndjson {
             schema_dtypes.as_ptr(),
             override_names.as_ptr(),
             override_dtypes.as_ptr(),
-            name(&self.row_index_name),
-            name(&self.include_file_paths),
+            name(&row_index),
+            name(&file_paths),
         )
     }
 
     fn read_outcome(&self, path: &Path) -> Result<DataFrame, String> {
-        let out = self.call(path, dataframe_read_ndjson_with_options);
+        let out = self.call(path, dataframe_read_ndjson_with_options_v2);
         if out.is_null() {
             return Err(recorded_error().expect("a reason"));
         }
@@ -115,7 +119,7 @@ impl Ndjson {
     }
 
     fn scan(&self, path: &Path) -> Result<LazyFrame, String> {
-        let lf = self.call(path, lazyframe_scan_ndjson_with_options);
+        let lf = self.call(path, lazyframe_scan_ndjson_with_options_v2);
         if lf.is_null() {
             return Err(recorded_error().expect("a reason"));
         }

@@ -1,5 +1,6 @@
 use crate::prelude::*;
 use crate::{clear_last_error, guard_panic, slice_or_empty};
+use std::ffi::CStr;
 
 pub(crate) fn name_from_ptr(p: *const c_char) -> PlSmallStr {
     if p.is_null() {

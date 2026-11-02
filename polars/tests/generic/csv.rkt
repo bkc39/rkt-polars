@@ -4,8 +4,9 @@
   (require rackunit
            racket/file
            racket/runtime-path
+           (only-in racket/dict in-dict)
            (only-in racket/list filter-map range remove-duplicates second)
-           (only-in racket/match match match-lambda)
+           (only-in racket/match match match-define match-lambda)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains? string-join)
            (only-in polars/private/bulk in-series series->list)
@@ -20,13 +21,14 @@
            (only-in polars/private/generic/reshape collect)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
-                    frame=? gzip-file keyword-rejected? message-of polars-null scratch-file)
+                    frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
+                    polars-null scratch-file)
            (only-in (submod polars/tests/generic/test-fixtures test)
-                    check-readers-agree eager-reader glob-reader outcome-difference scan-reader))
+                    check-nul-names-round-trip check-readers-agree eager-reader glob-reader
+                    outcome-difference scan-reader [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
-  (define eager-and-scan
-    (list (cons 'eager (eager-reader read-csv)) (cons 'scan (scan-reader scan-csv collect))))
+  (define eager-and-scan (eager-and-scan* read-csv scan-csv))
   (define flights (build-path data-dir "flights.tsv"))
   (define scratch (make-temporary-directory "rkt-polars-io-~a"))
   (for ([sub '("globbed" "ordered" "mixed" "literal" "dirmix")])
@@ -61,11 +63,7 @@
       (#:row-index-name . i) (#:row-index-offset . -1) (#:row-index-offset . ,(expt 2 32))
       (#:skip-lines . -1) (#:skip-rows-after-header . 1.5) (#:infer-schema . 0)
       (#:raise-if-empty . 1) (#:missing-utf8-is-empty-string . "yes")
-      (#:truncate-ragged-lines . 1) (#:decimal-comma . 1)
-      (#:new-columns . ("a\u0000b")) (#:null-values . "N\u0000A")
-      (#:null-values . ("NA" "N\u0000A")) (#:null-values . (("a\u0000b" . "NA")))
-      (#:null-values . (("a" . "N\u0000A"))) (#:schema-overrides . (("a\u0000b" . f64)))
-      (#:comment-prefix . "#\u0000") (#:row-index-name . "i\u0000")))
+      (#:truncate-ragged-lines . 1) (#:decimal-comma . 1)))
   (define bad-together
     '(((#:quote-char . #\,))
       ((#:separator . #\;) (#:quote-char . #\;))
@@ -77,7 +75,7 @@
       ((#:skip-rows . 1) (#:skip-lines . 1))))
   (define bad-columns
     '((#:columns . ("a" "a")) (#:columns . (0 0)) (#:columns . ("a" 0)) (#:columns . (-1))
-      (#:columns . "a") (#:columns . ("a\u0000junk"))))
+      (#:columns . "a")))
   (for ([reader (in-list csv-readers)]
         [name '(read-csv scan-csv dataframe-read-csv lazyframe-scan-csv)])
     (check-exn (contract-violation-of name) (lambda () (reader 'sym)))
@@ -433,5 +431,33 @@
     (check-equal? (column parsed "t")
                   (list (moment 2021 3 26 23 #:tz "UTC") (moment 2021 3 28 22 #:tz "UTC")))
     (check-equal? (dtype (ref parsed "u")) '(datetime microseconds #f)))
+
+  (define nul-plain (scratch-file scratch "nul-plain.csv" "s,t\n1,2\n"))
+  (define nul-named (build-path scratch "nul-named.csv"))
+  (check-nul-names-round-trip
+   write-csv nul-named (list (assq 'eager eager-and-scan))
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-named `((#:columns . (,n))))) (list n) label)))
+  (check-nul-names-round-trip
+   write-csv nul-named eager-and-scan
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-named '())) (list n "s") label)
+     (check-equal? (dtype (ref (read-with nul-named `((#:schema-overrides . ((,n . f64))))) n))
+                   'float64 label)
+     (check-equal? (column (read-with nul-named `((#:null-values . ((,n . "2"))))) n)
+                   (list 1 polars-null) label)
+     (check-equal? (column-names (read-with nul-plain `((#:new-columns . (,n "t"))))) (list n "t")
+                   label)
+     (check-equal? (column-names (read-with nul-plain `((#:row-index-name . ,n))))
+                   (list n "s" "t") label)))
+  (for ([row (in-list (nul-expected 'io-reads))])
+    (match-define (list name text marker expected) row)
+    (define path (scratch-file scratch "nul-keyword.csv" text))
+    (define kvs
+      (match name
+        ['named-null-values `((#:null-values . (("s" . ,marker))))]
+        [_ (list (cons (keyword-of name) marker))]))
+    (for ([(kind read-with) (in-dict eager-and-scan)])
+      (check-equal? (column (read-with path kvs) "s") expected (format "~a ~s" kind row))))
 
   (delete-directory/files scratch))

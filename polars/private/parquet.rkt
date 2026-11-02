@@ -8,12 +8,12 @@
          (only-in polars/private/expr-core
                   _LazyFrame-ptr/null LazyFrame-ptr? define-compat lazyframe-drop)
          (only-in polars/private/foreign
-                  _DataFrame-ptr _DataFrame-ptr/null DataFrame-ptr? call/foreign-error
+                  _c-string _DataFrame-ptr _DataFrame-ptr/null DataFrame-ptr? call/foreign-error
                   dataframe-drop path->complete-string)
          (only-in polars/private/io-contracts
                   column-index/c column-name/c given row-index/c size/c)
          (only-in polars/private/io-options define-io-options keyword-forwarder)
-         (only-in polars/private/resource _string-list))
+         (only-in polars/private/resource _str-list _str/null))
 
 (provide parquet-reader parquet-scanner parquet-writer
          parquet-reader/c parquet-scanner/c parquet-writer/c
@@ -140,26 +140,25 @@
                                     (or data-page-size 0))))
 
 (define-compat dataframe-read-parquet/raw
-  (_fun _string/utf-8
+  (_fun _c-string
         _CompatParquetReadOptions
-        _string/utf-8
-        _string/utf-8
+        _str/null
+        _str/null
         _uint8
-        (names : _string-list)
+        (names : _str-list)
         (indices : (_list i _int64))
         (_size = (+ (length names) (length indices)))
         -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_parquet_with_options
+  #:c-id dataframe_read_parquet_with_options_v2
   #:wrap (allocator dataframe-drop))
 
 (define-compat lazyframe-scan-parquet/raw
-  (_fun _string/utf-8 _CompatParquetReadOptions _string/utf-8 _string/utf-8
-        -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_parquet_with_options
+  (_fun _c-string _CompatParquetReadOptions _str/null _str/null -> _LazyFrame-ptr/null)
+  #:c-id lazyframe_scan_parquet_with_options_v2
   #:wrap (allocator lazyframe-drop))
 
 (define-compat dataframe-write-parquet/raw
-  (_fun _DataFrame-ptr _string/utf-8 _CompatParquetWriteOptions -> _int32)
+  (_fun _DataFrame-ptr _c-string _CompatParquetWriteOptions -> _int32)
   #:c-id dataframe_write_parquet_with_options)
 
 (define (read-path who path options)

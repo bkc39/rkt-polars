@@ -250,19 +250,6 @@ pub(crate) fn write_checked_frame<T>(
     staged.finish(written)
 }
 
-fn optional_str(
-    ptr: *const c_char,
-    what: &str,
-) -> PolarsResult<Option<PlSmallStr>> {
-    if ptr.is_null() {
-        return Ok(None);
-    }
-    let text = unsafe { CStr::from_ptr(ptr) }.to_str().map_err(
-        |err| polars_err!(ComputeError: "{} is not valid UTF-8: {}", what, err),
-    )?;
-    Ok(Some(text.into()))
-}
-
 fn quote_style(code: u8) -> PolarsResult<QuoteStyle> {
     Ok(match code {
         0 => QuoteStyle::Necessary,
@@ -274,19 +261,28 @@ fn quote_style(code: u8) -> PolarsResult<QuoteStyle> {
 }
 
 pub(crate) struct CsvWriteStrings {
-    pub(crate) line_terminator: *const c_char,
-    pub(crate) null_value: *const c_char,
-    pub(crate) datetime_format: *const c_char,
-    pub(crate) date_format: *const c_char,
-    pub(crate) time_format: *const c_char,
+    pub(crate) line_terminator: StrArg,
+    pub(crate) null_value: StrArg,
+    pub(crate) datetime_format: StrArg,
+    pub(crate) date_format: StrArg,
+    pub(crate) time_format: StrArg,
 }
 
-pub(crate) fn csv_writer<W: std::io::Write>(
-    out: W,
+pub(crate) struct CsvWriteSettings {
+    batch_size: std::num::NonZeroUsize,
+    quote_style: QuoteStyle,
+    line_terminator: PlSmallStr,
+    null_value: PlSmallStr,
+    datetime_format: Option<PlSmallStr>,
+    date_format: Option<PlSmallStr>,
+    time_format: Option<PlSmallStr>,
+}
+
+pub(crate) fn csv_write_settings(
     options: &CompatCsvWriteOptions,
     strings: &CsvWriteStrings,
     height: usize,
-) -> PolarsResult<CsvWriter<W>> {
+) -> PolarsResult<CsvWriteSettings> {
     let batch_size =
         std::num::NonZeroUsize::new(options.batch_size.min(height.max(1)))
             .ok_or_else(
@@ -299,26 +295,35 @@ pub(crate) fn csv_writer<W: std::io::Write>(
         options.float_precision,
         u16::MAX
     );
-    let line_terminator =
-        optional_str(strings.line_terminator, "line terminator")?
-            .unwrap_or_else(|| "\n".into());
-    let null_value =
-        optional_str(strings.null_value, "null value")?.unwrap_or_default();
-    Ok(CsvWriter::new(out)
+    Ok(CsvWriteSettings {
+        batch_size,
+        quote_style: quote_style(options.quote_style)?,
+        line_terminator: optional_name(strings.line_terminator)?
+            .unwrap_or_else(|| "\n".into()),
+        null_value: optional_name(strings.null_value)?.unwrap_or_default(),
+        datetime_format: optional_name(strings.datetime_format)?,
+        date_format: optional_name(strings.date_format)?,
+        time_format: optional_name(strings.time_format)?,
+    })
+}
+
+pub(crate) fn csv_writer<W: std::io::Write>(
+    out: W,
+    options: &CompatCsvWriteOptions,
+    settings: CsvWriteSettings,
+) -> CsvWriter<W> {
+    CsvWriter::new(out)
         .include_header(options.include_header)
         .include_bom(options.include_bom)
         .with_separator(options.separator)
         .with_quote_char(options.quote_char)
-        .with_quote_style(quote_style(options.quote_style)?)
-        .with_line_terminator(line_terminator)
-        .with_null_value(null_value)
-        .with_batch_size(batch_size)
-        .with_datetime_format(optional_str(
-            strings.datetime_format,
-            "datetime format",
-        )?)
-        .with_date_format(optional_str(strings.date_format, "date format")?)
-        .with_time_format(optional_str(strings.time_format, "time format")?)
+        .with_quote_style(settings.quote_style)
+        .with_line_terminator(settings.line_terminator)
+        .with_null_value(settings.null_value)
+        .with_batch_size(settings.batch_size)
+        .with_datetime_format(settings.datetime_format)
+        .with_date_format(settings.date_format)
+        .with_time_format(settings.time_format)
         .with_float_scientific(
             options
                 .has_float_scientific
@@ -329,20 +334,20 @@ pub(crate) fn csv_writer<W: std::io::Write>(
                 .has_float_precision
                 .then_some(options.float_precision),
         )
-        .with_decimal_comma(options.decimal_comma))
+        .with_decimal_comma(options.decimal_comma)
 }
 
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
-pub extern "C" fn dataframe_write_csv_with_options(
+pub extern "C" fn dataframe_write_csv_with_options_v2(
     df_ptr: *mut DataFrame,
     path: *const c_char,
     options: CompatCsvWriteOptions,
-    line_terminator: *const c_char,
-    null_value: *const c_char,
-    datetime_format: *const c_char,
-    date_format: *const c_char,
-    time_format: *const c_char,
+    line_terminator: StrArg,
+    null_value: StrArg,
+    datetime_format: StrArg,
+    date_format: StrArg,
+    time_format: StrArg,
 ) -> i32 {
     let strings = CsvWriteStrings {
         line_terminator,
@@ -351,9 +356,12 @@ pub extern "C" fn dataframe_write_csv_with_options(
         date_format,
         time_format,
     };
-    write_frame(df_ptr, path, |file, df| {
-        csv_writer(file, &options, &strings, df.height())?.finish(df)
-    })
+    write_checked_frame(
+        df_ptr,
+        path,
+        |_, df| csv_write_settings(&options, &strings, df.height()),
+        |settings, file, df| csv_writer(file, &options, settings).finish(df),
+    )
 }
 
 #[no_mangle]

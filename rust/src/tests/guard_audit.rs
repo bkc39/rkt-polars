@@ -28,6 +28,7 @@ pub(super) struct Function {
     pub(super) name: String,
     pub(super) entry: bool,
     pub(super) output: syn::ReturnType,
+    pub(super) inputs: Vec<syn::FnArg>,
     block: Block,
 }
 
@@ -377,6 +378,7 @@ impl Walker<'_> {
             name,
             entry: export.is_some() && foreign,
             output: sig.output.clone(),
+            inputs: sig.inputs.iter().cloned().collect(),
             block: block.clone(),
         });
     }
@@ -652,7 +654,7 @@ fn audit(files: &[String], list: &str) -> Vec<String> {
     problems
 }
 
-fn crate_sources(dir: &Path, out: &mut Vec<String>) {
+fn crate_sources(dir: &Path, root: &Path, out: &mut Vec<(String, String)>) {
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .expect("readable source directory")
         .map(|e| e.expect("directory entry").path())
@@ -661,21 +663,29 @@ fn crate_sources(dir: &Path, out: &mut Vec<String>) {
     for path in entries {
         if path.is_dir() {
             if path.file_name() != Some("tests".as_ref()) {
-                crate_sources(&path, out);
+                crate_sources(&path, root, out);
             }
         } else if path.extension() == Some("rs".as_ref()) {
-            out.push(std::fs::read_to_string(&path).unwrap());
+            let relative = path.strip_prefix(root).unwrap().to_str().unwrap();
+            out.push((
+                relative.to_string(),
+                std::fs::read_to_string(&path).unwrap(),
+            ));
         }
     }
 }
 
-pub(super) fn tree() -> Vec<String> {
+/// Every source under `src/` but the tests, with its path relative to
+/// `src/`.
+pub(super) fn tree_by_path() -> Vec<(String, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut sources = Vec::new();
-    crate_sources(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-        &mut sources,
-    );
+    crate_sources(&root, &root, &mut sources);
     sources
+}
+
+pub(super) fn tree() -> Vec<String> {
+    tree_by_path().into_iter().map(|(_, text)| text).collect()
 }
 
 pub(super) fn fixture(text: &str) -> Vec<String> {
@@ -703,8 +713,8 @@ fn the_audit_reads_every_entry_point() {
     for name in [
         "dataframe_to_string_v2",
         "lazyframe_collect",
-        "dataframe_write_csv_with_options",
-        "dataframe_read_csv_v2",
+        "dataframe_write_csv_with_options_v2",
+        "dataframe_read_csv_v3",
         "series_cast",
     ] {
         assert!(

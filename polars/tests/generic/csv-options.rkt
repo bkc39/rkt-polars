@@ -11,21 +11,22 @@
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
-           (only-in polars/private/generic/core column-names dtype height ref shape)
+           (only-in polars/private/generic/core
+                    column-names dataframe dtype height ref series shape)
            (only-in polars/private/generic/csv read-csv scan-csv write-csv)
            (only-in polars/private/generic/reshape collect rename select [filter frame-filter])
            (only-in polars/private/generic/operators [> gt])
            (only-in polars/private/io-contracts size-max)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords cause-of col column contract-violation-of dtypes-of frame=?
-                    message-of one-file-pattern polars-null scratch-file staging-files)
+                    keyword-of message-of nul-expected one-file-pattern polars-null scratch-file
+                    staging-files)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     call-in-child check-readers-agree check-reads-like-every check-staged-write
-                    eager-reader scan-reader))
+                    [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
-  (define eager-and-scan
-    (list (cons 'eager (eager-reader read-csv)) (cons 'scan (scan-reader scan-csv collect))))
+  (define eager-and-scan (eager-and-scan* read-csv scan-csv))
   (define flights (build-path data-dir "flights.tsv"))
   (define part-1 (build-path data-dir "parts" "part-1.csv"))
   (define csv-dir (make-temporary-directory "rkt-polars-csv-options-~a"))
@@ -378,8 +379,7 @@
               (#:datetime-format . sym) (#:include-header . 1) (#:include-bom . "no")
               (#:decimal-comma . 1) (#:batch-size . ,(add1 size-max))
               (#:batch-size . ,(+ 2 size-max)) (#:float-precision . ,(add1 float-precision-max))
-              (#:float-precision . ,(add1 size-max)) (#:null-value . "N\u0000A")
-              (#:line-terminator . "\r\u0000X") (#:date-format . "%Y\u0000"))])
+              (#:float-precision . ,(add1 size-max)))])
     (check-exn (contract-violation-of 'write-csv)
                (lambda () (keyword-apply contracted:write-csv (list (car kv)) (list (cdr kv))
                                          (list oracle-frame round-trip)))
@@ -466,5 +466,15 @@
     (check-equal? (read (open-input-string output))
                   (make-list reads late-float-every)
                   label))
+
+  (define nul-written (build-path csv-dir "nul-written.csv"))
+  (for ([row (in-list (nul-expected 'io-writes))])
+    (match-define (list name xs arg expected) row)
+    (apply-keywords write-csv (list (cons (keyword-of name) arg))
+                    (dataframe (list (series xs #:name "s"))) nul-written)
+    (check-equal? (file->string nul-written) expected (format "~s" row)))
+  (write-csv (dataframe (list (series (list "x" polars-null) #:name "s"))) nul-written
+             #:null-value "N\u0000A")
+  (check-equal? (column (read-csv nul-written #:null-values "N\u0000A") "s") (list "x" polars-null))
 
   (delete-directory/files csv-dir))

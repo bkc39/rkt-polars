@@ -10,14 +10,14 @@
                   listof or/c)
          (only-in polars/private/expr-core _LazyFrame-ptr/null LazyFrame-ptr? lazyframe-drop)
          (only-in polars/private/foreign
-                  ->compat-dtype _CompatDType _DataFrame-ptr _DataFrame-ptr/null
+                  ->compat-dtype _c-string _CompatDType _DataFrame-ptr _DataFrame-ptr/null
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/io-contracts
                   column-name/c distinct-names? given positive-size/c row-index/c size/c)
          (only-in polars/private/io-options define-io-options keyword-forwarder)
-         (only-in polars/private/resource _string-list))
+         (only-in polars/private/resource _str-list _str/null))
 
 (provide json-reader json-writer json-reader/c
          ndjson-arguments ndjson-reader ndjson-scanner ndjson-writer ndjson-reader/c
@@ -53,18 +53,18 @@
    [overrides-len _size]))
 
 (define-compat dataframe-read-json/raw
-  (_fun _string/utf-8
+  (_fun _c-string
         _CompatJsonOptions
-        _string-list
+        _str-list
         (_list i _CompatDType)
-        _string-list
+        _str-list
         (_list i _CompatDType)
         -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_json_with_options
+  #:c-id dataframe_read_json_with_options_v2
   #:wrap (allocator dataframe-drop))
 
 (define-compat dataframe-write-json/raw
-  (_fun _DataFrame-ptr _string/utf-8 -> _int32)
+  (_fun _DataFrame-ptr _c-string -> _int32)
   #:c-id dataframe_write_json)
 
 (define (field-dtypes fields)
@@ -153,22 +153,26 @@
    [overrides-len _size]))
 
 (define-syntax-parse-rule (_ndjson-fun (~literal ->) result:expr)
-  (_fun _string/utf-8 _CompatNdjsonOptions
-        _string-list (_list i _CompatDType)
-        _string-list (_list i _CompatDType)
-        _string/utf-8 _string/utf-8
+  (_fun (path : _c-string)
+        (options : _CompatNdjsonOptions)
+        (schema-names : _str-list)
+        (schema-dtypes : (_list i _CompatDType))
+        (override-names : _str-list)
+        (override-dtypes : (_list i _CompatDType))
+        (row-index-name : _str/null)
+        (include-file-paths : _str/null)
         -> result))
 
 (define-compat dataframe-read-ndjson/raw (_ndjson-fun -> _DataFrame-ptr/null)
-  #:c-id dataframe_read_ndjson_with_options
+  #:c-id dataframe_read_ndjson_with_options_v2
   #:wrap (allocator dataframe-drop))
 
 (define-compat lazyframe-scan-ndjson/raw (_ndjson-fun -> _LazyFrame-ptr/null)
-  #:c-id lazyframe_scan_ndjson_with_options
+  #:c-id lazyframe_scan_ndjson_with_options_v2
   #:wrap (allocator lazyframe-drop))
 
 (define-compat dataframe-write-ndjson/raw
-  (_fun _DataFrame-ptr _string/utf-8 _uint8 _stdbool _uint32 _stdbool -> _int32)
+  (_fun _DataFrame-ptr _c-string _uint8 _stdbool _uint32 _stdbool -> _int32)
   #:c-id dataframe_write_ndjson_with_options)
 
 (define-io-options ndjson-options

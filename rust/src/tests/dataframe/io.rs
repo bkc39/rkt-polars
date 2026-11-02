@@ -13,7 +13,7 @@ pub(super) extern "C" fn write_parquet(
 }
 
 pub(super) extern "C" fn read_parquet(path: *const c_char) -> *mut DataFrame {
-    dataframe_read_parquet_with_options(
+    dataframe_read_parquet_with_options_v2(
         path,
         CompatParquetReadOptions::default(),
         ptr::null(),
@@ -26,7 +26,7 @@ pub(super) extern "C" fn read_parquet(path: *const c_char) -> *mut DataFrame {
 }
 
 pub(super) extern "C" fn scan_parquet(path: *const c_char) -> *mut LazyFrame {
-    lazyframe_scan_parquet_with_options(
+    lazyframe_scan_parquet_with_options_v2(
         path,
         CompatParquetReadOptions::default(),
         ptr::null(),
@@ -51,30 +51,26 @@ fn write_round_trip(
 }
 
 pub(super) extern "C" fn read_csv(path: *const c_char) -> *mut DataFrame {
-    dataframe_read_csv_v2(
+    dataframe_read_csv_v3(
         path,
         CompatCsvOptions::default(),
         ptr::null(),
         ptr::null(),
         ptr::null(),
-        0,
+        ptr::null(),
+        ptr::null(),
         ptr::null(),
         ptr::null(),
         0,
         ptr::null(),
         ptr::null(),
-        0,
-        ptr::null(),
-        0,
-        ptr::null(),
-        0,
         ptr::null(),
         0,
     )
 }
 
 fn read_json(path: *const c_char) -> *mut DataFrame {
-    dataframe_read_json_with_options(
+    dataframe_read_json_with_options_v2(
         path,
         CompatJsonOptions::default(),
         ptr::null(),
@@ -85,7 +81,7 @@ fn read_json(path: *const c_char) -> *mut DataFrame {
 }
 
 fn read_ndjson(path: *const c_char) -> *mut DataFrame {
-    dataframe_read_ndjson_with_options(
+    dataframe_read_ndjson_with_options_v2(
         path,
         CompatNdjsonOptions::default(),
         ptr::null(),
@@ -98,7 +94,7 @@ fn read_ndjson(path: *const c_char) -> *mut DataFrame {
 }
 
 fn scan_ndjson(path: *const c_char) -> *mut LazyFrame {
-    lazyframe_scan_ndjson_with_options(
+    lazyframe_scan_ndjson_with_options_v2(
         path,
         CompatNdjsonOptions::default(),
         ptr::null(),
@@ -111,23 +107,19 @@ fn scan_ndjson(path: *const c_char) -> *mut LazyFrame {
 }
 
 fn scan_csv(path: *const c_char) -> *mut LazyFrame {
-    lazyframe_scan_csv_v2(
+    lazyframe_scan_csv_v3(
         path,
         CompatCsvOptions::default(),
         ptr::null(),
         ptr::null(),
         ptr::null(),
-        0,
+        ptr::null(),
+        ptr::null(),
         ptr::null(),
         ptr::null(),
         0,
         ptr::null(),
         ptr::null(),
-        0,
-        ptr::null(),
-        0,
-        ptr::null(),
-        0,
         ptr::null(),
         0,
     )
@@ -137,7 +129,7 @@ pub(super) extern "C" fn write_csv(
     df: *mut DataFrame,
     path: *const c_char,
 ) -> i32 {
-    dataframe_write_csv_with_options(
+    dataframe_write_csv_with_options_v2(
         df,
         path,
         CompatCsvWriteOptions::default(),
@@ -297,7 +289,7 @@ fn every_entry_point_clears_a_stale_reason() {
 
     set_last_error("stale");
     assert_eq!(write_csv(df, csv.as_ptr()), 0);
-    cleared("dataframe_write_csv_with_options");
+    cleared("dataframe_write_csv_with_options_v2");
     assert_eq!(write_parquet(df, parquet.as_ptr()), 0);
     cleared("dataframe_write_parquet_with_options");
     assert_eq!(
@@ -314,32 +306,35 @@ fn every_entry_point_clears_a_stale_reason() {
     cleared("dataframe_write_ndjson_with_options");
     assert_eq!(dataframe_write_json(df, json.as_ptr()), 0);
     cleared("dataframe_write_json");
-    frame("dataframe_read_csv_v2", read_csv(csv.as_ptr()));
-    cleared("dataframe_read_csv_v2");
+    frame("dataframe_read_csv_v3", read_csv(csv.as_ptr()));
+    cleared("dataframe_read_csv_v3");
     frame(
-        "dataframe_read_parquet_with_options",
+        "dataframe_read_parquet_with_options_v2",
         read_parquet(parquet.as_ptr()),
     );
-    cleared("dataframe_read_parquet_with_options");
+    cleared("dataframe_read_parquet_with_options_v2");
     frame(
-        "dataframe_read_ndjson_with_options",
+        "dataframe_read_ndjson_with_options_v2",
         read_ndjson(ndjson.as_ptr()),
     );
-    cleared("dataframe_read_ndjson_with_options");
-    frame("dataframe_read_json_with_options", read_json(json.as_ptr()));
-    cleared("dataframe_read_json_with_options");
+    cleared("dataframe_read_ndjson_with_options_v2");
+    frame(
+        "dataframe_read_json_with_options_v2",
+        read_json(json.as_ptr()),
+    );
+    cleared("dataframe_read_json_with_options_v2");
     plan(
-        "lazyframe_scan_ndjson_with_options",
+        "lazyframe_scan_ndjson_with_options_v2",
         scan_ndjson(ndjson.as_ptr()),
     );
-    cleared("lazyframe_scan_ndjson_with_options");
-    plan("lazyframe_scan_csv_v2", scan_csv(csv.as_ptr()));
-    cleared("lazyframe_scan_csv_v2");
+    cleared("lazyframe_scan_ndjson_with_options_v2");
+    plan("lazyframe_scan_csv_v3", scan_csv(csv.as_ptr()));
+    cleared("lazyframe_scan_csv_v3");
     plan(
-        "lazyframe_scan_parquet_with_options",
+        "lazyframe_scan_parquet_with_options_v2",
         scan_parquet(parquet.as_ptr()),
     );
-    cleared("lazyframe_scan_parquet_with_options");
+    cleared("lazyframe_scan_parquet_with_options_v2");
     let lf = scan_csv(csv.as_ptr());
     set_last_error("stale");
     frame("lazyframe_collect", lazyframe_collect(lf));

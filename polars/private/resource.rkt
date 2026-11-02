@@ -1,8 +1,8 @@
 #lang racket/base
 
 (require (only-in ffi/unsafe
-                  _byte _gcpointer _int64 _pointer ctype-sizeof define-fun-syntax free malloc
-                  memcpy ptr-add ptr-ref ptr-set!)
+                  _gcpointer _int64 ctype-sizeof define-fun-syntax free malloc memcpy ptr-ref
+                  ptr-set!)
          (only-in ffi/unsafe/alloc allocator deallocator)
          (only-in racket/contract/base and/c flat-named-contract listof or/c)
          (only-in racket/list last)
@@ -13,7 +13,6 @@
 (provide _str
          _str-list
          _str/null
-         _string-list
          utf-8-name->string
          utf-8-name/c
          utf-8-names/c
@@ -99,41 +98,20 @@
 (define-syntax-parse-rule (with-raw-buffer ([name:id count:expr ctype:expr] ...+) body:expr ...+)
   (with-release ([name (alloc-buffer count ctype) free-buffer] ...) body ...))
 
-(define (c-string-bytes v)
-  (cond
-    [(string? v) (string->bytes/utf-8 v)]
-    [(bytes? v) v]
-    [(path? v) (path->bytes v)]
-    [else (raise-argument-error '_string-list "(or/c string? bytes? path?)" v)]))
+(define (name->bytes v)
+  (if (path? v) (path->bytes v) v))
 
 (define (utf-8-name->string v)
   (cond
     [(string? v) v]
     [else
-     (define encoded (c-string-bytes v))
+     (define encoded (name->bytes v))
      (and (bytes-utf-8-length encoded #f) (bytes->string/utf-8 encoded))]))
 
 (define utf-8-name/c
   (or/c string? (and/c (or/c bytes? path?) (flat-named-contract 'utf-8? utf-8-name->string))))
 
 (define utf-8-names/c (listof utf-8-name/c))
-
-;; The table's addresses point into its own block, which the collector never
-;; moves (#143).
-(define (strings->c-array strings)
-  (define encoded (map c-string-bytes strings))
-  (define table-size (* (length encoded) (ctype-sizeof _pointer)))
-  (define block
-    (malloc (for/fold ([size table-size]) ([utf-8 (in-list encoded)])
-              (+ size (bytes-length utf-8) 1))
-            'atomic-interior))
-  (for/fold ([at table-size]) ([utf-8 (in-list encoded)] [i (in-naturals)])
-    (define end (+ at (bytes-length utf-8)))
-    (memcpy block at utf-8 (bytes-length utf-8))
-    (ptr-set! block _byte 'abs end 0)
-    (ptr-set! block _pointer i (ptr-add block at))
-    (add1 end))
-  block)
 
 ;; A _fun argument syntax, not a ctype: a callout retains the values it is
 ;; given, not what a ctype converts them to, so only this way does the block
@@ -144,11 +122,6 @@
      (syntax-parser
        [_:id #'(type: _gcpointer pre: (v => (encode v)))]))))
 
-(define (string-list-argument strings)
-  (and (pair? strings) (strings->c-array strings)))
-
-(define-block-argument _string-list string-list-argument)
-
 (define word-size (ctype-sizeof _int64))
 
 (define (padded-words byte-count)
@@ -157,7 +130,7 @@
 (define (name-bytes who v)
   (cond
     [(string? v) (string->bytes/utf-8 v)]
-    [(and (or (bytes? v) (path? v)) (utf-8-name->string v)) (c-string-bytes v)]
+    [(and (or (bytes? v) (path? v)) (utf-8-name->string v)) (name->bytes v)]
     [else (raise-argument-error who "utf-8-name/c" v)]))
 
 (define (str-block words second)
@@ -220,5 +193,4 @@
   (provide str-block->string
            str-block->strings
            string->str-block
-           strings->c-array
            strings->str-block))

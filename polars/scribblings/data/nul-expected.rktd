@@ -19,4 +19,14 @@
  (zones
   (cast "UTC\u0000x" (raises ComputeError))
   (replace "UTC\u0000x" (raises ComputeError))
-  (convert "UTC\u0000x" (raises ComputeError))))
+  (convert "UTC\u0000x" (raises ComputeError)))
+ (io-reads
+  (null-values "s\nx\nN\u0000A\n" "N\u0000A" ("x" null))
+  (named-null-values "s\nx\nN\u0000A\n" "N\u0000A" ("x" null))
+  (comment-prefix "s\n#\u0000x\ny\n" "#\u0000" ("y")))
+ (io-writes
+  (null-value ("x" null) "N\u0000A" "s\nx\nN\u0000A\n")
+  (line-terminator ("x") "\r\u0000X" "s\r\u0000Xx\r\u0000X")
+  (date-format ((date 2020 1 2)) "%Y\u0000" "s\n2020\u0000\n")
+  (datetime-format ((datetime 2020 1 2 3 4 0 0)) "%F\u0000%T" "s\n2020-01-02\u000003:04:00\n")
+  (time-format ((time 3 4 0 0)) "%H\u0000%M" "s\n03\u000004\n")))

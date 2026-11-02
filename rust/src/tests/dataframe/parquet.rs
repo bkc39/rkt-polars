@@ -27,7 +27,7 @@ fn read_with(
     options: CompatParquetReadOptions,
 ) -> *mut DataFrame {
     let p = cstr(path.to_str().unwrap());
-    dataframe_read_parquet_with_options(
+    dataframe_read_parquet_with_options_v2(
         p.as_ptr(),
         options,
         ptr::null(),
@@ -41,17 +41,16 @@ fn read_with(
 
 fn read_names(path: &std::path::Path, names: &[&str]) -> *mut DataFrame {
     let p = cstr(path.to_str().unwrap());
-    let owned: Vec<CString> = names.iter().map(|n| cstr(n)).collect();
-    let ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
-    dataframe_read_parquet_with_options(
+    let block = str_list_block(names);
+    dataframe_read_parquet_with_options_v2(
         p.as_ptr(),
         CompatParquetReadOptions::default(),
         ptr::null(),
         ptr::null(),
         1,
-        ptrs.as_ptr(),
+        block.as_ptr(),
         ptr::null(),
-        ptrs.len(),
+        names.len(),
     )
 }
 
@@ -61,8 +60,8 @@ fn read_indices(
     indices: &[i64],
 ) -> *mut DataFrame {
     let p = cstr(path.to_str().unwrap());
-    let name = row_index.map(cstr);
-    dataframe_read_parquet_with_options(
+    let name = row_index.map(str_block);
+    dataframe_read_parquet_with_options_v2(
         p.as_ptr(),
         CompatParquetReadOptions::default(),
         name.as_ref().map_or(ptr::null(), |n| n.as_ptr()),
@@ -449,7 +448,7 @@ fn new_entry_points_clear_a_stale_reason() {
     dataframe_drop(out);
 
     set_last_error("stale");
-    let lf = lazyframe_scan_parquet_with_options(
+    let lf = lazyframe_scan_parquet_with_options_v2(
         p.as_ptr(),
         Default::default(),
         ptr::null(),
@@ -501,9 +500,9 @@ fn a_row_index_past_the_index_type_names_the_overflow() {
     let path = dir.path().join("index.parquet");
     let df = frame(4);
     assert_eq!(write_with(df, &path, Default::default()), 0);
-    let name = cstr("i");
+    let name = str_block("i");
     let p = cstr(path.to_str().unwrap());
-    let out = dataframe_read_parquet_with_options(
+    let out = dataframe_read_parquet_with_options_v2(
         p.as_ptr(),
         CompatParquetReadOptions {
             row_index_offset: u32::MAX,

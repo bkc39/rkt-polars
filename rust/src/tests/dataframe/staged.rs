@@ -38,7 +38,7 @@ fn read_parquet(path: &str) -> *mut DataFrame {
 
 fn read_ndjson(path: &str) -> *mut DataFrame {
     let p = cstr(path);
-    dataframe_read_ndjson_with_options(
+    dataframe_read_ndjson_with_options_v2(
         p.as_ptr(),
         CompatNdjsonOptions::default(),
         ptr::null(),

@@ -17,6 +17,7 @@ mod asof;
 mod csv;
 mod groupby;
 mod io;
+mod io_blocks;
 mod join;
 mod json;
 mod ndjson;

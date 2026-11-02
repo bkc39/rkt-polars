@@ -25,7 +25,8 @@
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? dtypes-of frame frame=? keyword-rejected?
                     message-of polars-null)
-           (only-in (submod polars/tests/generic/test-fixtures test) check-staged-write))
+           (only-in (submod polars/tests/generic/test-fixtures test)
+                    check-nul-names-round-trip check-staged-write eager-and-scan eager-reader))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define scratch (make-temporary-directory "rkt-polars-parquet-~a"))
@@ -297,5 +298,22 @@
   (check-true (frame=? (read-parquet brussels-parquet) brussels))
   (check-equal? (dtype (ref (read-parquet brussels-parquet) "t"))
                 '(datetime microseconds "Europe/Brussels"))
+
+  (define nul-parquet (build-path scratch "nul.parquet"))
+  (define nul-plain (build-path scratch "nul-plain.parquet"))
+  (write-parquet (dataframe (list (series '("x" "y") #:name "s"))) nul-plain)
+  (check-nul-names-round-trip
+   write-parquet nul-parquet (list (cons 'eager (eager-reader read-parquet)))
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-parquet '())) (list n "s") label)
+     (check-equal? (column (read-with nul-parquet `((#:columns . (,n)))) n) '(1 2) label)
+     (check-equal? (column-names (read-with nul-parquet `((#:columns . (,n))))) (list n) label)))
+  (check-nul-names-round-trip
+   write-parquet nul-parquet (eager-and-scan read-parquet scan-parquet)
+   (lambda (n read-with label)
+     (check-equal? (column-names (read-with nul-plain `((#:row-index-name . ,n)))) (list n "s")
+                   label)
+     (check-equal? (column-names (read-with nul-plain `((#:include-file-paths . ,n))))
+                   (list "s" n) label)))
 
   (delete-directory/files scratch))

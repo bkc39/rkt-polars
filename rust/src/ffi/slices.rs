@@ -17,24 +17,6 @@ pub(crate) unsafe fn slice_or_empty<'a, T>(
     }
 }
 
-pub(crate) unsafe fn collect_c_strings(
-    ptrs: *const *const c_char,
-    n: usize,
-) -> Option<Vec<String>> {
-    let slice = slice_or_empty(ptrs, n)?;
-    let mut out = Vec::with_capacity(n);
-    for &p in slice {
-        if p.is_null() {
-            return None;
-        }
-        match CStr::from_ptr(p).to_str() {
-            Ok(s) => out.push(s.to_string()),
-            Err(_) => return None,
-        }
-    }
-    Some(out)
-}
-
 pub(crate) unsafe fn collect_exprs(
     ptrs: *const *const Expr,
     n: usize,
