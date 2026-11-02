@@ -6,19 +6,11 @@ pub extern "C" fn dataframe_filter(
     df_ptr: *mut DataFrame,
     mask_ptr: *mut Series,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() || mask_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    let mask = unsafe { &*mask_ptr };
-    let bool_ca = match mask.bool() {
-        Ok(ca) => ca,
-        Err(_) => return ptr::null_mut(),
-    };
-    match df.filter(bool_ca) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let mask = unsafe { deref_arg(mask_ptr, "mask") }?;
+        df.filter(mask.bool()?)
+    })
 }
 
 #[no_mangle]

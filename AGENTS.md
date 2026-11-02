@@ -178,54 +178,66 @@ it. Racket side: `define-compat` with `#:c-id`.
   walk, fails on one.
 - **Failure reasons travel out of band** (#45): an entry point that can fail
   calls `clear_last_error()` on entry (the shared `write_frame`,
-  `collect_frame` and `scan` helpers do it) and records the **cause alone**; the Racket
-  wrapper names the operation and the path. Racket reads it with
+  `collect_frame` and `scan` helpers do it) and records the **cause alone**;
+  the Racket wrapper names the operation and the path. Racket reads it with
   `call/foreign-error`, which makes the call and reads the reason inside one
   `call-as-atomic` (given no format, the reason alone follows the verb;
-  `call/polars-reason` is that call, and `define-reasoned` binds a
-  keyword-free public name with a `name/who` variant taking the verb, as for
-  the series operators): the slot is per OS thread and every Racket thread in a
-  place shares one. Only wrap an entry point whose Rust side participates —
-  today the `dataframe_read_*` / `dataframe_write_*` IO entry points, the
-  `scan_*` family, `lazyframe_collect`, `lazyframe_explain_v2`,
-  `dataframe_to_string_v2`, `expr_to_string_v2`, `series_cast`,
-  `dataframe_pivot_v2`, `dataframe_unpivot_v2`,
-  `dataframe_sort_with_options_v2`, `series_sort_with_options`,
-  `series_new_str_packed`, the series-by-series operators (`series_add`,
-  `series_sub`, `series_mul`, `series_div`, `series_mod`, `series_eq`,
-  `series_ne`, `series_gt`, `series_ge`, `series_lt`, `series_le`,
-  `series_and`, `series_or`, `series_xor`, `series_not`), the scalar
-  operators (`series_{add,sub,mul,div,mod}_{i32,i64,u32,u64,f64}` and
+  `call/polars-reason` is that call). `define-reasoned` binds a public name,
+  keyword formals allowed, over `call/foreign-error`, with optional `#:ok?`
+  and `#:result`, and a `name/who` variant taking the verb, named by
+  `#:who-variant` (as for the series operators) or else hidden. Its binding is
+  a `define-compat` subform, or a `_fun` type ending in `_Series-ptr/null` or
+  `_DataFrame-ptr/null`, from which it makes a hidden `name/raw` with that
+  type's `allocator`, at `#:c-id` or else the name with `_` for `-`. The slot
+  is per OS thread and every Racket thread in a place shares one. Only wrap an
+  entry point whose Rust side participates — today the `dataframe_read_*` /
+  `dataframe_write_*` IO entry points, the `scan_*` family,
+  `lazyframe_collect`, `lazyframe_explain_v2`, `dataframe_to_string_v2`,
+  `expr_to_string_v2`, `series_cast`, `dataframe_pivot_v2`,
+  `dataframe_unpivot_v2`, `dataframe_sort_with_options_v2`,
+  `series_sort_with_options`, `series_new_str_packed`, the series-by-series
+  operators (`series_add`, `series_sub`, `series_mul`, `series_div`,
+  `series_mod`, `series_eq`, `series_ne`, `series_gt`, `series_ge`,
+  `series_lt`, `series_le`, `series_and`, `series_or`, `series_xor`,
+  `series_not`), the scalar operators
+  (`series_{add,sub,mul,div,mod}_{i32,i64,u32,u64,f64}` and
   `series_{lt,le,gt,ge,eq,ne}_{i32,f64}`), the reductions
   (`series_{sum,min,max,mean}_<dtype>_v2` over the ten numeric dtypes,
   `series_n_unique_v2`, `series_std_v2`, `series_var_v2`,
-  `series_quantile_v2`), which mark a failure in the result (`valid` -1, or
-  -1 for `series_n_unique_v2`) and are read with `#:ok?`, `dataframe_vstack`,
-  `dataframe_hstack`, `dataframe_join_v2`, `dataframe_join_asof_v2`,
-  `dataframe_join_asof_options_v2`, every other entry point that takes a
-  `_str` or `_str-list` block (`series_rename_v2`, `dataframe_select_v2`,
-  `dataframe_drop_columns_v2`, `dataframe_rename_v2`, `dataframe_column_v2`,
-  the five `dataframe_group_by_*_v2`, `lazyframe_sort_with_options_v2`,
-  `lazyframe_join_v2`, `expr_col_v2`, `expr_lit_str_v2`, `expr_alias_v2`,
-  `expr_exclude_v2`, `expr_str_to_date_v2`, `expr_str_to_datetime_v2`,
-  `expr_str_to_time_v2`, `expr_dt_strftime_v2`), the three Enum entry points
-  (`series_cast_enum_v2`, `expr_cast_enum_v2`, `expr_dtype_col_enum_v2`) and
-  the nine that take a time zone's name (`series_cast_datetime_tz`,
-  `expr_cast_datetime_tz`, `expr_dtype_col_datetime_tz`,
-  `expr_lit_datetime_tz`, `series_dt_convert_time_zone`,
-  `series_dt_replace_time_zone`, `expr_dt_convert_time_zone`,
-  `expr_dt_replace_time_zone`, `expr_str_to_datetime_tz_v2`) — or it
-  attaches a stale reason from an unrelated call. `call/foreign-error`
-  also respells the Python keyword names in Polars' "You might want to try"
-  hints (`null_values` → `#:null-values`, `missing_columns='insert'` →
-  `#:missing-columns 'insert`, `ambiguous` → `#:ambiguous`, ...;
-  `non_existent='null'` becomes `dt-replace-time-zone`'s `#:non-existent
-  'null`, since `str->datetime` and the other verbs that can raise it lack
-  the keyword) and in the JSON readers' advice to increase
-  `infer_schema_length` or give a schema. It drops the multi-file scan's
-  hint to pass `extra_columns` or a schema, which the bindings lack, and the
-  hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the nine take a zone's
-  name through `named_time_zone`, which checks it with
+  `series_quantile_v2`), which mark a failure in the result (`valid` -1, or -1
+  for `series_n_unique_v2`) and are read with `#:ok?`, the series and frame
+  reshapes and masks
+  (`series_{head,tail,slice,reverse,drop_nulls,unique,is_null,is_not_null}`,
+  `dataframe_{head,tail,slice,filter,unique,drop_nulls,with_column}`),
+  `dataframe_vstack`, `dataframe_hstack`, `dataframe_join_v2`,
+  `dataframe_join_asof_v2`, `dataframe_join_asof_options_v2`, every other
+  entry point that takes a `_str` or `_str-list` block (`series_rename_v2`,
+  `dataframe_select_v2`, `dataframe_drop_columns_v2`, `dataframe_rename_v2`,
+  `dataframe_column_v2`, the five `dataframe_group_by_*_v2`,
+  `lazyframe_sort_with_options_v2`, `lazyframe_join_v2`, `expr_col_v2`,
+  `expr_lit_str_v2`, `expr_alias_v2`, `expr_exclude_v2`,
+  `expr_str_to_date_v2`, `expr_str_to_datetime_v2`, `expr_str_to_time_v2`,
+  `expr_dt_strftime_v2`), the three Enum entry points (`series_cast_enum_v2`,
+  `expr_cast_enum_v2`, `expr_dtype_col_enum_v2`) and the nine that take a time
+  zone's name (`series_cast_datetime_tz`, `expr_cast_datetime_tz`,
+  `expr_dtype_col_datetime_tz`, `expr_lit_datetime_tz`,
+  `series_dt_convert_time_zone`, `series_dt_replace_time_zone`,
+  `expr_dt_convert_time_zone`, `expr_dt_replace_time_zone`,
+  `expr_str_to_datetime_tz_v2`) — or it attaches a stale reason from an
+  unrelated call. A fluent verb that diagnoses a refusal itself (`ref`,
+  `drop`, `with-column` and `rename` on a frame) passes `#:problem`, a thunk
+  giving its diagnosis or `#f`, to the `name/who` variant: on a failure the
+  diagnosis is raised as `exn:fail:contract` under the verb, and otherwise the
+  respelled reason, as for any call. `call/foreign-error` also respells the
+  Python keyword names in Polars' "You might want to try" hints (`null_values`
+  → `#:null-values`, `missing_columns='insert'` → `#:missing-columns 'insert`,
+  `ambiguous` → `#:ambiguous`, ...; `non_existent='null'` becomes
+  `dt-replace-time-zone`'s `#:non-existent 'null`, since `str->datetime` and
+  the other verbs that can raise it lack the keyword) and in the JSON readers'
+  advice to increase `infer_schema_length` or give a schema. It drops the
+  multi-file scan's hint to pass `extra_columns` or a schema, which the
+  bindings lack, and the hint to set `POLARS_IGNORE_TIMEZONE_PARSE_ERROR`: the
+  nine take a zone's name through `named_time_zone`, which checks it with
   `TimeZone::validate_time_zone` after `opt_try_new`, and only `opt_try_new`
   reads that variable, so setting it changes nothing here.
 - **A polars panic becomes the failure reason, not an abort.** A panic that
@@ -243,7 +255,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   reaches the previous hook. The worker test is process-wide, which assumes
   one place calls polars: while a guard runs in one place, a panic on a
   worker from an unguarded entry point in another prints nothing and then
-  aborts, a case guarding the `todo-129` entry points (#129) removes. A
+  aborts. #129 guarded the eager compute entry points; whether a `builder`,
+  `constructor` or `accessor` entry point runs polars on a worker is not
+  checked, and some do (`series_copy_cat` casts its codes). A
   streaming task that panics after an earlier error cancelled it is dropped
   with its payload, so the reason is that error's and the panic prints
   nothing. 0.41.3 aborted Racket on a Parquet Categorical or Decimal column
@@ -264,10 +278,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   that sense. It does not check what runs before the guard or in an adapter
   after it. Every other entry point is listed in `rust/src/tests/unguarded.txt`,
   one `name class` per line: `drop` and `count` (which must be the `_drop`
-  and `_drop_count` names), `accessor`, `builder`, `constructor`, `error`,
-  and `todo-129`, the eager compute entry points that run polars on caller
-  data unguarded until #129 (L7 of #223) guards them with a reason reported
-  to Racket. The audit fails on a stale or misclassified line, so guarding an
+  and `_drop_count` names), `accessor`, `builder`, `constructor` and
+  `error`. The audit fails on a stale or misclassified line, so guarding an
   entry point means deleting its line.
 - `dataframe_drop_count`, `expr_drop_count`, `lazyframe_drop_count` and
   `series_drop_count` count native releases; the reclamation tests assert on

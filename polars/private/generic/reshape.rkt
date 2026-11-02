@@ -9,6 +9,8 @@
          (only-in racket/list [drop list-drop])
          (only-in racket/contract/base contract-out)
          polars/private/foreign
+         (only-in (submod polars/private/foreign internal)
+                  dataframe-drop-columns/who dataframe-rename/who dataframe-with-column/who)
          polars/private/expr
          (only-in (submod polars/private/expr internal) collect-plan/who lazyframe-collect/who)
          (only-in polars/private/resource utf-8-name->string utf-8-name/c utf-8-names/c with-release)
@@ -51,7 +53,8 @@
 (define (column-height-problem d s)
   (define height (dataframe-height d))
   (define n (series-len s))
-  (and (not (= n height))
+  (and (not (memv n (list height 1)))
+       (positive? (dataframe-width d))
        (format "unable to add a column of length ~a to a DataFrame of height ~a" n height)))
 
 (define (rename-problem d old new)
@@ -152,15 +155,15 @@
     [(dataframe? x)
      (define names (map utf-8-name->string (if (list? arg) arg (list arg))))
      (wrap-dataframe
-      (or (dataframe-drop-columns/c x names)
-          (refuse 'drop (column-problem (dataframe-column-names x) names)
-                  "cannot drop the columns")))]
+      (dataframe-drop-columns/who
+       'drop x names
+       #:problem (lambda () (column-problem (dataframe-column-names x) names))))]
     [else (list-drop x arg)]))
 
 (define (with-column d s)
   (wrap-dataframe
-   (or (dataframe-with-column/raw d s)
-       (refuse 'with-column (column-height-problem d s) "cannot add the column"))))
+   (dataframe-with-column/who 'with-column d s
+                              #:problem (lambda () (column-height-problem d s)))))
 
 (define (cast x dtype)
   (cond [(Expr-ptr? x) (expr-cast-to 'cast x dtype)]
@@ -223,8 +226,9 @@
     [else
      (define new (utf-8-name->string b))
      (wrap-dataframe
-      (or (dataframe-rename/raw x name new)
-          (refuse 'rename (rename-problem x name new) "cannot rename the column")))]))
+      (dataframe-rename/who 'rename x name new
+                            #:problem (lambda () (rename-problem x name new))))]))
 
 (module+ internal
-  (provide agg cast drop group-by head pivot rename slice tail unpivot with-column))
+  (provide agg cast column-height-problem drop group-by head pivot rename slice tail unpivot
+           with-column))

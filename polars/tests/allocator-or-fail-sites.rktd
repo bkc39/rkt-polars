@@ -9,13 +9,9 @@
  (define-series-constructors u64 _uint64 0)
  (define-series-constructors u8 _uint8 0)
  (define-series-constructors ymdhms _YMDHMS default-ymdhms)
- dataframe-drop-nulls
- dataframe-filter
- dataframe-unique
  expr-lit-temporal
  series-enum-categories/raw
  series-new-bool/opt/raw
  series-new-bool/raw
  series-new-bool/vec/raw
- series-new-null/raw
- series-unique)
+ series-new-null/raw)

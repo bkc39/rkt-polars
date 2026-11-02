@@ -3,33 +3,25 @@ use crate::*;
 
 #[no_mangle]
 pub extern "C" fn dataframe_unique(df_ptr: *mut DataFrame) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    match df.unique::<String, String>(
-        None,
-        polars::prelude::UniqueKeepStrategy::Any,
-        None,
-    ) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        df.unique::<String, String>(
+            None,
+            polars::prelude::UniqueKeepStrategy::Any,
+            None,
+        )
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn dataframe_drop_nulls(
     df_ptr: *mut DataFrame,
 ) -> *mut DataFrame {
-    if df_ptr.is_null() {
-        return ptr::null_mut();
-    }
-    let df = unsafe { &*df_ptr };
-    let none: Option<&[String]> = None;
-    match df.drop_nulls(none) {
-        Ok(out) => Box::into_raw(Box::new(out)),
-        Err(_) => ptr::null_mut(),
-    }
+    boxed_result(|| {
+        let df = unsafe { deref_arg(df_ptr, "dataframe") }?;
+        let none: Option<&[String]> = None;
+        df.drop_nulls(none)
+    })
 }
 
 #[repr(i32)]
