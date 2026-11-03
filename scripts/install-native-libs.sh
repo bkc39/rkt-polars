@@ -46,7 +46,11 @@ install_by_rename() {
   local from=$1 target=$2 mode=$3 base
   base=${target##*/}
   tmp=$(mktemp "${target%/*}/.${base#.}.XXXXXX")
-  cp "$from" "$tmp"
+  if [ "$from" = - ]; then
+    cat > "$tmp"
+  else
+    cp "$from" "$tmp"
+  fi
   chmod "$mode" "$tmp"
   mv -f "$tmp" "$target"
   tmp=
@@ -63,6 +67,6 @@ for lib in "${libs[@]}"; do
     install_by_rename "$lib" "$target" 0755
   fi
   if [ "$(cat "$marker" 2> /dev/null)" != "$sum" ]; then
-    install_by_rename /dev/stdin "$marker" 0644 <<< "$sum"
+    install_by_rename - "$marker" 0644 <<< "$sum"
   fi
 done

@@ -218,6 +218,18 @@ stub() {
 stub failing-cp cp 'printf partial > "${@: -1}"; exit 1'
 stub failing-mv mv 'exit 1'
 stub failing-sha256sum sha256sum 'exit 1'
+# shellcheck disable=SC2016
+stub regular-cp cp '[ -f "$1" ] || { echo "cp: skipping file $1" >&2; exit 1; }; exec '"$(command -v cp)"' "$@"'
+
+fresh
+printf 'dev library bytes\n' > "$work/src/libcompat.so"
+if ! env PATH="$work/regular-cp:$base_path" bash "$script" "$work/src" "$work/dest"; then
+  fail "a cp that copies only regular files: status $?"
+elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
+  fail "a cp that copies only regular files: the marker is [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)]"
+else
+  echo "ok: the marker is written without copying a non-regular file, which macOS's cp refuses"
+fi
 
 refused() {
   local label=$1 before
