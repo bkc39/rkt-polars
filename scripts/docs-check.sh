@@ -71,12 +71,20 @@ stamp() {
 scan() {
   local log=$1 doc_dir=${2%/}
   local record="$doc_dir.docs-check-warnings"
-  local status=0 warnings recorded="" badlinks="" current
+  local status=0 warnings recorded="" badlinks="" current found=0
 
+  if [ ! -f "$log" ] || [ ! -r "$log" ]; then
+    report "cannot read the raco setup log $log"
+    return 1
+  fi
   warnings=$(log_warnings "$log")
   current=$(stamp "$doc_dir")
   if [ -f "$doc_dir/index.html" ]; then
-    badlinks=$(grep -rnoE --include='*.html' '<font class="badlink">.{0,160}' "$doc_dir" || true)
+    badlinks=$(grep -rnoE --include='*.html' '<font class="badlink">.{0,160}' "$doc_dir") || found=$?
+    if [ "$found" -gt 1 ]; then
+      report "grep failed (exit $found) reading the manual at $doc_dir"
+      status=1
+    fi
   else
     report "no rendered manual at $doc_dir (no index.html)"
     status=1

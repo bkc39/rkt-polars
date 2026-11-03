@@ -45,6 +45,9 @@
   ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
+  ;; The three grep gates above on a scratch tree: a hit fails with 1, and a
+  ;; missing directory or lock file with 2, never a pass.  Plain bash.
+  (grep-gates-test ("bash scripts/grep-gates-test.sh" #:shell ""))
   ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
   (build-so      ("bash scripts/test-build-so.sh" #:shell ""))
   ;; Every way into one checkout (a trailing slash, a symlink, a
@@ -70,4 +73,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule no-inline-tests rustls-only docs-check-test devshell-home install-native-libs compile test examples fmt)))
+ (push-gates (no-syntax-rule no-inline-tests rustls-only grep-gates-test docs-check-test devshell-home install-native-libs compile test examples fmt)))

@@ -15,7 +15,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 lock=rust/Cargo.lock
 forbidden='openssl|openssl-sys|native-tls|hyper-tls|tokio-native-tls|aws-lc-rs|aws-lc-sys|aws-lc-fips-sys'
-hits=$(grep -nE "^name = \"($forbidden)\"$" "$lock" || true)
+found=0
+hits=$(grep -nE "^name = \"($forbidden)\"$" "$lock") || found=$?
+if [ "$found" -gt 1 ]; then
+  echo "rustls-only: grep failed (exit $found) on $lock" >&2
+  exit 2
+fi
 
 if [ -n "$hits" ]; then
   while IFS=: read -r line text; do

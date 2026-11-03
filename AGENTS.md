@@ -979,10 +979,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (twelve checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (thirteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
-  `no-inline-tests`, `rustls-only`, `docs-check-test`, `install-native-libs`,
+  `no-inline-tests`, `rustls-only`, `grep-gates-test`, `docs-check-test`,
+  `install-native-libs`,
   `devshell-home`, `release-toolchain`, the rustc pin, and `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
   `nix build .#racket` runs only the second and is not enough. It does not
@@ -1076,6 +1077,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   there; anything else becomes a grep gate. The Resyntax run takes minutes
   (one large file alone takes about four), so it is not a push gate; CI runs
   it on every PR.
+- A grep that reads files never hides its exit status: in a grep gate 1 is
+  no match, and above 1 (a missing directory or file, an unreadable one)
+  fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
+  `grep-gates-test` gate, a push gate and a flake check) runs
+  `no-syntax-rule`, `no-inline-tests` and `rustls-only` on a scratch tree
+  to hold them there. `docs-check.sh`'s `scan` fails with 1, as for any
+  warning, on a log it cannot read or a grep error over the rendered
+  manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
   nycflights file into `bench/data/` (gitignored) and prints the scoreboard
   (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table
