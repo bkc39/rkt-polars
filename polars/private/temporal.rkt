@@ -31,8 +31,8 @@
   (check-gregor-export 'gregor/private/moment-base 'make-moment))
 
 (require (only-in gregor
-                  ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date
-                  date? datetime? jdn->date moment? ->tzid posix->datetime)
+                  ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds at-midnight
+                  date date? datetime? jdn->date moment? ->tzid posix->datetime)
          (only-in gregor/private/moment-base make-moment)
          (only-in gregor/period period? period-ref)
          (only-in gregor/time time time?)
@@ -191,7 +191,10 @@
   (<= (car chrono-jdn-range) (->jdn v) (cdr chrono-jdn-range)))
 
 (define (utc-clock v)
-  (if (moment? v) (->datetime/utc v) v))
+  (cond
+    [(moment? v) (->datetime/utc v)]
+    [(date? v) (at-midnight v)]
+    [else v]))
 
 (define (temporal-encoder who dtype)
   (define ((encoder accepts? what ->physical in-range?) v)
@@ -206,9 +209,19 @@
     ['time (encoder time? "a gregor time" time->nanoseconds (lambda (_t _ns) #t))]
     [(or 'datetime (list* 'datetime _))
      (define unit (if (pair? dtype) (cadr dtype) 'microseconds))
-     (encoder datetime-like? "a gregor datetime or moment"
-              (lambda (dt) (floor-nanoseconds->unit (datetime->nanoseconds dt) unit))
-              (lambda (dt ticks) (and (printable? (utc-clock dt)) (int64? ticks))))]
+     (define encode
+       (encoder (lambda (v) (or (date? v) (datetime-like? v))) "a gregor date, datetime or moment"
+                (lambda (v) (floor-nanoseconds->unit (datetime->nanoseconds (utc-clock v)) unit))
+                (lambda (v ticks) (and (printable? (utc-clock v)) (int64? ticks)))))
+     (define seen-kind #f)
+     (lambda (v)
+       (define kind (temporal-kind v))
+       (when (memq kind '(date datetime))
+         (set! seen-kind (or seen-kind kind))
+         (unless (eq? kind seen-kind)
+           (raise-arguments-error who "cannot mix gregor dates with datetimes or moments"
+                                  "dtype" dtype "value" v)))
+       (encode v))]
     [(list* 'duration unit _)
      (encoder fixed-length-period? "a gregor period without years or months"
               (lambda (p) (truncate-nanoseconds->unit (period->nanoseconds p) unit))

@@ -7,7 +7,7 @@
                     date datetime moment moment->iso8601/tzid posix->moment)
            (only-in gregor/period days hours milliseconds months nanoseconds period weeks)
            (only-in polars/private/temporal
-                    days->date epoch->datetime epoch->moment nanoseconds->time offset-unit
+                    days->date epoch->datetime epoch->moment nanoseconds->time offset-unit per-second
                     temporal-encoder temporal-value-dtype temporal-values-dtype utc-offset)
            (only-in (submod polars/private/temporal gregor-private) check-gregor-export)
            (only-in (submod polars/private/temporal internal) int64? ns/second))
@@ -163,8 +163,27 @@
              (lambda () ((temporal-encoder 'test 'date) 5)))
   (check-exn #rx"^test: expected a gregor date for this dtype\n  dtype: 'date\n  value: #<moment"
              (lambda () ((temporal-encoder 'test 'date) (moment 2024 1 2 #:tz "UTC"))))
-  (check-exn #rx"^test: expected a gregor datetime or moment for this dtype"
-             (lambda () ((temporal-encoder 'test '(datetime microseconds "UTC")) (date 2024 1 2))))
+  (for* ([unit '(milliseconds microseconds nanoseconds)]
+         [zone '(#f "UTC" "Europe/Paris" "Asia/Kathmandu")])
+    (define encode (temporal-encoder 'test (list 'datetime unit zone)))
+    (check-equal? (map encode (list (date 2013 1 1) (date 1969 12 31)))
+                  (map (lambda (s) (* s (per-second unit))) '(1356998400 -86400))))
+  (check-equal? ((temporal-encoder 'test 'datetime) (date 2013 1 1)) 1356998400000000)
+  (check-exn #rx"^test: expected a gregor date, datetime or moment for this dtype"
+             (lambda () ((temporal-encoder 'test '(datetime microseconds "UTC")) 5)))
+  (check-exn (regexp (string-append "^test: value out of range for this dtype\n"
+                                    "  dtype: '\\(datetime nanoseconds #f\\)\n  value: #<date 1500-01-01>$"))
+             (lambda () ((temporal-encoder 'test '(datetime nanoseconds #f)) (date 1500 1 1))))
+  (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime milliseconds #f\\)"
+             (lambda () ((temporal-encoder 'test '(datetime milliseconds #f)) (date 262143 1 1))))
+  (for ([pair (list (list (date 2013 1 1) (datetime 2013 1 1 5))
+                      (list (datetime 2013 1 1 5) (date 2013 1 1))
+                      (list (moment 2013 1 1 #:tz "UTC") (date 2013 1 1)))])
+    (define encode (temporal-encoder 'test '(datetime microseconds #f)))
+    (check-not-exn (lambda () (encode (car pair))))
+    (check-exn (regexp (string-append "^test: cannot mix gregor dates with datetimes or moments\n"
+                                      "  dtype: '\\(datetime microseconds #f\\)\n  value: #<"))
+               (lambda () (encode (cadr pair)))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime nanoseconds \"UTC\"\\)"
              (lambda () ((temporal-encoder 'test '(datetime nanoseconds "UTC"))
                          (moment 1500 #:tz "UTC"))))

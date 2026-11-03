@@ -2094,7 +2094,9 @@ are refused. With @racket[#:dtype], a value is converted to the dtype's unit
 and a finer part dropped as Polars' own casts drop it: a datetime is floored,
 a duration truncated toward zero. A value the dtype cannot hold raises, and
 so does a date or datetime outside the years -262143 to 262142, which Polars
-cannot print.
+cannot print. A datetime dtype takes a gregor @tt{date} as its midnight, as
+Python's @tt{pl.Series([date(2013, 1, 1)], dtype=pl.Datetime)} does, but not a
+list that mixes dates with datetimes or moments, which Python refuses too.
 
 A gregor @tt{moment} is an instant with a time zone, and makes a zoned
 column, as Python's aware @tt{datetime} does. A column has one zone, so a
@@ -2102,9 +2104,9 @@ list settles it as Python settles a list: the first value that is not null
 decides. A moment in a named zone gives that zone, @racket["Europe/Brussels"]
 or @racket["UTC"]; a moment at a fixed offset (gregor's @racket[#:tz 3600])
 gives @racket["UTC"]; and each other moment keeps its instant in that zone.
-A naive gregor @tt{datetime} in a zoned column is read as UTC, and a list
-whose first value is naive makes a naive column of each moment's UTC clock
-time. @racket[#:dtype] names the column's dtype outright, under the same
+A naive gregor @tt{datetime} in a zoned column is read as UTC, and a
+@tt{date} as its midnight in UTC, as in Python. A list whose first value is
+naive makes a naive column of each moment's UTC clock time. @racket[#:dtype] names the column's dtype outright, under the same
 reading: a zoned dtype converts every moment to its zone, and a naive one
 takes each moment's UTC clock time, where Python's
 @tt{pl.Datetime("us")} keeps the values' zone.
@@ -2142,6 +2144,8 @@ Polars' may.
 (series (list (hours 36) (minutes 90)) #:name "wait")
 (series (list (datetime 2013 1 1 5 6 7 123456789))
         #:name "dt" #:dtype '(datetime milliseconds))
+(series (list (date 2013 1 1) polars-null (date 1500 5 23)) #:name "d" #:dtype 'datetime)
+(eval:error (series (list (date 2013 1 1) (datetime 2013 1 1 5)) #:dtype 'datetime))
 (series->list (cast (series '(1500 -1) #:dtype 'i64) '(datetime milliseconds)))
 (define calendar
   (dataframe (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))
@@ -2157,6 +2161,8 @@ Polars' may.
         #:name "zoned")
 (series->list (series (list (moment 2021 3 27 #:tz 3600)) #:name "offset"))
 (series (list (datetime 2021 3 27 12)) #:dtype '(datetime milliseconds "Europe/Brussels"))
+(series (list (date 2013 1 1) polars-null (date 2013 7 1))
+        #:dtype '(datetime milliseconds "Europe/Paris"))
 (eval:error (series (list (datetime 2021 3 27)) #:dtype '(datetime microseconds "Mars/Base")))
 (eval:error (series (list (months 1))))
 (eval:error (series (list (datetime 1500 1 1)) #:dtype '(datetime nanoseconds)))]
