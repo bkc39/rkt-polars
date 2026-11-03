@@ -5,7 +5,9 @@ host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
 prebuilt binary per platform, and the pre-installer
 (`polars/private/install-compat.rkt`) copies it into place. It leaves an
 identical library alone and replaces a differing one by a rename, as
-`scripts/install-native-libs.sh` does (#267):
+`scripts/install-native-libs.sh` does (#267). It keeps a library that
+script installed, which it marks with `.libcompat.*.dev` beside it, until
+`RKT_POLARS_FORCE_CANDIDATE=1` or the dev shell installs another (#306):
 
 | Platform | Committed file | Installed on |
 |----------|----------------|--------------|

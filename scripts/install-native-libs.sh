@@ -8,6 +8,14 @@
 # mtime. On any failure the temporary file is removed and the target is as it
 # was.
 #
+# Beside each library it writes a marker, .<name>.dev, holding the
+# installed library's sha256 as 64 lowercase hex digits and a newline, also
+# by rename and left alone when it already holds that hash. The source is
+# hashed before anything is written, so a kill leaves a new library behind
+# an old marker only between the two renames. The pre-installer (polars/private/install-compat.rkt)
+# keeps a library whose marker matches it instead of copying the committed
+# candidate over it (#306).
+#
 # Called by the dev shell's hook (flake.nix's devSetup) and by
 # `nix run .#copy-native-libs`; tested by scripts/install-native-libs-test.sh.
 #
@@ -34,16 +42,31 @@ if [ ${#libs[@]} -eq 0 ]; then
   exit 1
 fi
 
+install_by_rename() {
+  local from=$1 target=$2 mode=$3 base
+  base=${target##*/}
+  tmp=$(mktemp "${target%/*}/.${base#.}.XXXXXX")
+  if [ "$from" = - ]; then
+    cat > "$tmp"
+  else
+    cp "$from" "$tmp"
+  fi
+  chmod "$mode" "$tmp"
+  mv -f "$tmp" "$target"
+  tmp=
+}
+
 mkdir -p "$dest"
 for lib in "${libs[@]}"; do
   name=${lib##*/}
   target=$dest/$name
-  if [ -f "$target" ] && cmp -s "$lib" "$target"; then
-    continue
+  marker=$dest/.$name.dev
+  sum=$(sha256sum "$lib")
+  sum=${sum%% *}
+  if ! { [ -f "$target" ] && cmp -s "$lib" "$target"; }; then
+    install_by_rename "$lib" "$target" 0755
   fi
-  tmp=$(mktemp "$dest/.$name.XXXXXX")
-  cp "$lib" "$tmp"
-  chmod 0755 "$tmp"
-  mv -f "$tmp" "$target"
-  tmp=
+  if ! cmp -s "$marker" <(printf '%s\n' "$sum"); then
+    install_by_rename - "$marker" 0644 <<< "$sum"
+  fi
 done

@@ -1,12 +1,15 @@
 #lang racket/base
 
-(require (only-in racket/file
+(require (only-in file/sha1 bytes->hex-string)
+         (only-in racket/file
                   delete-directory/files make-directory* make-temporary-file)
+         (only-in racket/match match)
          (only-in "resource.rkt" with-release))
 
 (provide pre-installer)
 
 (define compat-lib-env-var "RKT_POLARS_COMPAT_LIB_PATH")
+(define force-candidate-env-var "RKT_POLARS_FORCE_CANDIDATE")
 (define compat-lib-pattern #rx"^libcompat\\.")
 
 (define (preinstall-error . args)
@@ -32,22 +35,58 @@
              (call-with-input-file* dst
                (lambda (in-dst) (same-contents? in-src in-dst))))))))
 
-(define (install-by-rename! src dst dest-dir f)
-  (with-release ([staged
-                  (make-temporary-file (string-append "." (path->string f) ".~a")
-                                       #:base-dir dest-dir)
-                  (lambda (p) (delete-directory/files p #:must-exist? #f))])
-    (copy-file src staged #:exists-ok? #t #:permissions #o755)
-    (rename-file-or-directory staged dst #t)))
+(define (install-if-different! src dst)
+  (unless (same-bytes? src dst)
+    (define-values (dir name _) (split-path dst))
+    (with-release ([staged
+                    (make-temporary-file (string-append "." (path->string name) ".~a")
+                                         #:base-dir dir)
+                    (lambda (p) (delete-directory/files p #:must-exist? #f))])
+      (copy-file src staged #:exists-ok? #t #:permissions #o755)
+      (rename-file-or-directory staged dst #t))))
 
-(define (copy-native-libs! dest-dir source-dir pattern)
+(define (copy-native-libs! dest-dir source-dir pattern install!)
   (make-directory* dest-dir)
   (for ([f (in-list (directory-list source-dir))]
         #:when (regexp-match? pattern (path->string f)))
-    (define src (build-path source-dir f))
-    (define dst (build-path dest-dir f))
-    (unless (same-bytes? src dst)
-      (install-by-rename! src dst dest-dir f))))
+    (install! (build-path source-dir f) (build-path dest-dir f))))
+
+(define (dev-marker dst)
+  (define-values (dir name _) (split-path dst))
+  (build-path dir (string-append "." (path->string name) ".dev")))
+
+(define marker-pattern #px#"^([0-9a-f]{64})\n$")
+
+(define (marked-sha256 marker)
+  (define contents
+    (call-with-input-file* marker (lambda (in) (read-bytes 66 in))))
+  (match (and (bytes? contents) (regexp-match marker-pattern contents))
+    [(list _ hex) (bytes->string/utf-8 hex)]
+    [#f #f]))
+
+(define (sha256-hex path)
+  (call-with-input-file* path (lambda (in) (bytes->hex-string (sha256-bytes in)))))
+
+(define (dev-built? dst marker)
+  (with-handlers ([exn:fail:filesystem? (lambda (_) #f)])
+    (define marked (and (file-exists? marker) (file-exists? dst) (marked-sha256 marker)))
+    (and marked (equal? marked (sha256-hex dst)))))
+
+(define (remove-marker! marker)
+  (when (or (link-exists? marker) (file-exists? marker))
+    (with-handlers ([exn:fail:filesystem? void])
+      (delete-file marker))))
+
+(define ((install-candidate! force?) src dst)
+  (define marker (dev-marker dst))
+  (cond
+    [(and (not force?) (dev-built? dst marker))
+     (printf "pre-installer: keeping the dev-built ~a; ~a=1 installs the committed candidate\n"
+             dst
+             force-candidate-env-var)]
+    [else
+     (install-if-different! src dst)
+     (remove-marker! marker)]))
 
 (define (has-matching-files? dir pattern)
   (and (directory-exists? dir)
@@ -84,11 +123,16 @@
     [compat-lib-path
      (copy-native-libs! native-libs-dir
                         (build-path compat-lib-path "lib")
-                        compat-lib-pattern)]
+                        compat-lib-pattern
+                        install-if-different!)]
     ;; 2. Committed per-platform prebuilt candidate (catalog install).
     [(find-candidate-dir candidates-dir)
      => (lambda (dir)
-          (copy-native-libs! native-libs-dir dir compat-lib-pattern))]
+          (copy-native-libs! native-libs-dir
+                             dir
+                             compat-lib-pattern
+                             (install-candidate!
+                              (equal? (getenv force-candidate-env-var) "1"))))]
     ;; 3. Already staged (nothing to do).
     [(has-matching-files? native-libs-dir compat-lib-pattern)
      (void)]

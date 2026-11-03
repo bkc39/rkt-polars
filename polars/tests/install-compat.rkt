@@ -2,9 +2,10 @@
 
 (module+ test
   (require rackunit
+           (only-in file/sha1 bytes->hex-string)
            (only-in racket/file
                     delete-directory/files file->bytes make-directory* make-temporary-directory)
-           (only-in racket/port port->bytes)
+           (only-in racket/port port->bytes with-output-to-string)
            (only-in polars/private/install-compat pre-installer)
            (only-in polars/private/resource with-release)
            (only-in polars/tests/test-helpers scratch-file))
@@ -157,4 +158,132 @@
      (lambda (lib collection native)
        (scratch-file lib "libcompat.so" "fresh")
        (install! lib collection)
-       (check-equal? (file->bytes (build-path native "libcompat.so")) #"fresh")))))
+       (check-equal? (file->bytes (build-path native "libcompat.so")) #"fresh"))))
+
+  (define (candidate-dir collection)
+    (build-path collection "native-libs" "candidates"
+                (if (eq? (system-type 'os) 'macosx) "darwin" "linux")))
+
+  (define (install-candidate! collection #:force? [force? #f])
+    (parameterize ([current-environment-variables
+                    (environment-variables-copy (current-environment-variables))])
+      (environment-variables-set! (current-environment-variables)
+                                  #"RKT_POLARS_COMPAT_LIB_PATH" #f)
+      (environment-variables-set! (current-environment-variables)
+                                  #"RKT_POLARS_FORCE_CANDIDATE" (and force? #"1"))
+      (with-output-to-string (lambda () (pre-installer #f collection #f)))))
+
+  (define (sha256-hex bs)
+    (bytes->hex-string (sha256-bytes bs)))
+
+  (define (marker-for bs)
+    (format "~a\n" (sha256-hex bs)))
+
+  (define (call-with-dev-library marker-contents proc #:library [library "dev bytes"])
+    (call-with-install-dirs
+     (lambda (lib collection native)
+       (make-directory* (candidate-dir collection))
+       (scratch-file (candidate-dir collection) "libcompat.so" "candidate bytes")
+       (make-directory* native)
+       (define target (build-path native "libcompat.so"))
+       (when library
+         (scratch-file native "libcompat.so" library))
+       (define marker (build-path native ".libcompat.so.dev"))
+       (when marker-contents
+         (scratch-file native ".libcompat.so.dev" marker-contents))
+       (proc collection target marker))))
+
+  (test-case "a dev-marked library is kept, in one line naming it"
+    (call-with-dev-library
+     (marker-for #"dev bytes")
+     (lambda (collection target marker)
+       (define before (file-or-directory-identity target))
+       (define out (install-candidate! collection))
+       (check-equal? (file->bytes target) #"dev bytes")
+       (check-equal? (file-or-directory-identity target) before)
+       (check-true (file-exists? marker))
+       (check-equal? out
+                     (format (string-append "pre-installer: keeping the dev-built ~a; "
+                                            "RKT_POLARS_FORCE_CANDIDATE=1 installs the "
+                                            "committed candidate\n")
+                             (path->string target))))))
+
+  (test-case "a stale marker is ignored and removed with the candidate's install"
+    (call-with-dev-library
+     (marker-for #"other bytes")
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-false (file-exists? marker)))))
+
+  (test-case "RKT_POLARS_FORCE_CANDIDATE=1 installs the candidate over a dev-marked library"
+    (call-with-dev-library
+     (marker-for #"dev bytes")
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection #:force? #t) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-false (file-exists? marker)))))
+
+  (test-case "without a marker the candidate replaces the library"
+    (call-with-dev-library
+     #f
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (define before (file-or-directory-identity target))
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file-or-directory-identity target) before))))
+
+  (test-case "a marker not in the format, 64 lowercase hex digits and a newline, is stale"
+    (define hex (sha256-hex #"dev bytes"))
+    (for ([contents (list hex
+                          (string-upcase (marker-for #"dev bytes"))
+                          (format "~a\r\n" hex)
+                          (format "~a\n\n" hex)
+                          (format " ~a\n" hex))])
+      (call-with-dev-library
+       contents
+       (lambda (collection target marker)
+         (check-equal? (install-candidate! collection) "" contents)
+         (check-equal? (file->bytes target) #"candidate bytes" contents)
+         (check-false (file-exists? marker) contents)))))
+
+  (test-case "an unreadable marker is ignored and the candidate installed"
+    (call-with-dev-library
+     (marker-for #"dev bytes")
+     (lambda (collection target marker)
+       (file-or-directory-permissions marker #o000)
+       (when (fails-to? (lambda () (call-with-input-file* marker void)))
+         (check-equal? (install-candidate! collection) "")
+         (check-equal? (file->bytes target) #"candidate bytes")))))
+
+  (test-case "a marker without its library is removed and the candidate installed"
+    (call-with-dev-library
+     (marker-for #"dev bytes")
+     #:library #f
+     (lambda (collection target marker)
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-false (file-exists? marker)))))
+
+  (test-case "a stale marker a read-only directory keeps does not fail the install"
+    (call-with-dev-library
+     (marker-for #"other bytes")
+     #:library "candidate bytes"
+     (lambda (collection target marker)
+       (define native (build-path collection "native-libs"))
+       (file-or-directory-permissions native #o555)
+       (when (fails-to? (lambda () (delete-file (scratch-file native "probe" ""))))
+         (check-equal? (install-candidate! collection) "")
+         (check-equal? (file->bytes target) #"candidate bytes")
+         (check-true (file-exists? marker))))))
+
+  (test-case "a directory named like the marker is left alone"
+    (call-with-dev-library
+     #f
+     (lambda (collection target marker)
+       (make-directory* marker)
+       (scratch-file marker "inside" "kept")
+       (check-equal? (install-candidate! collection) "")
+       (check-equal? (file->bytes target) #"candidate bytes")
+       (check-equal? (file->bytes (build-path marker "inside")) #"kept")))))
