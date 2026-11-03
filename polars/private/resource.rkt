@@ -43,57 +43,81 @@
                    (lambda () (release v))
                    (lambda () (release-each release more)))]))
 
+(define (call-with-one-shot-extent who acquire use release)
+  (define entered? #f)
+  (define held #f)
+  (dynamic-wind
+   (lambda ()
+     (when entered?
+       (error who "cannot re-enter the extent after its release"))
+     (set! entered? #t)
+     (set! held (acquire)))
+   (lambda () (use held))
+   (lambda ()
+     (define acquired held)
+     (set! held #f)
+     (release acquired))))
+
+(define-syntax-parse-rule (one-shot-binding who:id name:id acquire:expr view:expr release:expr
+                                            body:expr ...+)
+  (let ([acquire-held acquire]
+        [view-held view]
+        [release-held release])
+    (let ([name #f])
+      (call-with-one-shot-extent 'who
+                                 acquire-held
+                                 (lambda (held)
+                                   (set! name (view-held held))
+                                   body ...)
+                                 (lambda (held)
+                                   (set! name #f)
+                                   (release-held held))))))
+
 (define-syntax-parser with-release
   [(_ () body:expr ...+)
    #'(let () body ...)]
   [(_ (first:release-clause more:release-clause ...) body:expr ...+)
-   #'(let ([acquire (lambda () first.acquire)]
-           [held #f]
-           [entered? #f])
-       (let ([first.name #f])
-         (dynamic-wind
-          (lambda ()
-            (when entered?
-              (error 'with-release "cannot re-enter the extent after its release"))
-            (set! entered? #t)
-            (set! held (acquire))
-            (set! first.name held))
-          (lambda () (with-release (more ...) body ...))
-          (lambda ()
-            (define acquired held)
-            (set! held #f)
-            (set! first.name #f)
-            (when acquired
-              (let ([first.name acquired])
-                (first.release first.name)))))))])
+   #'(one-shot-binding with-release
+                       first.name
+                       (lambda () first.acquire)
+                       values
+                       (lambda (held)
+                         (when held
+                           (let ([first.name held])
+                             (first.release first.name))))
+                       (with-release (more ...) body ...))])
 
 (define-syntax-parse-rule (with-releases ([name:id (clause:for-clause ...)
                                           acquire:expr release:expr])
                            body:expr ...+)
-  (let ([acquired '()])
-    (dynamic-wind
-     void
-     (lambda ()
-       (for ((~@ . clause) ...)
-         (set! acquired (cons acquire acquired)))
-       (let ([name (reverse acquired)])
-         body ...))
-     (lambda ()
-       (define pending acquired)
-       (set! acquired '())
-       (release-each release pending)))))
+  (one-shot-binding with-releases
+                    name
+                    (lambda () (box '()))
+                    (lambda (acquired)
+                      (for ((~@ . clause) ...)
+                        (set-box! acquired (cons acquire (unbox acquired))))
+                      (reverse (unbox acquired)))
+                    (lambda (acquired) (release-each release (unbox acquired)))
+                    body ...))
+
+(define (pool-own! pool v)
+  (define owned (unbox pool))
+  (unless owned
+    (error 'with-release-pool "cannot own a value after its extent's release"))
+  (set-box! pool (cons v owned))
+  v)
+
+(define (pool-close! pool)
+  (begin0 (unbox pool)
+          (set-box! pool #f)))
 
 (define-syntax-parse-rule (with-release-pool ([own:id release:expr]) body:expr ...+)
-  (let ([owned '()])
-    (dynamic-wind
-     void
-     (lambda ()
-       (let ([own (lambda (v) (set! owned (cons v owned)) v)])
-         body ...))
-     (lambda ()
-       (define pending owned)
-       (set! owned '())
-       (release-each release pending)))))
+  (one-shot-binding with-release-pool
+                    own
+                    (lambda () (box '()))
+                    (lambda (pool) (lambda (v) (pool-own! pool v)))
+                    (lambda (pool) (release-each release (pool-close! pool)))
+                    body ...))
 
 (define-syntax-parse-rule (with-raw-buffer ([name:id count:expr ctype:expr] ...+) body:expr ...+)
   (with-release ([name (alloc-buffer count ctype) free-buffer] ...) body ...))

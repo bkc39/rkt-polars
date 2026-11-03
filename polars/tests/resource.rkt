@@ -67,22 +67,25 @@
              (lambda () (with-release ([a 'a release!] [b (error 'test "b") release!]) 'not-reached)))
   (check-equal? released '(a))
 
-  (set! released '())
-  (define re-enter #f)
-  (check-equal? (call-with-continuation-prompt
-                 (lambda ()
-                   (with-release ([a 'a release!])
-                     (call-with-composable-continuation (lambda (k) (set! re-enter k)))
-                     a)))
-                'a)
-  (check-exn #rx"^with-release: cannot re-enter the extent after its release$"
-             (lambda () (call-with-continuation-prompt (lambda () (re-enter #f)))))
-  (check-equal? released '(a))
+  (define (check-one-shot who expected-value expected-released run)
+    (set! released '())
+    (define re-enter #f)
+    (match-define (cons value read-name)
+      (call-with-continuation-prompt
+       (lambda ()
+         (run (lambda () (call-with-composable-continuation (lambda (k) (set! re-enter k))))))))
+    (check-equal? value expected-value)
+    (check-equal? (read-name) #f)
+    (check-equal? released expected-released)
+    (check-exn (regexp (format "^~a: cannot re-enter the extent after its release$" who))
+               (lambda () (call-with-continuation-prompt (lambda () (re-enter #f)))))
+    (check-equal? released expected-released))
 
-  (set! released '())
-  (define escaped (with-release ([a 'a release!]) (lambda () a)))
-  (check-equal? (escaped) #f)
-  (check-equal? released '(a))
+  (check-one-shot 'with-release 'a '(a)
+                  (lambda (pause)
+                    (with-release ([a 'a release!])
+                      (pause)
+                      (cons a (lambda () a)))))
 
   (set! released '())
   (check-equal? (let ([tags 10])
@@ -149,6 +152,26 @@
                (with-release-pool ([own (release-raising-on 1)])
                  (for ([i (in-range 3)]) (own i)))))
   (check-equal? released '(0 1 2))
+
+  (check-one-shot 'with-releases '(0 1) '(0 1)
+                  (lambda (pause)
+                    (with-releases ([tags ([i (in-range 2)]) i release!])
+                      (pause)
+                      (cons tags (lambda () tags)))))
+
+  (check-one-shot 'with-release-pool 'b '(a b)
+                  (lambda (pause)
+                    (with-release-pool ([own release!])
+                      (own 'a)
+                      (pause)
+                      (cons (own 'b) (lambda () own)))))
+
+  (set! released '())
+  (define escaped-own (with-release-pool ([own release!]) (own 'a) own))
+  (check-equal? released '(a))
+  (check-exn #rx"^with-release-pool: cannot own a value after its extent's release$"
+             (lambda () (escaped-own 'b)))
+  (check-equal? released '(a))
 
   (check-equal? (with-raw-buffer ([words 3 _int64])
                   (for ([i (in-range 3)]) (ptr-set! words _int64 i (* 10 i)))
