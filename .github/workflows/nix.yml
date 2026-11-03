@@ -24,7 +24,7 @@ jobs:
         run: nix flake check --print-build-logs
 
   lint:
-    name: Lint (no-syntax-rule, no-inline-tests, rustls-only, resyntax)
+    name: Lint (no-syntax-rule, no-inline-tests, rustls-only, no-dynamic-wind, resyntax)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +40,10 @@ jobs:
       - name: TLS is rustls only
         if: ${{ !cancelled() }}
         run: scripts/rustls-only.sh
+
+      - name: No dynamic-wind outside resource.rkt
+        if: ${{ !cancelled() }}
+        run: scripts/no-dynamic-wind.sh
 
       - name: Install Nix
         if: ${{ !cancelled() }}

@@ -403,7 +403,30 @@ it. Racket side: `define-compat` with `#:c-id`.
   `series-drop` does.
   No `(malloc …)` or `(free …)` appears under `polars/private` or
   `polars/tests` outside `polars/private/resource.rkt`: a test in
-  `polars/tests/resource.rkt` fails on one.
+  `polars/tests/resource.rkt` fails on one. Nor does `dynamic-wind`, but
+  at the sites `polars/tests/dynamic-wind-sites.rktd` lists, one entry
+  `(file definition reason)` per site, the definition a symbol, so a site
+  outside any `define` cannot be listed (a thread kill, an environment
+  variable restored). A test in `polars/tests/resource.rkt` reads each
+  module as data and finds each reference to `dynamic-wind`, a call or a
+  reference such as `(apply dynamic-wind ...)`, under that name and under the names
+  the module's `prefix-in`, `rename-in` and `only-in` give it in a `require`
+  or `local-require` (`base:dynamic-wind`), in a definition's formals (a default such as
+  `[w dynamic-wind]`) and body, in quoted data and in box, hash and prefab
+  literals, under its outermost definition, and holds those sites and the
+  entries to each other exactly: an unlisted site, an entry without its
+  own site and a malformed entry each fail. It reads
+  `polars/tests/resource.rkt` too, all but the quoted modules it hands
+  `module-text` to plant. The `no-dynamic-wind` gate
+  (`scripts/no-dynamic-wind.sh`, a push gate, a flake check and a step of
+  CI's Lint job) is a grep that exempts the files the list names and
+  `polars/tests/resource.rkt`, whose audit plants sites; it catches a name
+  prefixed with a `:` (`base:dynamic-wind`), not the keyword
+  `#:dynamic-wind`, and leaves any other prefix (`rkt-dynamic-wind`) and a
+  rename to the audit. Neither sees, for example, `dynamic-wind` reached
+  through `eval`, `dynamic-require` or `namespace-variable-value` with a
+  computed name, a name `filtered-in` computes, or a re-export under another
+  name from another module (`prefix-out`).
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
@@ -979,12 +1002,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (thirteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (fourteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
-  `no-inline-tests`, `rustls-only`, `grep-gates-test`, `docs-check-test`,
-  `install-native-libs`,
-  `devshell-home`, `release-toolchain`, the rustc pin, and `build-so-darwin`,
+  `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
+  `docs-check-test`, `install-native-libs`, `devshell-home`,
+  `release-toolchain`, the rustc pin, and `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
@@ -1066,8 +1089,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   Racket check runs it too (`-j 4`), so a broken example fails CI.
 - The gates in `.racket-dev.rktd` run all of the above through the
   racket-dev plugin's runner.
-- The lint gates are `scripts/no-syntax-rule.sh` and
-  `scripts/no-inline-tests.sh` (greps; no shell needed), and
+- The lint gates are `scripts/no-syntax-rule.sh`,
+  `scripts/no-inline-tests.sh` and `scripts/no-dynamic-wind.sh` (greps; no
+  shell needed; the last exempts the files
+  `polars/tests/dynamic-wind-sites.rktd` names, and the read audit in
+  `polars/tests/resource.rkt` holds each of its `(file definition reason)`
+  entries to one site), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
@@ -1081,10 +1108,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   no match, and above 1 (a missing directory or file, an unreadable one)
   fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
   `grep-gates-test` gate, a push gate and a flake check) runs
-  `no-syntax-rule`, `no-inline-tests` and `rustls-only` on a scratch tree
-  to hold them there. `docs-check.sh`'s `scan` fails with 1, as for any
-  warning, on a log it cannot read or a grep error over the rendered
-  manual, and `docs-check-test` plants both.
+  `no-syntax-rule`, `no-inline-tests`, `rustls-only` and `no-dynamic-wind`
+  on a scratch tree to hold them there. `docs-check.sh`'s `scan` fails with
+  1, as for any warning, on a log it cannot read or a grep error over the
+  rendered manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
   nycflights file into `bench/data/` (gitignored) and prints the scoreboard
   (`bench/blog-test.rkt`) and the rkt-polars / Python polars ratio table

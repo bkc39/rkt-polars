@@ -45,7 +45,13 @@
   ;; No OpenSSL, native-tls or aws-lc in rust/Cargo.lock: HTTPS is rustls on
   ;; ring.  A grep, so no shell.
   (rustls-only   ("bash scripts/rustls-only.sh" #:shell ""))
-  ;; The three grep gates above on a scratch tree: a hit fails with 1, and a
+  ;; No dynamic-wind under polars/private or polars/tests outside
+  ;; polars/private/resource.rkt, polars/tests/resource.rkt and the files
+  ;; polars/tests/dynamic-wind-sites.rktd names: a scoped resource is paired by
+  ;; its with- forms.  A grep, so no shell; the read audit in
+  ;; polars/tests/resource.rkt is the per-site check.
+  (no-dynamic-wind ("bash scripts/no-dynamic-wind.sh" #:shell ""))
+  ;; The four grep gates above on a scratch tree: a hit fails with 1, and a
   ;; missing directory or lock file with 2, never a pass.  Plain bash.
   (grep-gates-test ("bash scripts/grep-gates-test.sh" #:shell ""))
   ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
@@ -73,4 +79,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule no-inline-tests rustls-only grep-gates-test docs-check-test devshell-home install-native-libs compile test examples fmt)))
+ (push-gates (no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test devshell-home install-native-libs compile test examples fmt)))

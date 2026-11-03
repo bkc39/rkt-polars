@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The grep-gates-test gate (#298): each grep gate run on a scratch tree, which
+# The grep-gates-test gate (#298, #302): each grep gate run on a scratch tree, which
 # it reads because it works from its own script's parent.  A clean tree
 # passes, a planted hit fails with 1, and a tree missing a directory or file
 # the gate reads fails with 2 and the gate's message, where a grep error
@@ -28,8 +28,9 @@ tree() {
     printf '#lang racket/base\n(define x 1)\n' > "$work/tree/$dir/clean.rkt"
   done
   printf '[[package]]\nname = "rustls"\nversion = "0.23.0"\n' > "$work/tree/rust/Cargo.lock"
+  printf '(("tests/allowed.rkt" f "a reason"))\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
   cp "$here"/no-syntax-rule.sh "$here"/no-inline-tests.sh "$here"/rustls-only.sh \
-    "$work/tree/scripts/"
+    "$here"/no-dynamic-wind.sh "$work/tree/scripts/"
 }
 
 expect() {
@@ -71,5 +72,42 @@ expect "a hit" rustls-only 1 'rust/Cargo.lock:5: name = "openssl-sys": TLS must 
 tree
 rm "$work/tree/rust/Cargo.lock"
 expect "a missing lock file" rustls-only 2 "rustls-only: grep failed (exit 2) on rust/Cargo.lock"
+
+wind='(define (f) (dynamic-wind void void void))'
+tree
+expect "a clean tree" no-dynamic-wind 0 "no-dynamic-wind: none in"
+printf ';; (dynamic-wind void void void)\n' > "$work/tree/polars/private/comment.rkt"
+printf '%s\n' "$wind" > "$work/tree/polars/private/resource.rkt"
+printf '%s\n' "$wind" > "$work/tree/polars/tests/resource.rkt"
+printf '%s\n%s\n' "$wind" "$wind" > "$work/tree/polars/tests/allowed.rkt"
+expect "a comment, the resource.rkt files and a listed file" no-dynamic-wind 0 \
+  "no-dynamic-wind: none in"
+printf '%s\n' "$wind" > "$work/tree/polars/private/hit.rkt"
+expect "a hit" no-dynamic-wind 1 "polars/private/hit.rkt:1: pair the resource with with-release"
+tree
+printf '(define (g) (apply dynamic-wind (list void void void)))\n' \
+  > "$work/tree/polars/tests/reference.rkt"
+expect "a reference" no-dynamic-wind 1 "polars/tests/reference.rkt:1: pair the resource"
+tree
+printf '(require (prefix-in base: racket/base))\n(define (f t) (base:dynamic-wind void t void))\n' \
+  > "$work/tree/polars/private/prefixed.rkt"
+expect "a prefixed name" no-dynamic-wind 1 "polars/private/prefixed.rkt:2: pair the resource"
+tree
+printf ':dynamic-wind\n' > "$work/tree/polars/private/colon.rkt"
+expect "a line-initial colon prefix" no-dynamic-wind 1 "polars/private/colon.rkt:1: pair the resource"
+tree
+printf '(define (f #:dynamic-wind [w void]) w)\n(f #:dynamic-wind void)\n' \
+  > "$work/tree/polars/private/keyword.rkt"
+expect "a keyword" no-dynamic-wind 0 "no-dynamic-wind: none in"
+tree
+printf '()\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
+printf '%s\n' "$wind" > "$work/tree/polars/tests/allowed.rkt"
+expect "no sites listed" no-dynamic-wind 1 "polars/tests/allowed.rkt:1: pair the resource"
+tree
+rm -r "$work/tree/polars/private"
+expect "a missing directory" no-dynamic-wind 2 "no-dynamic-wind: grep failed (exit 2)"
+tree
+rm "$work/tree/polars/tests/dynamic-wind-sites.rktd"
+expect "a missing list of sites" no-dynamic-wind 2 "no-dynamic-wind: cannot read the listed sites"
 
 exit $status
