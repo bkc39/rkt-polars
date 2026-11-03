@@ -66,7 +66,7 @@ for lib in "${libs[@]}"; do
   if ! { [ -f "$target" ] && cmp -s "$lib" "$target"; }; then
     install_by_rename "$lib" "$target" 0755
   fi
-  if [ "$(cat "$marker" 2> /dev/null)" != "$sum" ]; then
+  if ! cmp -s "$marker" <(printf '%s\n' "$sum"); then
     install_by_rename - "$marker" 0644 <<< "$sum"
   fi
 done

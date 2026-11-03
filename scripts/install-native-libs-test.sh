@@ -209,6 +209,21 @@ else
   echo "ok: a marker that holds the identical library's sha256 keeps its inode and mtime"
 fi
 
+for shape in 'no newline:%s' 'two newlines:%s\n\n' 'a carriage return:%s\r\n'; do
+  fresh
+  printf 'dev library bytes\n' > "$work/src/libcompat.so"
+  cp "$work/src/libcompat.so" "$work/dest/libcompat.so"
+  # shellcheck disable=SC2059
+  printf "${shape#*:}" "$(sha "$work/src/libcompat.so")" > "$work/dest/.libcompat.so.dev"
+  if ! bash "$script" "$work/src" "$work/dest"; then
+    fail "a marker with ${shape%%:*}: status $?"
+  elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
+    fail "a marker with ${shape%%:*} is left as it was"
+  else
+    echo "ok: a marker holding the sha256 with ${shape%%:*} is rewritten to the exact bytes"
+  fi
+done
+
 stub() {
   mkdir -p "$work/$1"
   printf '#!%s\n%s\n' "$(command -v bash)" "$3" > "$work/$1/$2"
