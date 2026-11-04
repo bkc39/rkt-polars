@@ -143,10 +143,9 @@ An expression is a value; nothing runs until a context receives it.
 bmi-expr
 ]
 
-An expression prints as its plan, in the notation Polars itself uses: the
-binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div} and
-wrapped in @tt{floor_if_integer}, which floors the quotient of two integers as Python's
-@tt{//} does; @racket[pow] appears as a method suffix.
+An expression prints as its plan, in the notation Polars itself uses;
+@racket[pow] appears as a method suffix. The binding's @racket[/] floors the
+quotient of two integers, as Python's @tt{//} does.
 
 @subsection{Contexts}
 

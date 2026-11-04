@@ -275,6 +275,13 @@ fn over_g(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
     out
 }
 
+fn i64_lists(df: *mut DataFrame) -> Vec<Vec<Option<i64>>> {
+    let lists = unsafe { &*df }.column("x").unwrap().list().unwrap().clone();
+    (0..lists.len())
+        .map(|i| lists.get_as_series(i).unwrap().i64().unwrap().to_vec())
+        .collect()
+}
+
 fn sort_of(build: fn() -> *mut Expr, flags: (u8, u8)) -> *mut Expr {
     let e = build();
     let sorted = expr_sort_with_options(e, flags.0, flags.1);
@@ -323,20 +330,14 @@ fn expr_sort_of_a_per_row_input_sorts_each_group() {
     let (df, cols) = words();
     let shifted: fn() -> *mut Expr = || boxed(col("v") + col("v").sum());
     let out = agg_by_g(df, sort_of(shifted, (1, 1)));
-    let lists = unsafe { &*out }
-        .column("x")
-        .unwrap()
-        .list()
-        .unwrap()
-        .clone();
-    let a = lists.get_as_series(0).unwrap();
-    assert_eq!(a.i64().unwrap().to_vec(), [Some(-1), Some(-2)]);
-    let b = lists.get_as_series(1).unwrap();
-    let b = b.i64().unwrap();
+    let [a, b] = &i64_lists(out)[..] else {
+        panic!("expected two groups");
+    };
+    assert_eq!(a, &[Some(-1), Some(-2)]);
     assert_eq!(b.len(), 998);
-    assert_eq!((b.get(0), b.get(997)), (Some(-499501), Some(-500498)));
+    assert_eq!((b[0], b[997]), (Some(-499501), Some(-500498)));
     dataframe_drop(out);
-    let shares: fn() -> *mut Expr = || {
+    let shares = || {
         let v = boxed(col("v"));
         let total = boxed(col("v").sum());
         let out = expr_div(v, total);
@@ -345,15 +346,11 @@ fn expr_sort_of_a_per_row_input_sorts_each_group() {
         out
     };
     let out = agg_by_g(df, sort_of(shares, (1, 1)));
-    let lists = unsafe { &*out }
-        .column("x")
-        .unwrap()
-        .list()
-        .unwrap()
-        .clone();
-    let a = lists.get_as_series(0).unwrap();
-    assert_eq!(a.i64().unwrap().to_vec(), [Some(1), Some(0)]);
-    assert_eq!(lists.get_as_series(1).unwrap().len(), 998);
+    let [a, b] = &i64_lists(out)[..] else {
+        panic!("expected two groups");
+    };
+    assert_eq!(a, &[Some(1), Some(0)]);
+    assert_eq!(b.len(), 998);
     dataframe_drop(out);
     dataframe_drop(df);
     for c in cols {

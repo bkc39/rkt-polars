@@ -21,6 +21,7 @@
            (only-in polars/private/resource with-release)
            (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
+           (only-in polars/private/generic/math p-abs)
            (only-in polars/private/generic/reshape select)
            (only-in polars/private/generic/operators
                     != < <= = > >= else-when mod otherwise p* p+ p- p-when p/ then when-pending)
@@ -139,17 +140,17 @@
                      (op s)
                      (base:- (dataframe-drop-count) before)))
                   2))
+  (define (div-plan a b)
+    (format "[(~a) rust_div (~a)].floor_if_integer([~a, ~a])" a b a b))
   (for ([unary (list (list (p- (col "value")) "col(\"value\").negate()")
                     (list (p/ (col "value"))
-                          (string-append "[(dyn int: 1) rust_div (col(\"value\"))]"
-                                         ".floor_if_integer([dyn int: 1, col(\"value\")])"
+                          (string-append (div-plan "dyn int: 1" "col(\"value\")")
                                          ".alias(\"value\")"))
                     (list (p+ (col "value")) "col(\"value\")")
                     (list (p* (col "value")) "col(\"value\")")
                     (list (p- (col "delay")) "col(\"delay\").negate()")
                     (list (p/ (col "speed"))
-                          (string-append "[(dyn int: 1) rust_div (col(\"speed\"))]"
-                                         ".floor_if_integer([dyn int: 1, col(\"speed\")])"
+                          (string-append (div-plan "dyn int: 1" "col(\"speed\")")
                                          ".alias(\"speed\")")))])
     (match-define (list e printed) unary)
     (check-equal? (format "~a" e) printed))
@@ -188,8 +189,7 @@
                     series->list)
                 '(0.25 0.125))
   (check-equal? (format "~a" (p/ (col #rx"^c1$")))
-                (string-append "[(dyn int: 1) rust_div (cs.matches(\"^(?s).*(?:^c1$).*$\"))]"
-                               ".floor_if_integer([dyn int: 1, cs.matches(\"^(?s).*(?:^c1$).*$\")])"
+                (string-append (div-plan "dyn int: 1" "cs.matches(\"^(?s).*(?:^c1$).*$\")")
                                ".name.keep()"))
   (define negated (p- withnull))
   (check-pred series? negated)
@@ -391,22 +391,21 @@
         [(list 'raises (or 'TypeError 'ValueError 'OverflowError)) '(raises contract)]
         [(list 'raises _) '(raises polars)]
         [_ out]))
-    (define (selected-outcome columns e)
-      (division-outcome
-       (lambda () (ref (select (dataframe columns) (expr-alias e "a")) "a"))))
+    (define (selected columns e)
+      (ref (select (dataframe columns) (expr-alias e "a")) "a"))
     (for ([row (in-list division-rows)])
       (match row
         [(list 'series left right expected)
          (define columns (list (division-column 'left "a" left) (division-column 'right "b" right)))
-         (check-equal? (division-outcome (lambda () (apply p/ columns)))
-                       (python-division-outcome expected)
-                       (format "~a / ~a" left right))
-         (check-equal? (selected-outcome columns (p/ (col "a") (col "b")))
-                       (python-division-outcome expected)
-                       (format "(col ~a) / (col ~a)" left right))]
+         (for ([quotient (list (lambda () (apply p/ columns))
+                               (lambda () (selected columns (p/ (col "a") (col "b")))))]
+               [form '("~a / ~a" "(col ~a) / (col ~a)")])
+           (check-equal? (division-outcome quotient)
+                         (python-division-outcome expected)
+                         (format form left right)))]
         [(list 'value left side v eager expression)
          (define a (division-column 'left "a" left))
-         (check-equal? (selected-outcome (list a) (on-side side p/ (col "a") v))
+         (check-equal? (division-outcome (lambda () (selected (list a) (on-side side p/ (col "a") v))))
                        (python-division-outcome expression)
                        (format "(col ~a) ~a ~a" left side v))
          (define ours (division-outcome (lambda () (on-side side p/ a v))))
@@ -434,7 +433,17 @@
       (dataframe (list (series '(10 -7) #:name "i") (series '(3 2) #:dtype 'u64 #:name "u"))))
     (define floored
       (select signed-unsigned (p/ (col "i") (col "u")) (expr-alias (p/ (col "i") (expt 2 63)) "big")))
-    (check-equal? (for/list ([name '("i" "big")])
-                    (define column (ref floored name))
-                    (list (dtype column) (series->list column)))
-                  '((float64 (3.0 -4.0)) (float64 (0.0 -1.0))))))
+    (define (dtypes-and-values df names)
+      (for/list ([name names])
+        (list (~> df (ref name) dtype) (~> df (ref name) series->list))))
+    (check-equal? (dtypes-and-values floored '("i" "big"))
+                  '((float64 (3.0 -4.0)) (float64 (0.0 -1.0))))
+    (define (nested depth step)
+      (for/fold ([e (col "i")]) ([_ (in-range depth)])
+        (p/ (step e) 1)))
+    (for ([step (list values p-abs)])
+      (define (printed-length depth) (string-length (format "~a" (nested depth step))))
+      (check-true (< (printed-length 16) (* 20 (printed-length 4)))
+                  (format "~a ~a" (printed-length 16) (printed-length 4))))
+    (define deep (select signed-unsigned (nested 16 values) (expr-alias (nested 16 p-abs) "abs")))
+    (check-equal? (dtypes-and-values deep '("i" "abs")) '((int64 (10 -7)) (int64 (10 7))))))

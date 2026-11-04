@@ -1,5 +1,7 @@
 use crate::prelude::*;
-use crate::{guard_panic, str_list_out, str_out, StrListOut, StrOut};
+use crate::{
+    guard_panic, str_list_out, str_out, without_floors, StrListOut, StrOut,
+};
 
 #[no_mangle]
 pub extern "C" fn expr_meta_output_name_v2(e: *const Expr) -> StrOut {
@@ -14,7 +16,7 @@ pub extern "C" fn expr_meta_output_name_v2(e: *const Expr) -> StrOut {
 #[no_mangle]
 pub extern "C" fn expr_meta_root_names(e: *const Expr) -> StrListOut {
     unsafe { e.as_ref() }.map_or(ptr::null_mut(), |expr| {
-        str_list_out(expr.clone().meta().root_names())
+        str_list_out(without_floors(expr.clone()).meta().root_names())
     })
 }
 

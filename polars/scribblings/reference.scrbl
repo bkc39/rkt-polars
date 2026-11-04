@@ -364,11 +364,10 @@ total
   @racket[cast] an operand to @racket['f64] first for the same result. A
   signed integer series beside a @racket['uint64] one has no integer
   supertype, so the quotient is @racket['float64], floored, as Python's
-  @tt{//} gives it. So is the expression form, @racket[(/ (col "i") (col "u"))]
-  of an Int64 and a UInt64 column, or of an integer column and an integer from
-  @racket[(expt 2 63)]: it floors each batch's quotient by the dtypes its
-  operands hold, which a regular expression's columns and the groups of
-  @racket[agg] and @racket[over] keep apart.
+  @tt{//} gives it. The expression form floors as the series form does:
+  @racket[(/ (col "i") (col "u"))] of an Int64 and a UInt64 column, or of an
+  integer column and an integer from @racket[(expt 2 63)], is the floored
+  @racket['float64] quotient.
 
   @examples[#:eval ev #:label #f
 (- 5)
@@ -382,8 +381,10 @@ total
 (/ (series '(1 -1 2 -2 0)))
 (/ (series '(-7 7 1)) (series '(2 2 0)))
 (/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64))
-(~> (dataframe (list (series '(10 -7) #:name "i") (series '(3 2) #:dtype 'u64 #:name "u")))
-    (select (/ (col "i") (col "u")) (alias (/ (col "i") (expt 2 63)) "big")))
+(~> (dataframe (list (series '(10 -7) #:name "i")
+                    (series '(3 2) #:dtype 'u64 #:name "u")))
+    (select (/ (col "i") (col "u"))
+            (alias (/ (col "i") (expt 2 63)) "big")))
 (/ (cast (series '(1 2 4)) 'f64))
 (+ (series (list polars-null polars-null)) 1)
 (+ (series '(1 2)) 2.5)

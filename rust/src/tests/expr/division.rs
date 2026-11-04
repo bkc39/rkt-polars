@@ -1,14 +1,14 @@
+use super::test_util::take_box;
 use super::*;
 
+const TWO_TO_63: u64 = 1 << 63;
+
 fn div(a: Expr, b: Expr) -> Expr {
-    let (a, b) = (Box::into_raw(Box::new(a)), Box::into_raw(Box::new(b)));
-    let out = expr_div(a, b);
-    assert!(!out.is_null());
-    let quotient = unsafe { (*out).clone() };
-    for e in [out, a, b] {
-        expr_drop(e);
-    }
-    quotient
+    take_box(expr_div(&a, &b)).expect("expr_div returned null")
+}
+
+pub(super) fn div_plan(a: &str, b: &str) -> String {
+    format!("[({a}) rust_div ({b})].floor_if_integer([{a}, {b}])")
 }
 
 fn frame() -> LazyFrame {
@@ -17,6 +17,7 @@ fn frame() -> LazyFrame {
         "i" => [10i64, -7, 9],
         "u" => [3u64, 2, 2],
         "f" => [10.0f64, -7.0, 9.0],
+        "b" => [3u8, 200, 7],
     ]
     .unwrap();
     df.with_column(Column::full_null("n".into(), 3, &DataType::Null))
@@ -43,24 +44,31 @@ fn floats(xs: &[f64]) -> (DataType, Vec<AnyValue<'static>>) {
     )
 }
 
+fn int64s(xs: &[i64]) -> (DataType, Vec<AnyValue<'static>>) {
+    (
+        DataType::Int64,
+        xs.iter().map(|&x| AnyValue::Int64(x)).collect(),
+    )
+}
+
+fn nested(depth: usize, step: impl Fn(Expr) -> Expr) -> Expr {
+    (0..depth).fold(col("i"), |e, _| div(step(e), lit(1)))
+}
+
 #[test]
 fn integer_quotient_floors_beside_uint64() {
     let df = selected(vec![
         div(col("i"), col("u")).alias("columns"),
-        div(col("i"), lit(1u64 << 63)).alias("literal"),
+        div(col("i"), lit(TWO_TO_63)).alias("literal"),
         div(col("f"), col("u")).alias("float"),
         div(col("i"), lit(2i32)).alias("int64"),
+        div(div(col("i"), col("u")), col("u")).alias("nested"),
     ]);
     assert_eq!(values(&df, "columns"), floats(&[3.0, -4.0, 4.0]));
     assert_eq!(values(&df, "literal"), floats(&[0.0, -1.0, 0.0]));
     assert_eq!(values(&df, "float"), floats(&[10.0 / 3.0, -3.5, 4.5]));
-    assert_eq!(
-        values(&df, "int64"),
-        (
-            DataType::Int64,
-            vec![AnyValue::Int64(5), AnyValue::Int64(-4), AnyValue::Int64(4)]
-        )
-    );
+    assert_eq!(values(&df, "int64"), int64s(&[5, -4, 4]));
+    assert_eq!(values(&df, "nested"), floats(&[1.0, -2.0, 2.0]));
 }
 
 #[test]
@@ -72,16 +80,15 @@ fn integer_quotient_floors_each_expanded_column() {
     assert_eq!(names, ["i", "f"]);
     assert_eq!(values(&df, "i"), floats(&[3.0, -4.0, 4.0]));
     assert_eq!(values(&df, "f"), floats(&[10.0 / 3.0, -3.5, 4.5]));
-    let df = selected(vec![div(col("^(i|f)$"), lit(1u64 << 63))]);
+    let df = selected(vec![div(col("^(i|f)$"), lit(TWO_TO_63))]);
     assert_eq!(values(&df, "i"), floats(&[0.0, -1.0, 0.0]));
     assert_eq!(
         values(&df, "f").1[0],
-        AnyValue::Float64(10.0 / 9223372036854775808.0)
+        AnyValue::Float64(10.0 / TWO_TO_63 as f64)
     );
     assert_eq!(
         quotient.to_string(),
-        "[(cs.matches(\"^(i|f)$\")) rust_div (col(\"u\"))]\
-         .floor_if_integer([cs.matches(\"^(i|f)$\"), col(\"u\")])"
+        div_plan("cs.matches(\"^(i|f)$\")", "col(\"u\")")
     );
 }
 
@@ -115,4 +122,55 @@ fn integer_quotient_beside_a_null_column_is_null() {
     let nulls = vec![AnyValue::Null, AnyValue::Null, AnyValue::Null];
     assert_eq!(values(&df, "left"), (DataType::Int32, nulls.clone()));
     assert_eq!(values(&df, "right"), (DataType::UInt64, nulls));
+}
+
+#[test]
+fn nested_quotients_grow_polynomially() {
+    let steps: [fn(Expr) -> Expr; 2] = [|e| e, |e| e.abs()];
+    for step in steps {
+        let length = |depth| nested(depth, step).to_string().len();
+        assert!(length(16) < 20 * length(4), "{} {}", length(16), length(4));
+    }
+    let df = selected(vec![
+        nested(16, |e| e),
+        nested(16, |e| e.abs()).alias("abs"),
+    ]);
+    assert_eq!(values(&df, "i"), int64s(&[10, -7, 9]));
+    assert_eq!(values(&df, "abs"), int64s(&[10, 7, 9]));
+}
+
+#[test]
+fn integer_quotient_keeps_the_typing_of_a_literal() {
+    let df = selected(vec![
+        div(col("b"), lit(3)).alias("u8"),
+        div(lit(300), col("b")).alias("u16"),
+        div(lit(-7), col("u")).alias("i64"),
+        div(col("b"), lit(-1)).alias("i16"),
+        div(col("b").abs(), lit(3)).alias("abs"),
+    ]);
+    let dtypes: Vec<DataType> = ["u8", "u16", "i64", "i16", "abs"]
+        .iter()
+        .map(|name| df.column(name).unwrap().dtype().clone())
+        .collect();
+    use DataType::*;
+    assert_eq!(dtypes, [UInt8, UInt16, Int64, Int16, UInt8]);
+}
+
+#[test]
+fn integer_quotient_of_compound_operands_floors() {
+    let df = selected(vec![
+        div(div(col("i"), col("u")).abs(), col("u")).alias("float"),
+        div(div(col("i"), lit(2)).abs(), col("u")).alias("integer"),
+        div(col("i").abs() + col("i"), col("u")).alias("sum"),
+    ]);
+    assert_eq!(values(&df, "float"), floats(&[1.0, 2.0, 2.0]));
+    assert_eq!(values(&df, "integer"), floats(&[1.0, 2.0, 2.0]));
+    assert_eq!(values(&df, "sum"), floats(&[6.0, 0.0, 9.0]));
+    let compound = div(col("i").sum(), col("u"));
+    assert_eq!(
+        compound.to_string(),
+        "[(col(\"i\").sum()) rust_div (col(\"u\"))]\
+         .floor_if_integer([null.cast(dtype_of(col(\"i\").sum())), \
+         col(\"u\")])"
+    );
 }
