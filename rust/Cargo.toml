@@ -42,7 +42,5 @@ inherits = "release"
 lto = "thin"
 codegen-units = 1
 
-# polars-stream 0.55.2 with vendor/polars-stream-0.55.2.patch applied, which
-# lets the CSV source take a pre-slice with a comment prefix (#270).
 [patch.crates-io]
 polars-stream = { path = "vendor/polars-stream-0.55.2" }

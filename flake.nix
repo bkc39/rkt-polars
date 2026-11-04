@@ -421,11 +421,8 @@
               fi
               touch $out
             '';
-          # rust/vendor/polars-stream-0.55.2 is the crates.io crate with
-          # rust/vendor/polars-stream-0.55.2.patch applied, and nothing else,
-          # and rust/Cargo.lock takes polars-stream from it alone (#270); the
-          # hash is the crate's Cargo.lock checksum before the vendor.
           vendored-polars-stream = pkgs.runCommand "rkt-polars-vendored-polars-stream" {
+            # The crate's Cargo.lock checksum before the vendor.
             crate = pkgs.fetchurl {
               name = "polars-stream-0.55.2.tar.gz";
               url = "https://static.crates.io/crates/polars-stream/0.55.2/download";
@@ -434,11 +431,18 @@
             patchFile = ./rust/vendor/polars-stream-0.55.2.patch;
             vendored = ./rust/vendor/polars-stream-0.55.2;
             lock = ./rust/Cargo.lock;
+            patchPath =
+              ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.polars-stream or { }).path or "";
           } ''
             mkdir pristine
             tar -xzf $crate -C pristine
             patch -d pristine/polars-stream-0.55.2 -p1 -F0 --no-backup-if-mismatch < $patchFile
             diff -r pristine/polars-stream-0.55.2 $vendored
+            if [ "$patchPath" != "vendor/polars-stream-0.55.2" ]; then
+              echo "ERROR: rust/Cargo.toml's [patch.crates-io] polars-stream path is \"$patchPath\"," \
+                "not \"vendor/polars-stream-0.55.2\"" >&2
+              exit 1
+            fi
             entry=$(grep -x -A2 'name = "polars-stream"' $lock)
             if [ "$entry" != "$(printf '%s\n' 'name = "polars-stream"' 'version = "0.55.2"' 'dependencies = [')" ] \
               || grep -q -x '\[\[patch.unused\]\]' $lock; then

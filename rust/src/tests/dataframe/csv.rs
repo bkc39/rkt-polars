@@ -2,6 +2,8 @@ use super::test_util::*;
 use super::*;
 use std::path::{Path, PathBuf};
 
+mod comment_slices;
+
 #[derive(Clone, Default)]
 struct Csv {
     options: CompatCsvOptions,
@@ -34,6 +36,22 @@ type CsvEntry<T> = extern "C" fn(
 
 fn bytes_of(s: &str) -> Vec<u8> {
     s.as_bytes().to_vec()
+}
+
+fn commented_csv(prefix: &str) -> Csv {
+    Csv {
+        comment_prefix: Some(bytes_of(prefix)),
+        ..Default::default()
+    }
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
+    gzip.write_all(bytes).expect("gzip");
+    gzip.finish().expect("gzip")
 }
 
 fn optional(block: &Option<Vec<u64>>) -> StrArg {
@@ -97,11 +115,14 @@ impl Csv {
         recorded_error().expect("a reason")
     }
 
-    fn scan_collect(&self, path: &Path) -> DataFrame {
+    fn scan(&self, path: &Path) -> LazyFrame {
         let lf = self.call(path, lazyframe_scan_csv_v3);
         assert!(!lf.is_null(), "scan failed: {:?}", recorded_error());
-        let lf = unsafe { *Box::from_raw(lf) };
-        lf.collect().expect("collect")
+        unsafe { *Box::from_raw(lf) }
+    }
+
+    fn scan_collect(&self, path: &Path) -> DataFrame {
+        self.scan(path).collect().expect("collect")
     }
 }
 
@@ -709,10 +730,7 @@ fn separator_quote_and_comment_options_apply() {
         "opts.txt",
         b"# a comment\na;b\n'x;y';1\n# another\nz;2\n",
     );
-    let mut csv = Csv {
-        comment_prefix: Some(bytes_of("#")),
-        ..Default::default()
-    };
+    let mut csv = commented_csv("#");
     csv.options.separator = b';';
     csv.options.quote_char = b'\'';
     let df = csv.read(&path);
@@ -728,11 +746,7 @@ fn separator_quote_and_comment_options_apply() {
 fn a_multi_character_comment_prefix_works() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "c.csv", b"x\n//skip\n1\n2\n");
-    let csv = Csv {
-        comment_prefix: Some(bytes_of("//")),
-        ..Default::default()
-    };
-    assert_eq!(csv.read(&path).height(), 2);
+    assert_eq!(commented_csv("//").read(&path).height(), 2);
 }
 
 #[test]
@@ -808,401 +822,6 @@ fn an_n_rows_read_gives_the_scan_outcome_every_time() {
         differing.len(),
         differing.first()
     );
-}
-
-fn commented_every_ten(text: &str) -> String {
-    text.lines()
-        .enumerate()
-        .map(|(i, line)| match i % 10 {
-            0 if i > 0 => format!("# before line {}\n{}\n", i, line),
-            _ => format!("{}\n", line),
-        })
-        .collect()
-}
-
-fn commented_late_na() -> String {
-    let text = commented_every_ten(&int_column_with_na_after(110_000));
-    assert!(
-        (900 * 1024..1200 * 1024).contains(&text.len()),
-        "{}",
-        text.len()
-    );
-    text
-}
-
-fn commented_head(n: usize) -> Csv {
-    let mut csv = Csv {
-        comment_prefix: Some(bytes_of("#")),
-        ..Default::default()
-    };
-    csv.options.has_n_rows = true;
-    csv.options.n_rows = n;
-    csv
-}
-
-fn assert_first_row_only(outcomes: [Outcome; 2]) {
-    for outcome in outcomes {
-        let df = outcome.expect("the slice stops before the NA");
-        assert_eq!(df.height(), 1);
-        assert_eq!(read_i64(&df, "id"), [0]);
-    }
-}
-
-#[test]
-fn a_commented_n_rows_read_stops_at_the_first_batch_past_the_slice() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = write(dir.path(), "late-na.csv", commented_late_na().as_bytes());
-    let csv = commented_head(1);
-    assert_first_row_only([csv.read_outcome(&path), csv.scan_outcome(&path)]);
-}
-
-#[test]
-fn a_commented_gzip_n_rows_read_decompresses_only_a_prefix() {
-    use flate2::write::GzEncoder;
-    use flate2::Compression;
-    use std::io::Write;
-    let dir = tempfile::tempdir().expect("tempdir");
-    let text = commented_late_na().replace("NA", "7");
-    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
-    gzip.write_all(text.as_bytes()).expect("gzip");
-    let mut cut = gzip.finish().expect("gzip");
-    cut.truncate(cut.len() - 64);
-    let path = write(dir.path(), "cut.csv.gz", &cut);
-    let whole = Csv {
-        comment_prefix: Some(bytes_of("#")),
-        ..Default::default()
-    };
-    assert!(whole.scan_outcome(&path).is_err());
-    let csv = commented_head(1);
-    assert_first_row_only([csv.read_outcome(&path), csv.scan_outcome(&path)]);
-}
-
-const LAW_FIXTURE_BYTES: usize = 200 * 1024;
-const FIRST_BATCH_BYTES: usize = 64 * 1024;
-
-struct LawFixture {
-    label: &'static str,
-    eol: &'static str,
-    body: String,
-    trailer: &'static str,
-    first_batch_rows: usize,
-    csv: Csv,
-}
-
-impl LawFixture {
-    fn new(
-        label: &'static str,
-        eol: &'static str,
-        preamble: &[&str],
-        comments: impl Fn(usize, usize) -> Vec<String>,
-        row: impl Fn(usize) -> String,
-        trailer: &'static str,
-        csv: Csv,
-    ) -> Self {
-        let mut body: String = preamble
-            .iter()
-            .map(|line| format!("{}{}", line, eol))
-            .collect();
-        let mut first_batch_rows = 0;
-        let mut i = 0;
-        while body.len() < LAW_FIXTURE_BYTES {
-            for comment in comments(i, body.len()) {
-                body.push_str(&comment);
-                body.push_str(eol);
-            }
-            body.push_str(&row(i));
-            body.push_str(eol);
-            if body.len() <= FIRST_BATCH_BYTES {
-                first_batch_rows = i + 1;
-            }
-            i += 1;
-        }
-        LawFixture {
-            label,
-            eol,
-            body,
-            trailer,
-            first_batch_rows,
-            csv,
-        }
-    }
-
-    fn clean(&self) -> String {
-        format!("{}{}", self.body, self.trailer)
-    }
-
-    fn terminated(&self) -> String {
-        match self.trailer {
-            "" => self.clean(),
-            trailer => format!("{}{}{}", self.body, trailer, self.eol),
-        }
-    }
-
-    fn with_a_bad_last_row(&self) -> String {
-        format!("{}oops,v{}{}", self.body, self.eol, self.trailer)
-    }
-
-    fn ends_in_the_first_two_batches(&self, offset: usize, n: usize) -> bool {
-        offset + n <= self.first_batch_rows + 100
-    }
-}
-
-fn law_fixtures() -> Vec<LawFixture> {
-    let with_prefix = |prefix: &str| Csv {
-        comment_prefix: Some(bytes_of(prefix)),
-        ..Default::default()
-    };
-    let hash = with_prefix("#");
-    let mut skip_two = hash.clone();
-    skip_two.options.skip_rows_after_header = 2;
-    let row = |i: usize| format!("{},v{}", i, i % 13);
-    let every_ten = |prefix: &'static str| {
-        move |i: usize, _: usize| match i % 10 {
-            0 => vec![format!("{} note {}", prefix, i)],
-            _ => vec![],
-        }
-    };
-    vec![
-        LawFixture::new(
-            "comments around the header",
-            "\n",
-            &["# first", "# second", "id,s", "# after the header"],
-            every_ten("#"),
-            row,
-            "",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "runs of comments",
-            "\n",
-            &["id,s"],
-            |i, _| match i % 37 {
-                0 => vec!["# run".to_string(); i % 5 + 1],
-                _ => vec![],
-            },
-            row,
-            "",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "a quote in a comment",
-            "\n",
-            &["id,s"],
-            |i, _| match i % 10 {
-                0 => vec![format!("# say \"hi {}", i)],
-                _ => vec![],
-            },
-            row,
-            "",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "a quoted line that starts with the prefix",
-            "\n",
-            &["id,s"],
-            every_ten("#"),
-            |i| match i % 25 {
-                0 => format!("{},\"first\n# not a comment\"", i),
-                _ => row(i),
-            },
-            "",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "crlf",
-            "\r\n",
-            &["id,s"],
-            every_ten("#"),
-            row,
-            "",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "the // prefix",
-            "\n",
-            &["id,s"],
-            every_ten("//"),
-            row,
-            "",
-            with_prefix("//"),
-        ),
-        LawFixture::new(
-            "a final comment without a newline",
-            "\n",
-            &["id,s"],
-            every_ten("#"),
-            row,
-            "# the end",
-            hash.clone(),
-        ),
-        LawFixture::new(
-            "comments across the first batch boundary",
-            "\n",
-            &["id,s"],
-            |i, at| match (40 * 1024..96 * 1024).contains(&at) {
-                true => vec![format!("# across {}", i); 3],
-                false => every_ten("#")(i, at),
-            },
-            row,
-            "",
-            hash,
-        ),
-        LawFixture::new(
-            "two rows skipped after the header",
-            "\n",
-            &["id,s", "# a", "# b"],
-            every_ten("#"),
-            row,
-            "",
-            skip_two,
-        ),
-    ]
-}
-
-fn same_frame(a: &DataFrame, b: &DataFrame) -> bool {
-    a.schema() == b.schema() && a.equals_missing(b)
-}
-
-fn slice_law_violations(fixture: &LawFixture, dir: &Path) -> Vec<String> {
-    let clean = write(dir, "clean.csv", fixture.clean().as_bytes());
-    let terminated =
-        write(dir, "terminated.csv", fixture.terminated().as_bytes());
-    let bad = write(dir, "bad.csv", fixture.with_a_bad_last_row().as_bytes());
-    let mut violations = Vec::new();
-    for row_index in [None, Some(bytes_of("i"))] {
-        let csv = Csv {
-            row_index_name: row_index.clone(),
-            ..fixture.csv.clone()
-        };
-        let label =
-            format!("{}, row index {:?}", fixture.label, row_index.is_some());
-        let full = match csv.scan_outcome(&terminated) {
-            Ok(full) => full,
-            Err(e) => {
-                violations
-                    .push(format!("{}: the full read failed: {}", label, e));
-                continue;
-            }
-        };
-        let first = fixture.first_batch_rows;
-        let total = full.height();
-        let lens = [
-            0,
-            1,
-            2,
-            99,
-            100,
-            first - 1,
-            first,
-            first + 1,
-            total - 1,
-            total,
-            total + 5,
-        ];
-        for offset in [0, 1, 1000, first + 1, total / 2] {
-            for n in lens {
-                let expected = full.slice(offset as i64, n);
-                let near = fixture.ends_in_the_first_two_batches(offset, n);
-                let mut paths = vec![&terminated];
-                if near || fixture.trailer.is_empty() {
-                    paths.push(&clean);
-                }
-                if near {
-                    paths.push(&bad);
-                }
-                for path in paths {
-                    let lf = csv.call(path, lazyframe_scan_csv_v3);
-                    assert!(
-                        !lf.is_null(),
-                        "scan failed: {:?}",
-                        recorded_error()
-                    );
-                    let lf = unsafe { *Box::from_raw(lf) };
-                    let got = lf.slice(offset as i64, n as IdxSize).collect();
-                    if !got.as_ref().is_ok_and(|got| same_frame(got, &expected))
-                    {
-                        violations.push(format!(
-                            "{} on {:?}: slice({}, {}) gave {:?}",
-                            label,
-                            path.file_name().unwrap(),
-                            offset,
-                            n,
-                            got.map(|df| df.shape())
-                        ));
-                    }
-                }
-            }
-        }
-        for n in lens {
-            let mut read = csv.clone();
-            read.options.has_n_rows = true;
-            read.options.n_rows = n;
-            let got = read.read_outcome(&terminated);
-            if !got
-                .as_ref()
-                .is_ok_and(|got| same_frame(got, &full.head(Some(n))))
-            {
-                violations.push(format!(
-                    "{}: n rows {} gave {:?}",
-                    label,
-                    n,
-                    got.map(|df| df.shape())
-                ));
-            }
-        }
-    }
-    violations
-}
-
-#[test]
-fn a_final_comment_without_a_newline_fails_a_scan_past_one_batch() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let csv = Csv {
-        comment_prefix: Some(bytes_of("#")),
-        ..Default::default()
-    };
-    let rows: String =
-        (0..20_000).map(|i| format!("{},{}\n", i, i % 7)).collect();
-    let text = format!("a,b\n{}# the end", rows);
-    let path = write(dir.path(), "end.csv", text.as_bytes());
-    let ended =
-        write(dir.path(), "ended.csv", format!("{}\n", text).as_bytes());
-    let reference = csv.scan_collect(&ended);
-    assert_eq!(reference.height(), 20_000);
-    let scan = csv.scan_outcome(&path);
-    assert!(
-        scan.as_ref()
-            .is_err_and(|e| e
-                .starts_with("CSV malformed: expected 1 rows, actual 0 rows")),
-        "{:?}",
-        scan
-    );
-    assert!(same_frame(&csv.read(&path), &reference));
-    assert!(same_outcome(
-        &commented_head(2).read_outcome(&path),
-        &Ok(reference.head(Some(2)))
-    ));
-}
-
-#[test]
-fn a_pushed_slice_with_comments_equals_the_full_read_cut() {
-    let fixtures = law_fixtures();
-    let violations: Vec<String> = std::thread::scope(|scope| {
-        let checks: Vec<_> = fixtures
-            .iter()
-            .map(|fixture| {
-                scope.spawn(move || {
-                    let dir = tempfile::tempdir().expect("tempdir");
-                    slice_law_violations(fixture, dir.path())
-                })
-            })
-            .collect();
-        checks
-            .into_iter()
-            .flat_map(|check| check.join().expect("a fixture's check"))
-            .collect()
-    });
-    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 #[test]
@@ -1815,16 +1434,14 @@ fn a_count_past_the_input_or_the_memory_infers_from_every_row() {
 }
 
 fn newlines_compressed(lines: usize) -> [(&'static str, Vec<u8>, u64); 3] {
-    use flate2::write::{GzEncoder, ZlibEncoder};
+    use flate2::write::ZlibEncoder;
     use flate2::Compression;
     use std::io::Write;
     let text = vec![b'\n'; lines];
-    let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
-    gzip.write_all(&text).expect("gzip");
     let mut zlib = ZlibEncoder::new(Vec::new(), Compression::best());
     zlib.write_all(&text).expect("zlib");
     [
-        ("lines.csv.gz", gzip.finish().expect("gzip"), 1032),
+        ("lines.csv.gz", gzip_bytes(&text), 1032),
         ("lines.csv.zlib", zlib.finish().expect("zlib"), 1032),
         (
             "lines.csv.zst",

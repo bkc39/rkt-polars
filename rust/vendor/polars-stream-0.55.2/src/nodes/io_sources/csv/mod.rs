@@ -46,6 +46,8 @@ const NO_SLICE: (usize, usize) = (0, usize::MAX);
 /// This is used if we finish the slice but still need a row count. It signals to the workers to
 /// go into line-counting mode where they can skip parsing the chunks.
 const SLICE_ENDED: (usize, usize) = (usize::MAX, 0);
+/// Parse the chunk and check its height against the line count, but emit no rows.
+const CHECK_ONLY: (usize, usize) = (0, 0);
 
 struct CsvFileReader {
     scan_source: ScanSource,
@@ -356,6 +358,7 @@ impl FileReader for CsvFileReader {
                 let quote_char = options.parse_options.quote_char;
                 let eol_char = options.parse_options.eol_char;
                 let comment_prefix = options.parse_options.comment_prefix.clone();
+                let check_every_batch = comment_prefix.is_some();
 
                 let line_counter = CountLines::new(quote_char, eol_char, comment_prefix);
 
@@ -372,6 +375,7 @@ impl FileReader for CsvFileReader {
                             line_batch_tx,
                             pre_slice,
                             needs_full_row_count,
+                            check_every_batch,
                             use_async_prefetch,
                             verbose,
                         }

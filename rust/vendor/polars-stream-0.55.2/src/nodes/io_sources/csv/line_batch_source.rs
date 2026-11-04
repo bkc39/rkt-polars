@@ -11,7 +11,7 @@ use polars_io::utils::stream_buf_reader::ReaderSource;
 use polars_utils::mem::prefetch::prefetch_l2;
 use polars_utils::slice_enum::Slice;
 
-use super::{NO_SLICE, SLICE_ENDED};
+use super::{CHECK_ONLY, NO_SLICE, SLICE_ENDED};
 use crate::nodes::MorselSeq;
 use crate::utils::tokio_handle_ext;
 
@@ -32,6 +32,10 @@ pub(super) struct LineBatchSource {
     pub(super) line_batch_tx: distributor_channel::Sender<LineBatch>,
     pub(super) pre_slice: Option<Slice>,
     pub(super) needs_full_row_count: bool,
+    /// Set with a comment prefix, where the line counter and the parser can agree on a batch's
+    /// row count but not on where its rows end: batch boundaries then do not depend on the slice,
+    /// and every batch before the slice's end, or with no counted lines, is parsed and checked.
+    pub(super) check_every_batch: bool,
     pub(super) use_async_prefetch: bool,
     pub(super) verbose: bool,
 }
@@ -60,6 +64,7 @@ impl LineBatchSource {
             self.line_counter,
             self.pre_slice,
             self.needs_full_row_count,
+            self.check_every_batch,
             use_l2_prefetch,
         );
         let mut line_batch_tx = self.line_batch_tx;
@@ -94,6 +99,7 @@ impl LineBatchSource {
                     self.line_counter,
                     self.pre_slice,
                     self.needs_full_row_count,
+                    self.check_every_batch,
                     use_l2_prefetch,
                 );
 
@@ -120,6 +126,7 @@ struct LineBatchProducer {
     line_counter: CountLines,
     global_slice: Option<Range<usize>>,
     needs_full_row_count: bool,
+    check_every_batch: bool,
     use_prefetch_l2: bool,
     row_offset: usize,
     morsel_seq: MorselSeq,
@@ -135,6 +142,7 @@ impl LineBatchProducer {
         line_counter: CountLines,
         pre_slice: Option<Slice>,
         needs_full_row_count: bool,
+        check_every_batch: bool,
         use_prefetch_l2: bool,
     ) -> Self {
         let global_slice = if let Some(pre_slice) = pre_slice {
@@ -154,6 +162,7 @@ impl LineBatchProducer {
             line_counter,
             global_slice,
             needs_full_row_count,
+            check_every_batch,
             use_prefetch_l2,
             row_offset: 0,
             morsel_seq: MorselSeq::default(),
@@ -208,11 +217,24 @@ impl LineBatchProducer {
                     n_lines,
                     global_slice.clone(),
                 ) {
+                    SplitSlicePosition::Before
+                        if self.check_every_batch && !self.needs_full_row_count =>
+                    {
+                        CHECK_ONLY
+                    },
                     SplitSlicePosition::Before => {
                         self.n_rows_skipped = self.n_rows_skipped.saturating_add(n_lines);
+                        if self.check_every_batch {
+                            self.grow_read_size();
+                        }
                         continue;
                     },
                     SplitSlicePosition::Overlapping(offset, len) => (offset, len),
+                    SplitSlicePosition::After
+                        if self.check_every_batch && !self.needs_full_row_count && n_lines == 0 =>
+                    {
+                        CHECK_ONLY
+                    },
                     SplitSlicePosition::After => {
                         if self.needs_full_row_count {
                             SLICE_ENDED
@@ -240,11 +262,15 @@ impl LineBatchProducer {
                 self.finished = true;
             }
 
-            if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
-                self.read_size *= 4;
-            }
+            self.grow_read_size();
 
             return Ok(Some(batch));
+        }
+    }
+
+    fn grow_read_size(&mut self) {
+        if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
+            self.read_size *= 4;
         }
     }
 

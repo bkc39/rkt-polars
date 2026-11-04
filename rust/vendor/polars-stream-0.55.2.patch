@@ -1,21 +1,137 @@
 --- a/src/nodes/io_sources/csv/builder.rs
 +++ b/src/nodes/io_sources/csv/builder.rs
-@@ -42,11 +42,7 @@
+@@ -42,7 +42,9 @@
      fn reader_capabilities(&self) -> ReaderCapabilities {
          use ReaderCapabilities as RC;
  
 -        if self.options.parse_options.comment_prefix.is_some() {
--            RC::empty()
--        } else {
--            RC::PRE_SLICE
--        }
-+        RC::PRE_SLICE
++        // With `ignore_errors` a batch whose parsed height differs from its counted lines is only
++        // a warning, so the slice cannot be cut by the line counter.
++        if self.options.parse_options.comment_prefix.is_some() && self.options.ignore_errors {
+             RC::empty()
+         } else {
+             RC::PRE_SLICE
+--- a/src/nodes/io_sources/csv/line_batch_source.rs
++++ b/src/nodes/io_sources/csv/line_batch_source.rs
+@@ -11,7 +11,7 @@
+ use polars_utils::mem::prefetch::prefetch_l2;
+ use polars_utils::slice_enum::Slice;
+ 
+-use super::{NO_SLICE, SLICE_ENDED};
++use super::{CHECK_ONLY, NO_SLICE, SLICE_ENDED};
+ use crate::nodes::MorselSeq;
+ use crate::utils::tokio_handle_ext;
+ 
+@@ -32,6 +32,10 @@
+     pub(super) line_batch_tx: distributor_channel::Sender<LineBatch>,
+     pub(super) pre_slice: Option<Slice>,
+     pub(super) needs_full_row_count: bool,
++    /// Set with a comment prefix, where the line counter and the parser can agree on a batch's
++    /// row count but not on where its rows end: batch boundaries then do not depend on the slice,
++    /// and every batch before the slice's end, or with no counted lines, is parsed and checked.
++    pub(super) check_every_batch: bool,
+     pub(super) use_async_prefetch: bool,
+     pub(super) verbose: bool,
+ }
+@@ -60,6 +64,7 @@
+             self.line_counter,
+             self.pre_slice,
+             self.needs_full_row_count,
++            self.check_every_batch,
+             use_l2_prefetch,
+         );
+         let mut line_batch_tx = self.line_batch_tx;
+@@ -94,6 +99,7 @@
+                     self.line_counter,
+                     self.pre_slice,
+                     self.needs_full_row_count,
++                    self.check_every_batch,
+                     use_l2_prefetch,
+                 );
+ 
+@@ -120,6 +126,7 @@
+     line_counter: CountLines,
+     global_slice: Option<Range<usize>>,
+     needs_full_row_count: bool,
++    check_every_batch: bool,
+     use_prefetch_l2: bool,
+     row_offset: usize,
+     morsel_seq: MorselSeq,
+@@ -135,6 +142,7 @@
+         line_counter: CountLines,
+         pre_slice: Option<Slice>,
+         needs_full_row_count: bool,
++        check_every_batch: bool,
+         use_prefetch_l2: bool,
+     ) -> Self {
+         let global_slice = if let Some(pre_slice) = pre_slice {
+@@ -154,6 +162,7 @@
+             line_counter,
+             global_slice,
+             needs_full_row_count,
++            check_every_batch,
+             use_prefetch_l2,
+             row_offset: 0,
+             morsel_seq: MorselSeq::default(),
+@@ -208,11 +217,24 @@
+                     n_lines,
+                     global_slice.clone(),
+                 ) {
++                    SplitSlicePosition::Before
++                        if self.check_every_batch && !self.needs_full_row_count =>
++                    {
++                        CHECK_ONLY
++                    },
+                     SplitSlicePosition::Before => {
+                         self.n_rows_skipped = self.n_rows_skipped.saturating_add(n_lines);
++                        if self.check_every_batch {
++                            self.grow_read_size();
++                        }
+                         continue;
+                     },
+                     SplitSlicePosition::Overlapping(offset, len) => (offset, len),
++                    SplitSlicePosition::After
++                        if self.check_every_batch && !self.needs_full_row_count && n_lines == 0 =>
++                    {
++                        CHECK_ONLY
++                    },
+                     SplitSlicePosition::After => {
+                         if self.needs_full_row_count {
+                             SLICE_ENDED
+@@ -240,14 +262,18 @@
+                 self.finished = true;
+             }
+ 
+-            if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
+-                self.read_size *= 4;
+-            }
++            self.grow_read_size();
+ 
+             return Ok(Some(batch));
+         }
      }
  
-     fn set_execution_state(&self, execution_state: &crate::execute::StreamingExecutionState) {
++    fn grow_read_size(&mut self) {
++        if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
++            self.read_size *= 4;
++        }
++    }
++
+     fn n_rows_skipped(&self) -> usize {
+         self.n_rows_skipped
+     }
 --- a/src/nodes/io_sources/csv/mod.rs
 +++ b/src/nodes/io_sources/csv/mod.rs
-@@ -187,15 +187,6 @@
+@@ -46,6 +46,8 @@
+ /// This is used if we finish the slice but still need a row count. It signals to the workers to
+ /// go into line-counting mode where they can skip parsing the chunks.
+ const SLICE_ENDED: (usize, usize) = (usize::MAX, 0);
++/// Parse the chunk and check its height against the line count, but emit no rows.
++const CHECK_ONLY: (usize, usize) = (0, 0);
+ 
+ struct CsvFileReader {
+     scan_source: ScanSource,
+@@ -187,15 +189,6 @@
          match &pre_slice {
              Some(Slice::Negative { .. }) => unimplemented!(),
  
@@ -31,3 +147,19 @@
              _ => {},
          }
  
+@@ -365,6 +358,7 @@
+                 let quote_char = options.parse_options.quote_char;
+                 let eol_char = options.parse_options.eol_char;
+                 let comment_prefix = options.parse_options.comment_prefix.clone();
++                let check_every_batch = comment_prefix.is_some();
+ 
+                 let line_counter = CountLines::new(quote_char, eol_char, comment_prefix);
+ 
+@@ -381,6 +375,7 @@
+                             line_batch_tx,
+                             pre_slice,
+                             needs_full_row_count,
++                            check_every_batch,
+                             use_async_prefetch,
+                             verbose,
+                         }

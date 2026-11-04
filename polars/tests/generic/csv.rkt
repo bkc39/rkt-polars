@@ -5,10 +5,11 @@
            racket/file
            racket/runtime-path
            (only-in racket/dict in-dict)
-           (only-in racket/list filter-map range remove-duplicates second)
+           (only-in racket/format ~a)
+           (only-in racket/list append* filter-map range remove-duplicates second)
            (only-in racket/match match match-define match-lambda)
            (only-in racket/sequence sequence->list)
-           (only-in racket/string string-contains? string-join)
+           (only-in racket/string string-append* string-contains? string-join)
            (only-in polars/private/bulk in-series series->list)
            (only-in threading ~>)
            (only-in gregor date datetime moment)
@@ -18,7 +19,7 @@
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
-           (only-in polars/private/generic/reshape collect head)
+           (only-in polars/private/generic/reshape collect head slice tail)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
                     frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
@@ -214,20 +215,42 @@
   (check-equal? (column (read-csv commented #:comment-prefix "#") "a") '(1 3))
   (define slashed (scratch-file scratch "slashed.csv" "x\n//skip\n1\n"))
   (check-equal? (column (read-csv slashed #:comment-prefix "//") "x") '(1))
-  (define commented-late-na (build-path scratch "commented-late-na.csv"))
-  (display-lines-to-file
-   (append '("id,delay")
-           (for*/list ([i (in-range 110000)]
-                       [line (in-list (if (zero? (modulo i 10))
-                                          (list (format "~a,~a" i (modulo i 7))
-                                                (format "# after row ~a" i))
-                                          (list (format "~a,~a" i (modulo i 7)))))])
-             line)
-           '("110000,NA"))
-   commented-late-na)
+  (define (csv-lines . lines) (string-append* (for/list ([line (in-list lines)]) (~a line "\n"))))
+  (define commented-late-na
+    (scratch-file
+     scratch "commented-late-na.csv"
+     (apply csv-lines
+            "id,delay"
+            (append (append* (for/list ([i (in-range 0 20000 10)])
+                               (cons (format "# before row ~a" i)
+                                     (for/list ([j (in-range i (+ i 10))])
+                                       (format "~a,~a" j (modulo j 7))))))
+                    '("20000,NA")))))
   (check-equal? (column (read-csv commented-late-na #:n-rows 1 #:comment-prefix "#") "id") '(0))
   (check-equal? (column (~> (scan-csv commented-late-na #:comment-prefix "#") (head 1) collect) "id")
                 '(0))
+  (define stray-quote-resynchronised
+    (scratch-file
+     scratch "stray-quote.csv"
+     (apply csv-lines
+            "a,b"
+            (append (for/list ([i (in-range 8000)]) (format "r~a,v~a" i (modulo i 7)))
+                    (list "p1,a\"b" "p2,\"x" (~a (make-string 40000 #\y) "\"") "# \"")
+                    (for/list ([i (in-range 20000)]) (format "s~a,v~a" i (modulo i 7)))))))
+  (define stray-full (collect (scan-csv stray-quote-resynchronised #:comment-prefix "#")))
+  (check-equal? (height stray-full) 28002)
+  (check-true (frame=? (~> (scan-csv stray-quote-resynchronised #:comment-prefix "#") (slice 8001 2) collect)
+                       (slice stray-full 8001 2)))
+  (check-true (frame=? (~> (scan-csv stray-quote-resynchronised #:comment-prefix "#") (tail 20002) collect)
+                       (tail stray-full 20002)))
+  (define stray-ignored (scratch-file scratch "stray-ignored.csv" "a,b\n1,5\"\n2,6\n# note\n3,7\n"))
+  (check-equal? (column (read-csv stray-ignored #:comment-prefix "#" #:ignore-errors #t #:n-rows 2) "b")
+                '("5\"" "6"))
+  (define unended
+    (scratch-file scratch "unended.csv"
+                  (~a (apply csv-lines "a" (for/list ([i (in-range 20000)]) (~a "v" i))) "x#y")))
+  (check-equal? (height (read-csv unended #:comment-prefix "#" #:ignore-errors #t #:n-rows 20001))
+                20001)
 
   (define latin (scratch-file scratch "latin.csv" #"s\ncaf\351\n"))
   (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))
