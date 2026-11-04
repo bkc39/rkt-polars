@@ -2096,7 +2096,9 @@ a duration truncated toward zero. A value the dtype cannot hold raises, and
 so does a date or datetime outside the years -262143 to 262142, which Polars
 cannot print. A datetime dtype takes a gregor @tt{date} as its midnight, as
 Python's @tt{pl.Series([date(2013, 1, 1)], dtype=pl.Datetime)} does, but not a
-list that mixes dates with datetimes or moments, which Python refuses too.
+list that mixes dates with datetimes or moments, which Python refuses too. A
+@racket['date] dtype refuses a datetime or moment, where Python ignores
+@tt{dtype=pl.Date} and returns a @tt{Datetime} column.
 
 A gregor @tt{moment} is an instant with a time zone, and makes a zoned
 column, as Python's aware @tt{datetime} does. A column has one zone, so a
@@ -2106,10 +2108,11 @@ or @racket["UTC"]; a moment at a fixed offset (gregor's @racket[#:tz 3600])
 gives @racket["UTC"]; and each other moment keeps its instant in that zone.
 A naive gregor @tt{datetime} in a zoned column is read as UTC, and a
 @tt{date} as its midnight in UTC, as in Python. A list whose first value is
-naive makes a naive column of each moment's UTC clock time. @racket[#:dtype] names the column's dtype outright, under the same
-reading: a zoned dtype converts every moment to its zone, and a naive one
-takes each moment's UTC clock time, where Python's
-@tt{pl.Datetime("us")} keeps the values' zone.
+naive makes a naive column of each moment's UTC clock time.
+@racket[#:dtype] names the column's dtype outright, under the same reading:
+a zoned dtype converts every moment to its zone, and a naive one takes each
+moment's UTC clock time, where Python's @tt{pl.Datetime("us")} keeps the
+values' zone.
 
 Polars reads zones from chrono-tz's compiled copy of the tz database, and
 every reading here is Polars': a moment read back carries the offset Polars

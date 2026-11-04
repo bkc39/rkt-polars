@@ -848,14 +848,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:dtype` does, so `(series (list (now) (datetime 1600 1 1)))` builds
   although `(now)` nearly always carries nanoseconds. `#:dtype` drops a finer
   part as a polars cast does: a datetime floors, a duration truncates toward
-  zero. A datetime `#:dtype` takes a gregor `date` as its midnight (in UTC
-  for a zoned dtype), as Python's `pl.Series([date(...)], dtype=pl.Datetime)`
-  does (#168); a list that mixes dates with datetimes or moments is refused
-  with or without `#:dtype`, as in Python. The encoder `temporal-encoder`
-  returns keeps the kind of the first date or datetime it encodes and refuses
-  the other, so each list takes a fresh one. A date or datetime outside
-  chrono's years (-262143 to 262142) is refused, since polars panics
-  printing one. A `cast` still makes one (#141):
+  zero. A datetime `#:dtype` takes a gregor `date` as its midnight, midnight
+  UTC for a zoned dtype, as Python's `pl.Series([date(...)],
+  dtype=pl.Datetime)` does (#168), and a list that mixes dates with
+  datetimes or moments is refused, with or without `#:dtype`, as in Python.
+  A `'date` `#:dtype` refuses a datetime, where Python ignores it. A date or
+  datetime outside chrono's years (-262143 to 262142) is refused, since
+  polars panics printing one. A `cast` still makes one (#141):
   `ref`, the conversions and the series printer read it as gregor's value
   (`ref` reads a date through the bulk copy, as `series->list` does, so the
   two agree; a zoned series prints without its zone abbreviations when

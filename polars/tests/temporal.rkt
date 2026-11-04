@@ -7,8 +7,9 @@
                     date datetime moment moment->iso8601/tzid posix->moment)
            (only-in gregor/period days hours milliseconds months nanoseconds period weeks)
            (only-in polars/private/temporal
-                    days->date epoch->datetime epoch->moment nanoseconds->time offset-unit per-second
-                    temporal-encoder temporal-value-dtype temporal-values-dtype utc-offset)
+                    check-date-datetime-mix days->date epoch->datetime epoch->moment nanoseconds->time
+                    offset-unit per-second temporal-encoder temporal-value-dtype temporal-values-dtype
+                    utc-offset)
            (only-in (submod polars/private/temporal gregor-private) check-gregor-export)
            (only-in (submod polars/private/temporal internal) int64? ns/second))
 
@@ -176,14 +177,24 @@
              (lambda () ((temporal-encoder 'test '(datetime nanoseconds #f)) (date 1500 1 1))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime milliseconds #f\\)"
              (lambda () ((temporal-encoder 'test '(datetime milliseconds #f)) (date 262143 1 1))))
-  (for ([pair (list (list (date 2013 1 1) (datetime 2013 1 1 5))
-                      (list (datetime 2013 1 1 5) (date 2013 1 1))
-                      (list (moment 2013 1 1 #:tz "UTC") (date 2013 1 1)))])
-    (define encode (temporal-encoder 'test '(datetime microseconds #f)))
-    (check-not-exn (lambda () (encode (car pair))))
+  (define encode-datetime (temporal-encoder 'test '(datetime microseconds #f)))
+  (check-equal? (map encode-datetime
+                     (list (datetime 2013 1 1 5) (date 2013 1 1) (moment 2013 1 1 #:tz "UTC")
+                           (date 2013 1 2)))
+                (map (lambda (s) (* s 1000000)) '(1357016400 1356998400 1356998400 1357084800)))
+  (for ([mixed (list (list (date 2013 1 1) (datetime 2013 1 1 5))
+                     (list (datetime 2013 1 1 5) (datetime 2013 1 2) (date 2013 1 1))
+                     (vector (moment 2013 1 1 #:tz "UTC") (date 2013 1 1)))]
+        [other '("#<datetime 2013-01-01T05:00:00>" "#<date 2013-01-01>" "#<date 2013-01-01>")])
     (check-exn (regexp (string-append "^test: cannot mix gregor dates with datetimes or moments\n"
-                                      "  dtype: '\\(datetime microseconds #f\\)\n  value: #<"))
-               (lambda () (encode (cadr pair)))))
+                                      "  dtype: '\\(datetime microseconds #f\\)\n"
+                                      "  value: " (regexp-quote other) "$"))
+               (lambda () (check-date-datetime-mix 'test '(datetime microseconds #f) mixed))))
+  (for ([dtype '(datetime (datetime nanoseconds "UTC") date)]
+        [vals (list (list (date 2013 1 1) (date 2013 1 2))
+                    (vector (datetime 2013 1 1) (moment 2013 1 1 #:tz "UTC"))
+                    (list (date 2013 1 1) (datetime 2013 1 1)))])
+    (check-not-exn (lambda () (check-date-datetime-mix 'test dtype vals))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: '\\(datetime nanoseconds \"UTC\"\\)"
              (lambda () ((temporal-encoder 'test '(datetime nanoseconds "UTC"))
                          (moment 1500 #:tz "UTC"))))

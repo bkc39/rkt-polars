@@ -38,7 +38,8 @@
          (only-in gregor/time time time?)
          racket/match)
 
-(provide days->date
+(provide check-date-datetime-mix
+         days->date
          epoch->datetime
          epoch->moment
          nanoseconds->time
@@ -209,23 +210,30 @@
     ['time (encoder time? "a gregor time" time->nanoseconds (lambda (_t _ns) #t))]
     [(or 'datetime (list* 'datetime _))
      (define unit (if (pair? dtype) (cadr dtype) 'microseconds))
-     (define encode
-       (encoder (lambda (v) (or (date? v) (datetime-like? v))) "a gregor date, datetime or moment"
-                (lambda (v) (floor-nanoseconds->unit (datetime->nanoseconds (utc-clock v)) unit))
-                (lambda (v ticks) (and (printable? (utc-clock v)) (int64? ticks)))))
-     (define seen-kind #f)
-     (lambda (v)
-       (define kind (temporal-kind v))
-       (when (memq kind '(date datetime))
-         (set! seen-kind (or seen-kind kind))
-         (unless (eq? kind seen-kind)
-           (raise-arguments-error who "cannot mix gregor dates with datetimes or moments"
-                                  "dtype" dtype "value" v)))
-       (encode v))]
+     (encoder (lambda (v) (or (date? v) (datetime-like? v))) "a gregor date, datetime or moment"
+              (lambda (v) (floor-nanoseconds->unit (datetime->nanoseconds (utc-clock v)) unit))
+              (lambda (v ticks) (and (printable? (utc-clock v)) (int64? ticks))))]
     [(list* 'duration unit _)
      (encoder fixed-length-period? "a gregor period without years or months"
               (lambda (p) (truncate-nanoseconds->unit (period->nanoseconds p) unit))
               (lambda (_p ticks) (int64? ticks)))]))
+
+(define (check-date-datetime-mix who dtype vals)
+  (define dated
+    (match dtype
+      [(or 'datetime (list* 'datetime _))
+       (for/list ([v (if (vector? vals) (in-vector vals) (in-list vals))]
+                  #:when (memq (temporal-kind v) '(date datetime)))
+         v)]
+      [_ '()]))
+  (define other
+    (match dated
+      [(cons head rest)
+       (for/first ([v (in-list rest)] #:unless (eq? (temporal-kind v) (temporal-kind head))) v)]
+      ['() #f]))
+  (when other
+    (raise-arguments-error who "cannot mix gregor dates with datetimes or moments"
+                           "dtype" dtype "value" other)))
 
 (module+ internal
   (provide int64? ns/second))
