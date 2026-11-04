@@ -29,10 +29,12 @@
          [(expression-form-op 'name expr-op a b) => values]
          [(series? a)
           (call-with-operand-series 'name a b 'right
-                                    (lambda (o) (named-after 'name a b (series-op 'name a o))))]
+                                    (lambda (self o)
+                                      (named-after 'name a b (series-op 'name self o))))]
          [(series? b)
           (call-with-operand-series 'name b a 'left
-                                    (lambda (o) (named-after 'name b a (series-op-reflected 'name b o))))]
+                                    (lambda (self o)
+                                      (named-after 'name b a (series-op-reflected 'name self o))))]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
 
@@ -61,10 +63,10 @@
         [(expression-form-op who expr-op a b) => values]
         [(series? a)
          (call-with-operand-series who a b 'right
-                                   (lambda (o) (wrap-series (series-op who a o 'right))))]
+                                   (lambda (self o) (wrap-series (series-op who self o 'right))))]
         [(series? b)
          (call-with-operand-series who b a 'left
-                                   (lambda (o) (wrap-series (series-op who o b 'left))))]
+                                   (lambda (self o) (wrap-series (series-op who o self 'left))))]
         [else (base-op a b)]))
 
 (define ((sideless series-op) who a b _side)

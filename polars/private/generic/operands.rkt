@@ -7,7 +7,7 @@
          (only-in polars/private/foreign
                   call/foreign-error dataframe-drop dataframe-new enum-dtype? polars-null?
                   series-drop series-dtype series-len series-name series-value)
-         (only-in (submod polars/private/foreign internal) dataframe-column/who)
+         (only-in (submod polars/private/foreign internal) dataframe-column/who series-cast-to)
          (only-in polars/private/expr
                   expr-alias expr-all expr-drop expr-eq expr-max expr-min lazyframe-collect/raw
                   lazyframe-select lit/who)
@@ -81,9 +81,18 @@
     [(or 'string 'categorical 'boolean 'null) (list dt)]
     [_ '(other)]))
 
+(define (series-classes dt)
+  (cons 'series
+        (for/list ([c (in-list (dtype-classes dt))])
+          (string->symbol (format "~a-series" c)))))
+
+(define (operand-classes dt v)
+  (match v
+    [(? series?) (series-classes (series-dtype v))]
+    [_ (list (operand-class dt v))]))
+
 (define (operand-class dt v)
   (match v
-    [(? series?) 'series]
     [(? polars-null?) 'null]
     [(? boolean?) 'boolean]
     [(? exact-integer?)
@@ -110,12 +119,21 @@
 
 (define operand-rules
   '([mod        temporal              _                                   modulo]
+    [sub        temporal              null-series                         cast-other]
+    [add        duration              null-series                         cast-other]
+    [sub        null                  temporal-series                     cast-self]
+    [add        null                  duration-series                     cast-self]
+    [add        string                (date-series time-series datetime-series)
+                                      text]
+    [add        (date time datetime)  string-series                       self-text]
     [_          _                     series                              series]
     [div        null                  null                                same]
     [_          _                     null                                expression]
     [_          null                  (boolean integer real text date time datetime moment duration)
                                       expression]
     [_          enum                  text                                expression]
+    [add        (date time datetime)  text
+                                      (sided expression self-text)]
     [add        _                     text                                (sided expression string)]
     [_          decimal               (integer past-int64 real)           expression]
     [compare    decimal               boolean                             integer-expression]
@@ -141,6 +159,7 @@
     [compare    time                  time                                own]
     [mod        float                 date                                refuse]
     [mod        float                 (datetime moment)                   physical]
+    [add        string                (date datetime moment)              text]
     [arithmetic _                     time                                refuse]
     [arithmetic _                     (date datetime moment duration)     own]
     [arithmetic float                 text                                refuse]
@@ -162,7 +181,7 @@
 (define (operand-action who dt v side)
   (define ops (operator-classes (hash-ref operators who)))
   (define dts (dtype-classes dt))
-  (define value (list (operand-class dt v)))
+  (define value (operand-classes dt v))
   (define rule
     (for/or ([r (in-list operand-rules)])
       (match r
@@ -242,6 +261,15 @@
   (define (lifted dtype value) (const-series who dtype n value #:name (series-name s)))
   (match (operand-action who dt other side)
     ['series other]
+    ['cast-self other]
+    ['cast-other (series-cast-to who other dt)]
+    [(or 'text 'self-text)
+     (match other
+       [(? series?) #:when (eq? (series-dtype other) 'string) other]
+       [(? series?) (series-cast-to who other 'string)]
+       [(or (? string?) (? symbol?)) (lifted 'string (same-value 'string other))]
+       [_ (with-release ([own (lifted (temporal-value-dtype other) other) series-drop])
+            (series-cast-to who own 'string))])]
     ['same (lifted dt (same-value dt other))]
     ['own (lifted (temporal-value-dtype other) other)]
     ['float64 (lifted 'float64 (same-value 'float64 other))]
@@ -255,6 +283,12 @@
                                     "series dtype" dt)]
     [_ (raise-arguments-error who "the value cannot be an element of a series of this dtype"
                               "value" other "series dtype" dt)]))
+
+(define (self-series who s other side)
+  (match (operand-action who (series-dtype s) other side)
+    ['cast-self (series-cast-to who s (series-dtype other))]
+    ['self-text (series-cast-to who s 'string)]
+    [_ s]))
 
 (define (check-same-zone who s o)
   (match* ((series-dtype s) (series-dtype o))
@@ -271,19 +305,19 @@
      (const-series who 'boolean (series-len s) other #:name (series-name s))]
     [else (raise-argument-error who "(or/c series? boolean? polars-null?)" other)]))
 
-(define (call-with-lifted lifted other proc)
-  (define release (if (eq? lifted other) void series-drop))
-  (with-release ([operand lifted release])
-    (proc operand)))
+(define ((release-unless original) x)
+  (unless (eq? x original)
+    (series-drop x)))
 
 (define (call-with-operand-series who s other side proc)
-  (call-with-lifted (operand-series who s other side) other
-                    (lambda (operand)
-                      (check-same-zone who s operand)
-                      (proc operand))))
+  (with-release ([operand (operand-series who s other side) (release-unless other)]
+                 [self (self-series who s other side) (release-unless s)])
+    (check-same-zone who self operand)
+    (proc self operand)))
 
 (define (call-with-logical-operand who s other proc)
-  (call-with-lifted (logical-operand who s other) other proc))
+  (with-release ([operand (logical-operand who s other) (release-unless other)])
+    (proc operand)))
 
 (define ((collect-for who) plan)
   (call/foreign-error who (lambda () (lazyframe-collect/raw plan))))

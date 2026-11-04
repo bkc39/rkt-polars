@@ -497,8 +497,6 @@
           (list '(and int64 right 1) '(raises contract) 'bitwise)
           (list '(/ uint8 right 9223372036854775808) '(raises contract) 'past-int64)
           (list '(+ int64 series date) '(raises polars) 'temporal-physical)
-          (list '(- date series null) '(raises polars) 'null-temporal-series)
-          (list '(+ string right (date 2024 1 1)) '(raises polars) 'string-temporal-concat)
           (list '(mod int64 left "x") '(raises polars) 'python-string-format))])
     (match-define (list key got class) forged)
     (check-equal? (classify-deviation (hash-ref rows-by-key key) got) class
