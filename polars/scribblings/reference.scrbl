@@ -2266,9 +2266,18 @@ string series is its string as Python's @tt{str} spells it (@tt{1e-05},
 a float series and a datetime reads the datetime's physical integer, as
 Python does), a non-integer real beside an integer series is
 @racket['float64], and in arithmetic a string or symbol is a string, so
-@racket[+] concatenates. Otherwise the operator runs its expression form,
+@racket[+] concatenates. @racket[+] of a string and a date, time or datetime,
+naive or zoned, concatenates the temporal's text, as Python does
+(@tt{2024-01-01 00:00:00.000000+01:00}): two series, a date or datetime value
+on either side of a string series, or a string or symbol after a temporal
+series; a string before a temporal series raises, as Python's does. A
+@racket['null] series beside a temporal series in @racket[-], or beside a
+duration series in @racket[+], gives null durations. Both hold for series and
+plain values, not inside @racket[select]: there @racket[(+ (col "s") (col "d"))]
+of a string column and a date column raises, as Python's expression form does.
+Otherwise the operator runs its expression form,
 @racket[(_op (col _name) _value)], with that form's dtypes and values: beside
-a @racket['null] series (where Python's eager operators raise) or with
+a @racket['null] series (where Python's eager operators raise on a number) or with
 @racket[polars-null], beside an Enum series a string or symbol, beside a
 Decimal series a real or boolean (compared as 1 or 0), beside a duration
 series a number in @racket[*], a string before a series in @racket[+], beside
@@ -2315,6 +2324,14 @@ where they still differ.
 (+ (series '(1 2) #:dtype 'u64) (expt 2 63))
 (eval:error (+ (series '(1 2)) (expt 2 63)))
 (+ (series '(1 2)) "x")
+(+ (series '("due " "paid ")) (series (list (date 2024 1 1) polars-null)))
+(+ (series '("at " "since ")) (moment 2024 1 1 #:tz "Europe/Paris"))
+(eval:error (+ "x" (series (list (date 2024 1 1)))))
+(eval:error (select (dataframe (list (series '("due ") #:name "s")
+                                     (series (list (date 2024 1 1)) #:name "d")))
+                    (+ (col "s") (col "d"))))
+(- (series (list (date 2024 1 1) (date 2024 1 2)) #:name "d")
+   (series (list polars-null polars-null)))
 (+ (series '(1 2)) #t)
 (- 10 (series '(1 2) #:name "n"))
 (= (series '("x" "y")) 1)

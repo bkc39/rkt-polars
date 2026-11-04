@@ -171,23 +171,6 @@
           "Duration series")
          (lambda (row python got)
            (and (past-int64? row) (series-outcome? python) (equal? got '(raises contract)))))
-   (list 'null-temporal-series
-         (string-append
-          "a temporal series and a Null series in arithmetic: Python 1.42.1 gives a null temporal "
-          "or duration series, where polars 0.55's kernel, which ours call, raises")
-         (lambda (row python got)
-           (match row
-             [(list (or '+ '- '* '/ 'mod) _ 'series _ _ ...)
-              (and (kinds-are? row 'temporal 'null) (eq? (result-kind python) 'temporal)
-                   (equal? got '(raises polars)))]
-             [_ #f])))
-   (list 'string-temporal-concat
-         (string-append
-          "Python's + of a string and a temporal value or series concatenates the temporal's "
-          "text; ours raise")
-         (lambda (row python got)
-           (and (eq? (op-of row) '+) (kinds-are? row 'string 'temporal)
-                (eq? (result-kind python) 'string) (raised? got))))
    (list 'temporal-physical
          (string-append
           "Python's eager operator reads a temporal operand beside a number or a Boolean by its "
