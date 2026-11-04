@@ -522,19 +522,30 @@ it. Racket side: `define-compat` with `#:c-id`.
     deterministic, but dependent on the file's size. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    one listed exception, a malformed-quote error's chunk locator.
+    one listed exception, a malformed-quote error's chunk locator. The two
+    readers still part on a stray quote in an unquoted field beside a
+    commented line that holds a quote: the eager reader can fail to parse a
+    field the scan reads (#341).
   - With `#:comment-prefix` the scan pushes the slice into the CSV source
     too, through the vendored polars-stream (#270), whose line counter
     skips comment lines. With a prefix the source cuts batches where the
     full read does, whatever the slice, and parses every batch before the
     slice's end, and every batch the counter finds no rows in, checking
-    each one's height against its count. So a slice, `head` or `tail` of
-    the scan gives the full read's rows or fails with `CSV malformed`.
-    Given `#:ignore-errors` too, a mismatch is only a warning, so the scan
-    parses the whole file and slices afterwards. A file whose last line
-    has no newline and is misjudged by the counter, a comment among them,
-    fails a whole-file scan or a `tail` with `CSV malformed` (#335), where
-    the eager reader reads it.
+    each one's height against its count, so a `head` or a slice gives the
+    full read's rows or fails with `CSV malformed`. A `tail` first counts
+    the rows, parsing and checking only the batches the counter finds no
+    rows in, then reads the last rows as such a slice: in each file it
+    reaches every batch is checked in one pass or the other, so a `tail` of
+    one file too gives the full read's rows or fails. A glob's `tail` walks
+    back from the last file and never parses the files wholly before it,
+    so a malformed one among them is not reported (#340).
+    Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
+    a slice parses the whole file and slices afterwards, but a `tail` is
+    cut by the counter's count, with or without a prefix, and can return
+    other rows (#339). A file whose last line has no newline and is
+    misjudged by the counter, a comment among them, fails a whole-file scan
+    or a `tail` with `CSV malformed` (#335), where the eager reader reads
+    it.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,

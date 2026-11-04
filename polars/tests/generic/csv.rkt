@@ -251,6 +251,12 @@
                   (~a (apply csv-lines "a" (for/list ([i (in-range 20000)]) (~a "v" i))) "x#y")))
   (check-equal? (height (read-csv unended #:comment-prefix "#" #:ignore-errors #t #:n-rows 20001))
                 20001)
+  (define stray-to-the-end
+    (scratch-file scratch "stray-to-the-end.csv"
+                  (apply csv-lines "a,b" "1,5\"" (for/list ([i (in-range 1000)]) (~a i "," i)))))
+  (for ([read (list collect (lambda (lf) (collect (tail lf 5))))])
+    (check-exn #rx"CSV malformed"
+               (lambda () (read (scan-csv stray-to-the-end #:comment-prefix "#")))))
 
   (define latin (scratch-file scratch "latin.csv" #"s\ncaf\351\n"))
   (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))

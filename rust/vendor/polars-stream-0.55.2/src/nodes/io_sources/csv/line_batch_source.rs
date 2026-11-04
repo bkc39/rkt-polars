@@ -32,9 +32,10 @@ pub(super) struct LineBatchSource {
     pub(super) line_batch_tx: distributor_channel::Sender<LineBatch>,
     pub(super) pre_slice: Option<Slice>,
     pub(super) needs_full_row_count: bool,
-    /// Set with a comment prefix, where the line counter and the parser can agree on a batch's
-    /// row count but not on where its rows end: batch boundaries then do not depend on the slice,
-    /// and every batch before the slice's end, or with no counted lines, is parsed and checked.
+    /// Set with a comment prefix and without `ignore_errors`, where the line counter and the
+    /// parser can agree on a batch's row count but not on where its rows end: batch boundaries
+    /// then do not depend on the slice, every batch with no counted lines is parsed and checked,
+    /// and so is every batch before the slice's end unless only a row count is needed.
     pub(super) check_every_batch: bool,
     pub(super) use_async_prefetch: bool,
     pub(super) verbose: bool,
@@ -218,7 +219,8 @@ impl LineBatchProducer {
                     global_slice.clone(),
                 ) {
                     SplitSlicePosition::Before
-                        if self.check_every_batch && !self.needs_full_row_count =>
+                        if self.check_every_batch
+                            && (!self.needs_full_row_count || n_lines == 0) =>
                     {
                         CHECK_ONLY
                     },
@@ -230,9 +232,7 @@ impl LineBatchProducer {
                         continue;
                     },
                     SplitSlicePosition::Overlapping(offset, len) => (offset, len),
-                    SplitSlicePosition::After
-                        if self.check_every_batch && !self.needs_full_row_count && n_lines == 0 =>
-                    {
+                    SplitSlicePosition::After if self.check_every_batch && n_lines == 0 => {
                         CHECK_ONLY
                     },
                     SplitSlicePosition::After => {

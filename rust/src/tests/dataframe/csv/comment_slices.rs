@@ -119,6 +119,34 @@ fn a_final_line_the_counter_misjudges_fails_every_read_that_reaches_it() {
     }
 }
 
+#[test]
+fn a_tail_of_a_file_the_counter_finds_no_rows_in_fails_as_the_full_read_does() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let csv = commented_csv("#");
+    let rows: String = (0..100_000).map(|i| format!("{},{}\n", i, i)).collect();
+    let path = write(
+        dir.path(),
+        "stray.csv",
+        format!("a,b\n1,5\"\n{}", rows).as_bytes(),
+    );
+    let lf = || csv.scan(&path);
+    for (read, got) in [
+        ("a whole scan", csv.scan_outcome(&path)),
+        ("a tail", lf().tail(5).collect().map_err(|e| e.to_string())),
+        (
+            "a head",
+            lf().slice(0, 5).collect().map_err(|e| e.to_string()),
+        ),
+    ] {
+        assert!(
+            got.as_ref().is_err_and(|e| e.starts_with("CSV malformed")),
+            "{} fails: {:?}",
+            read,
+            got.map(|df| df.shape())
+        );
+    }
+}
+
 #[derive(Clone)]
 struct LawFixture {
     label: &'static str,

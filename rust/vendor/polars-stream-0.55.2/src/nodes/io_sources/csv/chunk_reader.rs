@@ -10,7 +10,7 @@ use polars_io::prelude::_csv_read_internal::{
 use polars_io::prelude::builder::validate_utf8;
 use polars_io::prelude::{CsvEncoding, CsvParseOptions, CsvReadOptions};
 
-use super::{NO_SLICE, SLICE_ENDED};
+use super::{CHECK_ONLY, NO_SLICE, SLICE_ENDED};
 use crate::nodes::compute_node_prelude::*;
 
 #[derive(Default)]
@@ -20,6 +20,8 @@ pub(super) struct ChunkReader {
     fields_to_cast: Vec<Field>,
     ignore_errors: bool,
     projection: Vec<usize>,
+    /// The columns parsed for a `CHECK_ONLY` chunk, whose rows are not emitted.
+    check_projection: Vec<usize>,
     null_values: Option<NullValuesCompiled>,
     validate_utf8: bool,
 }
@@ -29,6 +31,7 @@ impl ChunkReader {
         options: Arc<CsvReadOptions>,
         mut reader_schema: SchemaRef,
         projection: Vec<usize>,
+        check_projection: Vec<usize>,
     ) -> PolarsResult<Self> {
         let mut fields_to_cast: Vec<Field> = options.fields_to_cast.clone();
         prepare_csv_schema(&mut reader_schema, &mut fields_to_cast)?;
@@ -52,6 +55,7 @@ impl ChunkReader {
             fields_to_cast,
             ignore_errors: options.ignore_errors,
             projection,
+            check_projection,
             null_values,
             validate_utf8,
         })
@@ -70,8 +74,14 @@ impl ChunkReader {
             polars_bail!(ComputeError: "invalid utf-8 sequence")
         }
 
+        let projection = if slice == CHECK_ONLY {
+            &self.check_projection
+        } else {
+            &self.projection
+        };
+
         // If projection is empty create a DataFrame with the correct height by counting the lines.
-        let mut df = if self.projection.is_empty() {
+        let mut df = if projection.is_empty() {
             DataFrame::empty_with_height(n_lines)
         } else {
             read_chunk(
@@ -79,7 +89,7 @@ impl ChunkReader {
                 &self.parse_options,
                 &self.reader_schema,
                 self.ignore_errors,
-                &self.projection,
+                projection,
                 0,       // bytes_offset_thread
                 n_lines, // capacity
                 self.null_values.as_ref(),
@@ -107,7 +117,9 @@ impl ChunkReader {
             }
         }
 
-        if slice != NO_SLICE {
+        if slice == CHECK_ONLY && self.check_projection != self.projection {
+            df = DataFrame::empty_with_height(0);
+        } else if slice != NO_SLICE {
             assert!(slice != SLICE_ENDED);
 
             df = df.slice(i64::try_from(slice.0).unwrap(), slice.1);

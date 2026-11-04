@@ -11,6 +11,78 @@
              RC::empty()
          } else {
              RC::PRE_SLICE
+--- a/src/nodes/io_sources/csv/chunk_reader.rs
++++ b/src/nodes/io_sources/csv/chunk_reader.rs
+@@ -10,7 +10,7 @@
+ use polars_io::prelude::builder::validate_utf8;
+ use polars_io::prelude::{CsvEncoding, CsvParseOptions, CsvReadOptions};
+ 
+-use super::{NO_SLICE, SLICE_ENDED};
++use super::{CHECK_ONLY, NO_SLICE, SLICE_ENDED};
+ use crate::nodes::compute_node_prelude::*;
+ 
+ #[derive(Default)]
+@@ -20,6 +20,8 @@
+     fields_to_cast: Vec<Field>,
+     ignore_errors: bool,
+     projection: Vec<usize>,
++    /// The columns parsed for a `CHECK_ONLY` chunk, whose rows are not emitted.
++    check_projection: Vec<usize>,
+     null_values: Option<NullValuesCompiled>,
+     validate_utf8: bool,
+ }
+@@ -29,6 +31,7 @@
+         options: Arc<CsvReadOptions>,
+         mut reader_schema: SchemaRef,
+         projection: Vec<usize>,
++        check_projection: Vec<usize>,
+     ) -> PolarsResult<Self> {
+         let mut fields_to_cast: Vec<Field> = options.fields_to_cast.clone();
+         prepare_csv_schema(&mut reader_schema, &mut fields_to_cast)?;
+@@ -52,6 +55,7 @@
+             fields_to_cast,
+             ignore_errors: options.ignore_errors,
+             projection,
++            check_projection,
+             null_values,
+             validate_utf8,
+         })
+@@ -70,8 +74,14 @@
+             polars_bail!(ComputeError: "invalid utf-8 sequence")
+         }
+ 
++        let projection = if slice == CHECK_ONLY {
++            &self.check_projection
++        } else {
++            &self.projection
++        };
++
+         // If projection is empty create a DataFrame with the correct height by counting the lines.
+-        let mut df = if self.projection.is_empty() {
++        let mut df = if projection.is_empty() {
+             DataFrame::empty_with_height(n_lines)
+         } else {
+             read_chunk(
+@@ -79,7 +89,7 @@
+                 &self.parse_options,
+                 &self.reader_schema,
+                 self.ignore_errors,
+-                &self.projection,
++                projection,
+                 0,       // bytes_offset_thread
+                 n_lines, // capacity
+                 self.null_values.as_ref(),
+@@ -107,7 +117,9 @@
+             }
+         }
+ 
+-        if slice != NO_SLICE {
++        if slice == CHECK_ONLY && self.check_projection != self.projection {
++            df = DataFrame::empty_with_height(0);
++        } else if slice != NO_SLICE {
+             assert!(slice != SLICE_ENDED);
+ 
+             df = df.slice(i64::try_from(slice.0).unwrap(), slice.1);
 --- a/src/nodes/io_sources/csv/line_batch_source.rs
 +++ b/src/nodes/io_sources/csv/line_batch_source.rs
 @@ -11,7 +11,7 @@
@@ -22,18 +94,19 @@
  use crate::nodes::MorselSeq;
  use crate::utils::tokio_handle_ext;
  
-@@ -32,6 +32,10 @@
+@@ -32,6 +32,11 @@
      pub(super) line_batch_tx: distributor_channel::Sender<LineBatch>,
      pub(super) pre_slice: Option<Slice>,
      pub(super) needs_full_row_count: bool,
-+    /// Set with a comment prefix, where the line counter and the parser can agree on a batch's
-+    /// row count but not on where its rows end: batch boundaries then do not depend on the slice,
-+    /// and every batch before the slice's end, or with no counted lines, is parsed and checked.
++    /// Set with a comment prefix and without `ignore_errors`, where the line counter and the
++    /// parser can agree on a batch's row count but not on where its rows end: batch boundaries
++    /// then do not depend on the slice, every batch with no counted lines is parsed and checked,
++    /// and so is every batch before the slice's end unless only a row count is needed.
 +    pub(super) check_every_batch: bool,
      pub(super) use_async_prefetch: bool,
      pub(super) verbose: bool,
  }
-@@ -60,6 +64,7 @@
+@@ -60,6 +65,7 @@
              self.line_counter,
              self.pre_slice,
              self.needs_full_row_count,
@@ -41,7 +114,7 @@
              use_l2_prefetch,
          );
          let mut line_batch_tx = self.line_batch_tx;
-@@ -94,6 +99,7 @@
+@@ -94,6 +100,7 @@
                      self.line_counter,
                      self.pre_slice,
                      self.needs_full_row_count,
@@ -49,7 +122,7 @@
                      use_l2_prefetch,
                  );
  
-@@ -120,6 +126,7 @@
+@@ -120,6 +127,7 @@
      line_counter: CountLines,
      global_slice: Option<Range<usize>>,
      needs_full_row_count: bool,
@@ -57,7 +130,7 @@
      use_prefetch_l2: bool,
      row_offset: usize,
      morsel_seq: MorselSeq,
-@@ -135,6 +142,7 @@
+@@ -135,6 +143,7 @@
          line_counter: CountLines,
          pre_slice: Option<Slice>,
          needs_full_row_count: bool,
@@ -65,7 +138,7 @@
          use_prefetch_l2: bool,
      ) -> Self {
          let global_slice = if let Some(pre_slice) = pre_slice {
-@@ -154,6 +162,7 @@
+@@ -154,6 +163,7 @@
              line_counter,
              global_slice,
              needs_full_row_count,
@@ -73,12 +146,13 @@
              use_prefetch_l2,
              row_offset: 0,
              morsel_seq: MorselSeq::default(),
-@@ -208,11 +217,24 @@
+@@ -208,11 +218,23 @@
                      n_lines,
                      global_slice.clone(),
                  ) {
 +                    SplitSlicePosition::Before
-+                        if self.check_every_batch && !self.needs_full_row_count =>
++                        if self.check_every_batch
++                            && (!self.needs_full_row_count || n_lines == 0) =>
 +                    {
 +                        CHECK_ONLY
 +                    },
@@ -90,9 +164,7 @@
                          continue;
                      },
                      SplitSlicePosition::Overlapping(offset, len) => (offset, len),
-+                    SplitSlicePosition::After
-+                        if self.check_every_batch && !self.needs_full_row_count && n_lines == 0 =>
-+                    {
++                    SplitSlicePosition::After if self.check_every_batch && n_lines == 0 => {
 +                        CHECK_ONLY
 +                    },
                      SplitSlicePosition::After => {
@@ -147,19 +219,58 @@
              _ => {},
          }
  
-@@ -365,6 +358,7 @@
+@@ -365,11 +358,23 @@
                  let quote_char = options.parse_options.quote_char;
                  let eol_char = options.parse_options.eol_char;
                  let comment_prefix = options.parse_options.comment_prefix.clone();
-+                let check_every_batch = comment_prefix.is_some();
++                let check_every_batch = comment_prefix.is_some() && !options.ignore_errors;
  
                  let line_counter = CountLines::new(quote_char, eol_char, comment_prefix);
  
-@@ -381,6 +375,7 @@
++                let check_projection = if check_every_batch
++                    && needs_full_row_count
++                    && projection.is_empty()
++                    && !used_schema.is_empty()
++                {
++                    vec![0]
++                } else {
++                    projection.clone()
++                };
++
+                 let chunk_reader_result =
+-                    ChunkReader::try_new(options, used_schema, projection).map(Arc::new);
++                    ChunkReader::try_new(options, used_schema, projection, check_projection)
++                        .map(Arc::new);
+                 _ = chunk_reader_tx.send(chunk_reader_result.clone());
+ 
+                 match chunk_reader_result {
+@@ -381,6 +386,7 @@
                              line_batch_tx,
                              pre_slice,
                              needs_full_row_count,
 +                            check_every_batch,
                              use_async_prefetch,
                              verbose,
+                         }
+@@ -454,14 +460,18 @@
+                         }
+ 
+                         while let Ok(LineBatch {
+-                            mem_slice: _,
++                            mem_slice,
+                             n_lines,
+                             slice,
+-                            row_offset: _,
++                            row_offset,
+                             morsel_seq: _,
+                         }) = line_batch_rx.recv().await
+                         {
+-                            assert_eq!(slice, SLICE_ENDED);
++                            if slice == CHECK_ONLY {
++                                chunk_reader.read_chunk(&mem_slice, n_lines, slice, row_offset)?;
++                            } else {
++                                assert_eq!(slice, SLICE_ENDED);
++                            }
+ 
+                             n_rows_processed = n_rows_processed.saturating_add(n_lines);
                          }
