@@ -61,7 +61,7 @@ fn inputs_of<'a>(udf: &Expr, e: &'a Expr) -> Option<&'a [Expr]> {
 }
 
 fn floor_if_integer(a: Expr, b: Expr) -> Expr {
-    if dynamic_integer_quotient(&a, &b) {
+    if let Some((a, b)) = dynamic_integer_operands(&a, &b) {
         return a.floor_div(b);
     }
     let (wa, wb) = (witness(&a), witness(&b));
@@ -82,18 +82,29 @@ fn reads_frame(e: &Expr) -> bool {
     })
 }
 
-fn dynamic_integer_quotient(a: &Expr, b: &Expr) -> bool {
-    !reads_frame(a)
-        && !reads_frame(b)
-        && matches!(
-            guard_panic(|| {
-                (a.clone() / b.clone()).to_field(&Schema::default()).ok()
-            }),
-            Some(Field {
-                dtype: DataType::Unknown(UnknownKind::Int(_)),
-                ..
-            })
-        )
+fn dynamic_integer_or_null(e: &Expr) -> Option<DataType> {
+    guard_panic(|| e.clone().to_field(&Schema::default()).ok())
+        .map(|field| field.dtype)
+        .filter(|dtype| {
+            matches!(
+                dtype,
+                DataType::Null | DataType::Unknown(UnknownKind::Int(_))
+            )
+        })
+}
+
+fn dynamic_integer_operands(a: &Expr, b: &Expr) -> Option<(Expr, Expr)> {
+    if reads_frame(a) || reads_frame(b) {
+        return None;
+    }
+    let l = dynamic_integer_or_null(a)?;
+    let r = dynamic_integer_or_null(b)?;
+    match (l, r) {
+        (DataType::Null, DataType::Null) => None,
+        (DataType::Null, r) => Some((a.clone().cast(r), b.clone())),
+        (l, DataType::Null) => Some((a.clone(), b.clone().cast(l))),
+        _ => Some((a.clone(), b.clone())),
+    }
 }
 
 fn floor_if_integer_inputs(e: &Expr) -> Option<&[Expr; 3]> {

@@ -205,3 +205,28 @@ fn integer_quotient_of_compound_operands_floors() {
          col(\"u\")])"
     );
 }
+
+#[test]
+fn null_literal_quotient_takes_the_other_literals_typing() {
+    let null = || lit(Null {});
+    let df = selected(vec![
+        (col("b") + div(lit(7), null())).alias("u8"),
+        div(div(null(), lit(2)), col("u")).alias("u64"),
+    ]);
+    let nulls = vec![AnyValue::Null; 3];
+    assert_eq!(values(&df, "u8"), (DataType::UInt8, nulls.clone()));
+    assert_eq!(values(&df, "u64"), (DataType::UInt64, nulls));
+    for quotient in [div(null(), lit(2)), div(lit(7), null())] {
+        let df = selected(vec![quotient.alias("q")]);
+        assert_eq!(values(&df, "q"), (DataType::Int32, vec![AnyValue::Null]));
+    }
+    let grouped = frame()
+        .group_by_stable([col("g")])
+        .agg([div(null(), lit(2)).alias("q")])
+        .collect()
+        .unwrap();
+    let nulls = vec![AnyValue::Null; 2];
+    assert_eq!(values(&grouped, "q"), (DataType::Int32, nulls));
+    let df = selected(vec![div(null(), null()).alias("q")]);
+    assert_eq!(values(&df, "q"), (DataType::Float64, vec![AnyValue::Null]));
+}

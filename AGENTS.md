@@ -482,10 +482,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   the quotient alone. Polars asks the function's output dtype once while it
   converts the plan, before any coercion, and asserts a known one
   (`expr_to_ir.rs`), so a dynamic quotient comes out materialised. A
-  quotient whose operands read no column and that polars types as a dynamic
-  integer is therefore polars' `floor_div`, Python's `//`, with no function,
-  and keeps that typing beside a column (`(+ (/ (lit 7) (lit 2)) u8)` is
-  UInt8). One beside a Null column cannot: `(+ (/ n 2) u8)` is Int32 and
+  quotient whose operands read no column and each type as a dynamic integer,
+  or one as a dynamic integer and the other as Null, is therefore polars'
+  `floor_div`, Python's `//`, with no function, and keeps that typing beside
+  a column (`(+ (/ (lit 7) (lit 2)) u8)` is UInt8). The Null operand is cast
+  to the other's dynamic dtype first, as Python's coercion does, since
+  0.55's `floor_div` refuses a Null operand that its `/` would coerce, so
+  `(+ (/ (lit 7) polars-null) u8)` is UInt8 nulls. One beside a Null column
+  cannot: `(+ (/ n 2) u8)` is Int32 and
   `(/ (/ n 2) u64)` Float64, all null, where Python's `//` gives UInt8 and
   UInt64, since one known dtype cannot be both Python's Int32 for `(/ n 2)`
   alone and its neighbour's. A type error inside a compound operand is
