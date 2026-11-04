@@ -156,6 +156,37 @@ fn integer_quotient_keeps_the_typing_of_a_literal() {
     assert_eq!(dtypes, [UInt8, UInt16, Int64, Int16, UInt8]);
 }
 
+fn ints_as(dtype: DataType, xs: &[i64]) -> (DataType, Vec<AnyValue<'static>>) {
+    let s = Series::new("".into(), xs).cast(&dtype).unwrap();
+    (dtype, s.iter().map(|v| v.into_static()).collect())
+}
+
+#[test]
+fn literal_quotient_keeps_dynamic_typing() {
+    let half = || div(lit(7), lit(2));
+    let df = selected(vec![
+        (half() + col("u")).alias("u64"),
+        (half() + col("b")).alias("u8"),
+        (col("b") * div(lit(10), lit(3))).alias("wrapped"),
+        (div(lit(TWO_TO_63), lit(2)) + col("u")).alias("big"),
+        div(half(), col("u")).alias("quotient"),
+        (div(lit(-7), lit(TWO_TO_63)) + col("b")).alias("i16"),
+        div(lit(-7), lit(2)).alias("floored"),
+    ]);
+    use DataType::*;
+    let quarter = 1i64 << 62;
+    assert_eq!(values(&df, "u64"), ints_as(UInt64, &[6, 5, 5]));
+    assert_eq!(values(&df, "u8"), ints_as(UInt8, &[6, 203, 10]));
+    assert_eq!(values(&df, "wrapped"), ints_as(UInt8, &[9, 88, 21]));
+    assert_eq!(
+        values(&df, "big"),
+        ints_as(UInt64, &[quarter + 3, quarter + 2, quarter + 2])
+    );
+    assert_eq!(values(&df, "quotient"), ints_as(UInt64, &[1, 1, 1]));
+    assert_eq!(values(&df, "i16"), ints_as(Int16, &[2, 199, 6]));
+    assert_eq!(values(&df, "floored"), ints_as(Int32, &[-4, -4, -4]));
+}
+
 #[test]
 fn integer_quotient_of_compound_operands_floors() {
     let df = selected(vec![

@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use crate::guard_panic;
 use crate::prelude::*;
 
 expr_binop!(expr_add, |a, b| a + b);
@@ -60,8 +61,39 @@ fn inputs_of<'a>(udf: &Expr, e: &'a Expr) -> Option<&'a [Expr]> {
 }
 
 fn floor_if_integer(a: Expr, b: Expr) -> Expr {
+    if dynamic_integer_quotient(&a, &b) {
+        return a.floor_div(b);
+    }
     let (wa, wb) = (witness(&a), witness(&b));
     anonymous(&FLOOR_IF_INTEGER, "floor_if_integer", vec![a / b, wa, wb])
+}
+
+fn reads_frame(e: &Expr) -> bool {
+    e.into_iter().any(|e| {
+        matches!(
+            e,
+            Expr::Column(_)
+                | Expr::Len
+                | Expr::Selector(_)
+                | Expr::Eval { .. }
+                | Expr::Field(_)
+                | Expr::Element
+        )
+    })
+}
+
+fn dynamic_integer_quotient(a: &Expr, b: &Expr) -> bool {
+    !reads_frame(a)
+        && !reads_frame(b)
+        && matches!(
+            guard_panic(|| {
+                (a.clone() / b.clone()).to_field(&Schema::default()).ok()
+            }),
+            Some(Field {
+                dtype: DataType::Unknown(UnknownKind::Int(_)),
+                ..
+            })
+        )
 }
 
 fn floor_if_integer_inputs(e: &Expr) -> Option<&[Expr; 3]> {
