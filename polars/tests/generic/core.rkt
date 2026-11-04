@@ -62,7 +62,7 @@
   (check-equal? (series-dtype (series (vector 1 2 3) #:dtype 'f64)) 'float64)
   (check-exn #rx"series: unsupported dtype '\\(datetime weeks\\)"
              (lambda () (series '(1) #:dtype '(datetime weeks))))
-  (check-exn #rx"series: expected a gregor datetime or moment for this dtype"
+  (check-exn #rx"series: expected a gregor date, datetime or moment for this dtype"
              (lambda () (series '(1) #:dtype '(datetime microseconds "UTC"))))
   (check-exn #rx"^series: contract violation\n  expected: time-zone-name/c\n  given: \"\"\n"
              (lambda () (series '(1) #:dtype '(datetime microseconds ""))))
@@ -219,6 +219,38 @@
                (lambda () (series '(1) #:name bad))))
   (check-equal? (series-name (series '(1) #:name #"q")) "q")
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (date 2024 1 2) (datetime 2024)))))
+  (define datetime-dtype-dates (list (date 2013 1 1) polars-null (date 1500 5 23)))
+  (define datetime-dtype-midnights (list (datetime 2013 1 1) polars-null (datetime 1500 5 23)))
+  (for ([unit '(milliseconds microseconds)])
+    (check-equal? (round-trip datetime-dtype-dates (list 'datetime unit))
+                  (list (list 'datetime unit #f) datetime-dtype-midnights)))
+  (check-equal? (round-trip datetime-dtype-dates 'datetime)
+                (list '(datetime microseconds #f) datetime-dtype-midnights))
+  (check-equal? (round-trip (list->vector datetime-dtype-dates) 'datetime)
+                (list '(datetime microseconds #f) datetime-dtype-midnights))
+  (check-equal? (round-trip (list (date 2013 1 1) polars-null) '(datetime nanoseconds))
+                (list '(datetime nanoseconds #f) (list (datetime 2013 1 1) polars-null)))
+  (for ([unit '(milliseconds nanoseconds)])
+    (check-equal? (round-trip (list (date 2013 1 1) polars-null (date 2013 7 1))
+                              (list 'datetime unit "Europe/Paris"))
+                  (list (list 'datetime unit "Europe/Paris")
+                        (list (moment 2013 1 1 1 #:tz "Europe/Paris") polars-null
+                              (moment 2013 7 1 2 #:tz "Europe/Paris")))))
+  (check-equal? (round-trip (list (date 2013 1 1)) '(datetime microseconds "Asia/Kathmandu"))
+                (list '(datetime microseconds "Asia/Kathmandu")
+                      (list (moment 2013 1 1 5 45 #:tz "Asia/Kathmandu"))))
+  (check-exn (regexp (string-append "^series: value out of range for this dtype\n"
+                                    "  dtype: '\\(datetime nanoseconds\\)\n  value: #<date 1500-05-23>$"))
+             (lambda () (series datetime-dtype-dates #:dtype '(datetime nanoseconds))))
+  (for ([vals (list (list (datetime 2013 1 1 5)) (vector polars-null (moment 2013 1 1 #:tz "UTC")))])
+    (check-exn #rx"^series: expected a gregor date for this dtype\n  dtype: 'date\n  value: #<"
+               (lambda () (series vals #:dtype 'date))))
+  (for ([mixed (list (list (date 2013 1 1) (datetime 2013 1 1 5))
+                     (list (date 2013 1 1) polars-null (datetime 2013 1 1 5))
+                     (list polars-null (datetime 2013 1 1 5) (date 2013 1 1))
+                     (vector (moment 2013 1 1 #:tz "UTC") (date 2013 1 1)))])
+    (check-exn #rx"^series: cannot mix gregor dates with datetimes or moments\n  dtype: 'datetime\n"
+               (lambda () (series mixed #:dtype 'datetime))))
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list (months 1)))))
   (check-equal? (round-trip (list (moment 2024 1 2 #:tz "Europe/Paris") polars-null))
                 (list '(datetime microseconds "Europe/Paris")

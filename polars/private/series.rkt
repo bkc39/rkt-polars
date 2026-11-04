@@ -3,7 +3,7 @@
 (require (only-in racket/list make-list)
          polars/private/foreign
          (only-in polars/private/resource with-release)
-         (only-in polars/private/temporal temporal-encoder))
+         (only-in polars/private/temporal check-date-datetime-mix temporal-encoder))
 
 (provide series-new-temporal
          series-repeat-temporal)
@@ -22,6 +22,7 @@
   (lambda (v) (if (polars-null? v) v (encode v))))
 
 (define (series-new-temporal who name elements dtype)
+  (check-date-datetime-mix who dtype elements)
   (define physical (physical-encoder who dtype))
   (series-from-physical who
                         name

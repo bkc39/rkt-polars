@@ -31,14 +31,15 @@
   (check-gregor-export 'gregor/private/moment-base 'make-moment))
 
 (require (only-in gregor
-                  ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds date
-                  date? datetime? jdn->date moment? ->tzid posix->datetime)
+                  ->datetime/utc ->hours ->jdn ->minutes ->nanoseconds ->posix ->seconds at-midnight
+                  date date? datetime? jdn->date moment? ->tzid posix->datetime)
          (only-in gregor/private/moment-base make-moment)
          (only-in gregor/period period? period-ref)
          (only-in gregor/time time time?)
          racket/match)
 
-(provide days->date
+(provide check-date-datetime-mix
+         days->date
          epoch->datetime
          epoch->moment
          nanoseconds->time
@@ -191,7 +192,10 @@
   (<= (car chrono-jdn-range) (->jdn v) (cdr chrono-jdn-range)))
 
 (define (utc-clock v)
-  (if (moment? v) (->datetime/utc v) v))
+  (cond
+    [(moment? v) (->datetime/utc v)]
+    [(date? v) (at-midnight v)]
+    [else v]))
 
 (define (temporal-encoder who dtype)
   (define ((encoder accepts? what ->physical in-range?) v)
@@ -206,13 +210,30 @@
     ['time (encoder time? "a gregor time" time->nanoseconds (lambda (_t _ns) #t))]
     [(or 'datetime (list* 'datetime _))
      (define unit (if (pair? dtype) (cadr dtype) 'microseconds))
-     (encoder datetime-like? "a gregor datetime or moment"
-              (lambda (dt) (floor-nanoseconds->unit (datetime->nanoseconds dt) unit))
-              (lambda (dt ticks) (and (printable? (utc-clock dt)) (int64? ticks))))]
+     (encoder (lambda (v) (or (date? v) (datetime-like? v))) "a gregor date, datetime or moment"
+              (lambda (v) (floor-nanoseconds->unit (datetime->nanoseconds (utc-clock v)) unit))
+              (lambda (v ticks) (and (printable? (utc-clock v)) (int64? ticks))))]
     [(list* 'duration unit _)
      (encoder fixed-length-period? "a gregor period without years or months"
               (lambda (p) (truncate-nanoseconds->unit (period->nanoseconds p) unit))
               (lambda (_p ticks) (int64? ticks)))]))
+
+(define (check-date-datetime-mix who dtype vals)
+  (define dated
+    (match dtype
+      [(or 'datetime (list* 'datetime _))
+       (for/list ([v (if (vector? vals) (in-vector vals) (in-list vals))]
+                  #:when (memq (temporal-kind v) '(date datetime)))
+         v)]
+      [_ '()]))
+  (define other
+    (match dated
+      [(cons head rest)
+       (for/first ([v (in-list rest)] #:unless (eq? (temporal-kind v) (temporal-kind head))) v)]
+      ['() #f]))
+  (when other
+    (raise-arguments-error who "cannot mix gregor dates with datetimes or moments"
+                           "dtype" dtype "value" other)))
 
 (module+ internal
   (provide int64? ns/second))
