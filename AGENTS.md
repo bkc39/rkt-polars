@@ -40,6 +40,23 @@ core (the nix check went from 30 to 145 minutes on CI), so the bench measures
 the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
 depends on it.
 
+One crate is vendored: `rust/vendor/polars-stream-0.55.2` is the crates.io
+crate with `rust/vendor/polars-stream-0.55.2.patch` applied, through
+`[patch.crates-io]` in `rust/Cargo.toml`, so `Cargo.lock` lists it without a
+source or checksum. The patch's two hunks lift the guard that kept the
+streaming CSV source from taking a pre-slice when a comment prefix is set,
+which made an `n_rows` read or a `head` with comments parse the whole file
+(#270). The guard dates from when the source's line counter did not skip
+comments; 0.55.2's does, and checks every decoded batch's height against its
+count. The nix build and `scripts/build-so.sh` build it from the tree, with
+no network. The fmt gate and check run `cargo fmt` without `--all`, which
+can format path dependencies too, so rustfmt leaves it as published. The
+`vendored-polars-stream` flake check fetches the published crate by its old
+lock checksum, applies the patch with no fuzz, and fails on any other
+difference from the vendored tree, or when `Cargo.lock` takes polars-stream
+from anywhere else (a `cargo update` to a polars patch release leaves the
+`[patch]` unused).
+
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
 not the repo root, and anything the docs need at build time (fixtures, helper
@@ -512,11 +529,16 @@ it. Racket side: `define-compat` with `#:c-id`.
     whole file with `#:infer-schema-length #f`, plus 32 KiB; each later one
     larger, up to 512 KiB), decodes them in parallel, and stops at the
     first batch past the slice, so a bad value beyond it is not reported:
-    deterministic, but dependent on the file's size. Given
-    `#:comment-prefix` too, polars-stream does not push the slice into the
-    CSV source, so the scan parses the whole file: a bad value anywhere in
-    it fails the read, and `#:n-rows 5` of a 100 MB file takes about
-    105 ms, against 15 ms for the eager reader. Both are built
+    deterministic, but dependent on the file's size. A `#:comment-prefix`
+    changes none of this: the vendored polars-stream (see Project overview)
+    pushes the slice into the CSV source with a comment prefix too (#270),
+    whose line counter skips comment lines, so the batch rule is the same
+    as without comments, and a `scan-csv` cut by `head` stops there as
+    well. A whole-file scan of a file longer than one line batch that ends
+    in a comment without a newline fails with `CSV malformed: expected 1
+    rows, actual 0 rows`, as before #270 (the counter counts that line as
+    a row), where the eager reader reads the file; a slice that stops
+    before the last batch reads it. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
     one listed exception, a malformed-quote error's chunk locator.
@@ -1060,13 +1082,14 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (fourteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (fifteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
   `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
   `docs-check-test`, `install-native-libs`, `devshell-home`,
-  `release-toolchain`, the rustc pin, and `build-so-darwin`,
-  `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
+  `release-toolchain`, the rustc pin, `build-so-darwin`,
+  `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`, and
+  `vendored-polars-stream`, the vendored crate against its patch).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -1229,3 +1252,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
+  A polars bump re-vendors polars-stream at the new version, with the
+  patch rebased onto it, or drops the vendor and its `[patch.crates-io]`
+  entry once upstream lifts the comment-prefix guard; either way the
+  `vendored-polars-stream` check moves with it.

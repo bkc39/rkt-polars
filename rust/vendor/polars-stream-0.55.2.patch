@@ -1,0 +1,33 @@
+--- a/src/nodes/io_sources/csv/builder.rs
++++ b/src/nodes/io_sources/csv/builder.rs
+@@ -42,11 +42,7 @@
+     fn reader_capabilities(&self) -> ReaderCapabilities {
+         use ReaderCapabilities as RC;
+ 
+-        if self.options.parse_options.comment_prefix.is_some() {
+-            RC::empty()
+-        } else {
+-            RC::PRE_SLICE
+-        }
++        RC::PRE_SLICE
+     }
+ 
+     fn set_execution_state(&self, execution_state: &crate::execute::StreamingExecutionState) {
+--- a/src/nodes/io_sources/csv/mod.rs
++++ b/src/nodes/io_sources/csv/mod.rs
+@@ -187,15 +187,6 @@
+         match &pre_slice {
+             Some(Slice::Negative { .. }) => unimplemented!(),
+ 
+-            // We don't account for comments when slicing lines. We should never hit this panic -
+-            // the FileReaderBuilder does not indicate PRE_SLICE support when we have a comment
+-            // prefix.
+-            Some(pre_slice)
+-                if self.options.parse_options.comment_prefix.is_some() && pre_slice.len() > 0 =>
+-            {
+-                panic!("{pre_slice:?}")
+-            },
+-
+             _ => {},
+         }
+ 

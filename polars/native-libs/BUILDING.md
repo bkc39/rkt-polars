@@ -123,7 +123,11 @@ It benches the tree (`nix run .#bench`), then:
 2. moves `scripts/build-so.sh`'s image to the digest quay.io lists for
    `manylinux2014_x86_64:latest`, with the dated tag that shares it;
 3. runs `cargo update`, the newest semver-compatible crates: polars stays on
-   its minor, which `rust/Cargo.toml` fixes;
+   its minor, which `rust/Cargo.toml` fixes, and polars-stream is the
+   patched copy under `rust/vendor/` (#270), so a polars patch release
+   leaves that copy unused (cargo warns `Patch ... was not used`) and fails
+   the `vendored-polars-stream` check until the crate is vendored again at
+   the new version with the patch rebased onto it;
 4. rebuilds `racket-deps`, whose pinned hash a store that already holds it
    never checks, and runs `nix flake check`;
 5. benches the result, and writes the commit message and a PR body (the

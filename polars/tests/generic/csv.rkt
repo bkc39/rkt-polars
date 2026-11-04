@@ -18,7 +18,7 @@
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
-           (only-in polars/private/generic/reshape collect)
+           (only-in polars/private/generic/reshape collect head)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
                     frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
@@ -214,6 +214,20 @@
   (check-equal? (column (read-csv commented #:comment-prefix "#") "a") '(1 3))
   (define slashed (scratch-file scratch "slashed.csv" "x\n//skip\n1\n"))
   (check-equal? (column (read-csv slashed #:comment-prefix "//") "x") '(1))
+  (define commented-late-na (build-path scratch "commented-late-na.csv"))
+  (display-lines-to-file
+   (append '("id,delay")
+           (for*/list ([i (in-range 110000)]
+                       [line (in-list (if (zero? (modulo i 10))
+                                          (list (format "~a,~a" i (modulo i 7))
+                                                (format "# after row ~a" i))
+                                          (list (format "~a,~a" i (modulo i 7)))))])
+             line)
+           '("110000,NA"))
+   commented-late-na)
+  (check-equal? (column (read-csv commented-late-na #:n-rows 1 #:comment-prefix "#") "id") '(0))
+  (check-equal? (column (~> (scan-csv commented-late-na #:comment-prefix "#") (head 1) collect) "id")
+                '(0))
 
   (define latin (scratch-file scratch "latin.csv" #"s\ncaf\351\n"))
   (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))
