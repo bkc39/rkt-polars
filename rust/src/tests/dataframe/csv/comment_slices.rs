@@ -6,6 +6,7 @@ const LATE_NA_BYTES: Range<usize> = 900 * 1024..1200 * 1024;
 const FIRST_BATCH_BYTES: usize = 64 * 1024;
 const LAW_FIXTURE_BYTES: usize = 200 * 1024;
 const BAD_ROW: &str = "oops,v,extra";
+const LARGEST_BATCH_BYTES: usize = 512 * 1024;
 
 fn commented_every_ten(text: &str) -> String {
     text.lines()
@@ -147,6 +148,32 @@ fn a_tail_of_a_file_the_counter_finds_no_rows_in_fails_as_the_full_read_does() {
     }
 }
 
+#[test]
+fn a_tail_checks_the_row_structure_of_the_batches_it_counts() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let csv = commented_csv("#");
+    let rows: String = (0..2_000).map(|i| format!("{},{}\n", i, i)).collect();
+    let path = write(
+        dir.path(),
+        "quoted.csv",
+        format!("a,b\n\"1,5\n{}", rows).as_bytes(),
+    );
+    let lf = || csv.scan(&path).select([col("b")]);
+    for (read, got) in [
+        ("a whole scan", lf().collect().map_err(|e| e.to_string())),
+        ("a tail", lf().tail(2).collect().map_err(|e| e.to_string())),
+    ] {
+        assert!(
+            got.as_ref()
+                .is_err_and(|e| e.starts_with("CSV malformed")
+                    && !e.contains("1999,1999")),
+            "{} of column b fails on the row structure alone: {:?}",
+            read,
+            got.map(|df| df.shape())
+        );
+    }
+}
+
 #[derive(Clone)]
 struct LawFixture {
     label: &'static str,
@@ -156,6 +183,7 @@ struct LawFixture {
     comments: fn(usize, usize) -> Vec<String>,
     row: fn(usize) -> String,
     bytes: usize,
+    footer: Vec<String>,
     trailer: &'static str,
 }
 
@@ -166,6 +194,12 @@ struct LawText {
 
 fn plain_row(i: usize) -> String {
     format!("{},v{}", i, i % 13)
+}
+
+fn comment_run() -> Vec<String> {
+    let line = |i| format!("# a run longer than the largest batch {:06}", i);
+    let lines = LARGEST_BATCH_BYTES / line(0).len() + 1_000;
+    (0..lines).map(line).collect()
 }
 
 fn every_ten(prefix: &str, i: usize) -> Vec<String> {
@@ -184,6 +218,7 @@ fn law_fixture(label: &'static str, set: fn(&mut LawFixture)) -> LawFixture {
         comments: |i, _| every_ten("#", i),
         row: plain_row,
         bytes: LAW_FIXTURE_BYTES,
+        footer: vec![],
         trailer: "",
     };
     set(&mut fixture);
@@ -210,6 +245,10 @@ impl LawFixture {
                 first_batch_rows = i + 1;
             }
             i += 1;
+        }
+        for line in &self.footer {
+            body.push_str(line);
+            body.push_str(self.eol);
         }
         LawText {
             body,
@@ -261,6 +300,14 @@ fn law_fixtures() -> Vec<LawFixture> {
         law_fixture("two rows skipped after the header", |f| {
             f.header = &["id,s", "# a", "# b"];
             f.csv.options.skip_rows_after_header = 2;
+        }),
+        law_fixture("a comment run longer than a batch, twice", |f| {
+            f.comments = |i, _| match i {
+                0 => comment_run(),
+                _ => every_ten("#", i),
+            };
+            f.bytes += comment_run().concat().len();
+            f.footer = comment_run();
         }),
         law_fixture("a stray quote resynchronised by a quoted comment", |f| {
             f.header = &["a,b"];
@@ -328,7 +375,7 @@ impl LawRead<'_> {
             2,
             99,
             100,
-            first - 1,
+            first.saturating_sub(1),
             first,
             first + 1,
             total - 1,

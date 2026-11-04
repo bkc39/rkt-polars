@@ -530,15 +530,18 @@ it. Racket side: `define-compat` with `#:c-id`.
     too, through the vendored polars-stream (#270), whose line counter
     skips comment lines. With a prefix the source cuts batches where the
     full read does, whatever the slice, and parses every batch before the
-    slice's end, and every batch the counter finds no rows in, checking
-    each one's height against its count, so a `head` or a slice gives the
-    full read's rows or fails with `CSV malformed`. A `tail` first counts
-    the rows, parsing and checking only the batches the counter finds no
-    rows in, then reads the last rows as such a slice: in each file it
-    reaches every batch is checked in one pass or the other, so a `tail` of
-    one file too gives the full read's rows or fails. A glob's `tail` walks
-    back from the last file and never parses the files wholly before it,
-    so a malformed one among them is not reported (#340).
+    slice's end, and every batch with no counted rows up to the first batch
+    past the slice, checking each one's height against its count, so a
+    `head` or a slice gives the rows the full read gives at those
+    positions, or fails. A `tail` first counts the rows, parsing only the
+    batches with no counted rows, and those for their row structure alone
+    (the first column parsed with errors ignored, whatever the dtypes and
+    the selection), then reads the last rows as such a slice: in each file
+    it reaches every batch is checked in one pass or the other, so a `tail`
+    of one file too gives the rows the full read gives at those positions,
+    or fails. A glob's `tail` walks back from the last file and never
+    parses the files wholly before it, so a malformed one among them is
+    not reported (#340).
     Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
     a slice parses the whole file and slices afterwards, but a `tail` is
     cut by the counter's count, with or without a prefix, and can return

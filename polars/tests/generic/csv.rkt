@@ -19,7 +19,7 @@
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
-           (only-in polars/private/generic/reshape collect head slice tail)
+           (only-in polars/private/generic/reshape collect head select slice tail)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? contract-violation-of dtypes-of frame
                     frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
@@ -257,6 +257,14 @@
   (for ([read (list collect (lambda (lf) (collect (tail lf 5))))])
     (check-exn #rx"CSV malformed"
                (lambda () (read (scan-csv stray-to-the-end #:comment-prefix "#")))))
+  (define quoted-to-the-end
+    (scratch-file scratch "quoted-to-the-end.csv"
+                  (apply csv-lines "a,b" "\"1,5" (for/list ([i (in-range 2000)]) (~a i "," i)))))
+  (for ([read (list collect (lambda (lf) (collect (tail lf 2))))])
+    (define message
+      (message-of (lambda () (read (select (scan-csv quoted-to-the-end #:comment-prefix "#") "b")))))
+    (check-regexp-match #rx"CSV malformed" message)
+    (check-false (string-contains? message "1999,1999")))
 
   (define latin (scratch-file scratch "latin.csv" #"s\ncaf\351\n"))
   (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))
