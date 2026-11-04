@@ -2,6 +2,7 @@ use super::test_util;
 use super::*;
 
 mod core;
+mod division;
 mod meta;
 mod selectors;
 mod sort;

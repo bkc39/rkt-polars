@@ -457,13 +457,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   unlike Python's `/` (#65), two Null operands aside, which give Float64.
   On two series it is Python's `//`: a signed integer series beside a UInt64
   one, whose supertype is Float64, gives the floored Float64 quotient
-  (`series-true-div` floors it through `expr-floor`). The expression form
-  (`expr_div`, `RustDivide`) still true-divides there (#303), beside a UInt64
-  column or a literal from 2^63: a plan-time choice by the operands' dtypes
-  (`DataTypeExpr::matches` in a `when`) fails on a regex selector, which may
-  not expand inside a dtype expression, and keeps its dead `floor_div`
-  branch live when an operand is not elementwise (a `sum`), where it raises
-  on Decimal and Null.
+  (`series-true-div` floors it through `expr-floor`). So does the expression
+  form, beside a UInt64 column or a literal from 2^63 (#303): `expr_div` is
+  `RustDivide` under `floor_if_integer` (`rust/src/expr/binary.rs`), an
+  elementwise function of the quotient and both operands that floors a
+  Float64 quotient of two integer-like operands, batch by batch, by the dtypes
+  the batch holds. A plan-time choice (`DataTypeExpr::matches` in a `when`)
+  fails on a regex selector, which may not expand inside a dtype expression,
+  and keeps its dead `floor_div` branch live when an operand is not
+  elementwise (a `sum`), where it raises on Decimal and Null. Each operand is
+  evaluated twice, in the quotient and as itself; inside `agg` or `over`, one
+  value per group beside a value per row makes polars apply the function
+  group by group, as it already does the quotient. `expr_sort_with_options`
+  classifies it by its operands, as an operator.
   Any other `/` divides as Python's does: an integer, Boolean or Null series
   is cast to Float64 first, and so is the series under a plain number on the
   left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a

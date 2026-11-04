@@ -144,8 +144,9 @@ bmi-expr
 ]
 
 An expression prints as its plan, in the notation Polars itself uses: the
-binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}, and
-@racket[pow] appears as a method suffix.
+binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div} and
+wrapped in @tt{floor_if_integer}, which floors the quotient of two integers as Python's
+@tt{//} does; @racket[pow] appears as a method suffix.
 
 @subsection{Contexts}
 

@@ -196,7 +196,9 @@ fn name_keep_names_each_expanded_column_after_itself() {
     assert!(!kept.is_null());
     assert_eq!(
         take_str(expr_to_string_v2(kept)),
-        "[(dyn int: 1) rust_div (cs.matches(\"^(x|y)$\"))].name.keep()"
+        "[(dyn int: 1) rust_div (cs.matches(\"^(x|y)$\"))]\
+         .floor_if_integer([dyn int: 1, cs.matches(\"^(x|y)$\")])\
+         .name.keep()"
     );
     check_select(&[kept], &["x", "y"]);
     for e in [divided, wide, one] {

@@ -141,12 +141,16 @@
                   2))
   (for ([unary (list (list (p- (col "value")) "col(\"value\").negate()")
                     (list (p/ (col "value"))
-                          "[(dyn int: 1) rust_div (col(\"value\"))].alias(\"value\")")
+                          (string-append "[(dyn int: 1) rust_div (col(\"value\"))]"
+                                         ".floor_if_integer([dyn int: 1, col(\"value\")])"
+                                         ".alias(\"value\")"))
                     (list (p+ (col "value")) "col(\"value\")")
                     (list (p* (col "value")) "col(\"value\")")
                     (list (p- (col "delay")) "col(\"delay\").negate()")
                     (list (p/ (col "speed"))
-                          "[(dyn int: 1) rust_div (col(\"speed\"))].alias(\"speed\")"))])
+                          (string-append "[(dyn int: 1) rust_div (col(\"speed\"))]"
+                                         ".floor_if_integer([dyn int: 1, col(\"speed\")])"
+                                         ".alias(\"speed\")")))])
     (match-define (list e printed) unary)
     (check-equal? (format "~a" e) printed))
   (define unary-frame
@@ -184,7 +188,9 @@
                     series->list)
                 '(0.25 0.125))
   (check-equal? (format "~a" (p/ (col #rx"^c1$")))
-                "[(dyn int: 1) rust_div (cs.matches(\"^(?s).*(?:^c1$).*$\"))].name.keep()")
+                (string-append "[(dyn int: 1) rust_div (cs.matches(\"^(?s).*(?:^c1$).*$\"))]"
+                               ".floor_if_integer([dyn int: 1, cs.matches(\"^(?s).*(?:^c1$).*$\")])"
+                               ".name.keep()"))
   (define negated (p- withnull))
   (check-pred series? negated)
   (check-equal? (dtype negated) 'int32)
@@ -385,16 +391,24 @@
         [(list 'raises (or 'TypeError 'ValueError 'OverflowError)) '(raises contract)]
         [(list 'raises _) '(raises polars)]
         [_ out]))
+    (define (selected-outcome columns e)
+      (division-outcome
+       (lambda () (ref (select (dataframe columns) (expr-alias e "a")) "a"))))
     (for ([row (in-list division-rows)])
       (match row
         [(list 'series left right expected)
-         (check-equal? (division-outcome
-                        (lambda () (p/ (division-column 'left "a" left)
-                                       (division-column 'right "b" right))))
+         (define columns (list (division-column 'left "a" left) (division-column 'right "b" right)))
+         (check-equal? (division-outcome (lambda () (apply p/ columns)))
                        (python-division-outcome expected)
-                       (format "~a / ~a" left right))]
+                       (format "~a / ~a" left right))
+         (check-equal? (selected-outcome columns (p/ (col "a") (col "b")))
+                       (python-division-outcome expected)
+                       (format "(col ~a) / (col ~a)" left right))]
         [(list 'value left side v eager expression)
          (define a (division-column 'left "a" left))
+         (check-equal? (selected-outcome (list a) (on-side side p/ (col "a") v))
+                       (python-division-outcome expression)
+                       (format "(col ~a) ~a ~a" left side v))
          (define ours (division-outcome (lambda () (on-side side p/ a v))))
          (define accepted
            (cond
@@ -418,8 +432,9 @@
     (check-equal? (division-drops u64-divisor) (add1 (division-drops i64-divisor)))
     (define signed-unsigned
       (dataframe (list (series '(10 -7) #:name "i") (series '(3 2) #:dtype 'u64 #:name "u"))))
-    (check-equal? (~> signed-unsigned (select (p/ (col "i") (col "u"))) (ref "i") series->list)
-                  (list (exact->inexact 10/3) -3.5))
-    (check-equal? (~> signed-unsigned (select (p/ (col "i") (expt 2 63))) (ref "i") series->list)
-                  (list (exact->inexact (base:/ 10 (expt 2 63)))
-                        (exact->inexact (base:/ -7 (expt 2 63)))))))
+    (define floored
+      (select signed-unsigned (p/ (col "i") (col "u")) (expr-alias (p/ (col "i") (expt 2 63)) "big")))
+    (check-equal? (for/list ([name '("i" "big")])
+                    (define column (ref floored name))
+                    (list (dtype column) (series->list column)))
+                  '((float64 (3.0 -4.0)) (float64 (0.0 -1.0))))))
