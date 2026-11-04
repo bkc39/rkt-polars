@@ -5,7 +5,7 @@
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in threading ~>)
            (only-in polars/private/expr
-                    col expr-add expr-is-in expr-meta-output-name expr-mul lit)
+                    col expr-add expr-div expr-is-in expr-meta-output-name expr-mul lit)
            (only-in polars/private/foreign series-cast series-new-i32)
            (only-in polars/private/generic/reductions alias sum)
            (prefix-in contracted: polars/private/generic/meta)
@@ -32,6 +32,12 @@
   (check-false (meta-eq? (col "a") (alias (col "a") "a")))
   (check-false (meta-eq? ab (expr-add (col "b") (col "a"))))
   (check-true (meta-eq? "a" (col "a")))
+  (define a/b (expr-div (col "a") (col "b")))
+  (check-equal? (meta-root-names a/b) '("a" "b"))
+  (check-equal? (meta-root-names (expr-div a/b (col "c"))) '("a" "b" "c"))
+  (check-equal? (meta-output-name (expr-div a/b (col "c"))) "a")
+  (check-true (meta-eq? (expr-div (col "a") (lit 2)) (expr-div (col "a") (lit 2))))
+  (check-false (meta-eq? (expr-div (col "a") (lit 2)) a/b))
   (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
              (lambda () (meta-output-name "*")))
   (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.matches\\("

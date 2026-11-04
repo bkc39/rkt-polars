@@ -457,17 +457,48 @@ it. Racket side: `define-compat` with `#:c-id`.
   unlike Python's `/` (#65), two Null operands aside, which give Float64.
   On two series it is Python's `//`: a signed integer series beside a UInt64
   one, whose supertype is Float64, gives the floored Float64 quotient
-  (`series-true-div` floors it through `expr-floor`). The expression form
-  (`expr_div`, `RustDivide`) still true-divides there (#303), beside a UInt64
-  column or a literal from 2^63: a plan-time choice by the operands' dtypes
-  (`DataTypeExpr::matches` in a `when`) fails on a regex selector, which may
-  not expand inside a dtype expression, and keeps its dead `floor_div`
-  branch live when an operand is not elementwise (a `sum`), where it raises
-  on Decimal and Null.
+  (`series-true-div` floors it through `expr-floor`). So does the expression
+  form, beside a UInt64 column or a literal from 2^63 (#303).
   Any other `/` divides as Python's does: an integer, Boolean or Null series
   is cast to Float64 first, and so is the series under a plain number on the
   left (`(/ 1 f32)` is Float64) and a Decimal series under a boolean or a
   temporal value on the left (`(/ (hours 1) decimals)` is a duration).
+- `expr_div` is the `RustDivide` quotient under `floor_if_integer`
+  (`rust/src/expr/binary.rs`), an elementwise function that floors a Float64
+  quotient when both of its other inputs, witnesses of the operands' dtypes,
+  are integer-like. A column or literal operand is its own witness, and so is
+  one that expands (a selector) or reads no column. Any other operand's
+  witness is a null cast to the operand's dtype (`null.cast(dtype_of(...))`),
+  which polars resolves at plan time, with each `floor_if_integer` inside
+  read as `null_as_float` of its quotient, which has the floor's dtype. So
+  each operand is evaluated once, but for a selector or literal-only one,
+  which is evaluated twice; a plan grows quadratically with nesting; and a
+  witness is a literal beside the quotient in `agg` or `over`, where polars
+  keeps the function elementwise (a value per group beside a value per row
+  would apply it group by group). A dtype expression materialises a dynamic
+  dtype, as Int32 or Float64, which keeps it integer-like or not. Every
+  division shares one function value, so two equal divisions are `meta-eq?`
+  and CSE merges them; `meta-root-names` and `expr_sort_with_options` read
+  the quotient alone. Polars asks the function's output dtype once while it
+  converts the plan, before any coercion, and asserts a known one
+  (`expr_to_ir.rs`), so a dynamic quotient comes out materialised. A
+  quotient whose operands read no column and each type as a dynamic integer,
+  or one as a dynamic integer and the other as Null, is therefore polars'
+  `floor_div`, Python's `//`, with no function, and keeps that typing beside
+  a column (`(+ (/ (lit 7) (lit 2)) u8)` is UInt8). The Null operand is cast
+  to the other's dynamic dtype first, as Python's coercion does, since
+  0.55's `floor_div` refuses a Null operand that its `/` would coerce, so
+  `(+ (/ (lit 7) polars-null) u8)` is UInt8 nulls. One beside a Null column
+  cannot: `(+ (/ n 2) u8)` is Int32 and
+  `(/ (/ n 2) u64)` Float64, all null, where Python's `//` gives UInt8 and
+  UInt64, since one known dtype cannot be both Python's Int32 for `(/ n 2)`
+  alone and its neighbour's. A type error inside a compound operand is
+  reported at the division, `(/ (+ s 1) u64)` as `str and u64` naming the
+  operand's expression, as Python reports a `//` below a plan's root; at the
+  root Python names the inner `+`. A plan-time choice
+  (`DataTypeExpr::matches` in a `when`) fails on a regex selector, and a
+  function of the operands alone loses the typing polars gives a dynamic
+  literal, which keeps `(/ u8 3)` UInt8.
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v3` reads a

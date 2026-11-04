@@ -12,7 +12,7 @@ from datetime import date
 import polars as pl
 
 # --- expressions ---------------------------------------------------------
-bmi_expr = pl.col("weight") / (pl.col("height") ** 2)
+bmi_expr = pl.col("weight") * pl.col("height") ** -2
 print(bmi_expr)
 
 # --- contexts ------------------------------------------------------------

@@ -189,6 +189,9 @@ pub extern "C" fn expr_sort_with_options(
 /// Whether `e` is one value, or one per group in `agg` or `over`, by its
 /// structure alone, so that sorting it changes nothing.
 fn is_one_value(e: &Expr) -> bool {
+    if let Some(quotient) = floor_div_quotient(e) {
+        return is_one_value(quotient);
+    }
     match e {
         Expr::Agg(_) | Expr::Len => true,
         Expr::Literal(value) => value.is_scalar(),
@@ -218,6 +221,9 @@ fn is_one_value(e: &Expr) -> bool {
 /// even a function of one, `SortExpr` gathers each group's row indices from
 /// it and reads out of bounds; `sort_by` fixes up such groups first.
 fn is_per_row(e: &Expr) -> bool {
+    if let Some(quotient) = floor_div_quotient(e) {
+        return is_per_row(quotient);
+    }
     match e {
         Expr::Column(_) | Expr::Selector(_) => true,
         Expr::Alias(inner, _)

@@ -11,7 +11,7 @@
          polars)
 
 ;; --- expressions ---------------------------------------------------------
-(define bmi-expr (/ (col "weight") (pow (col "height") 2)))
+(define bmi-expr (* (col "weight") (pow (col "height") -2)))
 
 (displayln bmi-expr)
 

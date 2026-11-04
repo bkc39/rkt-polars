@@ -111,3 +111,23 @@ fn meta_eq_null_returns_zero() {
     assert_eq!(expr_meta_eq(ptr::null(), a), 0);
     expr_drop(a);
 }
+
+fn quotient(a: &Expr, b: &Expr) -> Expr {
+    take_box(expr_div(a, b)).unwrap()
+}
+
+#[test]
+fn meta_of_a_quotient_reads_its_operands() {
+    let ab = quotient(&col("a"), &col("b"));
+    let abc = quotient(&ab, &col("c"));
+    assert_eq!(take_strs(expr_meta_root_names(&ab)), ["a", "b"]);
+    assert_eq!(take_strs(expr_meta_root_names(&abc)), ["a", "b", "c"]);
+    assert_eq!(take_str(expr_meta_output_name_v2(&abc)), "a");
+}
+
+#[test]
+fn meta_eq_of_equal_quotients() {
+    let halves = [0, 1].map(|_| quotient(&col("a"), &lit(2)));
+    assert_eq!(expr_meta_eq(&halves[0], &halves[1]), 1);
+    assert_eq!(expr_meta_eq(&halves[0], &quotient(&col("a"), &col("b"))), 0);
+}

@@ -139,13 +139,15 @@ other operand's dtype.
 An expression is a value; nothing runs until a context receives it.
 
 @examples[#:eval ev #:label #f
-(define bmi-expr (/ (col "weight") (pow (col "height") 2)))
+(define bmi-expr (* (col "weight") (pow (col "height") -2)))
 bmi-expr
 ]
 
-An expression prints as its plan, in the notation Polars itself uses: the
-binding's @racket[/] is Polars' @tt{RustDivide} operator, shown as @tt{rust_div}, and
-@racket[pow] appears as a method suffix.
+An expression prints as its plan, in the notation Polars itself uses;
+@racket[pow] appears as a method suffix. Upstream divides by the squared
+height; the product prints the same way in both, where the binding's
+@racket[/], which floors the quotient of two integers as Python's @tt{//}
+does, prints with the function that decides it.
 
 @subsection{Contexts}
 
