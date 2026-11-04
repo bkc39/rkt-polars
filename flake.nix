@@ -331,7 +331,7 @@
 
             checkPhase = ''
               runHook preCheck
-              cargo fmt --manifest-path rust/Cargo.toml --all --check
+              cargo fmt --manifest-path rust/Cargo.toml --check
               runHook postCheck
             '';
 
@@ -421,9 +421,40 @@
               fi
               touch $out
             '';
+          vendored-polars-stream = pkgs.runCommand "rkt-polars-vendored-polars-stream" {
+            # The crate's Cargo.lock checksum before the vendor.
+            crate = pkgs.fetchurl {
+              name = "polars-stream-0.55.2.tar.gz";
+              url = "https://static.crates.io/crates/polars-stream/0.55.2/download";
+              sha256 = "b173c0c52f53ca930f3b59bc56a5854a650eb9555d67bba9022051714bc0b88f";
+            };
+            patchFile = ./rust/vendor/polars-stream-0.55.2.patch;
+            vendored = ./rust/vendor/polars-stream-0.55.2;
+            lock = ./rust/Cargo.lock;
+            patchPath =
+              ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.polars-stream or { }).path or "";
+          } ''
+            mkdir pristine
+            tar -xzf $crate -C pristine
+            patch -d pristine/polars-stream-0.55.2 -p1 -F0 --no-backup-if-mismatch < $patchFile
+            diff -r pristine/polars-stream-0.55.2 $vendored
+            if [ "$patchPath" != "vendor/polars-stream-0.55.2" ]; then
+              echo "ERROR: rust/Cargo.toml's [patch.crates-io] polars-stream path is \"$patchPath\"," \
+                "not \"vendor/polars-stream-0.55.2\"" >&2
+              exit 1
+            fi
+            entry=$(grep -x -A2 'name = "polars-stream"' $lock)
+            if [ "$entry" != "$(printf '%s\n' 'name = "polars-stream"' 'version = "0.55.2"' 'dependencies = [')" ] \
+              || grep -q -x '\[\[patch.unused\]\]' $lock; then
+              echo "ERROR: rust/Cargo.lock does not take polars-stream from rust/vendor alone:" >&2
+              grep -x -A3 'name = "polars-stream"' $lock >&2
+              exit 1
+            fi
+            touch $out
+          '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin vendored-polars-stream;
           inherit (self.packages.${system}) rust racket;
         });
 

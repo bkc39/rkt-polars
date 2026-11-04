@@ -2,6 +2,8 @@ use super::test_util::*;
 use super::*;
 use std::path::{Path, PathBuf};
 
+mod comment_slices;
+
 #[derive(Clone, Default)]
 struct Csv {
     options: CompatCsvOptions,
@@ -34,6 +36,22 @@ type CsvEntry<T> = extern "C" fn(
 
 fn bytes_of(s: &str) -> Vec<u8> {
     s.as_bytes().to_vec()
+}
+
+fn commented_csv(prefix: &str) -> Csv {
+    Csv {
+        comment_prefix: Some(bytes_of(prefix)),
+        ..Default::default()
+    }
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
+    gzip.write_all(bytes).expect("gzip");
+    gzip.finish().expect("gzip")
 }
 
 fn optional(block: &Option<Vec<u64>>) -> StrArg {
@@ -97,11 +115,14 @@ impl Csv {
         recorded_error().expect("a reason")
     }
 
-    fn scan_collect(&self, path: &Path) -> DataFrame {
+    fn scan(&self, path: &Path) -> LazyFrame {
         let lf = self.call(path, lazyframe_scan_csv_v3);
         assert!(!lf.is_null(), "scan failed: {:?}", recorded_error());
-        let lf = unsafe { *Box::from_raw(lf) };
-        lf.collect().expect("collect")
+        unsafe { *Box::from_raw(lf) }
+    }
+
+    fn scan_collect(&self, path: &Path) -> DataFrame {
+        self.scan(path).collect().expect("collect")
     }
 }
 
@@ -270,6 +291,23 @@ fn option_cases() -> Vec<(&'static str, Csv)> {
         case("no quoting", |c| c.options.has_quote_char = false),
         case("comment #", |c| c.comment_prefix = Some(bytes_of("#"))),
         case("comment //", |c| c.comment_prefix = Some(bytes_of("//"))),
+        case("comment # and n rows 1", |c| {
+            c.comment_prefix = Some(bytes_of("#"));
+            c.options.has_n_rows = true;
+            c.options.n_rows = 1;
+        }),
+        case("comment // and n rows 1", |c| {
+            c.comment_prefix = Some(bytes_of("//"));
+            c.options.has_n_rows = true;
+            c.options.n_rows = 1;
+        }),
+        case("comment #, row index i from 10 and n rows 2", |c| {
+            c.comment_prefix = Some(bytes_of("#"));
+            c.row_index_name = Some(bytes_of("i"));
+            c.options.row_index_offset = 10;
+            c.options.has_n_rows = true;
+            c.options.n_rows = 2;
+        }),
         case("skip rows", |c| c.options.skip_rows = 1),
         case("n rows 2", |c| {
             c.options.has_n_rows = true;
@@ -692,10 +730,7 @@ fn separator_quote_and_comment_options_apply() {
         "opts.txt",
         b"# a comment\na;b\n'x;y';1\n# another\nz;2\n",
     );
-    let mut csv = Csv {
-        comment_prefix: Some(bytes_of("#")),
-        ..Default::default()
-    };
+    let mut csv = commented_csv("#");
     csv.options.separator = b';';
     csv.options.quote_char = b'\'';
     let df = csv.read(&path);
@@ -711,11 +746,7 @@ fn separator_quote_and_comment_options_apply() {
 fn a_multi_character_comment_prefix_works() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "c.csv", b"x\n//skip\n1\n2\n");
-    let csv = Csv {
-        comment_prefix: Some(bytes_of("//")),
-        ..Default::default()
-    };
-    assert_eq!(csv.read(&path).height(), 2);
+    assert_eq!(commented_csv("//").read(&path).height(), 2);
 }
 
 #[test]
@@ -1403,16 +1434,14 @@ fn a_count_past_the_input_or_the_memory_infers_from_every_row() {
 }
 
 fn newlines_compressed(lines: usize) -> [(&'static str, Vec<u8>, u64); 3] {
-    use flate2::write::{GzEncoder, ZlibEncoder};
+    use flate2::write::ZlibEncoder;
     use flate2::Compression;
     use std::io::Write;
     let text = vec![b'\n'; lines];
-    let mut gzip = GzEncoder::new(Vec::new(), Compression::best());
-    gzip.write_all(&text).expect("gzip");
     let mut zlib = ZlibEncoder::new(Vec::new(), Compression::best());
     zlib.write_all(&text).expect("zlib");
     [
-        ("lines.csv.gz", gzip.finish().expect("gzip"), 1032),
+        ("lines.csv.gz", gzip_bytes(&text), 1032),
         ("lines.csv.zlib", zlib.finish().expect("zlib"), 1032),
         (
             "lines.csv.zst",

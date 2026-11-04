@@ -40,6 +40,13 @@ core (the nix check went from 30 to 145 minutes on CI), so the bench measures
 the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
 depends on it.
 
+One crate is vendored: `rust/vendor/polars-stream-0.55.2` is the crates.io
+crate with `rust/vendor/polars-stream-0.55.2.patch` applied, taken through
+`[patch.crates-io]` in `rust/Cargo.toml`. The patch lets the streaming CSV
+source take a slice with a comment prefix (#270; see the `read-csv` fact).
+The `vendored-polars-stream` flake check holds the tree to the patch, and
+`polars/native-libs/BUILDING.md` has the mechanics.
+
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
 not the repo root, and anything the docs need at build time (fixtures, helper
@@ -512,14 +519,36 @@ it. Racket side: `define-compat` with `#:c-id`.
     whole file with `#:infer-schema-length #f`, plus 32 KiB; each later one
     larger, up to 512 KiB), decodes them in parallel, and stops at the
     first batch past the slice, so a bad value beyond it is not reported:
-    deterministic, but dependent on the file's size. Given
-    `#:comment-prefix` too, polars-stream does not push the slice into the
-    CSV source, so the scan parses the whole file: a bad value anywhere in
-    it fails the read, and `#:n-rows 5` of a 100 MB file takes about
-    105 ms, against 15 ms for the eager reader. Both are built
+    deterministic, but dependent on the file's size. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    one listed exception, a malformed-quote error's chunk locator.
+    one listed exception, a malformed-quote error's chunk locator. The two
+    readers still part on a stray quote in an unquoted field beside a
+    commented line that holds a quote: the eager reader can fail to parse a
+    field the scan reads (#341).
+  - With `#:comment-prefix` the scan pushes the slice into the CSV source
+    too, through the vendored polars-stream (#270), whose line counter
+    skips comment lines. With a prefix the source cuts batches where the
+    full read does, whatever the slice, and parses every batch before the
+    slice's end, and every batch with no counted rows up to the first batch
+    past the slice, checking each one's height against its count, so a
+    `head` or a slice gives the rows the full read gives at those
+    positions, or fails. A `tail` first counts the rows, parsing only the
+    batches with no counted rows, and those for their row structure alone
+    (the first column parsed with errors ignored, whatever the dtypes and
+    the selection), then reads the last rows as such a slice: in each file
+    it reaches every batch is checked in one pass or the other, so a `tail`
+    of one file too gives the rows the full read gives at those positions,
+    or fails. A glob's `tail` walks back from the last file and never
+    parses the files wholly before it, so a malformed one among them is
+    not reported (#340).
+    Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
+    a slice parses the whole file and slices afterwards, but a `tail` is
+    cut by the counter's count, with or without a prefix, and can return
+    other rows (#339). A file whose last line has no newline and is
+    misjudged by the counter, a comment among them, fails a whole-file scan
+    or a `tail` with `CSV malformed` (#335), where the eager reader reads
+    it.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,
@@ -1060,13 +1089,14 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (fourteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (fifteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
   `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
   `docs-check-test`, `install-native-libs`, `devshell-home`,
-  `release-toolchain`, the rustc pin, and `build-so-darwin`,
-  `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`).
+  `release-toolchain`, the rustc pin, `build-so-darwin`,
+  `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`, and
+  `vendored-polars-stream`, the vendored crate against its patch).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -1229,3 +1259,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
+  A polars bump, a patch release included, re-vendors polars-stream at the
+  new version with the patch rebased onto it, or drops the vendor and its
+  `[patch.crates-io]` entry once upstream slices a commented CSV as the
+  patch does; the `vendored-polars-stream` check moves with it.

@@ -145,7 +145,7 @@ setup`. Typical commands inside the shell:
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml
-cargo fmt --manifest-path rust/Cargo.toml --all --check    # same check as CI
+cargo fmt --manifest-path rust/Cargo.toml --check          # same check as CI
 cd rust && cargo build --release
 cp target/release/libcompat.dylib ../polars/native-libs/   # macOS
 cd .. && raco test -x --timeout 600 -c polars

@@ -22,7 +22,7 @@
   ;; runs it too, with -j 4.
   (examples      "raco test -y -e -Q --empty-stdin -j 8 examples")
   ;; CI's rustfmt check; `nix build .#racket` does not run it.
-  (fmt           "cargo fmt --manifest-path rust/Cargo.toml --all --check")
+  (fmt           "cargo fmt --manifest-path rust/Cargo.toml --check")
   ;; A fresh dev shell has no threading docs, and without them the manual's
   ;; `~>` link is an undefined tag, which fails the docs gate, and
   ;; threading-doc looks like an unused dependency.  Cheap once built.
