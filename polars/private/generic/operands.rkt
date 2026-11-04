@@ -81,10 +81,13 @@
     [(or 'string 'categorical 'boolean 'null) (list dt)]
     [_ '(other)]))
 
+(define series-class-names (make-hasheq))
+
+(define (series-class c)
+  (hash-ref! series-class-names c (lambda () (string->symbol (format "~a-series" c)))))
+
 (define (series-classes dt)
-  (cons 'series
-        (for/list ([c (in-list (dtype-classes dt))])
-          (string->symbol (format "~a-series" c)))))
+  (cons 'series (map series-class (dtype-classes dt))))
 
 (define (operand-classes dt v)
   (match v
@@ -123,17 +126,17 @@
     [add        duration              null-series                         cast-other]
     [sub        null                  temporal-series                     cast-self]
     [add        null                  duration-series                     cast-self]
-    [add        string                (date-series time-series datetime-series)
-                                      text]
-    [add        (date time datetime)  string-series                       self-text]
+    [add        string                (date-series time-series datetime-series date datetime moment)
+                                      cast-other-text]
+    [add        (date time datetime)  string-series                       cast-self-text]
+    [add        (date time datetime)  text
+                                      (sided expression cast-self-text)]
     [_          _                     series                              series]
     [div        null                  null                                same]
     [_          _                     null                                expression]
     [_          null                  (boolean integer real text date time datetime moment duration)
                                       expression]
     [_          enum                  text                                expression]
-    [add        (date time datetime)  text
-                                      (sided expression self-text)]
     [add        _                     text                                (sided expression string)]
     [_          decimal               (integer past-int64 real)           expression]
     [compare    decimal               boolean                             integer-expression]
@@ -159,7 +162,6 @@
     [compare    time                  time                                own]
     [mod        float                 date                                refuse]
     [mod        float                 (datetime moment)                   physical]
-    [add        string                (date datetime moment)              text]
     [arithmetic _                     time                                refuse]
     [arithmetic _                     (date datetime moment duration)     own]
     [arithmetic float                 text                                refuse]
@@ -255,21 +257,23 @@
     [(>= point n) (string-append digits (make-string (- point n) #\0) ".0")]
     [else (string-append (substring digits 0 point) "." (substring digits point))]))
 
-(define (operand-series who s other side)
+(define (operand-series who s other action)
   (define dt (series-dtype s))
   (define n (series-len s))
   (define (lifted dtype value) (const-series who dtype n value #:name (series-name s)))
-  (match (operand-action who dt other side)
+  (match action
     ['series other]
     ['cast-self other]
     ['cast-other (series-cast-to who other dt)]
-    [(or 'text 'self-text)
+    ['cast-other-text
      (match other
-       [(? series?) #:when (eq? (series-dtype other) 'string) other]
        [(? series?) (series-cast-to who other 'string)]
-       [(or (? string?) (? symbol?)) (lifted 'string (same-value 'string other))]
        [_ (with-release ([own (lifted (temporal-value-dtype other) other) series-drop])
             (series-cast-to who own 'string))])]
+    ['cast-self-text
+     (match other
+       [(? series?) other]
+       [_ (lifted 'string (same-value 'string other))])]
     ['same (lifted dt (same-value dt other))]
     ['own (lifted (temporal-value-dtype other) other)]
     ['float64 (lifted 'float64 (same-value 'float64 other))]
@@ -284,10 +288,10 @@
     [_ (raise-arguments-error who "the value cannot be an element of a series of this dtype"
                               "value" other "series dtype" dt)]))
 
-(define (self-series who s other side)
-  (match (operand-action who (series-dtype s) other side)
+(define (self-series who s other action)
+  (match action
     ['cast-self (series-cast-to who s (series-dtype other))]
-    ['self-text (series-cast-to who s 'string)]
+    ['cast-self-text (series-cast-to who s 'string)]
     [_ s]))
 
 (define (check-same-zone who s o)
@@ -310,8 +314,9 @@
     (series-drop x)))
 
 (define (call-with-operand-series who s other side proc)
-  (with-release ([operand (operand-series who s other side) (release-unless other)]
-                 [self (self-series who s other side) (release-unless s)])
+  (define action (operand-action who (series-dtype s) other side))
+  (with-release ([operand (operand-series who s other action) (release-unless other)]
+                 [self (self-series who s other action) (release-unless s)])
     (check-same-zone who self operand)
     (proc self operand)))
 

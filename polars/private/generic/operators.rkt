@@ -27,16 +27,15 @@
        (cond
          [(or (Expr-ptr? a) (Expr-ptr? b)) (call-with-exprs 'name a b expr-op)]
          [(expression-form-op 'name expr-op a b) => values]
-         [(series? a)
-          (call-with-operand-series 'name a b 'right
-                                    (lambda (self o)
-                                      (named-after 'name a b (series-op 'name self o))))]
-         [(series? b)
-          (call-with-operand-series 'name b a 'left
-                                    (lambda (self o)
-                                      (named-after 'name b a (series-op-reflected 'name self o))))]
+         [(series? a) (compare-series 'name series-op a b 'right)]
+         [(series? b) (compare-series 'name series-op-reflected b a 'left)]
          [else (base-op a b)])]
       [_ (apply base-op args)])))
+
+(define (compare-series who series-op s other side)
+  (call-with-operand-series who s other side
+                            (lambda (self operand)
+                              (named-after who s other (series-op who self operand)))))
 
 (define (named-after who s other result)
   (cond
@@ -61,13 +60,16 @@
 (define (binary-arith who expr-op series-op base-op a b)
   (cond [(or (Expr-ptr? a) (Expr-ptr? b)) (call-with-exprs who a b expr-op)]
         [(expression-form-op who expr-op a b) => values]
-        [(series? a)
-         (call-with-operand-series who a b 'right
-                                   (lambda (self o) (wrap-series (series-op who self o 'right))))]
-        [(series? b)
-         (call-with-operand-series who b a 'left
-                                   (lambda (self o) (wrap-series (series-op who o self 'left))))]
+        [(series? a) (arith-series who series-op a b 'right)]
+        [(series? b) (arith-series who series-op b a 'left)]
         [else (base-op a b)]))
+
+(define (arith-series who series-op s other side)
+  (call-with-operand-series who s other side
+                            (lambda (self operand)
+                              (wrap-series (match side
+                                             ['right (series-op who self operand side)]
+                                             ['left (series-op who operand self side)])))))
 
 (define ((sideless series-op) who a b _side)
   (series-op who a b))

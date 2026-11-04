@@ -765,6 +765,22 @@ it. Racket side: `define-compat` with `#:c-id`.
   column does not vstack or join with a typed one, and `and`, `or`, `xor`
   and `not` refuse a `'null` series, as Python's eager operators do, and any
   other non-Boolean series, where Python's `& | ^` are bitwise on integers.
+- `+` of a string and a temporal concatenates the temporal's text, as
+  Python 1.42.1's eager `+` does (`"on 2024-01-01"`,
+  `2024-01-01 00:00:00.000000+01:00` for a zoned value): a String series
+  and a date, time or datetime series (naive or zoned) in either order, a
+  String series and a date or datetime value on either side, and a date,
+  time or datetime series with a string or symbol on its right. A string
+  left of a temporal series runs the expression form, which raises, as
+  Python's does, and a time value beside a String series is a contract
+  error. A Null series in `-` beside a date, time, datetime or duration
+  series, in either order, or in `+` beside a duration series, gives nulls
+  of the duration dtype the pair takes: `(duration microseconds)` beside a
+  date, the datetime's or duration's unit, `(duration nanoseconds)` beside a
+  time. 0.55's kernels raise on both, so the temporal series is cast to
+  String, and the Null one to the other's dtype, before the kernel runs.
+  Inside an expression neither holds: `(+ (col "s") (col "d"))` raises, as
+  Python's expression form does.
 - A plain value beside a typed series in an operator follows Python
   1.42.1's eager operators (decision (b) of #261). It is a constant of the
   series' dtype when it fits: a boolean beside a numeric series is 1 or 0 and
@@ -777,16 +793,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   non-integer real beside an integer, boolean or string series is Float64,
   and in
   arithmetic a string or symbol is a String constant (`(+ ints "x")` is
-  `"1x" "2x"`). `+` of a string and a date, time or datetime, naive or
-  zoned, concatenates the temporal's text as polars casts it to a string
-  (`2024-01-01 00:00:00.000000+01:00`), as Python does: two series, a date
-  or datetime value either side of a string series, or a string or symbol
-  right of a temporal series (left of one it is the expression form, which
-  raises, as Python's does). A Null series beside a temporal one in `-`, or
-  beside a duration one in `+`, is cast to the other's dtype first, so the
-  result is nulls of Python's dtype (`(- dates nulls)` is a
-  `(duration microseconds)` series of nulls), where 0.55's kernel raises.
-  Otherwise the operator runs its expression form,
+  `"1x" "2x"`). Otherwise the operator runs its expression form,
   `(op (col name) (lit v))` on a one-column frame (`series-through-expr`),
   with that form's dtypes, as Python's expressions give them: beside an Enum
   series a string or symbol (`=` with a value outside the categories is
