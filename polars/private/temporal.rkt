@@ -39,6 +39,7 @@
          racket/match)
 
 (provide check-date-datetime-mix
+         chrono-edge?
          days->date
          epoch->datetime
          epoch->moment
@@ -190,6 +191,14 @@
 
 (define (printable? v)
   (<= (car chrono-jdn-range) (->jdn v) (cdr chrono-jdn-range)))
+
+;; chrono bounds an offset below a day, so only an instant on chrono's first or
+;; last day can have a wall clock outside its range.
+(define (chrono-edge? unit ticks)
+  (define ticks/day (* 86400 (per-second unit)))
+  (define first-day (- (car chrono-jdn-range) unix-epoch-jdn))
+  (define last-day (- (cdr chrono-jdn-range) unix-epoch-jdn))
+  (or (< ticks (* (add1 first-day) ticks/day)) (>= ticks (* last-day ticks/day))))
 
 (define (utc-clock v)
   (cond

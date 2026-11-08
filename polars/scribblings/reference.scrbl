@@ -566,7 +566,8 @@ total
   it does.
 
   A cast can make a date or datetime outside the years -262143 to 262142,
-  which @racket[series] and @racket[lit] refuse. @racket[ref], the
+  or a zoned one whose local clock is outside them, which @racket[series]
+  and @racket[lit] refuse. @racket[ref], the
   conversions and a series' printing read it as the gregor value, but for a
   datetime in a zone other than UTC, whose local clock Polars cannot give:
   @racket[ref] and the conversions raise with Polars' reason, and the series
@@ -2105,7 +2106,8 @@ are refused. With @racket[#:dtype], a value is converted to the dtype's unit
 and a finer part dropped as Polars' own casts drop it: a datetime is floored,
 a duration truncated toward zero. A value the dtype cannot hold raises, and
 so does a date or datetime outside the years -262143 to 262142, which Polars
-cannot print. A datetime dtype takes a gregor @tt{date} as its midnight, as
+cannot print, and a zoned datetime whose local clock in the column's zone is
+outside them, which Polars cannot read back. A datetime dtype takes a gregor @tt{date} as its midnight, as
 Python's @tt{pl.Series([date(2013, 1, 1)], dtype=pl.Datetime)} does, but not a
 list that mixes dates with datetimes or moments, which Python refuses too. A
 @racket['date] dtype refuses a datetime or moment, where Python ignores

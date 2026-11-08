@@ -990,7 +990,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   datetimes or moments is refused, with or without `#:dtype`, as in Python.
   A `'date` `#:dtype` refuses a datetime, where Python ignores it. A date or
   datetime outside chrono's years (-262143 to 262142) is refused, since
-  polars panics printing one. A `cast` still makes one (#141):
+  polars panics printing one, and so is a zoned datetime whose UTC clock is
+  inside them but whose local clock in the column's zone is not (#334), which
+  polars cannot read back: Python 1.42.1 builds one by a cast or
+  `convert_time_zone`, prints it, and panics in `replace_time_zone(None)`
+  (its constructors stop at year 9999). Only an instant on chrono's first or
+  last day can be one, since chrono bounds an offset below a day, so for
+  those alone `series` and `lit` (`zoned-temporal-encoder`, `series.rkt`)
+  build a one-row column and read its wall clock as `ref` does, through
+  polars' offset, and refuse the value when polars cannot. A `cast` still
+  makes one (#141):
   `ref`, the conversions and the series printer read it as gregor's value
   (`ref` reads a date through the bulk copy, as `series->list` does, so the
   two agree; a zoned series prints without its zone abbreviations when
@@ -1029,7 +1038,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   UTC, and a list that starts naive makes a naive column of UTC clock times.
   `#:dtype` is the column's dtype outright (a naive one takes each moment's
   UTC clock time), where Python's `pl.Datetime("us")` keeps the values' zone.
-  `%z` parses to UTC; on an expression, an offset with no `#:format` and no
+  A value whose local clock in the zone falls outside chrono's years is
+  refused, by its local clock and polars' offset (#334; see the `series`
+  fact). `%z` parses to UTC; on an expression, an offset with no `#:format` and no
   `#:time-zone` is an error, as in Python. Every reading is polars'
   (chrono-tz's compiled database), never tzinfo's: a moment read back is built
   with the offset polars gives, through gregor's private `make-moment` (#172;

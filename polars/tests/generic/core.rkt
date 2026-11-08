@@ -3,7 +3,7 @@
 (module+ test
   (require rackunit
            (only-in compiler/find-exe find-exe)
-           (only-in gregor date datetime moment now)
+           (only-in gregor ->datetime/local ->posix date datetime moment now)
            (only-in gregor/period days hours microseconds milliseconds months nanoseconds weeks)
            (only-in gregor/time time)
            (only-in racket/match match match-define)
@@ -265,6 +265,47 @@
              (lambda () (series (list (months 1)) #:dtype '(duration microseconds))))
   (check-exn #rx"^series: value out of range for this dtype"
              (lambda () (series (list (datetime 1500)) #:dtype '(datetime nanoseconds #f))))
+
+  (define (local-clocks elements [dtype #f])
+    (match-define (list dt instants) (round-trip elements dtype))
+    (list dt (map ->datetime/local instants)))
+  (define new-york '(datetime milliseconds "America/New_York"))
+  (define kathmandu '(datetime milliseconds "Asia/Kathmandu"))
+  (for ([value (list (date -262143 1 1) (datetime -262143 1 1 4 56 1 999000000))])
+    (check-exn (regexp (string-append "^series: value out of range for this dtype\n"
+                                      "  dtype: '\\(datetime milliseconds \"America/New_York\"\\)\n"
+                                      "  value: " (regexp-quote (format "~v" value)) "$"))
+               (lambda () (series (list value) #:dtype new-york))))
+  (check-exn (regexp (string-append "^series: value out of range for this dtype\n"
+                                    "  dtype: '\\(datetime milliseconds \"Asia/Kathmandu\"\\)\n"
+                                    "  value: #<datetime 262142-12-31T18:15:00>$"))
+             (lambda () (series (list (datetime 262142 12 31 18 15)) #:dtype kathmandu)))
+  (for ([m (list (moment -262144 12 31 20 #:tz "America/New_York")
+                 (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))])
+    (check-exn (regexp (string-append "^series: value out of range for this dtype\n"
+                                      "  dtype: '\\(datetime microseconds \""))
+               (lambda () (series (list polars-null m)))))
+  (define gmt-14 '(datetime microseconds "Etc/GMT-14"))
+  (check-exn #rx"^series: value out of range for this dtype\n"
+             (lambda () (series (vector (datetime 262142 12 31 23)) #:dtype gmt-14)))
+  (check-equal? (local-clocks (list (datetime -262143 1 1 4 56 2)) new-york)
+                (list new-york (list (datetime -262143 1 1))))
+  (check-equal? (local-clocks (list (date -262143 1 2) (date 262142 12 31)) new-york)
+                (list new-york (list (datetime -262143 1 1 19 3 58) (datetime 262142 12 30 19))))
+  (check-equal? (local-clocks (list (datetime 262142 12 31 18 14 59 999000000)) kathmandu)
+                (list kathmandu (list (datetime 262142 12 31 23 59 59 999000000))))
+  (check-equal? (local-clocks (list (date -262143 1 1)) kathmandu)
+                (list kathmandu (list (datetime -262143 1 1 5 41 16))))
+  (check-equal? (local-clocks (list (datetime 262142 12 31 23 59 59 999000000)) new-york)
+                (list new-york (list (datetime 262142 12 31 18 59 59 999000000))))
+  (for ([edges (list (list (date -262143 1 1) (date 262142 12 31))
+                     (list (datetime -262143 1 1) (datetime 262142 12 31 23 59 59)))]
+        [clocks (list (list (datetime -262143 1 1) (datetime 262142 12 31))
+                      (list (datetime -262143 1 1) (datetime 262142 12 31 23 59 59)))])
+    (check-equal? (local-clocks edges '(datetime microseconds "UTC"))
+                  (list '(datetime microseconds "UTC") clocks)))
+  (check-equal? (~> (moment -262143 1 1 1 #:tz "America/New_York") list series (ref 0) ->posix)
+                (->posix (moment -262143 1 1 1 #:tz "America/New_York")))
 
   (define (empty-series-summary s)
     (list (series-name s) (series-dtype s) (series-len s) (series->list s)))

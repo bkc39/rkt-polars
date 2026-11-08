@@ -2,10 +2,11 @@
 
 (module+ test
   (require rackunit
-           (only-in gregor date datetime)
+           (only-in gregor ->datetime/local date datetime)
            (only-in gregor/period milliseconds nanoseconds)
            (only-in gregor/time time)
            (only-in racket/list make-list)
+           (only-in threading ~>>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign
                     dataframe-column dataframe-column-name dataframe-height dataframe-new
@@ -46,6 +47,16 @@
              (lambda () (series-new-temporal 'test "d" (vector (datetime 2024)) 'date)))
   (check-exn #rx"^test: expected a gregor date for this dtype"
              (lambda () (series-repeat-temporal 'test "d" (datetime 2024) 3 'date)))
+  (define gmt+12 '(datetime microseconds "Etc/GMT+12"))
+  (check-exn (regexp (string-append "^test: value out of range for this dtype\n"
+                                    "  dtype: '\\(datetime microseconds \"Etc/GMT\\+12\"\\)\n"
+                                    "  value: #<datetime -262143-01-01T11:59:59>$"))
+             (lambda ()
+               (series-repeat-temporal 'test "d" (datetime -262143 1 1 11 59 59) 2 gmt+12)))
+  (check-equal? (~>> (series-repeat-temporal 'test "d" (datetime -262143 1 1 12) 2 gmt+12)
+                     series->list
+                     (map ->datetime/local))
+                (list (datetime -262143 1 1) (datetime -262143 1 1)))
 
   ;; Mirror of rust/examples/02_dataframe_from_series.rs
   (define users   (series-new-str "user" '("alice" "bob" "carol" "dora")))
