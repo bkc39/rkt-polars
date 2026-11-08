@@ -589,6 +589,112 @@ fn guarding(functions: &[Function]) -> BTreeSet<String> {
     }
 }
 
+fn starts_with_a_call(e: &Expr, names: &BTreeSet<String>) -> bool {
+    match e {
+        Expr::Call(call) => match &*call.func {
+            Expr::Path(p) => p
+                .path
+                .segments
+                .last()
+                .is_some_and(|s| names.contains(&s.ident.to_string())),
+            _ => false,
+        },
+        Expr::MethodCall(call) => starts_with_a_call(&call.receiver, names),
+        Expr::Paren(p) => starts_with_a_call(&p.expr, names),
+        Expr::Group(g) => starts_with_a_call(&g.expr, names),
+        Expr::Block(b) => clears_first(&b.block, names),
+        Expr::Unsafe(u) => clears_first(&u.block, names),
+        _ => false,
+    }
+}
+
+#[derive(Default)]
+struct Exits(bool);
+
+impl<'ast> Visit<'ast> for Exits {
+    fn visit_expr_try(&mut self, _: &'ast syn::ExprTry) {
+        self.0 = true;
+    }
+    fn visit_expr_return(&mut self, _: &'ast syn::ExprReturn) {
+        self.0 = true;
+    }
+    fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
+}
+
+fn may_exit(e: &Expr) -> bool {
+    let mut exits = Exits::default();
+    exits.visit_expr(e);
+    exits.0
+}
+
+/// The block clears the last error before any statement that can return:
+/// only `let`s that cannot (no `else`, `?` or `return`) come before the
+/// clearing call.
+fn clears_first(block: &Block, clearing: &BTreeSet<String>) -> bool {
+    for stmt in &block.stmts {
+        match stmt {
+            Stmt::Expr(e, _) => return starts_with_a_call(e, clearing),
+            Stmt::Local(local) => match &local.init {
+                Some(init) if starts_with_a_call(&init.expr, clearing) => {
+                    return true
+                }
+                Some(init)
+                    if init.diverge.is_some() || may_exit(&init.expr) =>
+                {
+                    return false
+                }
+                _ => {}
+            },
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn clearing(functions: &[Function]) -> BTreeSet<String> {
+    let mut set: BTreeSet<String> = ["clear_last_error".to_string()].into();
+    loop {
+        let mut by_name: BTreeMap<&str, bool> = BTreeMap::new();
+        for f in functions {
+            let c = clears_first(&f.block, &set);
+            by_name
+                .entry(&f.name)
+                .and_modify(|all| *all &= c)
+                .or_insert(c);
+        }
+        let found: Vec<String> = by_name
+            .into_iter()
+            .filter(|(name, c)| *c && !set.contains(*name))
+            .map(|(name, _)| name.to_string())
+            .collect();
+        if found.is_empty() {
+            return set;
+        }
+        set.extend(found);
+    }
+}
+
+/// Every guarded entry point whose first act is not to clear the last
+/// error, so that a failure before it records anything reports a stale
+/// reason.
+fn stale_reasons(files: &[String]) -> Vec<String> {
+    let krate = walk(files);
+    let guarding = guarding(&krate.functions);
+    let clearing = clearing(&krate.functions);
+    krate
+        .functions
+        .iter()
+        .filter(|f| f.entry && guarded_block(&f.block, &guarding))
+        .filter(|f| !clears_first(&f.block, &clearing))
+        .map(|f| {
+            format!(
+                "{} is guarded but does not clear the last error first",
+                f.name
+            )
+        })
+        .collect()
+}
+
 fn class_by_name(name: &str) -> Option<&'static str> {
     if name.ends_with("_drop_count") {
         Some("count")
@@ -695,6 +801,83 @@ pub(super) fn fixture(text: &str) -> Vec<String> {
 fn every_entry_point_runs_under_guard_panic_or_is_exempt() {
     let problems = audit(&tree(), EXEMPTIONS);
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn every_guarded_entry_point_clears_the_last_error_first() {
+    let problems = stale_reasons(&tree());
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+#[test]
+fn the_clearing_audit_reads_what_runs_before_the_clear() {
+    let source = fixture(
+        r#"
+#[no_mangle]
+pub extern "C" fn clears_first(p: *const X) -> *mut Y {
+    clear_last_error();
+    guard_panic(|| work(p)).map_or(ptr::null_mut(), boxed)
+}
+
+#[no_mangle]
+pub extern "C" fn after_plain_lets(p: *const X, q: Q) -> *mut Y {
+    let arrays = Arrays { p, q };
+    let level = q.then_some(1);
+    clear_last_error();
+    guard_panic(|| work(arrays, level)).map_or(ptr::null_mut(), boxed)
+}
+
+fn helper(p: *const X) -> Option<Y> {
+    let p = p;
+    clear_last_error();
+    guard_panic(|| work(p))
+}
+
+#[no_mangle]
+pub extern "C" fn through_a_clearing_helper(p: *const X) -> *mut Y {
+    helper(p).map_or(ptr::null_mut(), boxed)
+}
+
+#[no_mangle]
+pub extern "C" fn returns_before_clearing(e: *const Expr) -> StrOut {
+    if e.is_null() {
+        return ptr::null_mut();
+    }
+    let expr = unsafe { (*e).clone() };
+    guard_panic(|| expr.meta().output_name().ok())
+        .map_or(ptr::null_mut(), |name| str_out(&name))
+}
+
+#[no_mangle]
+pub extern "C" fn clears_after_a_let_else(p: *const X) -> *mut Y {
+    let Some(x) = decode(p) else {
+        return ptr::null_mut();
+    };
+    clear_last_error();
+    guard_panic(|| work(x)).map_or(ptr::null_mut(), boxed)
+}
+
+#[no_mangle]
+pub extern "C" fn clears_after_a_try(p: *const X) -> Option<Y> {
+    let x = decode(p)?;
+    clear_last_error();
+    guard_panic(|| work(x))
+}
+
+#[no_mangle]
+pub extern "C" fn unguarded() -> i32 {
+    0
+}
+"#,
+    );
+    assert_eq!(
+        stale_reasons(&source),
+        vec![
+            "returns_before_clearing is guarded but does not clear the last error first",
+            "clears_after_a_let_else is guarded but does not clear the last error first",
+            "clears_after_a_try is guarded but does not clear the last error first",
+        ]
+    );
 }
 
 #[test]

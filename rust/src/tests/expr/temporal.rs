@@ -108,3 +108,51 @@ fn temporal_literal_compares_with_a_column() {
         .unwrap();
     assert_eq!(after.height(), 2);
 }
+
+#[test]
+fn the_v2_temporal_literal_names_why_it_refuses() {
+    use CompatDTypeTag as Tag;
+    use CompatTimeUnit as Unit;
+    let refused = [
+        (
+            1,
+            dtype(Tag::Int64, Unit::None),
+            "no temporal literal of dtype i64",
+        ),
+        (
+            1,
+            dtype(Tag::String, Unit::None),
+            "no temporal literal of dtype str",
+        ),
+        (
+            i64::from(i32::MAX) + 1,
+            dtype(Tag::Date, Unit::None),
+            "2147483648 days is outside the Date range",
+        ),
+        (
+            -1,
+            dtype(Tag::Time, Unit::None),
+            "-1 ns is outside the Time range",
+        ),
+        (
+            86_400_000_000_000,
+            dtype(Tag::Time, Unit::None),
+            "86400000000000 ns is outside the Time range",
+        ),
+    ];
+    for (value, target, reason) in refused {
+        set_last_error("stale");
+        assert!(expr_lit_temporal_v2(value, target).is_null());
+        assert_eq!(
+            super::test_util::recorded_error().as_deref(),
+            Some(reason),
+            "{value} as {target:?}"
+        );
+    }
+    let date = dtype(Tag::Date, Unit::None);
+    set_last_error("stale");
+    let e = expr_lit_temporal_v2(15886, date);
+    assert_eq!(super::test_util::recorded_error(), None);
+    assert_eq!(unsafe { (*e).clone() }, literal(15886, date));
+    expr_drop(e);
+}

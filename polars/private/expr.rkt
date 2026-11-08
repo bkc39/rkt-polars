@@ -17,7 +17,6 @@
          polars/private/expr-dt
          polars/private/expr-str
          (only-in polars/private/foreign
-                  allocator/or-fail
                   call/foreign-error
                   call/polars-reason
                   _DataFrame-ptr

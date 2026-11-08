@@ -11,12 +11,12 @@
                     ->expr/who Expr-ptr? _Expr-ptr _Expr-ptr/null define-compat expr-alias expr-col
                     expr-drop-count lit-integer/c)
            (only-in (submod polars/private/expr-core internal)
-                    col expr->string expr-all expr-drop expr-dtype-col expr-exclude lit
-                    lit-value/c multi-column-expr?)
+                    col expr->string expr-all expr-drop expr-dtype-col expr-exclude
+                    expr-lit-temporal expr-lit-temporal/who lit lit-value/c multi-column-expr?)
            (only-in racket/string string-contains?)
            (only-in polars/private/expr dataframe-select-exprs)
            (only-in polars/private/foreign
-                    call/foreign-error dataframe-column-names dataframe-new polars-null series-cast
+                    ->compat-dtype call/foreign-error dataframe-column-names dataframe-new polars-null series-cast
                     series-new-str)
            (only-in threading ~>)
            (only-in polars/private/resource with-raw-buffer)
@@ -31,6 +31,12 @@
     (ptr-set! truncated _int64 1 0)
     (check-exn #rx"^col: a string block is shorter than its header says$"
                (lambda () (call/foreign-error 'col (lambda () (col/block truncated))))))
+  (check-exn #rx"^expr-lit-temporal: 1099511627776 days is outside the Date range$"
+             (lambda () (expr-lit-temporal (expt 2 40) (->compat-dtype 'date))))
+  (check-exn #rx"^lit: 86400000000000 ns is outside the Time range$"
+             (lambda () (expr-lit-temporal/who 'lit 86400000000000 (->compat-dtype 'time))))
+  (check-exn #rx"^expr-lit-temporal: no temporal literal of dtype i32$"
+             (lambda () (expr-lit-temporal 1 (->compat-dtype 'int32))))
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))

@@ -74,6 +74,27 @@ pub extern "C" fn series_cast_enum_v2(
 }
 
 #[no_mangle]
+pub extern "C" fn series_enum_categories_v2(
+    s_ptr: *const Series,
+) -> *mut Series {
+    boxed_result(|| {
+        let s = unsafe { deref_arg(s_ptr, "series") }?;
+        match s.dtype() {
+            DataType::Enum(categories, _) => Ok(StringChunked::with_chunk(
+                s.name().clone(),
+                categories.categories().clone(),
+            )
+            .into_series()),
+            dtype => polars_bail!(
+                SchemaMismatch:
+                "invalid series dtype: expected `Enum`, got `{}` for `{}`",
+                dtype, s.name()
+            ),
+        }
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn series_enum_categories(s_ptr: *const Series) -> *mut Series {
     let Some(s) = (unsafe { s_ptr.as_ref() }) else {
         return ptr::null_mut();

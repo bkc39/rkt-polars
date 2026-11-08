@@ -585,3 +585,32 @@ fn a_lazy_enum_cast_counts_one_chunk_as_polars_does() {
         assert!(chunks.contains(&reason), "{reason}");
     }
 }
+
+#[test]
+fn the_v2_enum_categories_name_a_series_that_is_not_an_enum() {
+    let s = make_str("level", &["info", "debug"]);
+    let e = cast_enum(s, &["debug", "info"]);
+    set_last_error("stale");
+    let categories = owned(series_enum_categories_v2(e));
+    assert_eq!(recorded_error(), None);
+    assert_eq!(categories.name().as_str(), "level");
+    assert_eq!(
+        categories
+            .str()
+            .unwrap()
+            .iter()
+            .flatten()
+            .collect::<Vec<_>>(),
+        vec!["debug", "info"]
+    );
+    set_last_error("stale");
+    assert!(series_enum_categories_v2(s).is_null());
+    assert_eq!(
+        recorded_error().as_deref(),
+        Some("invalid series dtype: expected `Enum`, got `str` for `level`")
+    );
+    assert!(series_enum_categories_v2(ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("series is null"));
+    series_drop(s);
+    series_drop(e);
+}

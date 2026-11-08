@@ -1,3 +1,4 @@
+use super::args::{optional_values, values_arg};
 use crate::prelude::*;
 use crate::*;
 
@@ -135,3 +136,89 @@ series_new_opt_primitive!(series_new_opt_u8, u8);
 series_new_opt_primitive!(series_new_opt_u16, u16);
 series_new_opt_primitive!(series_new_opt_u32, u32);
 series_new_opt_primitive!(series_new_opt_u64, u64);
+
+macro_rules! series_new_primitive_v2 {
+    ($fn_name:ident, $opt_name:ident, $polars:ty, $ty:ty) => {
+        #[no_mangle]
+        pub extern "C" fn $fn_name(
+            data: *const $ty,
+            length: usize,
+        ) -> *mut Series {
+            boxed_result(|| {
+                let values = unsafe { values_arg(data, length) }?;
+                Ok(ChunkedArray::<$polars>::from_slice(
+                    PlSmallStr::EMPTY,
+                    values,
+                )
+                .into_series())
+            })
+        }
+
+        #[no_mangle]
+        pub extern "C" fn $opt_name(
+            data: *const $ty,
+            valid: *const u8,
+            length: usize,
+        ) -> *mut Series {
+            boxed_result(|| {
+                let values = unsafe { optional_values(data, valid, length) }?;
+                Ok(ChunkedArray::<$polars>::from_iter_options(
+                    PlSmallStr::EMPTY,
+                    values.map(|value| value.copied()),
+                )
+                .into_series())
+            })
+        }
+    };
+}
+
+series_new_primitive_v2!(series_new_i8_v2, series_new_opt_i8_v2, Int8Type, i8);
+series_new_primitive_v2!(
+    series_new_i16_v2,
+    series_new_opt_i16_v2,
+    Int16Type,
+    i16
+);
+series_new_primitive_v2!(
+    series_new_i32_v2,
+    series_new_opt_i32_v2,
+    Int32Type,
+    i32
+);
+series_new_primitive_v2!(
+    series_new_i64_v2,
+    series_new_opt_i64_v2,
+    Int64Type,
+    i64
+);
+series_new_primitive_v2!(series_new_u8_v2, series_new_opt_u8_v2, UInt8Type, u8);
+series_new_primitive_v2!(
+    series_new_u16_v2,
+    series_new_opt_u16_v2,
+    UInt16Type,
+    u16
+);
+series_new_primitive_v2!(
+    series_new_u32_v2,
+    series_new_opt_u32_v2,
+    UInt32Type,
+    u32
+);
+series_new_primitive_v2!(
+    series_new_u64_v2,
+    series_new_opt_u64_v2,
+    UInt64Type,
+    u64
+);
+series_new_primitive_v2!(
+    series_new_f32_v2,
+    series_new_opt_f32_v2,
+    Float32Type,
+    f32
+);
+series_new_primitive_v2!(
+    series_new_f64_v2,
+    series_new_opt_f64_v2,
+    Float64Type,
+    f64
+);
