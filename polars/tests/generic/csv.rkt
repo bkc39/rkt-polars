@@ -295,7 +295,9 @@
         (define expected (read piped))
         (define got (read-through-a-fifo (format "fifo-~a.csv" i) read))
         (check-equal? (height expected) rows)
-        (check-true (and (not (string? got)) (frame=? got expected)) (format "fifo ~a: ~a" i got)))
+        ;; printing a frame here fails the next file write in the nix sandbox (errno 17)
+        (check-true (and (not (string? got)) (frame=? got expected))
+                    (format "fifo ~a: ~a" i (if (string? got) got "a frame"))))
       (printf "skipped: the named-pipe reads need mkfifo and sh\n"))
   (define stray-to-the-end
     (scratch-file scratch "stray-to-the-end.csv"
