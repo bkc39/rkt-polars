@@ -298,7 +298,7 @@
         ;; printing a frame here fails the next file write in the nix sandbox (errno 17)
         (check-true (and (not (string? got)) (frame=? got expected))
                     (format "fifo ~a: ~a" i (if (string? got) got "a frame"))))
-      (printf "skipped: the named-pipe reads need mkfifo and sh\n"))
+      (displayln "skipped: the named-pipe reads need mkfifo and sh"))
   (define stray-to-the-end
     (scratch-file scratch "stray-to-the-end.csv"
                   (apply csv-lines "a,b" "1,5\"" (for/list ([i (in-range 1000)]) (~a i "," i)))))
