@@ -125,12 +125,13 @@ pub(super) fn unterminated(bytes: &[u8]) -> bool {
     bytes.iter().filter(|&&b| b == quote).count() % 2 == 1
 }
 
-/// The contents of a field that opens with a quote, or `None` when the field does not end with
-/// the closing quote: it ends inside the quote, or has bytes after it.
+/// The bytes between a quoted field's first and last byte, or `None` when the field is
+/// unterminated. A closed field with bytes after its closing quote gives what 0.55 sliced from
+/// it (`ab"` from `"ab"c`).
 #[inline]
 pub(super) fn unquoted(bytes: &[u8]) -> Option<&[u8]> {
     match bytes {
-        [open, inner @ .., close] if open == close && !unterminated(bytes) => Some(inner),
+        [_, inner @ .., _] if !unterminated(bytes) => Some(inner),
         _ => None,
     }
 }

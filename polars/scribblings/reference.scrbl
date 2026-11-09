@@ -828,7 +828,10 @@ by-quarter
   @racket[cast] it. Each column
   appears at most once (@racket[distinct-names?]), and naming a column the
   file lacks is an error. With
-  @racket[#:ignore-errors #t] a field that does not parse reads as null. @racket[#:try-parse-dates #t] reads ISO
+  @racket[#:ignore-errors #t] a field that does not parse reads as null,
+  but a quoted field left unclosed at the end of the file in a String,
+  Categorical or Time column, or a header name left unclosed, is an error
+  either way. @racket[#:try-parse-dates #t] reads ISO
   dates, times of day and datetimes as @racket['date], @racket['time] and
   @racket['datetime] columns, and datetimes with a UTC offset as
   @racket['(datetime microseconds "UTC")], as Python does.

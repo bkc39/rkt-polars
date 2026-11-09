@@ -526,4 +526,148 @@ fn a_quote_char_other_than_the_double_quote_closes_by_the_same_rule() {
         let column = df.column("a").unwrap();
         assert_eq!(column.get(1).unwrap(), AnyValue::Int64(12), "{}", how);
     }
+    for (tag, polars_dtype) in [(T::Int64, "i64"), (T::String, "str")] {
+        let odd = Case {
+            name: "odd.csv",
+            text: b"a\n1\n'12''",
+            column: "a",
+            dtype: plain(tag),
+            field: "'12''",
+            polars_dtype,
+        };
+        let path = write(dir.path(), odd.name, odd.text);
+        let typed = Csv {
+            overrides: vec![(bytes_of("a"), plain(tag))],
+            ..csv.clone()
+        };
+        for (how, outcome) in outcomes(&typed, &path) {
+            odd.assert_refused(&path, outcome, how);
+        }
+    }
+    let strings = Csv {
+        overrides: vec![(bytes_of("a"), plain(T::String))],
+        ..csv.clone()
+    };
+    let inner = write(dir.path(), "inner.csv", b"a\nx\n'a\"b'");
+    for (how, outcome) in outcomes(&strings, &inner) {
+        let df = outcome.unwrap_or_else(|e| panic!("{}: {}", how, e));
+        let column = df.column("a").unwrap();
+        assert_eq!(column.get(1).unwrap(), AnyValue::String("a\"b"), "{}", how);
+    }
+}
+
+#[test]
+fn a_closed_field_with_bytes_after_its_close_reads_as_in_0_55() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let typed = |tag| Csv {
+        overrides: vec![(bytes_of("a"), plain(tag))],
+        ..Default::default()
+    };
+    let path = write(dir.path(), "trailing.csv", b"a,b\n\"ab\"c,1\n");
+    let categorical = typed(T::Categorical);
+    for (how, outcome) in outcomes(&categorical, &path)
+        .into_iter()
+        .chain(outcomes(&ignoring_errors(&categorical), &path))
+    {
+        let df = outcome.unwrap_or_else(|e| panic!("cat {}: {}", how, e));
+        let strings = df.column("a").unwrap().cast(&DataType::String).unwrap();
+        assert_eq!(strings.str().unwrap().get(0), Some("ab"), "cat {}", how);
+    }
+    let string = typed(T::String);
+    for (how, outcome) in outcomes(&string, &path)
+        .into_iter()
+        .chain(outcomes(&ignoring_errors(&string), &path))
+    {
+        let msg = outcome.err().unwrap_or_else(|| panic!("str {}: read", how));
+        assert!(
+            msg.starts_with("could not parse `\"ab\"c` as dtype `str`")
+                && msg.contains("Field `\"ab\"c` is not properly escaped."),
+            "str {}: {:?}",
+            how,
+            msg
+        );
+    }
+    let path = write(dir.path(), "trailing-int.csv", b"a,b\n\"12\"3,1\n");
+    let int = typed(T::Int64);
+    for (how, outcome) in outcomes(&int, &path) {
+        let msg = outcome.err().unwrap_or_else(|| panic!("i64 {}: read", how));
+        assert!(
+            msg.starts_with("could not parse `\"12\"3` as dtype `i64`")
+                && msg.contains(
+                    "invalid primitive value found during CSV parsing"
+                ),
+            "i64 {}: {:?}",
+            how,
+            msg
+        );
+    }
+    for (how, outcome) in outcomes(&ignoring_errors(&int), &path) {
+        let df = outcome.unwrap_or_else(|e| panic!("i64 {}: {}", how, e));
+        assert!(
+            df.column("a").unwrap().get(0).unwrap().is_null(),
+            "i64 {}",
+            how
+        );
+    }
+}
+
+#[test]
+fn a_null_marker_never_matches_an_unclosed_field() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures: [(&str, &[u8], &str); 2] = [
+        ("marker.csv", b"a,b\n1,\"NA", "\"NA"),
+        ("quote.csv", b"a,b\n1,\"", "\""),
+    ];
+    for (name, text, field) in fixtures {
+        let path = write(dir.path(), name, text);
+        for (tag, polars_dtype) in [(T::String, "str"), (T::Int64, "i64")] {
+            let csv = Csv {
+                overrides: vec![(bytes_of("b"), plain(tag))],
+                null_values: vec![bytes_of(field)],
+                ..Default::default()
+            };
+            let mut head = csv.clone();
+            head.options.has_n_rows = true;
+            head.options.n_rows = 10;
+            let ignoring = ignoring_errors(&csv);
+            let mut refused = vec![
+                ("read", csv.read_outcome(&path)),
+                ("scan", csv.scan_outcome(&path)),
+                ("glob", csv.read_outcome(&one_file_pattern(&path))),
+                ("n_rows read", head.read_outcome(&path)),
+                ("n_rows scan", head.scan_outcome(&path)),
+            ];
+            let ignored = vec![
+                ("ignoring read", ignoring.read_outcome(&path)),
+                ("ignoring scan", ignoring.scan_outcome(&path)),
+            ];
+            if tag == T::String {
+                refused.extend(ignored);
+            } else {
+                for (how, outcome) in ignored {
+                    let df = outcome
+                        .unwrap_or_else(|e| panic!("{} {}: {}", name, how, e));
+                    assert!(
+                        df.column("b").unwrap().get(0).unwrap().is_null(),
+                        "{} {}",
+                        name,
+                        how
+                    );
+                }
+            }
+            let case = Case {
+                name,
+                text,
+                column: "b",
+                dtype: plain(tag),
+                field,
+                polars_dtype,
+            };
+            for (how, outcome) in refused {
+                case.assert_refused(&path, outcome, how);
+            }
+        }
+    }
 }

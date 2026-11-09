@@ -1152,14 +1152,16 @@ pub(super) fn parse_lines(
                         // if we have null values argument, check if this field equal null value
                         if let Some(null_values) = null_values {
                             let field = if needs_escaping {
-                                unquoted(field).unwrap_or(field)
+                                unquoted(field)
                             } else {
-                                field
+                                Some(field)
                             };
 
                             // SAFETY:
                             // process fields is in bounds
-                            add_null = unsafe { null_values.is_null(field, idx as usize) }
+                            add_null = field.is_some_and(|field| unsafe {
+                                null_values.is_null(field, idx as usize)
+                            })
                         }
                         if add_null {
                             buf.add_null(!parse_options.missing_is_null && field.is_empty())
