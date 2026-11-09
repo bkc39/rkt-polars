@@ -592,11 +592,13 @@ fn guarding(functions: &[Function]) -> BTreeSet<String> {
 fn starts_with_a_call(e: &Expr, names: &BTreeSet<String>) -> bool {
     match e {
         Expr::Call(call) => match &*call.func {
-            Expr::Path(p) => p
-                .path
-                .segments
-                .last()
-                .is_some_and(|s| names.contains(&s.ident.to_string())),
+            Expr::Path(p) => {
+                p.path
+                    .segments
+                    .last()
+                    .is_some_and(|s| names.contains(&s.ident.to_string()))
+                    && !call.args.iter().any(may_exit)
+            }
             _ => false,
         },
         Expr::MethodCall(call) => starts_with_a_call(&call.receiver, names),
@@ -618,6 +620,9 @@ impl<'ast> Visit<'ast> for Exits {
     fn visit_expr_return(&mut self, _: &'ast syn::ExprReturn) {
         self.0 = true;
     }
+    fn visit_expr_macro(&mut self, _: &'ast syn::ExprMacro) {
+        self.0 = true;
+    }
     fn visit_expr_closure(&mut self, _: &'ast syn::ExprClosure) {}
 }
 
@@ -628,8 +633,9 @@ fn may_exit(e: &Expr) -> bool {
 }
 
 /// The block clears the last error before any statement that can return:
-/// only `let`s that cannot (no `else`, `?` or `return`) come before the
-/// clearing call.
+/// only `let`s that cannot (no `else`, `?`, `return` or macro, whose
+/// expansion is unread) come before the clearing call, whose arguments
+/// cannot return either.
 fn clears_first(block: &Block, clearing: &BTreeSet<String>) -> bool {
     for stmt in &block.stmts {
         match stmt {
@@ -865,6 +871,32 @@ pub extern "C" fn clears_after_a_try(p: *const X) -> Option<Y> {
 }
 
 #[no_mangle]
+pub extern "C" fn returns_in_a_helper_argument(p: *const X) -> *mut Y {
+    helper(if p.is_null() { return ptr::null_mut() } else { p })
+        .map_or(ptr::null_mut(), boxed)
+}
+
+#[no_mangle]
+pub extern "C" fn clears_after_a_macro(p: *const X) -> Option<Y> {
+    let x = some_macro!(p);
+    clear_last_error();
+    guard_panic(|| work(x))
+}
+
+fn late_helper(p: *const X) -> Option<Y> {
+    if p.is_null() {
+        return None;
+    }
+    clear_last_error();
+    guard_panic(|| work(p))
+}
+
+#[no_mangle]
+pub extern "C" fn through_a_late_clearing_helper(p: *const X) -> *mut Y {
+    late_helper(p).map_or(ptr::null_mut(), boxed)
+}
+
+#[no_mangle]
 pub extern "C" fn unguarded() -> i32 {
     0
 }
@@ -876,6 +908,9 @@ pub extern "C" fn unguarded() -> i32 {
             "returns_before_clearing is guarded but does not clear the last error first",
             "clears_after_a_let_else is guarded but does not clear the last error first",
             "clears_after_a_try is guarded but does not clear the last error first",
+            "returns_in_a_helper_argument is guarded but does not clear the last error first",
+            "clears_after_a_macro is guarded but does not clear the last error first",
+            "through_a_late_clearing_helper is guarded but does not clear the last error first",
         ]
     );
 }
