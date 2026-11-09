@@ -43,7 +43,10 @@ depends on it.
 Two crates are vendored, each the crates.io crate with its patch applied
 and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
 `rust/vendor/polars-stream-0.55.2`, whose patch lets the streaming CSV source
-take a slice with a comment prefix (#270), and `rust/vendor/polars-io-0.55.2`,
+take a slice with a comment prefix (#270), slices a CSV scan under
+`#:ignore-errors` only after parsing, and lowers a slice from the end of a
+commented or `#:ignore-errors` CSV scan to a buffering slice node above it
+(#339, #340), and `rust/vendor/polars-io-0.55.2`,
 whose patch makes an unclosed quote in a CSV field a parse error (#347) and
 has the line counter skip the comment lines after its last counted newline
 before it judges a last line without a newline (#335; see the `read-csv`
@@ -541,21 +544,19 @@ it. Racket side: `define-compat` with `#:c-id`.
     slice's end, and every batch with no counted rows up to the first batch
     past the slice, checking each one's height against its count, so a
     `head` or a slice gives the rows the full read gives at those
-    positions, or fails. A `tail` first counts the rows, parsing only the
-    batches with no counted rows, and those for their row structure alone
-    (the first column parsed with errors ignored, whatever the dtypes and
-    the selection), then reads the last rows as such a slice: in each file
-    it reaches every batch is checked in one pass or the other, so a `tail`
-    of one file too gives the rows the full read gives at those positions,
-    or fails. A glob's `tail` walks back from the last file and never
-    parses the files wholly before it, so a malformed one among them is
-    not reported (#340).
-    Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
-    a slice parses the whole file and slices afterwards, but a `tail` is
-    cut by the counter's count, with or without a prefix, and can return
-    other rows (#339). A last line without a newline is a row unless what
-    follows the counter's last counted newline is comment lines alone
-    (#335): the counter skips comment lines from there, as at the start of
+    positions, or fails. A `tail`, or any slice counted from the end, is
+    not resolved from per-file row counts: the vendored lowering gives the
+    scan no slice and cuts its output with a buffering slice node above the
+    row index, so it parses every file of a glob and gives the full read's
+    last rows, row index included, or fails as the full read does (#340).
+    That costs one parse of every file and a buffer of the tail's rows.
+    Given `#:ignore-errors`, with or without a prefix, a batch whose height
+    differs from its count is only a warning, so the counter cuts no slice:
+    a `tail` is taken from the end in the same way, and a `head` or a slice
+    parses up to its end and slices afterwards, so each gives the full
+    read's rows at those positions (#339). A last line without a newline
+    is a row unless what follows the counter's last counted newline is
+    comment lines alone (#335): the counter skips comment lines from there, as at the start of
     any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the
     `#y` is inside a field and the file has two rows. 0.55 judged the last
     physical line alone, quote-blind, so a whole-file scan or a `tail` of

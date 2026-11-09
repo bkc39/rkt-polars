@@ -351,6 +351,155 @@ fn a_tail_checks_the_row_structure_of_the_batches_it_counts() {
     }
 }
 
+fn indexed(mut csv: Csv) -> Csv {
+    csv.row_index_name = Some(bytes_of("i"));
+    csv.options.row_index_offset = 5;
+    csv
+}
+
+fn slice_outcome(csv: &Csv, path: &Path, offset: i64, n: usize) -> Outcome {
+    csv.scan(path)
+        .slice(offset, n as IdxSize)
+        .collect()
+        .map_err(|e| e.to_string())
+}
+
+fn ten_rows_then(from: usize, rest: &str) -> String {
+    let rows: String = (from..from + 10)
+        .map(|i| format!("{},{}\n", i, i))
+        .collect();
+    format!("a,b\n{}{}", rows, rest)
+}
+
+fn two_file_glob(dir: &Path, name: &str, first: &str) -> PathBuf {
+    let sub = dir.join(name);
+    std::fs::create_dir(&sub).expect("glob directory");
+    write(&sub, "a0.csv", first.as_bytes());
+    write(&sub, "a1.csv", ten_rows_then(100, "").as_bytes());
+    sub.join("a*.csv")
+}
+
+#[test]
+fn a_slice_under_ignore_errors_is_the_full_reads_cut() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rows: String = (0..20_000).map(|i| format!("v{}\n", i)).collect();
+    let unended = write(
+        dir.path(),
+        "unended.csv",
+        format!("a\n{}x#y", rows).as_bytes(),
+    );
+    let commented = write(
+        dir.path(),
+        "commented.csv",
+        b"a,b\n1,5\"\n2,6\n# note\n3,7\n",
+    );
+    let stray = write(dir.path(), "stray.csv", b"a,b\n1,5\"\n2,6\n3,7\n");
+    let glob = two_file_glob(
+        dir.path(),
+        "glob",
+        &ten_rows_then(10, "1,5\"\n2,6\n# note\n3,7\n"),
+    );
+    let mut violations = Vec::new();
+    for (prefix, path) in [
+        (Some("#"), &unended),
+        (Some("#"), &commented),
+        (None, &stray),
+        (Some("#"), &glob),
+        (None, &glob),
+    ] {
+        let mut plain = Csv {
+            comment_prefix: prefix.map(bytes_of),
+            ..Default::default()
+        };
+        plain.options.ignore_errors = true;
+        for csv in [plain.clone(), indexed(plain)] {
+            let full = csv.scan_collect(path);
+            let total = full.height();
+            let mut cuts: Vec<(i64, usize)> = (1..=4)
+                .flat_map(|n| [(0, n), (-(n as i64), n), (-(n as i64), 1)])
+                .collect();
+            cuts.extend([(-12, 12), (0, total), (-(total as i64), total)]);
+            cuts.sort_unstable();
+            cuts.dedup();
+            for (offset, n) in cuts {
+                let expected = Ok(full.slice(offset, n));
+                let got = slice_outcome(&csv, path, offset, n);
+                if !same_outcome(&got, &expected) {
+                    violations.push(format!(
+                        "slice({}, {}) of {:?}, prefix {:?}, row index {}: {:?}",
+                        offset,
+                        n,
+                        path,
+                        prefix,
+                        csv.row_index_name.is_some(),
+                        got.map(|df| df.shape())
+                    ));
+                }
+            }
+            for n in [1, 2] {
+                let mut head = csv.clone();
+                head.options.has_n_rows = true;
+                head.options.n_rows = n;
+                let got = head.read_outcome(path);
+                if !same_outcome(&got, &Ok(full.head(Some(n)))) {
+                    violations.push(format!(
+                        "n rows {} of {:?}, prefix {:?}: {:?}",
+                        n,
+                        path,
+                        prefix,
+                        got.map(|df| df.shape())
+                    ));
+                }
+            }
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
+#[test]
+fn a_glob_tail_fails_on_a_malformed_earlier_file_as_the_full_read_does() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let csv = indexed(commented_csv("#"));
+    let bad = two_file_glob(
+        dir.path(),
+        "bad",
+        &ten_rows_then(10, "1,5\"\n2,6\n# note\n3,7\n"),
+    );
+    let good = two_file_glob(
+        dir.path(),
+        "good",
+        &ten_rows_then(10, "1,5\n2,6\n# note\n3,7\n"),
+    );
+    for (read, got) in [
+        ("a whole scan", csv.scan_outcome(&bad)),
+        ("a tail of 2", slice_outcome(&csv, &bad, -2, 2)),
+        ("a tail of 10", slice_outcome(&csv, &bad, -10, 10)),
+        ("a tail of 11", slice_outcome(&csv, &bad, -11, 11)),
+    ] {
+        assert!(
+            got.as_ref().is_err_and(|e| e.starts_with("CSV malformed")),
+            "{} of the glob fails: {:?}",
+            read,
+            got.map(|df| df.shape())
+        );
+    }
+    let full = csv.scan_collect(&good);
+    assert_eq!(full.height(), 23);
+    for n in [1, 2, 10, 11, 13, 14, 23, 30] {
+        let got = slice_outcome(&csv, &good, -(n as i64), n);
+        assert!(
+            same_outcome(&got, &Ok(full.tail(Some(n)))),
+            "a tail of {} of the well-formed glob: {:?}",
+            n,
+            got.map(|df| df.shape())
+        );
+    }
+    let last = slice_outcome(&csv, &good, -2, 2).expect("a tail of 2");
+    let index = last.column("i").unwrap().cast(&DataType::Int64).unwrap();
+    let index: Vec<i64> = index.i64().unwrap().into_no_null_iter().collect();
+    assert_eq!(index, [26, 27]);
+}
+
 #[derive(Clone)]
 struct LawFixture {
     label: &'static str,
@@ -519,26 +668,45 @@ struct LawFiles {
     bad: PathBuf,
 }
 
+fn law_glob(dir: &Path, name: &str, texts: [&str; 2]) -> PathBuf {
+    let sub = dir.join(name);
+    std::fs::create_dir(&sub).expect("glob directory");
+    for (i, text) in texts.iter().enumerate() {
+        write(&sub, &format!("{}.csv", i), text.as_bytes());
+    }
+    sub.join("*.csv")
+}
+
 impl LawFiles {
-    fn write(dir: &Path, fixture: &LawFixture, text: &LawText) -> Self {
+    fn write(
+        dir: &Path,
+        fixture: &LawFixture,
+        text: &LawText,
+        glob: bool,
+    ) -> Self {
         let LawText { body, .. } = text;
         let (eol, trailer) = (fixture.eol, fixture.trailer);
         let terminated = match trailer {
             "" => body.clone(),
             _ => format!("{}{}{}", body, trailer, eol),
         };
-        LawFiles {
-            clean: write(
-                dir,
-                "clean.csv",
-                format!("{}{}", body, trailer).as_bytes(),
-            ),
-            terminated: write(dir, "terminated.csv", terminated.as_bytes()),
-            bad: write(
-                dir,
-                "bad.csv",
-                format!("{}{}{}{}", body, BAD_ROW, eol, trailer).as_bytes(),
-            ),
+        let clean = format!("{}{}", body, trailer);
+        let bad = format!("{}{}{}{}", body, BAD_ROW, eol, trailer);
+        match glob {
+            false => LawFiles {
+                clean: write(dir, "clean.csv", clean.as_bytes()),
+                terminated: write(dir, "terminated.csv", terminated.as_bytes()),
+                bad: write(dir, "bad.csv", bad.as_bytes()),
+            },
+            true => LawFiles {
+                clean: law_glob(dir, "clean", [&terminated, &clean]),
+                terminated: law_glob(
+                    dir,
+                    "terminated",
+                    [&terminated, &terminated],
+                ),
+                bad: law_glob(dir, "bad", [&bad, &terminated]),
+            },
         }
     }
 }
@@ -548,6 +716,7 @@ struct LawRead<'a> {
     csv: Csv,
     files: &'a LawFiles,
     full: DataFrame,
+    bad_full: Option<DataFrame>,
     first_batch_rows: usize,
 }
 
@@ -595,19 +764,39 @@ impl LawRead<'_> {
         offset >= 0 && offset as usize + n <= self.first_batch_rows + 100
     }
 
+    fn bad_slice(&self, offset: i64, n: usize) -> Option<Option<DataFrame>> {
+        match &self.bad_full {
+            Some(bad_full) => Some(Some(bad_full.slice(offset, n))),
+            None if offset < 0 && n > 0 => Some(None),
+            None if !self.csv.options.ignore_errors
+                && self.ends_in_the_first_two_batches(offset, n) =>
+            {
+                Some(Some(self.full.slice(offset, n)))
+            }
+            None => None,
+        }
+    }
+
     fn violation(
         &self,
         read: String,
         got: Outcome,
-        expected: &DataFrame,
+        expected: Option<&DataFrame>,
     ) -> Option<String> {
-        match got.as_ref().is_ok_and(|got| same_frame(got, expected)) {
+        let holds = match expected {
+            Some(expected) => {
+                got.as_ref().is_ok_and(|got| same_frame(got, expected))
+            }
+            None => got.is_err(),
+        };
+        match holds {
             true => None,
             false => Some(format!(
-                "{}: {} gave {:?}",
+                "{}: {} gave {:?}, expected {:?}",
                 self.label,
                 read,
-                got.map(|df| df.shape())
+                got.map(|df| df.shape()),
+                expected.map(|df| df.shape())
             )),
         }
     }
@@ -616,30 +805,29 @@ impl LawRead<'_> {
         let mut violations = Vec::new();
         for offset in self.offsets() {
             for n in self.lens() {
-                let expected = self.full.slice(offset, n);
-                let near = self.ends_in_the_first_two_batches(offset, n);
+                let expected = Some(self.full.slice(offset, n));
                 let paths = [
-                    (&self.files.terminated, true),
-                    (&self.files.clean, true),
-                    (&self.files.bad, near),
+                    (&self.files.terminated, Some(expected.clone())),
+                    (&self.files.clean, Some(expected)),
+                    (&self.files.bad, self.bad_slice(offset, n)),
                 ];
-                for (path, applies) in paths {
-                    if !applies {
+                for (path, expected) in paths {
+                    let Some(expected) = expected else {
                         continue;
-                    }
+                    };
                     let got = self
                         .csv
                         .scan(path)
                         .slice(offset, n as IdxSize)
                         .collect()
                         .map_err(|e| e.to_string());
-                    let read = format!(
-                        "slice({}, {}) of {:?}",
-                        offset,
-                        n,
-                        path.file_name().unwrap()
-                    );
-                    violations.extend(self.violation(read, got, &expected));
+                    let read =
+                        format!("slice({}, {}) of {:?}", offset, n, path);
+                    violations.extend(self.violation(
+                        read,
+                        got,
+                        expected.as_ref(),
+                    ));
                 }
             }
         }
@@ -657,25 +845,37 @@ impl LawRead<'_> {
                 self.violation(
                     format!("n rows {}", n),
                     got,
-                    &self.full.head(Some(n)),
+                    Some(&self.full.head(Some(n))),
                 )
             })
             .collect()
     }
 }
 
-fn law_violations(fixture: &LawFixture, dir: &Path) -> Vec<String> {
+fn law_violations(
+    fixture: &LawFixture,
+    dir: &Path,
+    glob: bool,
+    ignore_errors: bool,
+) -> Vec<String> {
     let text = fixture.text();
-    let files = LawFiles::write(dir, fixture, &text);
+    let files = LawFiles::write(dir, fixture, &text, glob);
     let mut violations = Vec::new();
     for row_index in [None, Some(bytes_of("i"))] {
-        let label =
-            format!("{}, row index {}", fixture.label, row_index.is_some());
-        let csv = Csv {
+        let label = format!(
+            "{}, glob {}, ignore errors {}, row index {}",
+            fixture.label,
+            glob,
+            ignore_errors,
+            row_index.is_some()
+        );
+        let mut csv = Csv {
             row_index_name: row_index,
             ..fixture.csv.clone()
         };
-        if csv.scan_outcome(&files.bad).is_ok() {
+        csv.options.ignore_errors = ignore_errors;
+        let bad_full = csv.scan_outcome(&files.bad).ok();
+        if !ignore_errors && bad_full.is_some() {
             violations.push(format!("{}: the bad row reads", label));
         }
         let full = match csv.scan_outcome(&files.terminated) {
@@ -691,6 +891,7 @@ fn law_violations(fixture: &LawFixture, dir: &Path) -> Vec<String> {
             csv,
             files: &files,
             full,
+            bad_full,
             first_batch_rows: text.first_batch_rows,
         };
         violations.extend(read.scan_slice_violations());
@@ -702,13 +903,20 @@ fn law_violations(fixture: &LawFixture, dir: &Path) -> Vec<String> {
 #[test]
 fn a_pushed_slice_with_comments_equals_the_full_read_cut() {
     let fixtures = law_fixtures();
+    let runs: Vec<(&LawFixture, bool, bool)> = fixtures
+        .iter()
+        .flat_map(|fixture| {
+            [(false, false), (false, true), (true, false), (true, true)]
+                .map(|(glob, ignore_errors)| (fixture, glob, ignore_errors))
+        })
+        .collect();
     let violations: Vec<String> = std::thread::scope(|scope| {
-        let checks: Vec<_> = fixtures
+        let checks: Vec<_> = runs
             .iter()
-            .map(|fixture| {
+            .map(|&(fixture, glob, ignore_errors)| {
                 scope.spawn(move || {
                     let dir = tempfile::tempdir().expect("tempdir");
-                    law_violations(fixture, dir.path())
+                    law_violations(fixture, dir.path(), glob, ignore_errors)
                 })
             })
             .collect();

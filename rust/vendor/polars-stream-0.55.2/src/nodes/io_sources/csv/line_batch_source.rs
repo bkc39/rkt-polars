@@ -32,10 +32,10 @@ pub(super) struct LineBatchSource {
     pub(super) line_batch_tx: distributor_channel::Sender<LineBatch>,
     pub(super) pre_slice: Option<Slice>,
     pub(super) needs_full_row_count: bool,
-    /// Set with a comment prefix and without `ignore_errors`, where the line counter and the
-    /// parser can agree on a batch's row count but not on where its rows end: batch boundaries
-    /// then do not depend on the slice, every batch with no counted lines is parsed and checked,
-    /// and so is every batch before the slice's end unless only a row count is needed.
+    /// Set with a comment prefix and without `ignore_errors` when rows are read, not only
+    /// counted, where the line counter and the parser can agree on a batch's row count but not on
+    /// where its rows end: batch boundaries then do not depend on the slice, and every batch
+    /// before the slice's end, and every batch with no counted lines, is parsed and checked.
     pub(super) check_every_batch: bool,
     pub(super) use_async_prefetch: bool,
     pub(super) verbose: bool,
@@ -218,17 +218,9 @@ impl LineBatchProducer {
                     n_lines,
                     global_slice.clone(),
                 ) {
-                    SplitSlicePosition::Before
-                        if self.check_every_batch
-                            && (!self.needs_full_row_count || n_lines == 0) =>
-                    {
-                        CHECK_ONLY
-                    },
+                    SplitSlicePosition::Before if self.check_every_batch => CHECK_ONLY,
                     SplitSlicePosition::Before => {
                         self.n_rows_skipped = self.n_rows_skipped.saturating_add(n_lines);
-                        if self.check_every_batch {
-                            self.grow_read_size();
-                        }
                         continue;
                     },
                     SplitSlicePosition::Overlapping(offset, len) => (offset, len),
@@ -262,15 +254,11 @@ impl LineBatchProducer {
                 self.finished = true;
             }
 
-            self.grow_read_size();
+            if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
+                self.read_size *= 4;
+            }
 
             return Ok(Some(batch));
-        }
-    }
-
-    fn grow_read_size(&mut self) {
-        if self.read_size < ByteSourceReader::<ReaderSource>::ideal_read_size() {
-            self.read_size *= 4;
         }
     }
 

@@ -880,7 +880,23 @@ pub fn lower_ir(
                         unified_scan_args.column_mapping.as_ref(),
                     );
 
-                    let pre_slice = unified_scan_args.pre_slice.clone();
+                    let mut pre_slice = unified_scan_args.pre_slice.clone();
+
+                    // A CSV batch can parse to more or fewer rows than the line counter counts in
+                    // it (with `ignore_errors`, or around a comment), so per-file counts cannot
+                    // resolve a negative slice: it is taken from the end of the whole stream.
+                    let post_slice = match &*scan_type {
+                        #[cfg(feature = "csv")]
+                        FileScanIR::Csv { options }
+                            if predicate.is_none()
+                                && (options.ignore_errors
+                                    || options.parse_options.comment_prefix.is_some()) =>
+                        {
+                            pre_slice.take_if(|slice| matches!(slice, Slice::Negative { .. }))
+                        },
+                        _ => None,
+                    };
+
                     let disable_morsel_split = disable_morsel_split.unwrap_or(true);
 
                     // Set to None if empty for performance.
@@ -970,6 +986,12 @@ pub fn lower_ir(
 
                         stream = PhysStream::first(node_key);
                     }
+
+                    if let Some(slice) = post_slice {
+                        let (offset, len) = slice.to_signed_offset_len();
+                        stream = build_slice_stream(stream, offset, len as usize, phys_sm);
+                    }
+
                     return Ok(stream);
                 }
             }

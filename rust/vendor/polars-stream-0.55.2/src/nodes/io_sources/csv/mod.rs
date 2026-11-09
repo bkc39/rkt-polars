@@ -358,23 +358,13 @@ impl FileReader for CsvFileReader {
                 let quote_char = options.parse_options.quote_char;
                 let eol_char = options.parse_options.eol_char;
                 let comment_prefix = options.parse_options.comment_prefix.clone();
-                let check_every_batch = comment_prefix.is_some() && !options.ignore_errors;
+                let check_every_batch =
+                    comment_prefix.is_some() && !options.ignore_errors && !needs_full_row_count;
 
                 let line_counter = CountLines::new(quote_char, eol_char, comment_prefix);
 
-                let check_projection = if check_every_batch
-                    && needs_full_row_count
-                    && projection.is_empty()
-                    && !used_schema.is_empty()
-                {
-                    vec![0]
-                } else {
-                    projection.clone()
-                };
-
                 let chunk_reader_result =
-                    ChunkReader::try_new(options, used_schema, projection, check_projection)
-                        .map(Arc::new);
+                    ChunkReader::try_new(options, used_schema, projection).map(Arc::new);
                 _ = chunk_reader_tx.send(chunk_reader_result.clone());
 
                 match chunk_reader_result {
@@ -460,18 +450,14 @@ impl FileReader for CsvFileReader {
                         }
 
                         while let Ok(LineBatch {
-                            mem_slice,
+                            mem_slice: _,
                             n_lines,
                             slice,
-                            row_offset,
+                            row_offset: _,
                             morsel_seq: _,
                         }) = line_batch_rx.recv().await
                         {
-                            if slice == CHECK_ONLY {
-                                chunk_reader.read_chunk(&mem_slice, n_lines, slice, row_offset)?;
-                            } else {
-                                assert_eq!(slice, SLICE_ENDED);
-                            }
+                            assert_eq!(slice, SLICE_ENDED);
 
                             n_rows_processed = n_rows_processed.saturating_add(n_lines);
                         }
