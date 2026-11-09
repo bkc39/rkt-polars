@@ -46,7 +46,9 @@ and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
 take a slice with a comment prefix (#270), slices a CSV scan under
 `#:ignore-errors` only after parsing, and lowers a slice from the end of a
 commented or `#:ignore-errors` CSV scan to a buffering slice node above it
-(#339, #340), and `rust/vendor/polars-io-0.55.2`,
+(#339, #340), whose cut it corrects: 0.55's node dropped the frames before the
+slice's start but still counted them in its stop, so a `(slice lf -k n)` with `n < k` gave up
+to `k` rows, and `rust/vendor/polars-io-0.55.2`,
 whose patch makes an unclosed quote in a CSV field a parse error (#347) and
 has the line counter skip the comment lines after its last counted newline
 before it judges a last line without a newline (#335; see the `read-csv`
@@ -554,9 +556,13 @@ it. Racket side: `define-compat` with `#:c-id`.
     differs from its count is only a warning, so the counter cuts no slice:
     a `tail` is taken from the end in the same way, and a `head` or a slice
     parses up to its end and slices afterwards, so each gives the full
-    read's rows at those positions (#339). A last line without a newline
-    is a row unless what follows the counter's last counted newline is
-    comment lines alone (#335): the counter skips comment lines from there, as at the start of
+    read's rows at those positions (#339). The source is given no slice
+    there and reads ahead of the node that stops it, so the read stays
+    bounded but costs more than the slice: a `head` of 5 rows of a 500 MB
+    file takes about 60 ms and 370 MB under `#:ignore-errors`, against
+    5 ms without it. A last line without a newline is a row unless what
+    follows the counter's last counted newline is comment lines alone
+    (#335): the counter skips comment lines from there, as at the start of
     any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the
     `#y` is inside a field and the file has two rows. 0.55 judged the last
     physical line alone, quote-blind, so a whole-file scan or a `tail` of

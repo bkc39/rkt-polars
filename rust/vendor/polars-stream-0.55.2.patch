@@ -135,9 +135,28 @@
                              use_async_prefetch,
                              verbose,
                          }
+--- a/src/nodes/negative_slice.rs
++++ b/src/nodes/negative_slice.rs
+@@ -62,7 +62,7 @@
+             if let Buffering(buffer) = &mut self.state {
+                 // These offsets are relative to the start of buffer.
+                 let mut signed_start_offset = buffer.total_len as i64 + self.slice_offset;
+-                let signed_stop_offset =
++                let mut signed_stop_offset =
+                     signed_start_offset.saturating_add_unsigned(self.length as u64);
+ 
+                 // Trim the tokens in the buffer to just those that are relevant.
+@@ -72,6 +72,7 @@
+                     let len = buffer.frames.pop_front().unwrap().height();
+                     buffer.total_len -= len;
+                     signed_start_offset -= len as i64;
++                    signed_stop_offset -= len as i64;
+                 }
+ 
+                 while !buffer.frames.is_empty()
 --- a/src/physical_plan/lower_ir.rs
 +++ b/src/physical_plan/lower_ir.rs
-@@ -880,7 +880,23 @@
+@@ -880,7 +880,22 @@
                          unified_scan_args.column_mapping.as_ref(),
                      );
  
@@ -150,9 +169,8 @@
 +                    let post_slice = match &*scan_type {
 +                        #[cfg(feature = "csv")]
 +                        FileScanIR::Csv { options }
-+                            if predicate.is_none()
-+                                && (options.ignore_errors
-+                                    || options.parse_options.comment_prefix.is_some()) =>
++                            if options.ignore_errors
++                                || options.parse_options.comment_prefix.is_some() =>
 +                        {
 +                            pre_slice.take_if(|slice| matches!(slice, Slice::Negative { .. }))
 +                        },
@@ -162,7 +180,7 @@
                      let disable_morsel_split = disable_morsel_split.unwrap_or(true);
  
                      // Set to None if empty for performance.
-@@ -970,6 +986,12 @@
+@@ -970,6 +985,12 @@
  
                          stream = PhysStream::first(node_key);
                      }

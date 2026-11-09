@@ -5,6 +5,7 @@ const LATE_NA_ROWS: usize = 110_000;
 const LATE_NA_BYTES: Range<usize> = 900 * 1024..1200 * 1024;
 const FIRST_BATCH_BYTES: usize = 64 * 1024;
 const LAW_FIXTURE_BYTES: usize = 200 * 1024;
+const LONG_LAW_FIXTURE_BYTES: usize = 480 * 1024;
 const BAD_ROW: &str = "oops,v,extra";
 const LARGEST_BATCH_BYTES: usize = 512 * 1024;
 
@@ -500,6 +501,51 @@ fn a_glob_tail_fails_on_a_malformed_earlier_file_as_the_full_read_does() {
     assert_eq!(index, [26, 27]);
 }
 
+fn numbered_rows(rows: Range<usize>) -> String {
+    let rows: String = rows.map(|i| format!("{},{}\n", i, i)).collect();
+    format!("a,b\n{}", rows)
+}
+
+#[test]
+fn a_short_slice_from_the_end_past_whole_frames_is_the_full_reads_cut() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sub = dir.path().join("small-then-large");
+    std::fs::create_dir(&sub).expect("glob directory");
+    for (i, rows) in [0..10, 10..20, 20..30, 30..1030].into_iter().enumerate() {
+        write(&sub, &format!("f{}.csv", i), numbered_rows(rows).as_bytes());
+    }
+    let single = write(
+        dir.path(),
+        "single.csv",
+        numbered_rows(0..40_000).as_bytes(),
+    );
+    let mut ignoring = Csv::default();
+    ignoring.options.ignore_errors = true;
+    let mut violations = Vec::new();
+    for (path, offset, n) in
+        [(sub.join("f*.csv"), -500, 5), (single, -11_783, 4_479)]
+    {
+        for csv in [commented_csv("#"), ignoring.clone()] {
+            for csv in [csv.clone(), indexed(csv)] {
+                let expected = Ok(csv.scan_collect(&path).slice(offset, n));
+                let got = slice_outcome(&csv, &path, offset, n);
+                if !same_outcome(&got, &expected) {
+                    violations.push(format!(
+                        "slice({}, {}) of {:?}, prefix {}, row index {}: {:?}",
+                        offset,
+                        n,
+                        path,
+                        csv.comment_prefix.is_some(),
+                        csv.row_index_name.is_some(),
+                        got.map(|df| df.shape())
+                    ));
+                }
+            }
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
 #[derive(Clone)]
 struct LawFixture {
     label: &'static str,
@@ -607,6 +653,9 @@ fn law_fixtures() -> Vec<LawFixture> {
             };
         }),
         law_fixture("crlf", |f| f.eol = "\r\n"),
+        law_fixture("batches that grow past a short slice from the end", |f| {
+            f.bytes = LONG_LAW_FIXTURE_BYTES;
+        }),
         law_fixture("the // prefix", |f| {
             f.csv = commented_csv("//");
             f.comments = |i, _| every_ten("//", i);
@@ -755,6 +804,8 @@ impl LawRead<'_> {
             -1,
             -1000,
             -(first + 1),
+            -(total / 4),
+            -(total * 3 / 8),
             -(total / 2),
             -total,
         ]

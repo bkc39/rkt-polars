@@ -888,9 +888,8 @@ pub fn lower_ir(
                     let post_slice = match &*scan_type {
                         #[cfg(feature = "csv")]
                         FileScanIR::Csv { options }
-                            if predicate.is_none()
-                                && (options.ignore_errors
-                                    || options.parse_options.comment_prefix.is_some()) =>
+                            if options.ignore_errors
+                                || options.parse_options.comment_prefix.is_some() =>
                         {
                             pre_slice.take_if(|slice| matches!(slice, Slice::Negative { .. }))
                         },

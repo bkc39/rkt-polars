@@ -343,6 +343,18 @@
   (check-equal? (column (collect (tail (indexed-glob) 2)) "i") '(26 27))
   (for ([n (in-list '(2 10 11 13 14 23 30))])
     (check-true (frame=? (collect (tail (indexed-glob) n)) (tail (collect (indexed-glob)) n))))
+  (make-directory (build-path scratch "small-then-large"))
+  (for ([file (in-list '("f0.csv" "f1.csv" "f2.csv" "f3.csv"))]
+        [rows (in-list (list (range 0 10) (range 10 20) (range 20 30) (range 30 1030)))])
+    (scratch-file scratch
+                  (build-path "small-then-large" file)
+                  (apply csv-lines "a,b" (for/list ([i (in-list rows)]) (~a i "," i)))))
+  (define small-then-large (build-path scratch "small-then-large" "f*.csv"))
+  (for ([scan (list (lambda () (scan-csv small-then-large #:comment-prefix "#"))
+                    (lambda () (scan-csv small-then-large #:ignore-errors #t)))])
+    (define cut (collect (slice (scan) -500 5)))
+    (check-equal? (column cut "a") '(530 531 532 533 534))
+    (check-true (frame=? cut (slice (collect (scan)) -500 5))))
 
   (define latin (scratch-file scratch "latin.csv" #"s\ncaf\351\n"))
   (check-exn #rx"invalid utf-8" (lambda () (read-csv latin)))
