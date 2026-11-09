@@ -3,6 +3,7 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 mod comment_slices;
+mod pipes;
 mod unterminated_quotes;
 
 #[derive(Clone, Default)]
@@ -274,8 +275,8 @@ const OPTION_FIXTURES: &[(&str, &[u8])] = &[
     ("nul.csv", b"a\0b,c\n1,N\0A\n#\0 note\n2,x\n"),
 ];
 
-const COMMENTED_FIXTURES: &[(&str, &[u8])] =
-    &[("quoted-comment.csv", b"a,b\n1,x\n# it\"s\n2,y\n3,z\n")];
+const COMMENTED_FIXTURES: &[(&str, &[u8], usize)] =
+    &[("quoted-comment.csv", b"a,b\n1,x\n# it\"s\n2,y\n3,z\n", 3)];
 
 fn option_cases() -> Vec<(&'static str, Csv)> {
     let case = |label, set: fn(&mut Csv)| {
@@ -500,15 +501,18 @@ fn an_empty_file_is_an_error_unless_raise_if_empty_is_off() {
 #[test]
 fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let fixtures = FIXTURES
-        .iter()
-        .map(|(name, text)| (*name, text.as_bytes()))
-        .chain(OPTION_FIXTURES.iter().copied())
-        .map(|fixture| (fixture, false))
-        .chain(COMMENTED_FIXTURES.iter().map(|fixture| (*fixture, true)));
-    let paths: Vec<(PathBuf, bool)> = fixtures
-        .map(|((name, contents), commented)| {
-            (write(dir.path(), name, contents), commented)
+    let fixtures =
+        FIXTURES
+            .iter()
+            .map(|(name, text)| (*name, text.as_bytes()))
+            .chain(OPTION_FIXTURES.iter().copied())
+            .map(|fixture| (fixture, None))
+            .chain(COMMENTED_FIXTURES.iter().map(|(name, contents, rows)| {
+                ((*name, *contents), Some(*rows))
+            }));
+    let paths: Vec<(PathBuf, Option<usize>)> = fixtures
+        .map(|((name, contents), commented_rows)| {
+            (write(dir.path(), name, contents), commented_rows)
         })
         .collect();
     let mut outcomes = (0, 0);
@@ -516,11 +520,14 @@ fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
     for (label, csv) in option_cases() {
         let mut globbed = csv.clone();
         globbed.options.glob = true;
-        for (path, commented) in &paths {
-            if *commented && csv.comment_prefix.is_none() {
+        for (path, commented_rows) in &paths {
+            if commented_rows.is_some() && csv.comment_prefix.is_none() {
                 continue;
             }
             let eager = csv.read_outcome(path);
+            if let (Some(rows), "comment #") = (commented_rows, label) {
+                assert_eq!(eager.as_ref().map(|df| df.height()), Ok(*rows));
+            }
             let glob = globbed.read_outcome(&one_file_pattern(path));
             let scan = csv.scan_outcome(path);
             let name = path.file_name().unwrap().to_str().unwrap();

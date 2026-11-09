@@ -90,15 +90,18 @@ fn ignore_errors_with_a_comment_prefix_reads_the_rows_a_full_read_gives() {
 #[test]
 fn a_final_line_without_a_newline_reads_as_the_terminated_file_does() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let rows: String = (0..20_000).map(|i| format!("v{}\n", i)).collect();
-    for (prefix, rows, last) in [
-        ("#", rows.as_str(), "# the end"),
-        ("#", rows.as_str(), "#"),
-        ("#", rows.as_str(), "x#y"),
-        ("//", rows.as_str(), "x//y"),
-        ("//", rows.as_str(), "// the end"),
-        ("#", "", "x#y"),
-        ("//", "", "x//y"),
+    let padding: String = (0..20_000).map(|i| format!("v{}\n", i)).collect();
+    let quoted = "1\n\"x\n#y\"";
+    for (prefix, rows, last, values) in [
+        ("#", padding.as_str(), "# the end", &[][..]),
+        ("#", padding.as_str(), "#", &[]),
+        ("#", padding.as_str(), "x#y", &["x#y"]),
+        ("//", padding.as_str(), "x//y", &["x//y"]),
+        ("//", padding.as_str(), "// the end", &[]),
+        ("#", padding.as_str(), quoted, &["1", "x\n#y"]),
+        ("#", "", "x#y", &["x#y"]),
+        ("//", "", "x//y", &["x//y"]),
+        ("#", "", quoted, &["1", "x\n#y"]),
     ] {
         let csv = commented_csv(prefix);
         let ended = write(
@@ -107,6 +110,16 @@ fn a_final_line_without_a_newline_reads_as_the_terminated_file_does() {
             format!("a\n{}{}\n", rows, last).as_bytes(),
         );
         let reference = csv.scan_collect(&ended);
+        let expected: Vec<String> = (0..rows.lines().count())
+            .map(|i| format!("v{}", i))
+            .chain(values.iter().map(|v| v.to_string()))
+            .collect();
+        assert_eq!(
+            strings(&reference, "a"),
+            expected,
+            "the terminated file ending in {:?}",
+            last
+        );
         let path = write(
             dir.path(),
             "end.csv",
@@ -151,6 +164,49 @@ fn a_final_line_without_a_newline_reads_as_the_terminated_file_does() {
 }
 
 #[test]
+fn the_fast_count_counts_a_final_line_as_the_full_read_does() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let padding: String = (0..20_000).map(|i| format!("v{}\n", i)).collect();
+    for (prefix, rows, last, last_rows) in [
+        ("#", "", "\"x\n#y\"", 1),
+        ("#", "", "1\n\"x\n#y\"", 2),
+        ("#", "", "x#y", 1),
+        ("#", "", "# c", 0),
+        ("#", "", "# c\n# d", 0),
+        ("//", "", "x//y", 1),
+        ("#", padding.as_str(), "\"x\n#y\"", 1),
+        ("#", padding.as_str(), "1\n\"x\n#y\"", 2),
+        ("#", padding.as_str(), "# c", 0),
+        ("//", padding.as_str(), "// c\nx//y", 1),
+    ] {
+        let text = format!("a\n{}{}", rows, last);
+        let path = write(dir.path(), "count.csv", text.as_bytes());
+        let height = rows.lines().count() + last_rows;
+        let full = commented_csv(prefix)
+            .scan_outcome(&path)
+            .map(|df| df.height());
+        let comment_prefix = CommentPrefix::new_from_str(prefix);
+        let counted = polars::io::csv::read::count_rows_from_slice_par(
+            polars_buffer::Buffer::from_vec(text.into_bytes()),
+            Some(b'"'),
+            Some(&comment_prefix),
+            b'\n',
+            true,
+            0,
+            0,
+            0,
+            false,
+        );
+        assert_eq!(
+            (full, counted.map_err(|e| e.to_string())),
+            (Ok(height), Ok(height)),
+            "the full read and the fast count of a file ending in {:?}",
+            last
+        );
+    }
+}
+
+#[test]
 fn a_commented_read_is_the_scan_beside_a_quote_in_a_comment() {
     let dir = tempfile::tempdir().expect("tempdir");
     let stray: String = (0..8_000)
@@ -164,35 +220,54 @@ fn a_commented_read_is_the_scan_beside_a_quote_in_a_comment() {
             _ => format!("{},y\n", i),
         })
         .collect();
-    for (name, text, rows) in [
-        ("f8000.csv", format!("a,b\n{}", stray), 28_002),
-        ("small.csv", "a,b\n1,x\n# it\"s\n2,y\n3,z\n".to_string(), 3),
-        ("quoted.csv", format!("a,b\n{}", quoted), 100_000),
+    let numbered = |range: std::ops::Range<usize>| -> Vec<String> {
+        range.map(|i| i.to_string()).collect()
+    };
+    let stray_names: Vec<String> = (0..8_000)
+        .map(|i| format!("r{}", i))
+        .chain(["p1".to_string(), "p2".to_string()])
+        .chain((0..20_000).map(|i| format!("s{}", i)))
+        .collect();
+    for (name, text, column_a) in [
+        ("f8000.csv", format!("a,b\n{}", stray), stray_names),
+        (
+            "small.csv",
+            "a,b\n1,x\n# it\"s\n2,y\n3,z\n".to_string(),
+            numbered(1..4),
+        ),
+        (
+            "quoted.csv",
+            format!("a,b\n{}", quoted),
+            numbered(0..100_000),
+        ),
     ] {
         let path = write(dir.path(), name, text.as_bytes());
         let csv = commented_csv("#");
         let mut globbed = csv.clone();
         globbed.options.glob = true;
-        let scan = csv.scan_outcome(&path);
-        assert_eq!(
-            scan.as_ref().map(|df| df.height()),
-            Ok(rows),
-            "the scan of {}",
-            name
-        );
         for (read, got) in [
             ("a read", csv.read_outcome(&path)),
             ("a glob", globbed.read_outcome(&one_file_pattern(&path))),
+            ("a scan", csv.scan_outcome(&path)),
         ] {
-            assert!(
-                same_outcome(&got, &scan),
-                "{} of {}: {:?}",
+            assert_eq!(
+                got.map(|df| (df.height(), column_text(&df, "a"))),
+                Ok((column_a.len(), column_a.clone())),
+                "{} of {}",
                 read,
-                name,
-                got.map(|df| df.shape())
+                name
             );
         }
     }
+}
+
+fn column_text(df: &DataFrame, name: &str) -> Vec<String> {
+    let text = df.column(name).unwrap().cast(&DataType::String).unwrap();
+    text.str()
+        .unwrap()
+        .iter()
+        .map(|v| v.expect("no nulls").to_string())
+        .collect()
 }
 
 #[test]
@@ -372,6 +447,9 @@ fn law_fixtures() -> Vec<LawFixture> {
             f.comments = |i, _| every_ten("//", i);
             f.row = |i| format!("r{},v{}", i, i % 13);
             f.trailer = "x//y";
+        }),
+        law_fixture("a final quoted field holding a comment line", |f| {
+            f.trailer = "-1,\"x\n#y\"";
         }),
         law_fixture("comments across the first batch boundary", |f| {
             f.comments = |i, at| match (FIRST_BATCH_BYTES * 5 / 8

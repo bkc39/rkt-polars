@@ -151,7 +151,7 @@ pub fn count_rows_from_reader_par(
 
             // Technically this is broken if the input has a comment line at the end that is longer
             // than `BYTES_PER_CHUNK`, but in practice this ought to be fine.
-            eof_unterminated_row = ends_in_unterminated_row(&last_slice, eol_char, comment_prefix);
+            eof_unterminated_row = count.rest_is_a_row(&last_slice);
         } else {
             // For the non-compressed case this is a zero-copy op.
             // TODO: Implement streaming chunk logic.
@@ -173,7 +173,7 @@ pub fn count_rows_from_reader_par(
                         {
                             start_offset += nl_off + 1;
                         } else {
-                            return (count.analyze_chunk(&[]), 0);
+                            return (count.analyze_chunk(&[]), start_offset);
                         }
                     }
 
@@ -186,11 +186,23 @@ pub fn count_rows_from_reader_par(
                         bytes.len()
                     };
 
-                    (count.analyze_chunk(&bytes[start_offset..stop_offset]), 0)
+                    (
+                        count.analyze_chunk(&bytes[start_offset..stop_offset]),
+                        start_offset,
+                    )
                 })
                 .collect_into_vec(&mut states);
 
-            eof_unterminated_row = ends_in_unterminated_row(&bytes, eol_char, comment_prefix);
+            let mut in_string = false;
+            let mut rest_offset = 0;
+            for (pair, start_offset) in &states {
+                let stats = pair[in_string as usize];
+                if stats.newline_count > 0 {
+                    rest_offset = start_offset + stats.last_newline_offset + 1;
+                }
+                in_string = stats.end_inside_string;
+            }
+            eof_unterminated_row = count.rest_is_a_row(&bytes[rest_offset..]);
         }
 
         let mut n = 0;
@@ -810,10 +822,7 @@ impl CountLines {
 
     // bytes must begin at the start of a line.
     fn analyze_chunk_with_comment(&self, bytes: &[u8], mut in_string: bool) -> LineStats {
-        let pre_s = match self.comment_prefix.as_ref().unwrap() {
-            CommentPrefix::Single(pc) => core::slice::from_ref(pc),
-            CommentPrefix::Multi(ps) => ps.as_bytes(),
-        };
+        let pre_s = self.prefix_bytes().unwrap();
 
         let mut state = LineStats::default();
         let mut scan_offset = 0;
@@ -885,23 +894,26 @@ impl CountLines {
         }
 
         if is_eof {
-            count += self.ends_in_unterminated_row(&bytes[offset..]) as usize;
+            count += self.rest_is_a_row(&bytes[offset..]) as usize;
             offset = bytes.len();
         }
 
         (count, offset)
     }
 
-    /// `rest` is what follows the last newline the counter counted: comment lines, then the
-    /// start of a row whose end the counter has not seen, if any. A row that ends in a newline
-    /// the counter did not count, one inside an open quote, is not counted, as before.
-    fn ends_in_unterminated_row(&self, mut rest: &[u8]) -> bool {
-        if let Some(prefix) = self.comment_prefix.as_ref() {
-            let prefix = match prefix {
-                CommentPrefix::Single(pc) => core::slice::from_ref(pc),
-                CommentPrefix::Multi(ps) => ps.as_bytes(),
-            };
-            while rest.starts_with(prefix) {
+    fn prefix_bytes(&self) -> Option<&[u8]> {
+        self.comment_prefix.as_ref().map(|prefix| match prefix {
+            CommentPrefix::Single(pc) => core::slice::from_ref(pc),
+            CommentPrefix::Multi(ps) => ps.as_bytes(),
+        })
+    }
+
+    /// `rest` is what follows the last newline the counter counted, outside any quote: comment
+    /// lines, then the start of a row whose end the counter has not seen, if any. A row that
+    /// ends in a newline the counter did not count, one inside an open quote, is not counted.
+    fn rest_is_a_row(&self, mut rest: &[u8]) -> bool {
+        if let Some(prefix) = self.prefix_bytes() {
+            while !rest.is_empty() && rest.starts_with(prefix) {
                 rest = match memchr::memchr(self.eol_char, rest) {
                     Some(nl) => &rest[nl + 1..],
                     None => &[],
@@ -999,26 +1011,6 @@ impl CountLines {
 
         (count, position)
     }
-}
-
-fn ends_in_unterminated_row(
-    bytes: &[u8],
-    eol_char: u8,
-    comment_prefix: Option<&CommentPrefix>,
-) -> bool {
-    if !bytes.is_empty() && bytes.last().copied().unwrap() != eol_char {
-        // We can do a simple backwards-scan to find the start of last line if it is a
-        // comment line, since comment lines can't escape new-lines.
-        let last_line_start = memchr::memrchr(eol_char, bytes).map_or(0, |nl| nl + 1);
-        let last_line_is_comment_line = bytes
-            .get(last_line_start..)
-            .map(|line| is_comment_line(line, comment_prefix))
-            .unwrap_or(false);
-
-        return !last_line_is_comment_line;
-    }
-
-    false
 }
 
 #[inline]

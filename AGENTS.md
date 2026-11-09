@@ -45,8 +45,9 @@ and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
 `rust/vendor/polars-stream-0.55.2`, whose patch lets the streaming CSV source
 take a slice with a comment prefix (#270), and `rust/vendor/polars-io-0.55.2`,
 whose patch makes an unclosed quote in a CSV field a parse error (#347) and
-has the line counter judge a last line without a newline from its first byte
-(#335; see the `read-csv` facts for all three). The
+has the line counter skip the comment lines after its last counted newline
+before it judges a last line without a newline (#335; see the `read-csv`
+facts for all three). The
 `vendored-polars-stream` and `vendored-polars-io` flake checks hold each tree to its patch, and
 `polars/native-libs/BUILDING.md` has the mechanics.
 
@@ -512,10 +513,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v3` reads a
-    glob pattern, or any path given `#:n-rows` or `#:comment-prefix`, by
-    scan and collect, and any other single file with 0.55's eager
-    `CsvReader`, about three times
-    faster on nycflights. Given `n_rows`, the eager reader stops spawning
+    glob pattern, or a regular file given `#:n-rows` or `#:comment-prefix`,
+    by scan and collect, and any other single file with 0.55's eager
+    `CsvReader`, about three times faster on nycflights. A path that is not
+    a regular file (a named pipe, a device) reads eagerly whatever the
+    keywords, since the scan memory-maps a single file, so what follows
+    holds for regular files. Given `n_rows`, the eager reader stops spawning
     chunks once the chunks already parsed hold more rows, so whether it
     reaches a later chunk that fails (a late `NA` in an inferred integer
     column) depends on thread timing (#147). The scan cuts line batches in
@@ -550,11 +553,15 @@ it. Racket side: `define-compat` with `#:c-id`.
     Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
     a slice parses the whole file and slices afterwards, but a `tail` is
     cut by the counter's count, with or without a prefix, and can return
-    other rows (#339). A last line without a newline is a row unless the
-    bytes after the counter's last counted newline are comment lines alone
-    (#335), where 0.55 tested it from its second byte, so `x#y` was a
-    comment and `# c` a row, and a whole-file scan or a `tail` failed with
-    `CSV malformed`, as in Python.
+    other rows (#339). A last line without a newline is a row unless what
+    follows the counter's last counted newline is comment lines alone
+    (#335): the counter skips comment lines from there, as at the start of
+    any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the
+    `#y` is inside a field and the file has two rows. 0.55 judged the last
+    physical line alone, quote-blind, so a whole-file scan or a `tail` of
+    such a file could fail with `CSV malformed`, as Python's does. The
+    vendored fast count (`count_rows`, which no binding reaches) applies the
+    same rule.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every

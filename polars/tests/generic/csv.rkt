@@ -266,7 +266,37 @@
                 label))
   (check-equal? (column (read-csv (scratch-file scratch "one-row.csv" "a\nx#y") #:comment-prefix "#")
                         "a")
-                '("x#y"))
+                '("x#y")
+                "routing guard: a commented one-row file reads by scan as it read eagerly")
+  (define mkfifo (find-executable-path "mkfifo"))
+  (define sh (find-executable-path "sh"))
+  (define (spawn . arguments)
+    (define-values (process out in err) (apply subprocess #f #f #f arguments))
+    (close-input-port out)
+    (close-output-port in)
+    (close-input-port err)
+    process)
+  (define piped (scratch-file scratch "piped.csv" "a,b\n1,2\n# c\n3,4\n"))
+  (define (read-through-a-fifo name read)
+    (define fifo (build-path scratch name))
+    (subprocess-wait (spawn mkfifo (path->string fifo)))
+    (define writer
+      (spawn sh "-c" "cat \"$1\" > \"$2\"" "sh" (path->string piped) (path->string fifo)))
+    (define got (with-handlers ([exn:fail? exn-message]) (read fifo)))
+    (subprocess-kill writer #t)
+    got)
+  (if (and mkfifo sh)
+      (for ([read (list read-csv
+                        (lambda (path) (read-csv path #:comment-prefix "#"))
+                        (lambda (path) (read-csv path #:n-rows 2))
+                        (lambda (path) (read-csv path #:comment-prefix "#" #:n-rows 1)))]
+            [rows (in-list '(3 2 2 1))]
+            [i (in-naturals)])
+        (define expected (read piped))
+        (define got (read-through-a-fifo (format "fifo-~a.csv" i) read))
+        (check-equal? (height expected) rows)
+        (check-true (and (not (string? got)) (frame=? got expected)) (format "fifo ~a: ~a" i got)))
+      (printf "skipped: the named-pipe reads need mkfifo and sh\n"))
   (define stray-to-the-end
     (scratch-file scratch "stray-to-the-end.csv"
                   (apply csv-lines "a,b" "1,5\"" (for/list ([i (in-range 1000)]) (~a i "," i)))))

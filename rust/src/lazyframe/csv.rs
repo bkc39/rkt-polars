@@ -665,10 +665,13 @@ fn csv_read(
     arrays: &CsvArrays,
 ) -> PolarsResult<DataFrame> {
     // The eager reader's n_rows stop races its chunk workers (#147), and its chunk splitter
-    // counts the quotes in comment lines (#341).
+    // counts the quotes in comment lines (#341); the scan memory-maps a single file, which a
+    // pipe or a device refuses.
+    let scanned_options =
+        options.has_n_rows || optional_name(arrays.comment_prefix)?.is_some();
     if is_pattern(path, options.glob)
-        || options.has_n_rows
-        || optional_name(arrays.comment_prefix)?.is_some()
+        || (scanned_options
+            && std::fs::metadata(path).is_ok_and(|m| m.is_file()))
     {
         return csv_scan(path, options, arrays)?.collect();
     }
