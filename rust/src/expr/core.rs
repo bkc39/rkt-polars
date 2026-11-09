@@ -75,6 +75,34 @@ pub extern "C" fn expr_lit_null() -> *mut Expr {
 
 const NS_IN_DAY: i64 = 86_400_000_000_000;
 
+fn temporal_literal(value: i64, dtype: &CompatDType) -> PolarsResult<Expr> {
+    let scalar = match polars_dtype_from_compat(dtype) {
+        Some(DataType::Date) => {
+            Scalar::new_date(i32::try_from(value).map_err(|_| {
+                polars_err!(
+                    ComputeError: "{} days is outside the Date range", value
+                )
+            })?)
+        }
+        Some(DataType::Datetime(unit, None)) => {
+            Scalar::new_datetime(value, unit, None)
+        }
+        Some(DataType::Duration(unit)) => Scalar::new_duration(value, unit),
+        Some(DataType::Time) => {
+            polars_ensure!(
+                (0..NS_IN_DAY).contains(&value),
+                ComputeError: "{} ns is outside the Time range", value
+            );
+            Scalar::new_time(value)
+        }
+        Some(dtype) => polars_bail!(
+            ComputeError: "no temporal literal of dtype {}", dtype
+        ),
+        None => polars_bail!(ComputeError: "unknown dtype"),
+    };
+    Ok(lit(scalar))
+}
+
 /// A Date, naive Datetime, Duration or Time literal from its physical value
 /// (days, or the dtype's unit since the epoch or midnight). NULL for any
 /// other dtype, or a value outside the dtype's range.
@@ -83,21 +111,8 @@ pub extern "C" fn expr_lit_temporal(
     value: i64,
     dtype: CompatDType,
 ) -> *mut Expr {
-    let scalar = match polars_dtype_from_compat(&dtype) {
-        Some(DataType::Date) => match i32::try_from(value) {
-            Ok(days) => Scalar::new_date(days),
-            Err(_) => return ptr::null_mut(),
-        },
-        Some(DataType::Datetime(unit, None)) => {
-            Scalar::new_datetime(value, unit, None)
-        }
-        Some(DataType::Duration(unit)) => Scalar::new_duration(value, unit),
-        Some(DataType::Time) if (0..NS_IN_DAY).contains(&value) => {
-            Scalar::new_time(value)
-        }
-        _ => return ptr::null_mut(),
-    };
-    Box::into_raw(Box::new(lit(scalar)))
+    temporal_literal(value, &dtype)
+        .map_or(ptr::null_mut(), |e| Box::into_raw(Box::new(e)))
 }
 
 /// As `expr_lit_temporal`, recording why a value has no literal.
@@ -106,33 +121,7 @@ pub extern "C" fn expr_lit_temporal_v2(
     value: i64,
     dtype: CompatDType,
 ) -> *mut Expr {
-    boxed_result(|| {
-        let scalar = match polars_dtype_from_compat(&dtype) {
-            Some(DataType::Date) => {
-                Scalar::new_date(i32::try_from(value).map_err(|_| {
-                    polars_err!(
-                        ComputeError: "{} days is outside the Date range", value
-                    )
-                })?)
-            }
-            Some(DataType::Datetime(unit, None)) => {
-                Scalar::new_datetime(value, unit, None)
-            }
-            Some(DataType::Duration(unit)) => Scalar::new_duration(value, unit),
-            Some(DataType::Time) => {
-                polars_ensure!(
-                    (0..NS_IN_DAY).contains(&value),
-                    ComputeError: "{} ns is outside the Time range", value
-                );
-                Scalar::new_time(value)
-            }
-            Some(dtype) => polars_bail!(
-                ComputeError: "no temporal literal of dtype {}", dtype
-            ),
-            None => polars_bail!(ComputeError: "unknown dtype"),
-        };
-        Ok(lit(scalar))
-    })
+    boxed_result(|| temporal_literal(value, &dtype))
 }
 
 /// A zoned Datetime literal from its unit's count since the epoch, UTC.

@@ -20,7 +20,8 @@
                     series-new-str)
            (only-in threading ~>)
            (only-in polars/private/resource with-raw-buffer)
-           (only-in polars/tests/generic/test-fixtures nul-names))
+           (only-in polars/tests/generic/test-fixtures nul-names)
+           (only-in polars/tests/test-helpers drops-during drops-once settle!))
 
   (define-compat col/block
     (_fun _pointer -> _Expr-ptr/null)
@@ -37,6 +38,15 @@
              (lambda () (expr-lit-temporal/who 'lit 86400000000000 (->compat-dtype 'time))))
   (check-exn #rx"^expr-lit-temporal: no temporal literal of dtype i32$"
              (lambda () (expr-lit-temporal 1 (->compat-dtype 'int32))))
+  (define date-dtype (->compat-dtype 'date))
+  (check-equal? (drops-once expr-drop-count expr-drop (lambda () (expr-lit-temporal 1 date-dtype)))
+                1)
+  (check >= (drops-during expr-drop-count
+                          (lambda ()
+                            (for ([_ (in-range 100)])
+                              (expr-lit-temporal 1 date-dtype))
+                            (settle!)))
+         100)
   (check-pred Expr-ptr? (expr-all))
   (check-pred Expr-ptr? (expr-dtype-col 'float64))
   (check-pred Expr-ptr? (expr-dtype-col 'f64))

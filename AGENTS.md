@@ -152,15 +152,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
   `deallocator`-wrapped `<type>-drop/raw`, which `<type>-drop` wraps,
-  refusing a dropped value, so an explicit drop frees twice (#47). Every
-  entry point a wrapper reads `#f` from records why, and the wrapper raises
-  that reason through `call/foreign-error` (#320 retired `allocator/or-fail`,
-  which raised `who: operation failed`). A test in
+  refusing a dropped value, so an explicit drop frees twice (#47). A
+  wrapper reads the reason of an entry point that records one through
+  `call/foreign-error`; #320 retired `allocator/or-fail`, which raised
+  `who: operation failed` over any reason. Four wrappers still read `#f`
+  from an entry point that records none and raise a text of their own
+  (#353): `dataframe-new` and `expr-dtype-col` (`operation failed`),
+  `expr-sort` and `expr-sort-by`. A test in
   `polars/tests/foreign.rkt` reads every `define-compat` under
   `polars/private` and `polars/tests` and fails on one of these four result
-  types without its allocator, or on a `_pointer` result. It also fails on
-  `allocator/or-fail` around a `_v2` (or later) entry point, which records a
-  reason that `operation failed` would discard.
+  types without `allocator` and its drop, or on a `_pointer` result.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -303,8 +304,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   after it. A second walk holds every guarded entry point to clearing the
   last error before anything that can return (#291): its body opens with
   `clear_last_error()` or a call to a helper that does (`boxed_result`,
-  `scalar_result`, `write_checked_frame`, ...), after nothing but `let`s
-  that cannot return (no `else`, `?` or `return`). Every other entry point is listed in `rust/src/tests/unguarded.txt`,
+  `scalar_result`, `write_checked_frame`, ...), whose arguments cannot
+  return, after nothing but `let`s that cannot return (no `else`, `?`,
+  `return` or macro, whose expansion it does not read). Every other entry point is listed in `rust/src/tests/unguarded.txt`,
   one `name class` per line: `drop` and `count` (which must be the `_drop`
   and `_drop_count` names), `accessor`, `builder`, `constructor` and
   `error`. The audit fails on a stale or misclassified line, so guarding an
@@ -833,7 +835,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   one, as Python's `pl.Series([])` (#98); every constructor, native ones
   included, takes zero rows. A list or vector of `polars-null` alone infers
   `'null` too, as `pl.Series([None])` does, and a null among other values
-  takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
+  takes their dtype; `#:dtype 'null` (`series_new_null_v2`) takes `polars-null`
   elements only. `is-in` reads a list the same way, so `(list polars-null)`
   is a Null literal, and an empty list is a member of nothing (`#f`, null for
   a null), as Python's `is_in([])` is; a list holding an exact integer and
@@ -1020,7 +1022,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `dataframe->string`, `expr->string`, a `cast` to a string, `pivot` and
   `unpivot` raise under their own names with polars' panic as the reason. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
-  dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
+  dtypes (`expr_lit_temporal_v2`, `expr_lit_datetime_tz`).
 - A zoned datetime (#140, polars' `timezones` feature) is the datum
   `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
   `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no

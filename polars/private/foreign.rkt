@@ -40,7 +40,7 @@
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned no-problem block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
-                     series-std series-var series-new-null new-series new-series/nulls bool/null->u8
+                     series-std series-var series-new-null new-series new-series/valid bool/null->u8
                      vector-has-null? series-n-unique series-n-unique/raw
                      series-std/raw series-var/raw series-quantile series-quantile/raw
                      define-typed-reduction define-typed-reductions
@@ -812,12 +812,9 @@
 (define (new-series who name make)
   ((named who name) (call/polars-reason who make)))
 
-(define (new-series/nulls who name xs default raw opt-raw)
-  (new-series who name
-              (if (contains-polars-null? xs)
-                  (let-values ([(clean valid) (values+valid xs default)])
-                    (lambda () (opt-raw clean valid)))
-                  (lambda () (raw xs)))))
+(define (new-series/valid who name xs default opt-raw)
+  (define-values (clean valid) (values+valid xs default))
+  (new-series who name (lambda () (opt-raw clean valid))))
 
 (define-syntax-parse-rule (define-series-constructors rs-type:id ctype:id default-value:expr)
   #:with list-constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
@@ -852,12 +849,13 @@
       #:c-id rust-opt-id
       #:wrap (allocator series-drop))
     (define (list-constructor-name name xs)
-      (new-series/nulls 'list-constructor-name name xs default-value
-                        list-constructor-raw-name opt-constructor-name))
+      (if (contains-polars-null? xs)
+          (new-series/valid 'list-constructor-name name xs default-value opt-constructor-name)
+          (new-series 'list-constructor-name name (lambda () (list-constructor-raw-name xs)))))
     (define (vector-constructor-name name xs)
       (if (vector-has-null? xs)
-          (new-series/nulls 'vector-constructor-name name (vector->list xs) default-value
-                            list-constructor-raw-name opt-constructor-name)
+          (new-series/valid 'vector-constructor-name name (vector->list xs) default-value
+                            opt-constructor-name)
           (new-series 'vector-constructor-name name
                       (lambda () (vector-constructor-raw-name xs)))))))
 
@@ -908,13 +906,14 @@
   (if (polars-null? b) b (bool->u8 b)))
 
 (define (series-new-bool name bools)
-  (new-series/nulls 'series-new-bool name (map bool/null->u8 bools) 0
-                    series-new-bool/raw series-new-bool/opt/raw))
+  (if (contains-polars-null? bools)
+      (new-series/valid 'series-new-bool name (map bool/null->u8 bools) 0 series-new-bool/opt/raw)
+      (new-series 'series-new-bool name (lambda () (series-new-bool/raw (map bool->u8 bools))))))
 
 (define (series-new-bool/vec name bools)
   (if (vector-has-null? bools)
-      (new-series/nulls 'series-new-bool/vec name (map bool/null->u8 (vector->list bools)) 0
-                        series-new-bool/raw series-new-bool/opt/raw)
+      (new-series/valid 'series-new-bool/vec name (map bool/null->u8 (vector->list bools)) 0
+                        series-new-bool/opt/raw)
       (let ([u8s (for/vector #:length (vector-length bools) ([b (in-vector bools)])
                    (bool->u8 b))])
         (new-series 'series-new-bool/vec name (lambda () (series-new-bool/vec/raw u8s))))))

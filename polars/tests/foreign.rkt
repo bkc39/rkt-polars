@@ -337,6 +337,11 @@
   (check-equal?
    (series-dtype (series-new-ymdhms "name" ex1))
    '(datetime milliseconds #f))
+  (for ([new-ymdhms (in-list (list series-new-ymdhms
+                                   (lambda (name xs) (series-new-ymdhms/vec name (list->vector xs)))))])
+    (check-exn #rx"^series-new-ymdhms(/vec)?: invalid date and time: 2021-02-30 00:00:00$"
+               (lambda ()
+                 (new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0) polars-null)))))
 
   (for ([ctor+dtype
          (in-list (list (list series-new-i8 series-new-i8/vec 'int8)
@@ -1522,6 +1527,8 @@
                 `(,compat swapped (_fun _string -> _DataFrame-ptr/null)
                           #:wrap (allocator lazyframe-drop))))
   (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
+  (check-false (releases-result? `(,compat or-fail (_fun _str -> _Expr-ptr/null)
+                                           #:wrap (allocator/or-fail expr-drop 'or-fail))))
   (check > (length bindings) 200)
   (define (shared-signature-result form)
     (match form
@@ -1538,18 +1545,6 @@
                            #:unless (releases-result? form))
                   (cadr form))
                 '())
-  (define (discards-reason? form)
-    (match* ((memq '#:c-id form) (memq '#:wrap form))
-      [((list* _ (? symbol? id) _) (list* _ (list* 'allocator/or-fail _) _))
-       (regexp-match? #rx"_v[0-9]+$" (symbol->string id))]
-      [(_ _) #f]))
-  (check-true (discards-reason? `(,compat p (_fun _str -> _Expr-ptr/null) #:c-id p_v2
-                                          #:wrap (allocator/or-fail expr-drop 'p))))
-  (check-false (discards-reason? `(,compat p (_fun _str -> _Expr-ptr/null) #:c-id p_v2
-                                           #:wrap (allocator expr-drop))))
-  (check-equal? (for/list ([form (in-list bindings)] #:when (discards-reason? form)) (cadr form))
-                '()
-                "a v2 entry point records its reason: read it with call/foreign-error")
   (with-planted-sources (root ["tests/planted.rkt"
                                (format "#lang racket/base\n~s"
                                        `(,compat planted (_fun -> _DataFrame-ptr)))])

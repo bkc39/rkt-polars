@@ -25,10 +25,12 @@ macro_rules! primitive_v2_rows {
                 $v1(empty.as_ptr(), values.as_ptr(), values.len()),
             );
             assert_eq!(recorded_error(), None, stringify!($v2));
+            set_last_error("stale");
             same_series(
                 $opt_v2(values.as_ptr(), valid.as_ptr(), values.len()),
                 $opt_v1(empty.as_ptr(), values.as_ptr(), valid.as_ptr(), values.len()),
             );
+            assert_eq!(recorded_error(), None, stringify!($opt_v2));
             set_last_error("stale");
             refused_with($v2(ptr::null(), 3), "the values are null but 3 rows were given");
             set_last_error("stale");
@@ -87,6 +89,7 @@ fn the_v2_datetime_constructors_name_an_invalid_date() {
         series_new_ymdhms(empty.as_ptr(), values.as_ptr(), 3),
     );
     assert_eq!(recorded_error(), None);
+    set_last_error("stale");
     same_series(
         series_new_opt_ymdhms_v2(values.as_ptr(), valid.as_ptr(), 3),
         series_new_opt_ymdhms(
@@ -96,6 +99,7 @@ fn the_v2_datetime_constructors_name_an_invalid_date() {
             3,
         ),
     );
+    assert_eq!(recorded_error(), None);
     let invalid = [ymdhms(2024, 1, 2), ymdhms(2021, 2, 30)];
     set_last_error("stale");
     refused_with(
@@ -107,6 +111,7 @@ fn the_v2_datetime_constructors_name_an_invalid_date() {
         series_new_opt_ymdhms_v2(invalid.as_ptr(), [1u8, 1].as_ptr(), 2),
         "invalid date and time: 2021-02-30 03:04:05",
     );
+    set_last_error("stale");
     let skipped = take_box(series_new_opt_ymdhms_v2(
         invalid.as_ptr(),
         [1u8, 0].as_ptr(),
@@ -114,6 +119,7 @@ fn the_v2_datetime_constructors_name_an_invalid_date() {
     ))
     .expect("an invalid value under a null is not read");
     assert_eq!(skipped.null_count(), 1);
+    assert_eq!(recorded_error(), None);
 }
 
 #[test]
