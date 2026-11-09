@@ -7,6 +7,7 @@ use polars_time::prelude::string::Pattern;
 use polars_utils::format_pl_smallstr;
 
 use super::splitfields::SplitFields;
+use super::utils::unterminated;
 use super::{CsvParseOptions, NullValues};
 use crate::utils::{BOOLEAN_RE, FLOAT_RE, FLOAT_RE_DECIMAL, INTEGER_RE};
 
@@ -87,14 +88,15 @@ fn infer_headers(
 
     let headers = byterecord
         .map(|(slice, needs_escaping)| {
+            polars_ensure!(!(needs_escaping && unterminated(slice)), ComputeError: "invalid csv file\n\nColumn name `{}` is not properly escaped.", String::from_utf8_lossy(slice));
             let slice_escaped = if needs_escaping && (slice.len() >= 2) {
                 &slice[1..(slice.len() - 1)]
             } else {
                 slice
             };
-            String::from_utf8_lossy(slice_escaped)
+            Ok(String::from_utf8_lossy(slice_escaped))
         })
-        .collect::<Vec<_>>();
+        .collect::<PolarsResult<Vec<_>>>()?;
 
     let mut deduplicated_headers = PlIndexSet::with_capacity(headers.len());
     let mut header_names = PlHashMap::with_capacity(headers.len());

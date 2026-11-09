@@ -25,12 +25,21 @@
          }
  
          if !bytes.is_empty() && could_be_whitespace_fast(bytes[0]) {
+@@ -217,7 +224,7 @@ impl ParsedBuilder for Utf8Field {
+         let escaped_bytes = if needs_escaping {
+             self.scratch.clear();
+             self.scratch.reserve(bytes.len());
+-            polars_ensure!(bytes.len() > 1 && bytes.last() == Some(&self.quote_char), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
++            polars_ensure!(unquoted(bytes).is_some(), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
+ 
+             // SAFETY:
+             // we just allocated enough capacity and data_len is correct.
 @@ -302,7 +309,7 @@ impl<T: PolarsCategoricalType> CategoricalField<T> {
          }
          if validate_utf8(bytes) {
              if needs_escaping {
 -                polars_ensure!(bytes.len() > 1, ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
-+                polars_ensure!(bytes.len() > 1 && bytes.last() == Some(&self.quote_char), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
++                polars_ensure!(unquoted(bytes).is_some(), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
                  self.escape_scratch.clear();
                  self.escape_scratch.reserve(bytes.len());
                  // SAFETY:
@@ -105,6 +114,34 @@
                              } else {
                                  field
                              };
+--- a/src/csv/read/schema_inference.rs
++++ b/src/csv/read/schema_inference.rs
+@@ -7,6 +7,7 @@ use polars_time::prelude::string::Pattern;
+ use polars_utils::format_pl_smallstr;
+ 
+ use super::splitfields::SplitFields;
++use super::utils::unterminated;
+ use super::{CsvParseOptions, NullValues};
+ use crate::utils::{BOOLEAN_RE, FLOAT_RE, FLOAT_RE_DECIMAL, INTEGER_RE};
+ 
+@@ -87,14 +88,15 @@ fn infer_headers(
+ 
+     let headers = byterecord
+         .map(|(slice, needs_escaping)| {
++            polars_ensure!(!(needs_escaping && unterminated(slice)), ComputeError: "invalid csv file\n\nColumn name `{}` is not properly escaped.", String::from_utf8_lossy(slice));
+             let slice_escaped = if needs_escaping && (slice.len() >= 2) {
+                 &slice[1..(slice.len() - 1)]
+             } else {
+                 slice
+             };
+-            String::from_utf8_lossy(slice_escaped)
++            Ok(String::from_utf8_lossy(slice_escaped))
+         })
+-        .collect::<Vec<_>>();
++        .collect::<PolarsResult<Vec<_>>>()?;
+ 
+     let mut deduplicated_headers = PlIndexSet::with_capacity(headers.len());
+     let mut header_names = PlHashMap::with_capacity(headers.len());
 --- a/src/csv/read/utils.rs
 +++ b/src/csv/read/utils.rs
 @@ -3,6 +3,8 @@
@@ -116,17 +153,27 @@
  use super::parser::next_line_position;
  #[cfg(feature = "decompress")]
  use super::parser::next_line_position_naive;
-@@ -122,6 +124,21 @@ pub(crate) fn decompress(
- ///     - Output buffer must have enough capacity to hold `bytes.len()`
- ///     - bytes ends with the quote character e.g.: `"`
- ///     - bytes length > 1.
-+/// The contents of a field that opens with a quote, or `None` when the field never closes it (the
-+/// quote opens the last field of the input). Only the first and last bytes are compared, as in the
-+/// string builder.
+@@ -112,6 +114,31 @@ pub(crate) fn decompress(
+     }
+ }
+ 
++/// Whether a field that opens with a quote ends inside it. The splitter toggles its quoted state
++/// on every quote byte and ends a field only outside a quote, so an odd count means the field ran
++/// to the end of the input unclosed (`"`, `"12`, `"ab""`, `"a"b"`).
++#[inline]
++pub(super) fn unterminated(bytes: &[u8]) -> bool {
++    let Some(&quote) = bytes.first() else {
++        return false;
++    };
++    bytes.iter().filter(|&&b| b == quote).count() % 2 == 1
++}
++
++/// The contents of a field that opens with a quote, or `None` when the field does not end with
++/// the closing quote: it ends inside the quote, or has bytes after it.
 +#[inline]
 +pub(super) fn unquoted(bytes: &[u8]) -> Option<&[u8]> {
 +    match bytes {
-+        [open, inner @ .., close] if open == close => Some(inner),
++        [open, inner @ .., close] if open == close && !unterminated(bytes) => Some(inner),
 +        _ => None,
 +    }
 +}
@@ -135,6 +182,6 @@
 +    polars_err!(ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", String::from_utf8_lossy(bytes))
 +}
 +
- pub(super) unsafe fn escape_field(bytes: &[u8], quote: u8, buf: &mut [MaybeUninit<u8>]) -> usize {
-     debug_assert!(bytes.len() > 1);
-     let mut prev_quote = false;
+ /// replace double quotes by single ones
+ ///
+ /// This function assumes that bytes is wrapped in the quoting character.

@@ -552,14 +552,23 @@ it. Racket side: `define-compat` with `#:c-id`.
     or a `tail` with `CSV malformed` (#335), where the eager reader reads
     it.
   - A field that opens a quote and never closes it, which only the last
-    field of a file can (`"`, `"12`, a quote before a final `\r`), is a
-    parse error naming its column and dtype on every path, or a null under
-    `#:ignore-errors` in a numeric, Boolean, Decimal, date or datetime
-    column (#347). A String or Categorical column refuses it either way, as
-    polars' String reader does. 0.55's other readers dropped its first and
-    last bytes (`"12` read as 1, `"ab` as `a`), and its numeric, Boolean
-    and Decimal readers panicked on a lone quote, as Python 1.42.1 does;
-    the vendored polars-io checks the closing quote.
+    field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
+    final `\r`), is a parse error naming its column and dtype on every
+    path, or a null under `#:ignore-errors` in a numeric, Boolean, Decimal,
+    date or datetime column (#347). The splitter toggles on every quote, so
+    the vendored polars-io counts a quoted field's quote bytes and an odd
+    count is unclosed. A String, Categorical or Time column refuses it
+    either way, as polars' String reader does; a Time column is read as
+    String and cast, so its error names `str`. A null marker is compared
+    with an unclosed field whole, so `"NA` is not `#:null-values '("N")`'s
+    null, as it was in 0.55 and Python 1.42.1. A header name left unclosed
+    (`x,"ab`) is refused as `Column name ... is not properly escaped`, even
+    under `#:ignore-errors`, since a name is not a value. Every 0.55
+    reader took an escaped pair or a reopened quote for the close (`"ab""`
+    read as `ab`); all but the String reader dropped an unclosed field's
+    first and last bytes (`"12` read as 1, `"ab` as `a`, the header as
+    `a`), and the numeric, Boolean and Decimal readers panicked on a lone
+    quote, as Python 1.42.1 does.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,

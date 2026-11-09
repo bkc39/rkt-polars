@@ -70,6 +70,30 @@ fn cases() -> Vec<Case> {
             "i64",
         ),
         case(
+            "escaped-pair.csv",
+            b"a\n1\n\"12\"\"",
+            "a",
+            plain(T::Int64),
+            "\"12\"\"",
+            "i64",
+        ),
+        case(
+            "three-quotes.csv",
+            b"a\n1\n\"\"\"",
+            "a",
+            plain(T::Int64),
+            "\"\"\"",
+            "i64",
+        ),
+        case(
+            "reopened.csv",
+            b"a\n1\n\"1\"2\"",
+            "a",
+            plain(T::Int64),
+            "\"1\"2\"",
+            "i64",
+        ),
+        case(
             "t.csv",
             b"a\ntrue\n\"t",
             "a",
@@ -201,7 +225,7 @@ fn ignore_errors_reads_an_unclosed_quote_as_a_null() {
 }
 
 #[test]
-fn an_inferred_column_reads_the_unclosed_quote_as_far_as_inference_saw() {
+fn an_inferred_column_refuses_an_unclosed_quote_past_inference() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = write(dir.path(), "late.csv", b"a\n1\n2\n\"");
     let mut csv = Csv::default();
@@ -290,54 +314,216 @@ fn a_closed_quoted_last_field_still_reads() {
 #[test]
 fn a_decimal_column_refuses_an_unclosed_quote_or_nulls_it() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = write(dir.path(), "decimal.csv", b"a\n1.5\n\"");
-    let read = |ignore_errors: bool| {
-        CsvReadOptions::default()
-            .with_has_header(true)
-            .with_ignore_errors(ignore_errors)
-            .with_schema_overwrite(Some(Arc::new(Schema::from_iter([
-                Field::new("a".into(), DataType::Decimal(10, 2)),
-            ]))))
-            .try_into_reader_with_file_path(Some(path.clone()))
-            .and_then(|reader| reader.finish())
+    let schema = || {
+        Some(Arc::new(Schema::from_iter([Field::new(
+            "a".into(),
+            DataType::Decimal(10, 2),
+        )])))
     };
-    let msg = read(false).expect_err("a parse error").to_string();
-    assert!(
-        msg.starts_with(
-            "could not parse `\"` as dtype `decimal[10,2]` at column 'a'"
-        ),
-        "{:?}",
-        msg
-    );
-    let df = read(true).expect("a null");
-    assert_eq!(df.column("a").unwrap().null_count(), 1);
+    for (name, text, field) in [
+        ("decimal.csv", &b"a\n1.5\n\""[..], "\""),
+        ("digits.csv", &b"a\n1.5\n\"1.55"[..], "\"1.55"),
+    ] {
+        let path = write(dir.path(), name, text);
+        let read = |ignore_errors: bool| {
+            CsvReadOptions::default()
+                .with_has_header(true)
+                .with_ignore_errors(ignore_errors)
+                .with_schema_overwrite(schema())
+                .try_into_reader_with_file_path(Some(path.clone()))
+                .and_then(|reader| reader.finish())
+        };
+        let scan = |ignore_errors: bool| {
+            LazyCsvReader::new(path.to_str().unwrap().into())
+                .with_has_header(true)
+                .with_ignore_errors(ignore_errors)
+                .with_dtype_overwrite(schema())
+                .finish()
+                .and_then(|lf| lf.collect())
+        };
+        let expected = format!(
+            "could not parse `{}` as dtype `decimal[10,2]` at column 'a'",
+            field
+        );
+        for (how, outcome) in [("read", read(false)), ("scan", scan(false))] {
+            let msg = outcome.expect_err("a parse error").to_string();
+            assert!(msg.starts_with(&expected), "{} {}: {:?}", name, how, msg);
+        }
+        for (how, outcome) in [("read", read(true)), ("scan", scan(true))] {
+            let df =
+                outcome.unwrap_or_else(|e| panic!("{} {}: {}", name, how, e));
+            assert_eq!(df.height(), 2, "{} {}", name, how);
+            assert_eq!(
+                df.column("a").unwrap().null_count(),
+                1,
+                "{} {}",
+                name,
+                how
+            );
+        }
+    }
 }
 
 #[test]
 fn a_categorical_column_refuses_an_unclosed_quote_as_a_string_column_does() {
     use CompatDTypeTag as T;
     let dir = tempfile::tempdir().expect("tempdir");
-    let path = write(dir.path(), "cat.csv", b"a\nx\n\"ab");
-    for tag in [T::String, T::Categorical] {
+    for (i, field) in ["\"ab", "\"ab\"\"", "\"\"\"", "\"a\"b\""]
+        .iter()
+        .enumerate()
+    {
+        let text = format!("a\nx\n{}", field);
+        let path =
+            write(dir.path(), &format!("cat-{}.csv", i), text.as_bytes());
+        for (tag, name) in [(T::String, "str"), (T::Categorical, "cat")] {
+            let csv = Csv {
+                overrides: vec![(bytes_of("a"), plain(tag))],
+                ..Default::default()
+            };
+            for (how, outcome) in outcomes(&csv, &path)
+                .into_iter()
+                .chain(outcomes(&ignoring_errors(&csv), &path))
+            {
+                let msg = outcome.err().unwrap_or_else(|| {
+                    panic!("{} {} {}: read", name, field, how)
+                });
+                let cause =
+                    format!("Field `{}` is not properly escaped.", field);
+                assert!(
+                    msg.starts_with(&format!(
+                        "could not parse `{}` as dtype",
+                        field
+                    )) && msg.contains(&cause),
+                    "{} {} {}: {:?}",
+                    name,
+                    field,
+                    how,
+                    msg
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_time_column_refuses_an_unclosed_quote_as_a_string_even_ignoring_errors() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = write(dir.path(), "time.csv", b"a\n10:00:00\n\"10:00:001");
+    let csv = Csv {
+        overrides: vec![(bytes_of("a"), plain(T::Time))],
+        ..Default::default()
+    };
+    for (how, outcome) in outcomes(&csv, &path)
+        .into_iter()
+        .chain(outcomes(&ignoring_errors(&csv), &path))
+    {
+        let msg = outcome.err().unwrap_or_else(|| panic!("{}: read", how));
+        assert!(
+            msg.starts_with("could not parse `\"10:00:001` as dtype `str`")
+                && msg.contains("Field `\"10:00:001` is not properly escaped."),
+            "{}: {:?}",
+            how,
+            msg
+        );
+    }
+}
+
+#[test]
+fn a_null_marker_is_not_matched_inside_an_unclosed_quote() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures: [(&'static str, &'static [u8], &str, &'static str); 2] = [
+        ("prefix.csv", b"a\n1\n\"NA", "N", "\"NA"),
+        ("quotes.csv", b"a\n1\n\"\"\"", "\"", "\"\"\""),
+    ];
+    for (name, text, marker, field) in fixtures {
+        let path = write(dir.path(), name, text);
         let csv = Csv {
-            overrides: vec![(bytes_of("a"), plain(tag))],
+            overrides: vec![(bytes_of("a"), plain(T::Int64))],
+            null_values: vec![bytes_of(marker)],
             ..Default::default()
         };
-        for (how, outcome) in outcomes(&csv, &path)
-            .into_iter()
-            .chain(outcomes(&ignoring_errors(&csv), &path))
-        {
-            let msg = outcome
-                .err()
-                .unwrap_or_else(|| panic!("{:?} {}: read", tag as i32, how));
-            assert!(
-                msg.starts_with("could not parse `\"ab` as dtype")
-                    && msg.contains("Field `\"ab` is not properly escaped."),
-                "{:?} {}: {:?}",
-                tag as i32,
-                how,
-                msg
-            );
+        let case = Case {
+            name,
+            text,
+            column: "a",
+            dtype: plain(T::Int64),
+            field,
+            polars_dtype: "i64",
+        };
+        for (how, outcome) in [
+            ("read", csv.read_outcome(&path)),
+            ("scan", csv.scan_outcome(&path)),
+        ] {
+            case.assert_refused(&path, outcome, how);
         }
+        let ignoring = ignoring_errors(&csv);
+        for (how, outcome) in [
+            ("read", ignoring.read_outcome(&path)),
+            ("scan", ignoring.scan_outcome(&path)),
+        ] {
+            case.assert_last_is_null(outcome, how);
+        }
+    }
+}
+
+#[test]
+fn a_header_with_an_unclosed_quote_is_refused_even_ignoring_errors() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures: [(&str, &[u8]); 3] = [
+        ("bare.csv", b"x,\"ab"),
+        ("newline.csv", b"x,\"ab\n"),
+        ("rows.csv", b"x,\"ab\n1,2\n"),
+    ];
+    for (name, text) in fixtures {
+        let path = write(dir.path(), name, text);
+        for csv in [Csv::default(), ignoring_errors(&Csv::default())] {
+            for (how, outcome) in [
+                ("read", csv.read_outcome(&path)),
+                ("scan", csv.scan_outcome(&path)),
+            ] {
+                let msg = outcome
+                    .err()
+                    .unwrap_or_else(|| panic!("{} {}: read", name, how));
+                assert!(
+                    msg.contains("Column name `\"ab")
+                        && msg.contains("is not properly escaped."),
+                    "{} {}: {:?}",
+                    name,
+                    how,
+                    msg
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_quote_char_other_than_the_double_quote_closes_by_the_same_rule() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut csv = Csv {
+        overrides: vec![(bytes_of("a"), plain(T::Int64))],
+        ..Default::default()
+    };
+    csv.options.quote_char = b'\'';
+    let case = Case {
+        name: "open.csv",
+        text: b"a\n1\n'12",
+        column: "a",
+        dtype: plain(T::Int64),
+        field: "'12",
+        polars_dtype: "i64",
+    };
+    let open = write(dir.path(), case.name, case.text);
+    for (how, outcome) in outcomes(&csv, &open) {
+        case.assert_refused(&open, outcome, how);
+    }
+    let closed = write(dir.path(), "closed.csv", b"a\n1\n'12'");
+    for (how, outcome) in outcomes(&csv, &closed) {
+        let df = outcome.unwrap_or_else(|e| panic!("{}: {}", how, e));
+        let column = df.column("a").unwrap();
+        assert_eq!(column.get(1).unwrap(), AnyValue::Int64(12), "{}", how);
     }
 }

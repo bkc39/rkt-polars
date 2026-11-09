@@ -224,7 +224,7 @@ impl ParsedBuilder for Utf8Field {
         let escaped_bytes = if needs_escaping {
             self.scratch.clear();
             self.scratch.reserve(bytes.len());
-            polars_ensure!(bytes.len() > 1 && bytes.last() == Some(&self.quote_char), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
+            polars_ensure!(unquoted(bytes).is_some(), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
 
             // SAFETY:
             // we just allocated enough capacity and data_len is correct.
@@ -309,7 +309,7 @@ impl<T: PolarsCategoricalType> CategoricalField<T> {
         }
         if validate_utf8(bytes) {
             if needs_escaping {
-                polars_ensure!(bytes.len() > 1 && bytes.last() == Some(&self.quote_char), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
+                polars_ensure!(unquoted(bytes).is_some(), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
                 self.escape_scratch.clear();
                 self.escape_scratch.reserve(bytes.len());
                 // SAFETY:

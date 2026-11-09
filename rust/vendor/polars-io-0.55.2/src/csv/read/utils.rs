@@ -114,6 +114,31 @@ pub(crate) fn decompress(
     }
 }
 
+/// Whether a field that opens with a quote ends inside it. The splitter toggles its quoted state
+/// on every quote byte and ends a field only outside a quote, so an odd count means the field ran
+/// to the end of the input unclosed (`"`, `"12`, `"ab""`, `"a"b"`).
+#[inline]
+pub(super) fn unterminated(bytes: &[u8]) -> bool {
+    let Some(&quote) = bytes.first() else {
+        return false;
+    };
+    bytes.iter().filter(|&&b| b == quote).count() % 2 == 1
+}
+
+/// The contents of a field that opens with a quote, or `None` when the field does not end with
+/// the closing quote: it ends inside the quote, or has bytes after it.
+#[inline]
+pub(super) fn unquoted(bytes: &[u8]) -> Option<&[u8]> {
+    match bytes {
+        [open, inner @ .., close] if open == close && !unterminated(bytes) => Some(inner),
+        _ => None,
+    }
+}
+
+pub(super) fn unterminated_field(bytes: &[u8]) -> PolarsError {
+    polars_err!(ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", String::from_utf8_lossy(bytes))
+}
+
 /// replace double quotes by single ones
 ///
 /// This function assumes that bytes is wrapped in the quoting character.
@@ -124,21 +149,6 @@ pub(crate) fn decompress(
 ///     - Output buffer must have enough capacity to hold `bytes.len()`
 ///     - bytes ends with the quote character e.g.: `"`
 ///     - bytes length > 1.
-/// The contents of a field that opens with a quote, or `None` when the field never closes it (the
-/// quote opens the last field of the input). Only the first and last bytes are compared, as in the
-/// string builder.
-#[inline]
-pub(super) fn unquoted(bytes: &[u8]) -> Option<&[u8]> {
-    match bytes {
-        [open, inner @ .., close] if open == close => Some(inner),
-        _ => None,
-    }
-}
-
-pub(super) fn unterminated_field(bytes: &[u8]) -> PolarsError {
-    polars_err!(ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", String::from_utf8_lossy(bytes))
-}
-
 pub(super) unsafe fn escape_field(bytes: &[u8], quote: u8, buf: &mut [MaybeUninit<u8>]) -> usize {
     debug_assert!(bytes.len() > 1);
     let mut prev_quote = false;
