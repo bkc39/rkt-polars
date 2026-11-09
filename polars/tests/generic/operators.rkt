@@ -568,4 +568,11 @@
                             #rx"^select: [+] not allowed on str and date")))])
       (match-define (list thunk message) row)
       (check-exn message thunk))
-    (check-exn exn:fail:contract? (lambda () (p+ labels (time 1 0 0))))))
+    (check-exn exn:fail:contract? (lambda () (p+ labels (time 1 0 0)))))
+  (let ()
+    (define past-local-range (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))
+    (define kathmandu (series (list (moment 2024 1 1 #:tz "Asia/Kathmandu")) #:name "t"))
+    (check-exn #rx"^=: value out of range for this dtype\n"
+               (lambda () (= kathmandu past-local-range)))
+    (check-exn #rx"^<: value out of range for this dtype\n"
+               (lambda () (< (col "t") past-local-range)))))

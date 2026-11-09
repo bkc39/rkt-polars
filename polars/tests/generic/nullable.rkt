@@ -1,7 +1,7 @@
 #lang racket/base
 
 (module+ test
-  (require rackunit (only-in threading ~>)
+  (require rackunit (only-in gregor moment) (only-in threading ~>)
            (only-in racket/list make-list)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr col lit)
@@ -113,4 +113,6 @@
                 (list '(1 1 1 4) (list 1 1 polars-null 4) '(1 4 4 4)))
 
   (check-exn (contract-violation-of 'forward-fill)
-             (lambda () (contracted:forward-fill "v" #:limit -1))))
+             (lambda () (contracted:forward-fill "v" #:limit -1)))
+  (check-exn #rx"^fill-null: value out of range for this dtype\n"
+             (lambda () (fill-null "t" (moment 262143 1 1 1 #:tz "Asia/Kathmandu")))))
