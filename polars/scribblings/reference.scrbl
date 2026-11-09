@@ -862,8 +862,9 @@ by-quarter
 
   The result is @racket[(collect (scan-csv path ....))] with the same
   keywords but @racket[#:columns], which @racket[scan-csv] lacks:
-  @racket[select] from the plan instead. A single file is read eagerly
-  rather than through a plan, which is faster. One check is
+  @racket[select] from the plan instead. A single file read without
+  @racket[n-rows] or @racket[comment-prefix] is read eagerly rather than
+  through a plan, which is faster. One check is
   @racket[read-csv]'s own. When @racket[separator] is
   @racket[#f], @racket[new-columns] and @racket[columns] are empty and the
   file reads as one column, a row index aside, whose header splits on a tab, @litchar{;} or

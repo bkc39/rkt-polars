@@ -274,6 +274,9 @@ const OPTION_FIXTURES: &[(&str, &[u8])] = &[
     ("nul.csv", b"a\0b,c\n1,N\0A\n#\0 note\n2,x\n"),
 ];
 
+const COMMENTED_FIXTURES: &[(&str, &[u8])] =
+    &[("quoted-comment.csv", b"a,b\n1,x\n# it\"s\n2,y\n3,z\n")];
+
 fn option_cases() -> Vec<(&'static str, Csv)> {
     let case = |label, set: fn(&mut Csv)| {
         let mut csv = Csv::default();
@@ -500,16 +503,23 @@ fn the_eager_reader_matches_the_glob_and_scan_paths_for_every_option() {
     let fixtures = FIXTURES
         .iter()
         .map(|(name, text)| (*name, text.as_bytes()))
-        .chain(OPTION_FIXTURES.iter().copied());
-    let paths: Vec<PathBuf> = fixtures
-        .map(|(name, contents)| write(dir.path(), name, contents))
+        .chain(OPTION_FIXTURES.iter().copied())
+        .map(|fixture| (fixture, false))
+        .chain(COMMENTED_FIXTURES.iter().map(|fixture| (*fixture, true)));
+    let paths: Vec<(PathBuf, bool)> = fixtures
+        .map(|((name, contents), commented)| {
+            (write(dir.path(), name, contents), commented)
+        })
         .collect();
     let mut outcomes = (0, 0);
     let mut mismatches = Vec::new();
     for (label, csv) in option_cases() {
         let mut globbed = csv.clone();
         globbed.options.glob = true;
-        for path in &paths {
+        for (path, commented) in &paths {
+            if *commented && csv.comment_prefix.is_none() {
+                continue;
+            }
             let eager = csv.read_outcome(path);
             let glob = globbed.read_outcome(&one_file_pattern(path));
             let scan = csv.scan_outcome(path);

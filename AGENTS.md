@@ -44,9 +44,10 @@ Two crates are vendored, each the crates.io crate with its patch applied
 and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
 `rust/vendor/polars-stream-0.55.2`, whose patch lets the streaming CSV source
 take a slice with a comment prefix (#270), and `rust/vendor/polars-io-0.55.2`,
-whose patch makes an unclosed quote in a CSV field a parse error (#347; see
-the `read-csv` facts for both). The `vendored-polars-stream` and
-`vendored-polars-io` flake checks hold each tree to its patch, and
+whose patch makes an unclosed quote in a CSV field a parse error (#347) and
+has the line counter judge a last line without a newline from its first byte
+(#335; see the `read-csv` facts for all three). The
+`vendored-polars-stream` and `vendored-polars-io` flake checks hold each tree to its patch, and
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -511,8 +512,9 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v3` reads a
-    glob pattern, or any path given `#:n-rows`, by scan and collect, and
-    any other single file with 0.55's eager `CsvReader`, about three times
+    glob pattern, or any path given `#:n-rows` or `#:comment-prefix`, by
+    scan and collect, and any other single file with 0.55's eager
+    `CsvReader`, about three times
     faster on nycflights. Given `n_rows`, the eager reader stops spawning
     chunks once the chunks already parsed hold more rows, so whether it
     reaches a later chunk that fails (a late `NA` in an inferred integer
@@ -524,10 +526,11 @@ it. Racket side: `define-compat` with `#:c-id`.
     deterministic, but dependent on the file's size. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    one listed exception, a malformed-quote error's chunk locator. The two
-    readers still part on a stray quote in an unquoted field beside a
-    commented line that holds a quote: the eager reader can fail to parse a
-    field the scan reads (#341).
+    one listed exception, a malformed-quote error's chunk locator. The
+    eager reader's chunk splitter counts the quotes in comment lines, so a
+    quote in one can cut a chunk inside a row and fail the read: a
+    commented read goes through the scan, whose counter skips comment
+    lines (#341), where Python's `read_csv` of a single file fails.
   - With `#:comment-prefix` the scan pushes the slice into the CSV source
     too, through the vendored polars-stream (#270), whose line counter
     skips comment lines. With a prefix the source cuts batches where the
@@ -547,10 +550,11 @@ it. Racket side: `define-compat` with `#:c-id`.
     Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
     a slice parses the whole file and slices afterwards, but a `tail` is
     cut by the counter's count, with or without a prefix, and can return
-    other rows (#339). A file whose last line has no newline and is
-    misjudged by the counter, a comment among them, fails a whole-file scan
-    or a `tail` with `CSV malformed` (#335), where the eager reader reads
-    it.
+    other rows (#339). A last line without a newline is a row unless the
+    bytes after the counter's last counted newline are comment lines alone
+    (#335), where 0.55 tested it from its second byte, so `x#y` was a
+    comment and `# c` a row, and a whole-file scan or a `tail` failed with
+    `CSV malformed`, as in Python.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every
@@ -1295,5 +1299,6 @@ it. Racket side: `define-compat` with `#:c-id`.
   A polars bump, a patch release included, re-vendors polars-stream and
   polars-io at the new version with each patch rebased onto it, or drops a
   vendor and its `[patch.crates-io]` entry once upstream does what its
-  patch does (slices a commented CSV; refuses an unclosed quote); the
+  patch does (slices a commented CSV; refuses an unclosed quote and counts
+  an unterminated last line); the
   `vendored-polars-stream` and `vendored-polars-io` checks move with them.

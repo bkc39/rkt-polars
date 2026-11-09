@@ -885,12 +885,30 @@ impl CountLines {
         }
 
         if is_eof {
-            count += ends_in_unterminated_row(bytes, self.eol_char, self.comment_prefix.as_ref())
-                as usize;
+            count += self.ends_in_unterminated_row(&bytes[offset..]) as usize;
             offset = bytes.len();
         }
 
         (count, offset)
+    }
+
+    /// `rest` is what follows the last newline the counter counted: comment lines, then the
+    /// start of a row whose end the counter has not seen, if any. A row that ends in a newline
+    /// the counter did not count, one inside an open quote, is not counted, as before.
+    fn ends_in_unterminated_row(&self, mut rest: &[u8]) -> bool {
+        if let Some(prefix) = self.comment_prefix.as_ref() {
+            let prefix = match prefix {
+                CommentPrefix::Single(pc) => core::slice::from_ref(pc),
+                CommentPrefix::Multi(ps) => ps.as_bytes(),
+            };
+            while rest.starts_with(prefix) {
+                rest = match memchr::memchr(self.eol_char, rest) {
+                    Some(nl) => &rest[nl + 1..],
+                    None => &[],
+                };
+            }
+        }
+        rest.last().is_some_and(|c| *c != self.eol_char)
     }
 
     /// Returns count and offset to split for remainder in slice.
@@ -991,9 +1009,9 @@ fn ends_in_unterminated_row(
     if !bytes.is_empty() && bytes.last().copied().unwrap() != eol_char {
         // We can do a simple backwards-scan to find the start of last line if it is a
         // comment line, since comment lines can't escape new-lines.
-        let last_new_line_post = memchr::memrchr(eol_char, bytes).unwrap_or(0);
+        let last_line_start = memchr::memrchr(eol_char, bytes).map_or(0, |nl| nl + 1);
         let last_line_is_comment_line = bytes
-            .get(last_new_line_post + 1..)
+            .get(last_line_start..)
             .map(|line| is_comment_line(line, comment_prefix))
             .unwrap_or(false);
 
