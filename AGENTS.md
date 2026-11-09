@@ -554,19 +554,26 @@ it. Racket side: `define-compat` with `#:c-id`.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every
-    path, or a null under `#:ignore-errors` in a numeric, Boolean, Decimal,
-    date or datetime column (#347). The splitter toggles on every quote, so
-    the vendored polars-io counts a quoted field's quote bytes and an odd
-    count is unclosed. A String, Categorical or Time column refuses it
-    either way, as polars' String reader does; a Time column is read as
+    path that parses that column (a read that projects it away, with
+    `#:columns`, returns the row, #350), or a null under `#:ignore-errors`
+    in a numeric, Boolean, Decimal, date or datetime column (#347). The
+    error gives no "You might want to try" list: no null marker matches the
+    field, and `#:ignore-errors` cannot read it in every column. The
+    splitter toggles on every quote, so the vendored polars-io counts a
+    quoted field's quote bytes and an odd count is unclosed. A String,
+    Categorical or Time column refuses it either way, as polars' String
+    reader does; a Time column is read as
     String and cast, so its error names `str`. A null marker never
     matches an unclosed field: `"NA` is the null of neither
-    `#:null-values '("\"NA")` nor `'("N")`, which 0.55 and Python 1.42.1
-    match after dropping its first and last bytes. A closed field with
-    bytes after its close (`"ab"c`) reads as in 0.55 and Python: `ab` in a
-    Categorical column, an error in a String one. A header name left
-    unclosed (`x,"ab`) is refused as `Column name ... is not properly escaped`, even
-    under `#:ignore-errors`, since a name is not a value. Every 0.55
+    `#:null-values '("\"NA")` nor `'("N")`, which 0.55 and Python match
+    against `N`, the field less its first and last bytes. A closed field
+    is matched on the bytes between its quotes, escapes kept, as in 0.55
+    and Python: `"NA"` is the null of `'("NA")`, `"N""A"` of
+    `'("N\"\"A")`. A closed field with bytes after its close (`"ab"c`)
+    reads as in 0.55 and Python: `ab` in a Categorical column, an error in
+    a String one. A header name left unclosed (`x,"ab`) is refused as
+    `Column name ... is not properly escaped`, even under
+    `#:ignore-errors`, since a name is not a value. Every 0.55
     reader took an escaped pair or a reopened quote for the close (`"ab""`
     read as `ab`); all but the String reader dropped an unclosed field's
     first and last bytes (`"12` read as 1, `"ab` as `a`, the header as

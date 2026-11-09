@@ -146,6 +146,7 @@ impl Case {
         );
         let cause = format!("Field `{}` is not properly escaped.", self.field);
         assert!(msg.contains(&cause), "{} {}: {:?}", self.name, how, msg);
+        assert_no_hint(&msg, &format!("{} {}", self.name, how));
     }
 
     fn assert_last_is_null(&self, outcome: Outcome, how: &str) {
@@ -162,6 +163,12 @@ impl Case {
             df
         );
     }
+}
+
+const HINT: &str = "You might want to try:";
+
+fn assert_no_hint(msg: &str, label: &str) {
+    assert!(!msg.contains(HINT), "{}: {:?}", label, msg);
 }
 
 fn outcomes(csv: &Csv, path: &Path) -> Vec<(&'static str, Outcome)> {
@@ -400,6 +407,7 @@ fn a_categorical_column_refuses_an_unclosed_quote_as_a_string_column_does() {
                     how,
                     msg
                 );
+                assert_no_hint(&msg, &format!("{} {} {}", name, field, how));
             }
         }
     }
@@ -426,6 +434,7 @@ fn a_time_column_refuses_an_unclosed_quote_as_a_string_even_ignoring_errors() {
             how,
             msg
         );
+        assert_no_hint(&msg, how);
     }
 }
 
@@ -667,6 +676,100 @@ fn a_null_marker_never_matches_an_unclosed_field() {
             };
             for (how, outcome) in refused {
                 case.assert_refused(&path, outcome, how);
+            }
+        }
+    }
+}
+
+#[test]
+fn an_ordinary_bad_value_keeps_the_hint() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures: [(&str, &[u8], CompatDTypeTag, &str); 3] = [
+        ("bare.csv", b"a\ny", T::Int64, "y"),
+        ("quoted.csv", b"a\n1\n\"y\"", T::Int64, "\"y\""),
+        ("trailing.csv", b"a,b\n\"ab\"c,1\n", T::String, "\"ab\"c"),
+    ];
+    for (name, text, tag, field) in fixtures {
+        let path = write(dir.path(), name, text);
+        let csv = Csv {
+            overrides: vec![(bytes_of("a"), plain(tag))],
+            ..Default::default()
+        };
+        for (how, outcome) in outcomes(&csv, &path) {
+            let msg = outcome
+                .err()
+                .unwrap_or_else(|| panic!("{} {}: read", name, how));
+            assert!(
+                msg.starts_with(&format!(
+                    "could not parse `{}` as dtype",
+                    field
+                )) && msg.contains(HINT)
+                    && msg.contains(&format!(
+                        "adding `{}` to the `null_values` list",
+                        field
+                    )),
+                "{} {}: {:?}",
+                name,
+                how,
+                msg
+            );
+        }
+    }
+}
+
+#[test]
+fn a_closed_quoted_field_equal_to_a_marker_is_null() {
+    use CompatDTypeTag as T;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fixtures: [(&str, &[u8], &str); 2] = [
+        ("na.csv", b"a\n\"NA\"\n1\n", "NA"),
+        ("pair.csv", b"a\n\"N\"\"A\"\n1\n", "N\"\"A"),
+    ];
+    for (name, text, marker) in fixtures {
+        let path = write(dir.path(), name, text);
+        let gz = write(dir.path(), &format!("{}.gz", name), &gzip_bytes(text));
+        for overrides in [vec![], vec![(bytes_of("a"), plain(T::Int64))]] {
+            let csv = Csv {
+                overrides,
+                null_values: vec![bytes_of(marker)],
+                ..Default::default()
+            };
+            let mut head = csv.clone();
+            head.options.has_n_rows = true;
+            head.options.n_rows = 10;
+            let mut commented = csv.clone();
+            commented.comment_prefix = Some(bytes_of("#"));
+            for (how, outcome) in [
+                ("read", csv.read_outcome(&path)),
+                ("scan", csv.scan_outcome(&path)),
+                ("glob", csv.read_outcome(&one_file_pattern(&path))),
+                ("gzip read", csv.read_outcome(&gz)),
+                ("gzip scan", csv.scan_outcome(&gz)),
+                ("n_rows read", head.read_outcome(&path)),
+                ("n_rows scan", head.scan_outcome(&path)),
+                ("commented read", commented.read_outcome(&path)),
+                ("commented scan", commented.scan_outcome(&path)),
+            ] {
+                let df = outcome
+                    .unwrap_or_else(|e| panic!("{} {}: {}", name, how, e));
+                let column = df.column("a").unwrap();
+                assert_eq!(
+                    column.dtype(),
+                    &DataType::Int64,
+                    "{} {}",
+                    name,
+                    how
+                );
+                assert_eq!(
+                    (0..column.len())
+                        .map(|i| column.get(i).unwrap().extract::<i64>())
+                        .collect::<Vec<_>>(),
+                    [None, Some(1)],
+                    "{} {}",
+                    name,
+                    how
+                );
             }
         }
     }

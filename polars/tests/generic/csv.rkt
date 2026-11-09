@@ -387,6 +387,40 @@
                             `((#:null-values . (,marker)) (#:schema-overrides . (("b" . string))))
                             (format "Field `~a` is not properly escaped." marker)
                             (format "marker ~s" marker)))
+  (define hint "You might want to try:")
+  (define markerless-keywords '(() ((#:n-rows . 10)) ((#:comment-prefix . "#"))))
+  (define unclosed-hintless (scratch-file scratch "unclosed-hintless.csv" "a,b\n1,\"NA"))
+  (define bad-value (scratch-file scratch "bad-value.csv" "a\nx"))
+  (for* ([kvs (in-list markerless-keywords)]
+         [(kind read) (in-dict unclosed-readers)])
+    (define label (format "~a ~s" kind kvs))
+    (define unclosed-message
+      (message-of (lambda () (read unclosed-hintless `((#:schema-overrides . (("b" . i64))) ,@kvs)))))
+    (check-true (string-contains? unclosed-message "Field `\"NA` is not properly escaped.") label)
+    (check-false (string-contains? unclosed-message hint) label)
+    (define bad-message
+      (message-of (lambda () (read bad-value `((#:schema-overrides . (("a" . i64))) ,@kvs)))))
+    (check-true (string-contains? bad-message hint) label)
+    (check-true (string-contains? bad-message "adding `x` to #:null-values") label))
+  (define closed-markers
+    (for/list ([(spec i) (in-indexed '(("a\n\"NA\"\n1\n" "NA") ("a\n\"N\"\"A\"\n1\n" "N\"\"A")))])
+      (match-define (list text marker) spec)
+      (list (scratch-file scratch (format "closed-marker-~a.csv" i) text) text marker)))
+  (for* ([spec (in-list closed-markers)]
+         [overrides (in-list '(() ((#:schema-overrides . (("a" . i64))))))]
+         [(kind read) (in-dict unclosed-readers)]
+         [kvs (in-list markerless-keywords)])
+    (match-define (list path text marker) spec)
+    (define df (read path `((#:null-values . (,marker)) ,@overrides ,@kvs)))
+    (check-equal? (list (dtype (ref df "a")) (column df "a"))
+                  (list 'int64 (list polars-null 1))
+                  (format "~s ~a ~s ~s" text kind overrides kvs)))
+  (define projected-350
+    (read-csv (scratch-file scratch "projected-unclosed-350.csv" "b,a\n1,\"x\n2,y\n3,z\n")
+              #:columns '("b")))
+  (check-equal? (list (column-names projected-350) (column projected-350 "b"))
+                '(("b") (1))
+                "#350's gap: a read that projects an unclosed field away returns its row")
 
   (define big (build-path scratch "big.csv"))
   (display-lines-to-file (cons "x" (range 100000)) big)
