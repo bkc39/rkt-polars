@@ -554,9 +554,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every
-    path that parses that column (a read that projects it away, with
-    `#:columns`, returns the row, #350), or a null under `#:ignore-errors`
-    in a numeric, Boolean, Decimal, date or datetime column (#347). The
+    path that parses that column (an eager read of one file that projects
+    it away with `#:columns` returns the row, and with `#:n-rows` returns
+    none; a glob or a scan fails with `CSV malformed`, #350), or a null
+    under `#:ignore-errors` in a numeric, Boolean, Decimal, date or
+    datetime column (#347). The
     error gives no "You might want to try" list: no null marker matches the
     field, and `#:ignore-errors` cannot read it in every column. The
     splitter toggles on every quote, so the vendored polars-io counts a
@@ -567,8 +569,8 @@ it. Racket side: `define-compat` with `#:c-id`.
     matches an unclosed field: `"NA` is the null of neither
     `#:null-values '("\"NA")` nor `'("N")`, which 0.55 and Python match
     against `N`, the field less its first and last bytes. A closed field
-    is matched on the bytes between its quotes, escapes kept, as in 0.55
-    and Python: `"NA"` is the null of `'("NA")`, `"N""A"` of
+    is matched on the field less its first and last bytes, escapes kept,
+    as in 0.55 and Python: `"NA"` is the null of `'("NA")`, `"N""A"` of
     `'("N\"\"A")`. A closed field with bytes after its close (`"ab"c`)
     reads as in 0.55 and Python: `ab` in a Categorical column, an error in
     a String one. A header name left unclosed (`x,"ab`) is refused as

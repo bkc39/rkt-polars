@@ -420,7 +420,7 @@
               #:columns '("b")))
   (check-equal? (list (column-names projected-350) (column projected-350 "b"))
                 '(("b") (1))
-                "#350's gap: a read that projects an unclosed field away returns its row")
+                "#350's gap: an eager read of one file that projects an unclosed field away returns its row")
 
   (define big (build-path scratch "big.csv"))
   (display-lines-to-file (cons "x" (range 100000)) big)

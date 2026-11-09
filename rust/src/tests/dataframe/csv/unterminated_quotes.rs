@@ -146,6 +146,13 @@ impl Case {
         );
         let cause = format!("Field `{}` is not properly escaped.", self.field);
         assert!(msg.contains(&cause), "{} {}: {:?}", self.name, how, msg);
+        assert!(
+            msg.contains("The current offset in the file is "),
+            "{} {}: {:?}",
+            self.name,
+            how,
+            msg
+        );
         assert_no_hint(&msg, &format!("{} {}", self.name, how));
     }
 
