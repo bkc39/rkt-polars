@@ -271,6 +271,46 @@
   (check-equal? (column (read-csv latin #:encoding 'utf8-lossy) "s")
                 (list (string #\c #\a #\f (integer->char #xFFFD))))
 
+  (define unclosed-readers
+    (list* (cons 'glob (glob-reader read-csv))
+           (cons 'gzip (lambda (path kvs)
+                         (define gz (path-add-extension path #".gz"))
+                         (gzip-file path gz)
+                         (apply-keywords read-csv kvs gz)))
+           eager-and-scan))
+  (define unclosed-keywords
+    '(() ((#:n-rows . 10)) ((#:comment-prefix . "#")) ((#:null-values . ("x")))))
+  (for* ([spec (in-list `((i64 "2" 2 "\"" "\"12") (f64 "2.5" 2.5 "\"" "\"12")
+                          (bool "true" #t "\"" "\"t") (date "2020-01-01" ,(date 2020 1 1) "\"2020-01-022")))]
+         [last (in-list (cdddr spec))])
+    (match-define (list dt text value _ ...) spec)
+    (define path (scratch-file scratch (format "unclosed-~a-~a.csv" dt (string-length last))
+                               (format "a,b\n1,~a\n3,~a" text last)))
+    (define overrides `((#:schema-overrides . (("b" . ,dt)))))
+    (define cause (format "could not parse `~a` as dtype `~a` at column 'b' (column number 2)" last dt))
+    (for* ([kvs (in-list unclosed-keywords)]
+           [(kind read) (in-dict unclosed-readers)])
+      (define label (format "~a ~s ~a ~s" dt last kind kvs))
+      (define message (message-of (lambda () (read path (append overrides kvs)))))
+      (check-regexp-match
+       (regexp (string-append "^(read-csv: failed to read csv from [^:]*: |collect: )" (regexp-quote cause)))
+       message
+       label)
+      (check-true (string-contains? message (format "Field `~a` is not properly escaped." last)) label)
+      (check-equal? (column (read path (list* '(#:ignore-errors . #t) (append overrides kvs))) "b")
+                    (list value polars-null)
+                    label)))
+  (define closed (scratch-file scratch "closed.csv" "a,b,c\n1,\"\",\"true\"\n\"2\",\"34\",\"\""))
+  (for* ([kvs (in-list unclosed-keywords)]
+         [ignore (in-list '(#f #t))]
+         [(kind read) (in-dict unclosed-readers)])
+    (define df (read closed `((#:ignore-errors . ,ignore)
+                              (#:schema-overrides . (("a" . i64) ("b" . i64) ("c" . bool)))
+                              ,@kvs)))
+    (check-equal? (map (lambda (name) (column df name)) '("a" "b" "c"))
+                  (list '(1 2) (list polars-null 34) (list #t polars-null))
+                  (format "~a ~s" kind kvs)))
+
   (define big (build-path scratch "big.csv"))
   (display-lines-to-file (cons "x" (range 100000)) big)
   (define first-half (read-csv big #:n-rows 50000))

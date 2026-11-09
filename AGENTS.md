@@ -40,11 +40,13 @@ core (the nix check went from 30 to 145 minutes on CI), so the bench measures
 the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
 depends on it.
 
-One crate is vendored: `rust/vendor/polars-stream-0.55.2` is the crates.io
-crate with `rust/vendor/polars-stream-0.55.2.patch` applied, taken through
-`[patch.crates-io]` in `rust/Cargo.toml`. The patch lets the streaming CSV
-source take a slice with a comment prefix (#270; see the `read-csv` fact).
-The `vendored-polars-stream` flake check holds the tree to the patch, and
+Two crates are vendored, each the crates.io crate with its patch applied
+and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
+`rust/vendor/polars-stream-0.55.2`, whose patch lets the streaming CSV source
+take a slice with a comment prefix (#270), and `rust/vendor/polars-io-0.55.2`,
+whose patch makes an unclosed quote in a CSV field a parse error (#347; see
+the `read-csv` facts for both). The `vendored-polars-stream` and
+`vendored-polars-io` flake checks hold each tree to its patch, and
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -549,6 +551,15 @@ it. Racket side: `define-compat` with `#:c-id`.
     misjudged by the counter, a comment among them, fails a whole-file scan
     or a `tail` with `CSV malformed` (#335), where the eager reader reads
     it.
+  - A field that opens a quote and never closes it, which only the last
+    field of a file can (`"`, `"12`, a quote before a final `\r`), is a
+    parse error naming its column and dtype on every path, or a null under
+    `#:ignore-errors` in a numeric, Boolean, Decimal, date or datetime
+    column (#347). A String or Categorical column refuses it either way, as
+    polars' String reader does. 0.55's other readers dropped its first and
+    last bytes (`"12` read as 1, `"ab` as `a`), and its numeric, Boolean
+    and Decimal readers panicked on a lone quote, as Python 1.42.1 does;
+    the vendored polars-io checks the closing quote.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,
@@ -1089,14 +1100,15 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (fifteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (sixteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
   `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
   `docs-check-test`, `install-native-libs`, `devshell-home`,
   `release-toolchain`, the rustc pin, `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`, and
-  `vendored-polars-stream`, the vendored crate against its patch).
+  `vendored-polars-stream` and `vendored-polars-io`, each vendored crate
+  against its patch).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -1259,7 +1271,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
-  A polars bump, a patch release included, re-vendors polars-stream at the
-  new version with the patch rebased onto it, or drops the vendor and its
-  `[patch.crates-io]` entry once upstream slices a commented CSV as the
-  patch does; the `vendored-polars-stream` check moves with it.
+  A polars bump, a patch release included, re-vendors polars-stream and
+  polars-io at the new version with each patch rebased onto it, or drops a
+  vendor and its `[patch.crates-io]` entry once upstream does what its
+  patch does (slices a commented CSV; refuses an unclosed quote); the
+  `vendored-polars-stream` and `vendored-polars-io` checks move with them.

@@ -1,0 +1,7 @@
+{
+  "git": {
+    "sha1": "d7488c71ecfbc77790292ff5b365b991c08380ce",
+    "dirty": true
+  },
+  "path_in_vcs": "crates/polars-io"
+}

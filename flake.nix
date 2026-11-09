@@ -421,40 +421,51 @@
               fi
               touch $out
             '';
-          vendored-polars-stream = pkgs.runCommand "rkt-polars-vendored-polars-stream" {
-            # The crate's Cargo.lock checksum before the vendor.
-            crate = pkgs.fetchurl {
-              name = "polars-stream-0.55.2.tar.gz";
-              url = "https://static.crates.io/crates/polars-stream/0.55.2/download";
-              sha256 = "b173c0c52f53ca930f3b59bc56a5854a650eb9555d67bba9022051714bc0b88f";
-            };
-            patchFile = ./rust/vendor/polars-stream-0.55.2.patch;
-            vendored = ./rust/vendor/polars-stream-0.55.2;
-            lock = ./rust/Cargo.lock;
-            patchPath =
-              ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.polars-stream or { }).path or "";
-          } ''
-            mkdir pristine
-            tar -xzf $crate -C pristine
-            patch -d pristine/polars-stream-0.55.2 -p1 -F0 --no-backup-if-mismatch < $patchFile
-            diff -r pristine/polars-stream-0.55.2 $vendored
-            if [ "$patchPath" != "vendor/polars-stream-0.55.2" ]; then
-              echo "ERROR: rust/Cargo.toml's [patch.crates-io] polars-stream path is \"$patchPath\"," \
-                "not \"vendor/polars-stream-0.55.2\"" >&2
-              exit 1
-            fi
-            entry=$(grep -x -A2 'name = "polars-stream"' $lock)
-            if [ "$entry" != "$(printf '%s\n' 'name = "polars-stream"' 'version = "0.55.2"' 'dependencies = [')" ] \
-              || grep -q -x '\[\[patch.unused\]\]' $lock; then
-              echo "ERROR: rust/Cargo.lock does not take polars-stream from rust/vendor alone:" >&2
-              grep -x -A3 'name = "polars-stream"' $lock >&2
-              exit 1
-            fi
-            touch $out
-          '';
+          # A vendored crate is the published one with its patch applied.
+          vendoredCrate = { name, sha256 }:
+            let dir = "${name}-0.55.2"; in
+            pkgs.runCommand "rkt-polars-vendored-${name}" {
+              # The crate's Cargo.lock checksum before the vendor.
+              crate = pkgs.fetchurl {
+                name = "${dir}.tar.gz";
+                url = "https://static.crates.io/crates/${name}/0.55.2/download";
+                inherit sha256;
+              };
+              patchFile = ./rust/vendor + "/${dir}.patch";
+              vendored = ./rust/vendor + "/${dir}";
+              lock = ./rust/Cargo.lock;
+              patchPath =
+                ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.${name} or { }).path or "";
+            } ''
+              mkdir pristine
+              tar -xzf $crate -C pristine
+              patch -d pristine/${dir} -p1 -F0 --no-backup-if-mismatch < $patchFile
+              diff -r pristine/${dir} $vendored
+              if [ "$patchPath" != "vendor/${dir}" ]; then
+                echo "ERROR: rust/Cargo.toml's [patch.crates-io] ${name} path is \"$patchPath\"," \
+                  "not \"vendor/${dir}\"" >&2
+                exit 1
+              fi
+              entry=$(grep -x -A2 'name = "${name}"' $lock)
+              if [ "$entry" != "$(printf '%s\n' 'name = "${name}"' 'version = "0.55.2"' 'dependencies = [')" ] \
+                || grep -q -x '\[\[patch.unused\]\]' $lock; then
+                echo "ERROR: rust/Cargo.lock does not take ${name} from rust/vendor alone:" >&2
+                grep -x -A3 'name = "${name}"' $lock >&2
+                exit 1
+              fi
+              touch $out
+            '';
+          vendored-polars-io = vendoredCrate {
+            name = "polars-io";
+            sha256 = "3ba705af75665c6c6f6822bdc20a0b162846dd9d23573221096945b45210c2db";
+          };
+          vendored-polars-stream = vendoredCrate {
+            name = "polars-stream";
+            sha256 = "b173c0c52f53ca930f3b59bc56a5854a650eb9555d67bba9022051714bc0b88f";
+          };
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin vendored-polars-stream;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin vendored-polars-io vendored-polars-stream;
           inherit (self.packages.${system}) rust racket;
         });
 

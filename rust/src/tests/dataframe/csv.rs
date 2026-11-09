@@ -3,6 +3,7 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 mod comment_slices;
+mod unterminated_quotes;
 
 #[derive(Clone, Default)]
 struct Csv {

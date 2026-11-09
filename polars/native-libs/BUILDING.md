@@ -124,8 +124,9 @@ It benches the tree (`nix run .#bench`), then:
    `manylinux2014_x86_64:latest`, with the dated tag that shares it;
 3. runs `cargo update`, the newest semver-compatible crates: polars stays on
    its minor, which `rust/Cargo.toml` fixes; a polars patch release leaves
-   the vendored polars-stream unused (cargo warns `Patch ... was not used`)
-   and fails the `vendored-polars-stream` check (see below);
+   the vendored crates unused (cargo warns `Patch ... was not used`) and
+   fails the `vendored-polars-stream` and `vendored-polars-io` checks (see
+   below);
 4. rebuilds `racket-deps`, whose pinned hash a store that already holds it
    never checks, and runs `nix flake check`;
 5. benches the result, and writes the commit message and a PR body (the
@@ -148,27 +149,28 @@ A new image can change the Linux candidate's bytes; refresh the candidates
 from that PR's run (`scripts/refresh-candidates.sh` refuses an older run,
 built in the old image).
 
-## The vendored polars-stream
+## The vendored crates
 
-`rust/vendor/polars-stream-0.55.2` is the crates.io crate, unpacked as
-published, with `rust/vendor/polars-stream-0.55.2.patch` applied (#270).
-`[patch.crates-io]` in `rust/Cargo.toml` points cargo at it, so
-`rust/Cargo.lock` lists polars-stream without a source or checksum. The nix
-build and `scripts/build-so.sh` build it from the tree, so neither downloads
-polars-stream; the latter's Docker image still installs rustup and fetches
-the other crates. The fmt gate and check run `cargo fmt` without `--all`,
-which would format path dependencies too, so rustfmt leaves the crate as
-published.
+`rust/vendor/polars-stream-0.55.2` (#270) and `rust/vendor/polars-io-0.55.2`
+(#347) are the crates.io crates, unpacked as published, each with its
+`rust/vendor/<crate>-0.55.2.patch` applied. `[patch.crates-io]` in
+`rust/Cargo.toml` points cargo at them, so `rust/Cargo.lock` lists both
+without a source or checksum. The nix build and `scripts/build-so.sh` build
+them from the tree, so neither downloads them; the latter's Docker image
+still installs rustup and fetches the other crates. The fmt gate and check
+run `cargo fmt` without `--all`, which would format path dependencies too,
+so rustfmt leaves the crates as published.
 
-The `vendored-polars-stream` flake check fetches the published crate by its
-lock checksum before the vendor, applies the patch with no fuzz, and fails on
-any other difference from `rust/vendor/polars-stream-0.55.2`, when
-`rust/Cargo.toml`'s `[patch.crates-io]` names another path, or when
-`Cargo.lock` takes polars-stream from anywhere else (a `cargo update` to a
-polars patch release leaves the `[patch]` unused). To change the patch, edit
-the vendored files and write the patch again as a unified diff against the
-pristine crate, `a/` and `b/` relative to its root. A polars bump moves the
-vendor as `AGENTS.md`'s toolchain rule says.
+The `vendored-polars-stream` and `vendored-polars-io` flake checks, one
+`vendoredCrate` in `flake.nix` each, fetch the published crate by its lock
+checksum before the vendor, apply the patch with no fuzz, and fail on any
+other difference from the vendored tree, when `rust/Cargo.toml`'s
+`[patch.crates-io]` names another path, or when `Cargo.lock` takes the crate
+from anywhere else (a `cargo update` to a polars patch release leaves the
+`[patch]` unused). To change a patch, edit the vendored files and write the
+patch again as a unified diff against the pristine crate, `a/` and `b/`
+relative to its root. A polars bump moves the vendors as `AGENTS.md`'s
+toolchain rule says.
 
 ## Building by hand
 

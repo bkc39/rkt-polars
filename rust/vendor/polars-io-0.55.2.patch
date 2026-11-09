@@ -1,0 +1,140 @@
+--- a/src/csv/read/builder.rs
++++ b/src/csv/read/builder.rs
+@@ -17,7 +17,7 @@ use polars_utils::vec::PushUnchecked;
+ 
+ use super::options::CsvEncoding;
+ use super::parser::{could_be_whitespace_fast, skip_whitespace};
+-use super::utils::escape_field;
++use super::utils::{escape_field, unquoted, unterminated_field};
+ 
+ pub(crate) trait PrimitiveParser: PolarsNumericType {
+     fn parse(bytes: &[u8]) -> Option<Self::Native>;
+@@ -138,7 +138,14 @@ where
+         _time_unit: Option<TimeUnit>,
+     ) -> PolarsResult<()> {
+         if !bytes.is_empty() && needs_escaping {
+-            bytes = &bytes[1..bytes.len() - 1];
++            match unquoted(bytes) {
++                Some(inner) => bytes = inner,
++                None if ignore_errors => {
++                    self.append_null();
++                    return Ok(());
++                },
++                None => return Err(unterminated_field(bytes)),
++            }
+         }
+ 
+         if !bytes.is_empty() && could_be_whitespace_fast(bytes[0]) {
+@@ -302,7 +309,7 @@ impl<T: PolarsCategoricalType> CategoricalField<T> {
+         }
+         if validate_utf8(bytes) {
+             if needs_escaping {
+-                polars_ensure!(bytes.len() > 1, ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
++                polars_ensure!(bytes.len() > 1 && bytes.last() == Some(&self.quote_char), ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", std::str::from_utf8(bytes).map_err(to_compute_err)?);
+                 self.escape_scratch.clear();
+                 self.escape_scratch.reserve(bytes.len());
+                 // SAFETY:
+@@ -346,7 +353,14 @@ impl ParsedBuilder for BooleanChunkedBuilder {
+         _time_unit: Option<TimeUnit>,
+     ) -> PolarsResult<()> {
+         let bytes = if needs_escaping {
+-            &bytes[1..bytes.len() - 1]
++            match unquoted(bytes) {
++                Some(inner) => inner,
++                None if ignore_errors => {
++                    self.append_null();
++                    return Ok(());
++                },
++                None => return Err(unterminated_field(bytes)),
++            }
+         } else {
+             bytes
+         };
+@@ -405,7 +419,14 @@ impl ParsedBuilder for DecimalField {
+         _time_unit: Option<TimeUnit>,
+     ) -> PolarsResult<()> {
+         if !bytes.is_empty() && needs_escaping {
+-            bytes = &bytes[1..bytes.len() - 1];
++            match unquoted(bytes) {
++                Some(inner) => bytes = inner,
++                None if ignore_errors => {
++                    self.builder.append_null();
++                    return Ok(());
++                },
++                None => return Err(unterminated_field(bytes)),
++            }
+         }
+ 
+         if !bytes.is_empty() && could_be_whitespace_fast(bytes[0]) {
+@@ -534,8 +555,15 @@ where
+         _missing_is_null: bool,
+         time_unit: Option<TimeUnit>,
+     ) -> PolarsResult<()> {
+-        if needs_escaping && bytes.len() >= 2 {
+-            bytes = &bytes[1..bytes.len() - 1]
++        if needs_escaping {
++            match unquoted(bytes) {
++                Some(inner) => bytes = inner,
++                None if ignore_errors => {
++                    self.builder.append_null();
++                    return Ok(());
++                },
++                None => return Err(unterminated_field(bytes)),
++            }
+         }
+ 
+         if bytes.is_empty() {
+--- a/src/csv/read/parser.rs
++++ b/src/csv/read/parser.rs
+@@ -14,6 +14,7 @@ use super::CsvParseOptions;
+ use super::builder::Builder;
+ use super::options::{CommentPrefix, NullValuesCompiled};
+ use super::splitfields::SplitFields;
++use super::utils::unquoted;
+ use crate::prelude::CsvReadOptions;
+ use crate::prelude::streaming::read_until_start_and_infer_schema;
+ use crate::utils::compression::ByteSourceReader;
+@@ -1150,8 +1151,8 @@ pub(super) fn parse_lines(
+ 
+                         // if we have null values argument, check if this field equal null value
+                         if let Some(null_values) = null_values {
+-                            let field = if needs_escaping && !field.is_empty() {
+-                                unsafe { field.get_unchecked(1..field.len() - 1) }
++                            let field = if needs_escaping {
++                                unquoted(field).unwrap_or(field)
+                             } else {
+                                 field
+                             };
+--- a/src/csv/read/utils.rs
++++ b/src/csv/read/utils.rs
+@@ -3,6 +3,8 @@
+ use std::io::Read;
+ use std::mem::MaybeUninit;
+ 
++use polars_error::{PolarsError, polars_err};
++
+ use super::parser::next_line_position;
+ #[cfg(feature = "decompress")]
+ use super::parser::next_line_position_naive;
+@@ -122,6 +124,21 @@ pub(crate) fn decompress(
+ ///     - Output buffer must have enough capacity to hold `bytes.len()`
+ ///     - bytes ends with the quote character e.g.: `"`
+ ///     - bytes length > 1.
++/// The contents of a field that opens with a quote, or `None` when the field never closes it (the
++/// quote opens the last field of the input). Only the first and last bytes are compared, as in the
++/// string builder.
++#[inline]
++pub(super) fn unquoted(bytes: &[u8]) -> Option<&[u8]> {
++    match bytes {
++        [open, inner @ .., close] if open == close => Some(inner),
++        _ => None,
++    }
++}
++
++pub(super) fn unterminated_field(bytes: &[u8]) -> PolarsError {
++    polars_err!(ComputeError: "invalid csv file\n\nField `{}` is not properly escaped.", String::from_utf8_lossy(bytes))
++}
++
+ pub(super) unsafe fn escape_field(bytes: &[u8], quote: u8, buf: &mut [MaybeUninit<u8>]) -> usize {
+     debug_assert!(bytes.len() > 1);
+     let mut prev_quote = false;

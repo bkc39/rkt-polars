@@ -43,4 +43,5 @@ lto = "thin"
 codegen-units = 1
 
 [patch.crates-io]
+polars-io = { path = "vendor/polars-io-0.55.2" }
 polars-stream = { path = "vendor/polars-stream-0.55.2" }
