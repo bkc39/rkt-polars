@@ -866,7 +866,7 @@ by-quarter
   @racket[n-rows] or @racket[comment-prefix] is read eagerly rather than
   through a plan, which is faster. A path that is not a regular file, such
   as a named pipe, is read eagerly whatever the keywords, since a plan maps
-  its file into memory. With @racket[comment-prefix], a file with a quote in
+  its file into memory. With @racket[comment-prefix], a regular file with a quote in
   a comment line reads, where Python's @tt{read_csv} fails on it. One check
   is @racket[read-csv]'s own. When @racket[separator] is
   @racket[#f], @racket[new-columns] and @racket[columns] are empty and the

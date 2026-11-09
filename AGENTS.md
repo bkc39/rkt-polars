@@ -560,8 +560,13 @@ it. Racket side: `define-compat` with `#:c-id`.
     `#y` is inside a field and the file has two rows. 0.55 judged the last
     physical line alone, quote-blind, so a whole-file scan or a `tail` of
     such a file could fail with `CSV malformed`, as Python's does. The
-    vendored fast count (`count_rows`, which no binding reaches) applies the
-    same rule.
+    vendored fast count (`count_rows_from_reader_par` /
+    `count_rows_from_slice_par`) applies the same rule, and starts a chunk
+    inside a quoted field without skipping a comment there. A binding
+    reaches it only through a scan's schema inference over a cloud path (or
+    under `POLARS_FORCE_ASYNC`), to size a fetch; polars' fast count of a
+    `select` of `pl.len()` would reach it too, but no binding builds
+    `pl.len()`.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every

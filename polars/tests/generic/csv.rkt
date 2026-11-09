@@ -277,11 +277,11 @@
     (close-input-port err)
     process)
   (define piped (scratch-file scratch "piped.csv" "a,b\n1,2\n# c\n3,4\n"))
-  (define (read-through-a-fifo name read)
+  (define (read-through-a-fifo name read [source piped])
     (define fifo (build-path scratch name))
     (subprocess-wait (spawn mkfifo (path->string fifo)))
     (define writer
-      (spawn sh "-c" "cat \"$1\" > \"$2\"" "sh" (path->string piped) (path->string fifo)))
+      (spawn sh "-c" "cat \"$1\" > \"$2\"" "sh" (path->string source) (path->string fifo)))
     (define got (with-handlers ([exn:fail? exn-message]) (read fifo)))
     (subprocess-kill writer #t)
     got)
@@ -579,6 +579,12 @@
     (check-readers-agree eager-and-scan path '()))
   (define quoted-comment (scratch-file scratch "quoted-comment.csv" "a,b\n1,x\n# it\"s\n2,y\n3,z\n"))
   (check-equal? (column (read-csv quoted-comment #:comment-prefix "#") "a") '(1 2 3))
+  (when (and mkfifo sh)
+    (check-regexp-match #rx"^read-csv: .*CSV malformed: expected 1 rows, actual 2 rows"
+                        (read-through-a-fifo "fifo-quoted-comment.csv"
+                                             (lambda (path) (read-csv path #:comment-prefix "#"))
+                                             quoted-comment)
+                        "a pipe with a quote in a comment line still reads eagerly, and fails"))
   (for ([path (list quoted-comment stray-quote-resynchronised)])
     (check-readers-agree every-reader path '((#:comment-prefix . "#"))))
   (check-true (frame=? (read-csv stray-quote-resynchronised #:comment-prefix "#") stray-full))

@@ -163,10 +163,27 @@ fn a_final_line_without_a_newline_reads_as_the_terminated_file_does() {
     }
 }
 
+fn fast_count(text: &str, prefix: &str) -> Result<usize, String> {
+    let comment_prefix = CommentPrefix::new_from_str(prefix);
+    polars::io::csv::read::count_rows_from_slice_par(
+        polars_buffer::Buffer::from_vec(text.as_bytes().to_vec()),
+        Some(b'"'),
+        Some(&comment_prefix),
+        b'\n',
+        true,
+        0,
+        0,
+        0,
+        false,
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[test]
 fn the_fast_count_counts_a_final_line_as_the_full_read_does() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let padding: String = (0..20_000).map(|i| format!("v{}\n", i)).collect();
+    let padding: String = (0..200_000).map(|i| format!("v{}\n", i)).collect();
+    assert!(padding.len() > 2 * LARGEST_BATCH_BYTES);
     for (prefix, rows, last, last_rows) in [
         ("#", "", "\"x\n#y\"", 1),
         ("#", "", "1\n\"x\n#y\"", 2),
@@ -185,25 +202,35 @@ fn the_fast_count_counts_a_final_line_as_the_full_read_does() {
         let full = commented_csv(prefix)
             .scan_outcome(&path)
             .map(|df| df.height());
-        let comment_prefix = CommentPrefix::new_from_str(prefix);
-        let counted = polars::io::csv::read::count_rows_from_slice_par(
-            polars_buffer::Buffer::from_vec(text.into_bytes()),
-            Some(b'"'),
-            Some(&comment_prefix),
-            b'\n',
-            true,
-            0,
-            0,
-            0,
-            false,
-        );
         assert_eq!(
-            (full, counted.map_err(|e| e.to_string())),
+            (full, fast_count(&text, prefix)),
             (Ok(height), Ok(height)),
             "the full read and the fast count of a file ending in {:?}",
             last
         );
     }
+}
+
+#[test]
+fn the_fast_count_reads_a_chunk_that_starts_inside_a_quoted_field() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let before: String =
+        (0..47_662).map(|i| format!("p{:07},1\n", i)).collect();
+    let field = format!("\"{}\n#y\",1\n", "x".repeat(20));
+    let inner_newline = before.len() + 1 + 20;
+    assert!(
+        before.len() < LARGEST_BATCH_BYTES
+            && LARGEST_BATCH_BYTES <= inner_newline
+    );
+    let after: String = (0..50_000).map(|i| format!("t{},2\n", i)).collect();
+    let text = format!("a,b\n{}{}{}", before, field, after);
+    let path = write(dir.path(), "straddle.csv", text.as_bytes());
+    let full = commented_csv("#").scan_outcome(&path).map(|df| df.height());
+    assert_eq!(
+        (full, fast_count(&text, "#")),
+        (Ok(97_663), Ok(97_663)),
+        "a quoted field whose second line starts with the prefix, across a chunk boundary"
+    );
 }
 
 #[test]

@@ -828,7 +828,7 @@ impl CountLines {
         let mut scan_offset = 0;
         while scan_offset < bytes.len() {
             // Skip comment line if needed.
-            while bytes[scan_offset..].starts_with(pre_s) {
+            while !in_string && bytes[scan_offset..].starts_with(pre_s) {
                 scan_offset += pre_s.len();
                 let Some(nl_off) = bytes[scan_offset..]
                     .iter()

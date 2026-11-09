@@ -147,7 +147,7 @@
          }
  
          let mut n = 0;
-@@ -809,10 +822,7 @@ impl CountLines {
+@@ -809,16 +822,13 @@ impl CountLines {
  
      // bytes must begin at the start of a line.
      fn analyze_chunk_with_comment(&self, bytes: &[u8], mut in_string: bool) -> LineStats {
@@ -159,6 +159,13 @@
  
          let mut state = LineStats::default();
          let mut scan_offset = 0;
+         while scan_offset < bytes.len() {
+             // Skip comment line if needed.
+-            while bytes[scan_offset..].starts_with(pre_s) {
++            while !in_string && bytes[scan_offset..].starts_with(pre_s) {
+                 scan_offset += pre_s.len();
+                 let Some(nl_off) = bytes[scan_offset..]
+                     .iter()
 @@ -884,14 +894,35 @@ impl CountLines {
          }
  
