@@ -48,7 +48,10 @@ take a slice with a comment prefix (#270), slices a CSV scan under
 commented or `#:ignore-errors` CSV scan to a buffering slice node above it
 (#339, #340), whose cut it corrects: 0.55's node dropped the frames before the
 slice's start but still counted them in its stop, so a `(slice lf -k n)` with `n < k` gave up
-to `k` rows, and `rust/vendor/polars-io-0.55.2`,
+to `k` rows. `collect` runs polars' default engine, which cuts a slice
+above a `filter` itself, so that slice never reaches the node; Python
+1.42.1's `engine="streaming"` sends it there and returns too many rows.
+The other is `rust/vendor/polars-io-0.55.2`,
 whose patch makes an unclosed quote in a CSV field a parse error (#347) and
 has the line counter skip the comment lines after its last counted newline
 before it judges a last line without a newline (#335; see the `read-csv`
@@ -559,8 +562,10 @@ it. Racket side: `define-compat` with `#:c-id`.
     read's rows at those positions (#339). The source is given no slice
     there and reads ahead of the node that stops it, so the read stays
     bounded but costs more than the slice: a `head` of 5 rows of a 500 MB
-    file takes about 60 ms and 370 MB under `#:ignore-errors`, against
-    5 ms without it. A last line without a newline is a row unless what
+    file takes about 60 ms under `#:ignore-errors`, against 5 ms without
+    it, and about 150 MB more memory than a strict `head`, which does not
+    grow with the file: a 97 MB file costs the same. A first read from a cold page cache is much
+    slower. A last line without a newline is a row unless what
     follows the counter's last counted newline is comment lines alone
     (#335): the counter skips comment lines from there, as at the start of
     any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the
