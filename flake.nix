@@ -111,7 +111,12 @@
             pname = "rkt-polars-compat";
             version = rustVersion;
             src = pkgs.lib.cleanSource ./rust;
-            cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
+            cargoDeps = importCargoLock {
+              lockFile = ./rust/Cargo.lock;
+              # The tree of the bkc39/polars commit rust/Cargo.toml takes
+              # every polars crate from; one hash covers them all.
+              outputHashes."polars-0.55.2" = "sha256-T69Lb3v6dUHb8EueQlEFOFRRnL3PeBOObteMxaraWxY=";
+            };
 
             # polars' `nightly` feature (std::simd) on the pinned stable rustc,
             # as nixpkgs builds Python polars; scripts/build-so.sh matches it.
@@ -421,40 +426,46 @@
               fi
               touch $out
             '';
-          vendored-polars-stream = pkgs.runCommand "rkt-polars-vendored-polars-stream" {
-            # The crate's Cargo.lock checksum before the vendor.
-            crate = pkgs.fetchurl {
-              name = "polars-stream-0.55.2.tar.gz";
-              url = "https://static.crates.io/crates/polars-stream/0.55.2/download";
-              sha256 = "b173c0c52f53ca930f3b59bc56a5854a650eb9555d67bba9022051714bc0b88f";
-            };
-            patchFile = ./rust/vendor/polars-stream-0.55.2.patch;
-            vendored = ./rust/vendor/polars-stream-0.55.2;
-            lock = ./rust/Cargo.lock;
-            patchPath =
-              ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.polars-stream or { }).path or "";
-          } ''
-            mkdir pristine
-            tar -xzf $crate -C pristine
-            patch -d pristine/polars-stream-0.55.2 -p1 -F0 --no-backup-if-mismatch < $patchFile
-            diff -r pristine/polars-stream-0.55.2 $vendored
-            if [ "$patchPath" != "vendor/polars-stream-0.55.2" ]; then
-              echo "ERROR: rust/Cargo.toml's [patch.crates-io] polars-stream path is \"$patchPath\"," \
-                "not \"vendor/polars-stream-0.55.2\"" >&2
-              exit 1
-            fi
-            entry=$(grep -x -A2 'name = "polars-stream"' $lock)
-            if [ "$entry" != "$(printf '%s\n' 'name = "polars-stream"' 'version = "0.55.2"' 'dependencies = [')" ] \
-              || grep -q -x '\[\[patch.unused\]\]' $lock; then
-              echo "ERROR: rust/Cargo.lock does not take polars-stream from rust/vendor alone:" >&2
-              grep -x -A3 'name = "polars-stream"' $lock >&2
-              exit 1
-            fi
-            touch $out
-          '';
+          # Every polars crate comes from the bkc39/polars fork, at the one
+          # rev rust/Cargo.toml gives each direct polars dependency.
+          polars-fork =
+            let
+              manifest = builtins.fromTOML (builtins.readFile ./rust/Cargo.toml);
+              lock = builtins.fromTOML (builtins.readFile ./rust/Cargo.lock);
+              deps = manifest.dependencies // manifest.dev-dependencies;
+              # Published on their own, outside the polars workspace.
+              external = [ "polars-arrow-format" "polars-parquet-format" ];
+              isPolars = name:
+                (name == "polars" || pkgs.lib.hasPrefix "polars-" name)
+                && !(builtins.elem name external);
+              rev = deps.polars.rev or "";
+              source = "git+https://github.com/bkc39/polars?rev=${rev}#${rev}";
+              strayDeps = builtins.filter
+                (name: (deps.${name}.git or "") != "https://github.com/bkc39/polars"
+                       || (deps.${name}.rev or "") != rev)
+                (builtins.filter isPolars (builtins.attrNames deps));
+              strayLocks = map (pkg: "${pkg.name} ${pkg.version} ${pkg.source or "(path)"}")
+                (builtins.filter (pkg: isPolars pkg.name && (pkg.source or "") != source)
+                  lock.package);
+              problems =
+                pkgs.lib.optional (builtins.stringLength rev != 40)
+                  "rust/Cargo.toml: polars has no full commit rev"
+                ++ pkgs.lib.optional (manifest ? patch) "rust/Cargo.toml has a [patch] table"
+                ++ map (name: "rust/Cargo.toml: ${name} is not the fork at ${rev}") strayDeps
+                ++ map (entry: "rust/Cargo.lock: ${entry}") strayLocks;
+            in
+            pkgs.runCommand "rkt-polars-polars-fork" {
+              report = pkgs.lib.concatStringsSep "\n" problems;
+            } ''
+              if [ -n "$report" ]; then
+                printf 'ERROR: %b\n' "$report" >&2
+                exit 1
+              fi
+              touch $out
+            '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin vendored-polars-stream;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
           inherit (self.packages.${system}) rust racket;
         });
 

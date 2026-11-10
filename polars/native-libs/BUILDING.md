@@ -122,10 +122,9 @@ It benches the tree (`nix run .#bench`), then:
    nixpkgs' rustc;
 2. moves `scripts/build-so.sh`'s image to the digest quay.io lists for
    `manylinux2014_x86_64:latest`, with the dated tag that shares it;
-3. runs `cargo update`, the newest semver-compatible crates: polars stays on
-   its minor, which `rust/Cargo.toml` fixes; a polars patch release leaves
-   the vendored polars-stream unused (cargo warns `Patch ... was not used`)
-   and fails the `vendored-polars-stream` check (see below);
+3. runs `cargo update`, the newest semver-compatible crates: polars stays
+   at the fork's rev, which `rust/Cargo.toml` fixes, so a polars patch
+   release is a new fork branch (see below);
 4. rebuilds `racket-deps`, whose pinned hash a store that already holds it
    never checks, and runs `nix flake check`;
 5. benches the result, and writes the commit message and a PR body (the
@@ -148,27 +147,37 @@ A new image can change the Linux candidate's bytes; refresh the candidates
 from that PR's run (`scripts/refresh-candidates.sh` refuses an older run,
 built in the old image).
 
-## The vendored polars-stream
+## The polars fork
 
-`rust/vendor/polars-stream-0.55.2` is the crates.io crate, unpacked as
-published, with `rust/vendor/polars-stream-0.55.2.patch` applied (#270).
-`[patch.crates-io]` in `rust/Cargo.toml` points cargo at it, so
-`rust/Cargo.lock` lists polars-stream without a source or checksum. The nix
-build and `scripts/build-so.sh` build it from the tree, so neither downloads
-polars-stream; the latter's Docker image still installs rustup and fetches
-the other crates. The fmt gate and check run `cargo fmt` without `--all`,
-which would format path dependencies too, so rustfmt leaves the crate as
-published.
+Every polars crate comes from the branch `rkt-polars/0.55.2` of
+[bkc39/polars](https://github.com/bkc39/polars/tree/rkt-polars/0.55.2)
+(#362). `rust/Cargo.toml` takes `polars`, `polars-async`, `polars-buffer`
+and `polars-core` from it by `git` and the same `rev`, a full commit hash,
+so cargo resolves the rest of the workspace from that commit and no polars
+crate from crates.io (`polars-arrow-format` and `polars-parquet-format` are
+published on their own and stay there). The branch starts at upstream's
+`0.55.2` commit (d7488c7). Its first commit makes
+`crates/polars-io/src/cloud/options.rs` the crates.io release's: that
+release was published from a dirty tree that leaves out the caching DNS
+resolver and the CRC64NVME checksum, which need the object_store fork
+polars' workspace patches in, and a workspace's patches do not reach its
+git dependents. Each later commit is one change, named by the rkt-polars
+issue it fixes.
 
-The `vendored-polars-stream` flake check fetches the published crate by its
-lock checksum before the vendor, applies the patch with no fuzz, and fails on
-any other difference from `rust/vendor/polars-stream-0.55.2`, when
-`rust/Cargo.toml`'s `[patch.crates-io]` names another path, or when
-`Cargo.lock` takes polars-stream from anywhere else (a `cargo update` to a
-polars patch release leaves the `[patch]` unused). To change the patch, edit
-the vendored files and write the patch again as a unified diff against the
-pristine crate, `a/` and `b/` relative to its root. A polars bump moves the
-vendor as `AGENTS.md`'s toolchain rule says.
+To change a crate, commit on the branch, push it, and move every `rev` in
+`rust/Cargo.toml` to the new tip; `cargo fetch` rewrites `rust/Cargo.lock`.
+The nix build fetches the commit with `fetchgit`, so `flake.nix`'s
+`outputHashes."polars-0.55.2"`, the NAR hash of the commit's tree, moves
+with it: `git archive <rev> | tar -x -C <dir>` and `nix hash path <dir>`
+print it, and a stale one fails the build with the hash it got. The
+`polars-fork` flake check fails when a direct polars dependency is not the
+fork at the one rev, when `rust/Cargo.toml` has a `[patch]` table, or when
+`rust/Cargo.lock` takes a polars crate from anywhere else.
+
+cargo fetches the fork with its history (about 160 MB) once per
+`CARGO_HOME`, so `scripts/build-so.sh`'s Docker build downloads it each
+time; `fetchgit` takes the one commit. A polars bump starts a new branch, as
+`AGENTS.md`'s toolchain rule says.
 
 ## Building by hand
 
