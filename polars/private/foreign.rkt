@@ -911,12 +911,15 @@
       (new-series 'series-new-bool name (lambda () (series-new-bool/raw (map bool->u8 bools))))))
 
 (define (series-new-bool/vec name bools)
-  (if (vector-has-null? bools)
-      (new-series/valid 'series-new-bool/vec name (map bool/null->u8 (vector->list bools)) 0
-                        series-new-bool/opt/raw)
-      (let ([u8s (for/vector #:length (vector-length bools) ([b (in-vector bools)])
-                   (bool->u8 b))])
-        (new-series 'series-new-bool/vec name (lambda () (series-new-bool/vec/raw u8s))))))
+  (cond
+    [(vector-has-null? bools)
+     (new-series/valid 'series-new-bool/vec name (map bool/null->u8 (vector->list bools)) 0
+                       series-new-bool/opt/raw)]
+    [else
+     (define u8s
+       (for/vector #:length (vector-length bools) ([b (in-vector bools)])
+         (bool->u8 b)))
+     (new-series 'series-new-bool/vec name (lambda () (series-new-bool/vec/raw u8s)))]))
 
 (define-compat series-new-null/raw
   (_fun _size -> _Series-ptr/null)
