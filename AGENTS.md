@@ -40,13 +40,17 @@ core (the nix check went from 30 to 145 minutes on CI), so the bench measures
 the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
 depends on it.
 
-Two crates are vendored, each the crates.io crate with its patch applied
-and taken through `[patch.crates-io]` in `rust/Cargo.toml`:
-`rust/vendor/polars-stream-0.55.2`, whose patch lets the streaming CSV source
-take a slice with a comment prefix (#270), and `rust/vendor/polars-io-0.55.2`,
-whose patch makes an unclosed quote in a CSV field a parse error (#347; see
-the `read-csv` facts for both). The `vendored-polars-stream` and
-`vendored-polars-io` flake checks hold each tree to its patch, and
+Every polars crate comes from the branch `rkt-polars/0.55.2` of the fork
+bkc39/polars (#362): `rust/Cargo.toml` takes `polars`, `polars-async`,
+`polars-buffer` and `polars-core` from it by `git` and one `rev`, so no
+polars crate comes from crates.io. The branch is upstream's `0.55.2`
+commit, then the crates.io release's `polars-io/src/cloud/options.rs`
+(published from a dirty tree, against crates.io's object_store), then one
+commit per change: polars-stream's streaming CSV source takes a slice with
+a comment prefix (#270), and polars-io's CSV reader makes an unclosed quote
+in a field a parse error (#347; see the `read-csv` facts for both). The
+`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
+rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -529,7 +533,7 @@ it. Racket side: `define-compat` with `#:c-id`.
     commented line that holds a quote: the eager reader can fail to parse a
     field the scan reads (#341).
   - With `#:comment-prefix` the scan pushes the slice into the CSV source
-    too, through the vendored polars-stream (#270), whose line counter
+    too, through the fork's polars-stream (#270), whose line counter
     skips comment lines. With a prefix the source cuts batches where the
     full read does, whatever the slice, and parses every batch before the
     slice's end, and every batch with no counted rows up to the first batch
@@ -561,7 +565,7 @@ it. Racket side: `define-compat` with `#:c-id`.
     datetime column (#347). The
     error gives no "You might want to try" list: no null marker matches the
     field, and `#:ignore-errors` cannot read it in every column. The
-    splitter toggles on every quote, so the vendored polars-io counts a
+    splitter toggles on every quote, so the fork's polars-io counts a
     quoted field's quote bytes and an odd count is unclosed. A String,
     Categorical or Time column refuses it either way, as polars' String
     reader does; a Time column is read as
@@ -1121,15 +1125,14 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (sixteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (fifteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
   `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
   `docs-check-test`, `install-native-libs`, `devshell-home`,
   `release-toolchain`, the rustc pin, `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`, and
-  `vendored-polars-stream` and `vendored-polars-io`, each vendored crate
-  against its patch).
+  `polars-fork`, every polars crate from the fork at one rev).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
@@ -1292,8 +1295,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
-  A polars bump, a patch release included, re-vendors polars-stream and
-  polars-io at the new version with each patch rebased onto it, or drops a
-  vendor and its `[patch.crates-io]` entry once upstream does what its
-  patch does (slices a commented CSV; refuses an unclosed quote); the
-  `vendored-polars-stream` and `vendored-polars-io` checks move with them.
+  A polars bump, a patch release included, starts a fork branch
+  `rkt-polars/<version>` at upstream's release commit, reproduces any
+  difference between the crates.io release and that commit, and rebases
+  the old branch's change commits onto it, dropping each one upstream has
+  made (slicing a commented CSV; refusing an unclosed quote);
+  `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.

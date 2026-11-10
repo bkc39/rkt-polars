@@ -8,7 +8,7 @@ crate-type = ["cdylib"]
 
 [dev-dependencies]
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
-polars-core = { version = "0.55.2", default-features = false }
+polars-core = { git = "https://github.com/bkc39/polars", rev = "9b9eab95e6c913b5dc9a12063f5b42fe62088b2b", default-features = false }
 proc-macro2 = "1"
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
@@ -19,9 +19,9 @@ zstd = "0.13.2"
 # symbols leak into the macOS dylib's exports.
 blake3 = { version = "1.8.7", features = ["pure"] }
 chrono = "0.4.38"
-polars = { version = "0.55.2", features = ["lazy", "parquet", "json", "ipc", "ipc_streaming", "avro", "scan_lines", "decompress", "http", "aws", "gcp", "azure", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "abs", "round_series", "sign", "log", "is_in", "is_unique", "is_first_distinct", "is_last_distinct", "is_between", "cum_agg", "diff", "rank", "meta", "dtype-categorical", "dtype-decimal", "timezones", "nightly"] }
-polars-async = { version = "0.55.2", default-features = false }
-polars-buffer = { version = "0.55.2", default-features = false }
+polars = { git = "https://github.com/bkc39/polars", rev = "9b9eab95e6c913b5dc9a12063f5b42fe62088b2b", features = ["lazy", "parquet", "json", "ipc", "ipc_streaming", "avro", "scan_lines", "decompress", "http", "aws", "gcp", "azure", "cross_join", "semi_anti_join", "asof_join", "pivot", "strings", "regex", "temporal", "dtype-i8", "dtype-i16", "dtype-u8", "dtype-u16", "abs", "round_series", "sign", "log", "is_in", "is_unique", "is_first_distinct", "is_last_distinct", "is_between", "cum_agg", "diff", "rank", "meta", "dtype-categorical", "dtype-decimal", "timezones", "nightly"] }
+polars-async = { git = "https://github.com/bkc39/polars", rev = "9b9eab95e6c913b5dc9a12063f5b42fe62088b2b", default-features = false }
+polars-buffer = { git = "https://github.com/bkc39/polars", rev = "9b9eab95e6c913b5dc9a12063f5b42fe62088b2b", default-features = false }
 rayon = "1.10.0"
 serde_json = "1.0.122"
 tokio = { version = "1.53.1", default-features = false, features = ["rt"] }
@@ -42,6 +42,3 @@ inherits = "release"
 lto = "thin"
 codegen-units = 1
 
-[patch.crates-io]
-polars-io = { path = "vendor/polars-io-0.55.2" }
-polars-stream = { path = "vendor/polars-stream-0.55.2" }

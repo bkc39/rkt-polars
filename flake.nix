@@ -111,7 +111,12 @@
             pname = "rkt-polars-compat";
             version = rustVersion;
             src = pkgs.lib.cleanSource ./rust;
-            cargoDeps = importCargoLock { lockFile = ./rust/Cargo.lock; };
+            cargoDeps = importCargoLock {
+              lockFile = ./rust/Cargo.lock;
+              # The tree of the bkc39/polars commit rust/Cargo.toml takes
+              # every polars crate from; one hash covers them all.
+              outputHashes."polars-0.55.2" = "sha256-Ec2gVZEHH88LmDi2yfx8Na8g+PGa6cVGqF99qk7YMqo=";
+            };
 
             # polars' `nightly` feature (std::simd) on the pinned stable rustc,
             # as nixpkgs builds Python polars; scripts/build-so.sh matches it.
@@ -421,51 +426,46 @@
               fi
               touch $out
             '';
-          # A vendored crate is the published one with its patch applied.
-          vendoredCrate = { name, sha256 }:
-            let dir = "${name}-0.55.2"; in
-            pkgs.runCommand "rkt-polars-vendored-${name}" {
-              # The crate's Cargo.lock checksum before the vendor.
-              crate = pkgs.fetchurl {
-                name = "${dir}.tar.gz";
-                url = "https://static.crates.io/crates/${name}/0.55.2/download";
-                inherit sha256;
-              };
-              patchFile = ./rust/vendor + "/${dir}.patch";
-              vendored = ./rust/vendor + "/${dir}";
-              lock = ./rust/Cargo.lock;
-              patchPath =
-                ((builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).patch.crates-io.${name} or { }).path or "";
+          # Every polars crate comes from the bkc39/polars fork, at the one
+          # rev rust/Cargo.toml gives each direct polars dependency.
+          polars-fork =
+            let
+              manifest = builtins.fromTOML (builtins.readFile ./rust/Cargo.toml);
+              lock = builtins.fromTOML (builtins.readFile ./rust/Cargo.lock);
+              deps = manifest.dependencies // manifest.dev-dependencies;
+              # Published on their own, outside the polars workspace.
+              external = [ "polars-arrow-format" "polars-parquet-format" ];
+              isPolars = name:
+                (name == "polars" || pkgs.lib.hasPrefix "polars-" name)
+                && !(builtins.elem name external);
+              rev = deps.polars.rev or "";
+              source = "git+https://github.com/bkc39/polars?rev=${rev}#${rev}";
+              strayDeps = builtins.filter
+                (name: (deps.${name}.git or "") != "https://github.com/bkc39/polars"
+                       || (deps.${name}.rev or "") != rev)
+                (builtins.filter isPolars (builtins.attrNames deps));
+              strayLocks = map (pkg: "${pkg.name} ${pkg.version} ${pkg.source or "(path)"}")
+                (builtins.filter (pkg: isPolars pkg.name && (pkg.source or "") != source)
+                  lock.package);
+              problems =
+                pkgs.lib.optional (builtins.stringLength rev != 40)
+                  "rust/Cargo.toml: polars has no full commit rev"
+                ++ pkgs.lib.optional (manifest ? patch) "rust/Cargo.toml has a [patch] table"
+                ++ map (name: "rust/Cargo.toml: ${name} is not the fork at ${rev}") strayDeps
+                ++ map (entry: "rust/Cargo.lock: ${entry}") strayLocks;
+            in
+            pkgs.runCommand "rkt-polars-polars-fork" {
+              report = pkgs.lib.concatStringsSep "\n" problems;
             } ''
-              mkdir pristine
-              tar -xzf $crate -C pristine
-              patch -d pristine/${dir} -p1 -F0 --no-backup-if-mismatch < $patchFile
-              diff -r pristine/${dir} $vendored
-              if [ "$patchPath" != "vendor/${dir}" ]; then
-                echo "ERROR: rust/Cargo.toml's [patch.crates-io] ${name} path is \"$patchPath\"," \
-                  "not \"vendor/${dir}\"" >&2
-                exit 1
-              fi
-              entry=$(grep -x -A2 'name = "${name}"' $lock)
-              if [ "$entry" != "$(printf '%s\n' 'name = "${name}"' 'version = "0.55.2"' 'dependencies = [')" ] \
-                || grep -q -x '\[\[patch.unused\]\]' $lock; then
-                echo "ERROR: rust/Cargo.lock does not take ${name} from rust/vendor alone:" >&2
-                grep -x -A3 'name = "${name}"' $lock >&2
+              if [ -n "$report" ]; then
+                printf 'ERROR: %b\n' "$report" >&2
                 exit 1
               fi
               touch $out
             '';
-          vendored-polars-io = vendoredCrate {
-            name = "polars-io";
-            sha256 = "3ba705af75665c6c6f6822bdc20a0b162846dd9d23573221096945b45210c2db";
-          };
-          vendored-polars-stream = vendoredCrate {
-            name = "polars-stream";
-            sha256 = "b173c0c52f53ca930f3b59bc56a5854a650eb9555d67bba9022051714bc0b88f";
-          };
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin vendored-polars-io vendored-polars-stream;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
           inherit (self.packages.${system}) rust racket;
         });
 
