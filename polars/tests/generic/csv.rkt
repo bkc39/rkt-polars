@@ -624,7 +624,7 @@
   (define quoted-comment (scratch-file scratch "quoted-comment.csv" "a,b\n1,x\n# it\"s\n2,y\n3,z\n"))
   (check-equal? (column (read-csv quoted-comment #:comment-prefix "#") "a") '(1 2 3))
   (when (and mkfifo sh)
-    (check-regexp-match #rx"^read-csv: .*CSV malformed: expected 1 rows, actual 2 rows"
+    (check-regexp-match #rx"^read-csv: failed to read csv from .*/fifo-quoted-comment[.]csv: "
                         (read-through-a-fifo "fifo-quoted-comment.csv"
                                              (lambda (path) (read-csv path #:comment-prefix "#"))
                                              quoted-comment)
