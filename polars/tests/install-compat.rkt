@@ -7,8 +7,11 @@
                     delete-directory/files file->bytes make-directory* make-temporary-directory)
            (only-in racket/port port->bytes with-output-to-string)
            (only-in polars/private/install-compat pre-installer)
+           (only-in polars/private/native-location library-file)
            (only-in polars/private/resource with-release)
-           (only-in polars/tests/test-helpers scratch-file))
+           (only-in polars/tests/test-helpers
+                    contains-all? make-native-package! message-of scratch-file
+                    with-environment-variable with-native-collections))
 
   (define (remove-install-root root)
     (define native (build-path root "collection" "native-libs"))
@@ -28,7 +31,8 @@
     (parameterize ([current-environment-variables
                     (environment-variables-copy (current-environment-variables))])
       (putenv "RKT_POLARS_COMPAT_LIB_PATH" (path->string (simplify-path (build-path lib 'up))))
-      (pre-installer #f collection #f)))
+      (with-native-collections _
+        (pre-installer #f collection #f))))
 
   (define (staged dir)
     (for/list ([f (in-list (directory-list dir))]
@@ -171,7 +175,8 @@
                                   #"RKT_POLARS_COMPAT_LIB_PATH" #f)
       (environment-variables-set! (current-environment-variables)
                                   #"RKT_POLARS_FORCE_CANDIDATE" (and force? #"1"))
-      (with-output-to-string (lambda () (pre-installer #f collection #f)))))
+      (with-native-collections _
+        (with-output-to-string (lambda () (pre-installer #f collection #f))))))
 
   (define (sha256-hex bs)
     (bytes->hex-string (sha256-bytes bs)))
@@ -286,4 +291,104 @@
        (scratch-file marker "inside" "kept")
        (check-equal? (install-candidate! collection) "")
        (check-equal? (file->bytes target) #"candidate bytes")
-       (check-equal? (file->bytes (build-path marker "inside")) #"kept")))))
+       (check-equal? (file->bytes (build-path marker "inside")) #"kept"))))
+
+  (define (call-with-package-install proc #:library [library "dev bytes"] #:marked? [marked? #f])
+    (with-native-collections collects
+      (define collection (build-path collects "fake-polars"))
+      (define native (build-path collection "native-libs"))
+      (make-directory* (candidate-dir collection))
+      (scratch-file (candidate-dir collection) "libcompat.so" "candidate bytes")
+      (scratch-file collection "info.rkt" "#lang info\n(define native-version \"0.3\")\n")
+      (when library
+        (scratch-file native library-file library))
+      (when marked?
+        (scratch-file native (format ".~a.dev" library-file) (marker-for (string->bytes/utf-8 library))))
+      (proc collects collection native)))
+
+  (define (pre-install collection)
+    (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH" #f
+      (with-environment-variable #"RKT_POLARS_FORCE_CANDIDATE" #f
+        (with-output-to-string (lambda () (pre-installer #f collection #f))))))
+
+  (define (tamper! root)
+    (scratch-file (build-path root "native-libs") library-file "tampered bytes"))
+
+  (test-case "the native package is checked and no candidate is staged over it"
+    (call-with-package-install
+     #:library #f
+     (lambda (collects collection native)
+       (make-native-package! collects)
+       (check-equal? (pre-install collection) "")
+       (check-false (file-exists? (build-path native library-file))))))
+
+  (test-case "a native package whose library its manifest does not list fails the install"
+    (call-with-package-install
+     #:library #f
+     (lambda (collects collection native)
+       (tamper! (make-native-package! collects))
+       (check-true (contains-all? (message-of (lambda () (pre-install collection)))
+                                  (list "pre-installer: "
+                                        (format "~a in the package polars-x86_64-linux has sha256"
+                                                library-file)))))))
+
+  (test-case "a native package of another version fails the install"
+    (call-with-package-install
+     #:library #f
+     (lambda (collects collection native)
+       (make-native-package! collects #:version "0.2")
+       (check-true (contains-all? (message-of (lambda () (pre-install collection)))
+                                  '("the package polars-x86_64-linux is version 0.2"
+                                    "`raco pkg update polars polars-x86_64-linux`"))))))
+
+  (test-case "a staged copy without a dev marker does not skip the package's check"
+    (call-with-package-install
+     (lambda (collects collection native)
+       (tamper! (make-native-package! collects))
+       (check-true (contains-all? (message-of (lambda () (pre-install collection)))
+                                  '("has sha256"))))))
+
+  (test-case "a dev-built staged copy is kept over the package, unchecked"
+    (call-with-package-install
+     #:marked? #t
+     (lambda (collects collection native)
+       (tamper! (make-native-package! collects))
+       (check-equal? (pre-install collection)
+                     (format "pre-installer: keeping the dev-built ~a over the package ~a\n"
+                             (build-path native library-file)
+                             "polars-x86_64-linux")))))
+
+  (test-case "RKT_POLARS_COMPAT_LIB_PATH skips the package's check"
+    (call-with-package-install
+     #:library #f
+     (lambda (collects collection native)
+       (tamper! (make-native-package! collects))
+       (define lib (build-path collects "override" "lib"))
+       (make-directory* lib)
+       (scratch-file lib library-file "override bytes")
+       (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH"
+                                  (path->bytes (build-path collects "override"))
+         (pre-installer #f collection #f))
+       (check-equal? (file->bytes (build-path native library-file)) #"override bytes"))))
+
+  (test-case "an empty RKT_POLARS_COMPAT_LIB_PATH is unset, so the package is checked"
+    (call-with-package-install
+     #:library #f
+     (lambda (collects collection native)
+       (tamper! (make-native-package! collects))
+       (check-true
+        (contains-all? (message-of (lambda ()
+                                     (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH" #""
+                                       (pre-installer #f collection #f))))
+                       '("has sha256"))))))
+
+  (test-case "with no library anywhere the install warns, naming the package to install"
+    (with-native-collections collects
+      (define collection (build-path collects "fake-polars"))
+      (make-directory* collection)
+      (define err (open-output-string))
+      (parameterize ([current-error-port err])
+        (pre-install collection))
+      (check-true (contains-all? (get-output-string err)
+                                 '("pre-installer: libcompat is not installed"
+                                   "`raco pkg install polars-x86_64-linux`"))))))

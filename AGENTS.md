@@ -5,7 +5,8 @@
 `polars` is a Racket binding to the [Polars](https://pola.rs) DataFrame
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 **0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
-macOS arm64 ship with the package, so users need no Rust toolchain. The
+macOS arm64 ship as the native packages `polars-x86_64-linux` and
+`polars-aarch64-macosx` (#254), so users need no Rust toolchain. The
 `dtype-decimal` feature is on because polars' `sign` does not compile
 without it (#106); Decimal columns are read (from Parquet), not built.
 `dtype-categorical` carries Categorical and Enum. Every IO feature of the
@@ -464,14 +465,34 @@ it. Racket side: `define-compat` with `#:c-id`.
   through `eval`, `dynamic-require` or `namespace-variable-value` with a
   computed name, a name `filtered-in` computes, or a re-export under another
   name from another module (`prefix-out`).
+- **One loader** finds `libcompat` for `foreign.rkt` and `expr-core.rkt`
+  (`polars/private/native-library.rkt`, over `native-location.rkt`, which
+  the pre-installer shares), in this order: `$RKT_POLARS_COMPAT_LIB_PATH/lib`;
+  a staged `polars/native-libs/libcompat.*`; the native package for the
+  platform, found with `collection-file-path` and `dynamic-require` (no
+  static require, so `polars` compiles anywhere). A native package that
+  holds a library outranks a staged copy whose dev marker does not match it,
+  so a staged committed candidate never shadows it. `polars/info.rkt` depends
+  on the packages by `#:platform` (`x86_64-linux`, pkg-build's
+  `x86_64-linux-natipkg`, `aarch64-macosx`) at `native-version`, which the
+  `#:version` only bounds below; the loader requires the package's version
+  to equal it. Each failure is an `exn:fail` naming the remedy (the
+  platforms, `raco pkg install`, `raco pkg update polars polars-<platform>`,
+  the dlopen reason). `polars-<platform>/` is a package's skeleton; no
+  binary is committed there, and `scripts/stage-native-package.rkt` adds the
+  library and `manifest.json` (native version, commit, `rust/` tree, each
+  file's sha256).
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
   `dataframe_read_csv_v3`), so a stale library fails at load, when
-  `define-compat` cannot resolve the symbol, instead of misreading its
+  `define-compat` cannot resolve the symbol (`libcompat lacks the export
+  for <binding>`, through `#:default-make-fail`), instead of misreading its
   arguments.
-- **A change to any `#[no_mangle]` export needs both
-  `polars/native-libs/candidates/` refreshed before it merges.** The catalog
+- **Until #254's L3 removes them, a change to any `#[no_mangle]` export
+  needs both `polars/native-libs/candidates/` refreshed before it merges.**
+  `scripts/test-local.sh` installs the candidate as the native package. The
+  catalog
   installs those committed binaries (it has no Rust toolchain) and
   `define-compat` resolves every symbol at module load, so a stale candidate
   breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
@@ -1230,7 +1251,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   sha256 as exactly 64 lowercase hex digits and a newline (any other
   content is a stale marker), by rename after hashing the source, and
   leaves it alone when it already holds that hash. Without
-  `RKT_POLARS_COMPAT_LIB_PATH`, the pre-installer keeps a library whose
+  `RKT_POLARS_COMPAT_LIB_PATH` and with no native package installed, the
+  pre-installer keeps a library whose
   marker matches its bytes instead of copying the committed candidate over
   it, and prints one line naming it; a stale marker (a regular file or a
   link, never a directory) is removed when the candidate goes in, and a
@@ -1240,7 +1262,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   those. The keep outlasts a branch switch or a pull, so after a candidate
   refresh that adds an export, set the variable or re-enter the dev shell.
   It takes no lock: a `raco setup` run concurrently with dev-shell entry in
-  the same tree may install the candidate.
+  the same tree may install the candidate. With a native package holding a
+  library installed, it stages nothing: it keeps a dev-marked copy, or else
+  fails `raco setup` unless the package's version, its manifest's native
+  version and every `libcompat.*` sha256 match. The dev shell does not export
+  `RKT_POLARS_COMPAT_LIB_PATH`, which the loader would prefer to the copy
+  `nix run .#copy-native-libs` stages; the nix build does.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:

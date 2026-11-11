@@ -10,7 +10,6 @@
                   [-> ->/c] ->* ->i and/c any/c contract-name contract-out flat-named-contract
                   integer-in non-empty-listof not/c or/c rename-contract)
          racket/match
-         racket/runtime-path
          (only-in polars/private/c-integer int32/c int64-max int64-min int64/c uint64-max uint64/c)
          polars/private/column-pattern
          (only-in polars/private/foreign
@@ -19,6 +18,7 @@
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
+         (only-in polars/private/native-library compat-library missing-export)
          (only-in (submod polars/private/foreign internal) define-reasoned)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _str _str-list)
@@ -51,11 +51,10 @@
           [expr-exclude (->/c multi-column-expr? (non-empty-listof column-pattern/c) Expr-ptr?)]
           [multi-column-expr? (->/c any/c boolean?)]))
 
-(define-runtime-path expr-native-libs-dir "../native-libs")
-
 (define-ffi-definer define-compat
-  (ffi-lib (build-path expr-native-libs-dir "libcompat"))
-  #:make-c-id convention:hyphen->underscore)
+  compat-library
+  #:make-c-id convention:hyphen->underscore
+  #:default-make-fail missing-export)
 
 (define-owned-cpointer-type _Expr-ptr expr #:noun "expression" #:wrap (lambda (p) (expr p))
   (define-compat expr-drop/raw

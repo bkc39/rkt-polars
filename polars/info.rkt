@@ -6,19 +6,24 @@
 
 (define name "polars")
 
-(define deps '("base" "gregor-lib" "threading-lib"))
+(define native-version "0.3")
+(define deps
+  `("base" "gregor-lib" "threading-lib"
+    ("polars-x86_64-linux" #:platform "x86_64-linux" #:version ,native-version)
+    ("polars-x86_64-linux" #:platform "x86_64-linux-natipkg" #:version ,native-version)
+    ("polars-aarch64-macosx" #:platform "aarch64-macosx" #:version ,native-version)))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"
                       "sandbox-lib" "plot-lib" "plot-gui-lib" "plot-doc"))
 
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
-(define version "0.2")
+(define version "0.3")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 
-;; Copies the prebuilt libcompat shared object into native-libs/ at install
-;; time; see private/install-compat.rkt.
+;; Checks the native package's manifest, or stages a committed candidate
+;; where none is installed; see private/install-compat.rkt.
 (define pre-install-collection "private/install-compat.rkt")
 (define compile-omit-files '("private/install-compat.rkt"))
 

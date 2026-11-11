@@ -1,5 +1,14 @@
 # The committed `libcompat` candidates
 
+`polars` loads `libcompat` from the native package for its platform,
+`polars-x86_64-linux` or `polars-aarch64-macosx` (#254), which a release
+builds; `scripts/stage-native-package.rkt` assembles one from a built library,
+with a `manifest.json` the pre-installer checks. The candidates below stay
+until #254's L3 removes them: the pre-installer stages one only where no
+native package is installed, and `scripts/test-local.sh` (the `Catalog
+install` and `Committed candidate` jobs) installs the candidate as the native
+package.
+
 `rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
 host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
 prebuilt binary per platform, and the pre-installer

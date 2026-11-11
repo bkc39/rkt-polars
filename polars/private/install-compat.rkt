@@ -1,14 +1,16 @@
 #lang racket/base
 
-(require (only-in file/sha1 bytes->hex-string)
-         (only-in racket/file
+(require (only-in racket/file
                   delete-directory/files make-directory* make-temporary-file)
          (only-in racket/match match)
+         (only-in "native-location.rkt"
+                  compat-lib-env-var dev-built? dev-built-library? dev-marker library-file
+                  manifest-problem native-library-problem native-location native-package
+                  outranking-package required-native-version)
          (only-in "resource.rkt" with-release))
 
 (provide pre-installer)
 
-(define compat-lib-env-var "RKT_POLARS_COMPAT_LIB_PATH")
 (define force-candidate-env-var "RKT_POLARS_FORCE_CANDIDATE")
 (define compat-lib-pattern #rx"^libcompat\\.")
 
@@ -51,27 +53,6 @@
         #:when (regexp-match? pattern (path->string f)))
     (install! (build-path source-dir f) (build-path dest-dir f))))
 
-(define (dev-marker dst)
-  (define-values (dir name _) (split-path dst))
-  (build-path dir (string-append "." (path->string name) ".dev")))
-
-(define marker-pattern #px#"^([0-9a-f]{64})\n$")
-
-(define (marked-sha256 marker)
-  (define contents
-    (call-with-input-file* marker (lambda (in) (read-bytes 66 in))))
-  (match (and (bytes? contents) (regexp-match marker-pattern contents))
-    [(list _ hex) (bytes->string/utf-8 hex)]
-    [#f #f]))
-
-(define (sha256-hex path)
-  (call-with-input-file* path (lambda (in) (bytes->hex-string (sha256-bytes in)))))
-
-(define (dev-built? dst marker)
-  (with-handlers ([exn:fail:filesystem? (lambda (_) #f)])
-    (define marked (and (file-exists? marker) (file-exists? dst) (marked-sha256 marker)))
-    (and marked (equal? marked (sha256-hex dst)))))
-
 (define (remove-marker! marker)
   (when (or (link-exists? marker) (file-exists? marker))
     (with-handlers ([exn:fail:filesystem? void])
@@ -111,21 +92,37 @@
     (define dir (build-path candidates-dir plat))
     (and (has-matching-files? dir compat-lib-pattern) dir)))
 
+(define (check-native-package! location wanted)
+  (match (or (native-library-problem location wanted) (manifest-problem location wanted))
+    [#f (void)]
+    [message (preinstall-error "~a" message)]))
+
 (define (pre-installer collections-top-path this-collection-path user-specific?)
   (define native-libs-dir
     (build-path this-collection-path "native-libs"))
   (define candidates-dir
     (build-path native-libs-dir "candidates"))
   (define compat-lib-path
-    (getenv compat-lib-env-var))
+    (match (getenv compat-lib-env-var)
+      [(or #f "") #f]
+      [path path]))
+  (define package (and (not compat-lib-path) (outranking-package)))
+  (define dev-library (and package (dev-built-library? native-libs-dir)))
   (cond
-    ;; 1. Explicit override (Nix build output / dev shell).
+    ;; 1. Explicit override (the Nix build).
     [compat-lib-path
      (copy-native-libs! native-libs-dir
                         (build-path compat-lib-path "lib")
                         compat-lib-pattern
                         install-if-different!)]
-    ;; 2. Committed per-platform prebuilt candidate (catalog install).
+    ;; 2. A dev-built library outranks the native package, unchecked.
+    [dev-library
+     (printf "pre-installer: keeping the dev-built ~a over the package ~a\n"
+             (build-path native-libs-dir library-file)
+             (native-package))]
+    ;; 3. The native package, which a committed candidate never shadows.
+    [package (check-native-package! package (required-native-version this-collection-path))]
+    ;; 4. Committed per-platform prebuilt candidate (until #254's L3).
     [(find-candidate-dir candidates-dir)
      => (lambda (dir)
           (copy-native-libs! native-libs-dir
@@ -133,16 +130,9 @@
                              compat-lib-pattern
                              (install-candidate!
                               (equal? (getenv force-candidate-env-var) "1"))))]
-    ;; 3. Already staged (nothing to do).
+    ;; 5. Already staged (nothing to do).
     [(has-matching-files? native-libs-dir compat-lib-pattern)
      (void)]
     [else
-     (preinstall-error
-      (string-append
-       "compatibility library not found. Either:\n"
-       "  1. Run: scripts/build-so.sh   (requires the Rust toolchain)\n"
-       "  2. Run: nix run .#copy-native-libs\n"
-       "  3. Set ~a to a Nix build output containing lib/libcompat.*\n"
-       "  4. Copy libcompat into ~a")
-      compat-lib-env-var
-      (path->string native-libs-dir))]))
+     (eprintf "pre-installer: ~a\n"
+              (native-library-problem (native-location 'missing native-libs-dir #f #f #f) #f))]))

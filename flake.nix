@@ -14,7 +14,7 @@
         "aarch64-darwin"
       ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      version = "0.2";
+      version = "0.3";
       rustVersion =
         (builtins.fromTOML (builtins.readFile ./rust/Cargo.toml)).package.version;
       # The Racket release this flake targets; nixpkgs supplies the actual
@@ -29,7 +29,8 @@
       # the working tree through the same PLTUSERHOME; `rest` runs last, and
       # only once PLTUSERHOME is set.
       devSetup = pkgs: rust: rest: ''
-        export RKT_POLARS_COMPAT_LIB_PATH="${rust}"
+        # No RKT_POLARS_COMPAT_LIB_PATH: the loader would prefer it to the
+        # staged copy, which `nix run .#copy-native-libs` refreshes.
 
         # PLTUSERHOME must live outside the checkout: raco pkg install --link
         # rejects a link target that overlaps with a collects dir, and

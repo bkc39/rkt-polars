@@ -20,6 +20,12 @@ polars/native-libs/.libcompat.*
 # scripts/build-so.sh's of the toolchain that built it.
 polars/native-libs/candidates/*/rust-tree
 polars/native-libs/candidates/*/toolchain
+# A native package's library, manifest and licences are added when it is
+# staged from a built library (scripts/stage-native-package.rkt), never
+# committed.
+/polars-*/native-libs/
+/polars-*/manifest.json
+/polars-*/LICENSE-*
 result
 .racket-user/
 

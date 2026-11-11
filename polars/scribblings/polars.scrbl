@@ -10,8 +10,8 @@
 @hyperlink["https://pola.rs/"]{Polars} DataFrame library. The bindings call
 into a native compatibility library (@tt{libcompat}) built from the Rust
 @tt{polars} crate; prebuilt shared objects for Linux (x86-64) and macOS
-(arm64) ship with the package and are installed automatically, so no Rust
-toolchain is required at install time.
+(arm64) are installed with the package, so no Rust toolchain is required at
+install time (see @secref["install"]).
 
 The @racketmodname[polars] module re-exports three groups of operations:
 
@@ -39,6 +39,33 @@ and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
 @racket[~>]. We are grateful for all of them.
 
 @local-table-of-contents[]
+
+@section[#:tag "install"]{Installation}
+
+@commandline{raco pkg install polars}
+
+installs @racketmodname[polars] and, as a dependency for the platform, the
+native package that holds @tt{libcompat}: @tt{polars-x86_64-linux} on x86-64
+Linux, @tt{polars-aarch64-macosx} on arm64 macOS. Its version must equal the
+native version this @racketmodname[polars] names, and its library must have
+the sha256 its @filepath{manifest.json} gives, or @exec{raco setup} fails;
+@exec{raco pkg update polars polars-x86_64-linux} (with the platform's
+package) brings the two together.
+
+@racketmodname[polars] loads @tt{libcompat} from the first of:
+
+@itemlist[#:style 'ordered
+  @item{the @filepath{lib} directory that @envvar{RKT_POLARS_COMPAT_LIB_PATH}
+        names, when it is set and not empty;}
+  @item{a copy in @racketmodname[polars]'s @filepath{native-libs} directory,
+        as a development build stages it, unless a native package is installed
+        and the copy is not that build's;}
+  @item{the native package.}
+]
+
+On any other platform, or without the native package, @racket[(require polars)]
+raises @racket[exn:fail], naming the platforms or the package to install and
+@envvar{RKT_POLARS_COMPAT_LIB_PATH}.
 
 @include-section["guide.scrbl"]
 @include-section["reference.scrbl"]
