@@ -860,11 +860,15 @@ by-quarter
   @tt{schema}, @tt{with_column_names}, @tt{include_file_paths} or
   @tt{missing_columns}.
 
-  The result is @racket[(collect (scan-csv path ....))] with the same
-  keywords but @racket[#:columns], which @racket[scan-csv] lacks:
-  @racket[select] from the plan instead. A single file is read eagerly
-  rather than through a plan, which is faster. One check is
-  @racket[read-csv]'s own. When @racket[separator] is
+  For a regular file the result is @racket[(collect (scan-csv path ....))]
+  with the same keywords but @racket[#:columns], which @racket[scan-csv]
+  lacks: @racket[select] from the plan instead. A single file read without
+  @racket[n-rows] or @racket[comment-prefix] is read eagerly rather than
+  through a plan, which is faster. A path that is not a regular file, such
+  as a named pipe, is read eagerly whatever the keywords, since a plan maps
+  its file into memory. With @racket[comment-prefix], a regular file with a quote in
+  a comment line reads, where Python's @tt{read_csv} fails on it. One check
+  is @racket[read-csv]'s own. When @racket[separator] is
   @racket[#f], @racket[new-columns] and @racket[columns] are empty and the
   file reads as one column, a row index aside, whose header splits on a tab, @litchar{;} or
   @litchar{|}, @racket[read-csv] raises an error naming the separator to

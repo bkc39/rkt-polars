@@ -47,10 +47,12 @@ polars crate comes from crates.io. The branch is upstream's `0.55.2`
 commit, then the crates.io release's `polars-io/src/cloud/options.rs`
 (published from a dirty tree, against crates.io's object_store), then one
 commit per change: polars-stream's streaming CSV source takes a slice with
-a comment prefix (#270), and polars-io's CSV reader makes an unclosed quote
-in a field a parse error (#347; see the `read-csv` facts for both). The
-`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
-rev, and `polars/native-libs/BUILDING.md` has the mechanics.
+a comment prefix (#270); polars-io's CSV reader makes an unclosed quote in
+a field a parse error (#347); and its line counter skips the comment lines
+after its last counted newline before it judges a last line without a
+newline (#335; see the `read-csv` facts for all three). The `polars-fork`
+flake check holds `Cargo.toml` and `Cargo.lock` to the one rev, and
+`polars/native-libs/BUILDING.md` has the mechanics.
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -515,9 +517,12 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `read-csv` and `scan-csv`:
   - `read-csv` returns what `(collect (scan-csv ...))` returns for the same
     keywords, as Python's `read_csv` does: `dataframe_read_csv_v3` reads a
-    glob pattern, or any path given `#:n-rows`, by scan and collect, and
-    any other single file with 0.55's eager `CsvReader`, about three times
-    faster on nycflights. Given `n_rows`, the eager reader stops spawning
+    glob pattern, or a regular file given `#:n-rows` or `#:comment-prefix`,
+    by scan and collect, and any other single file with 0.55's eager
+    `CsvReader`, about three times faster on nycflights. A path that is not
+    a regular file (a named pipe, a device) reads eagerly whatever the
+    keywords, since the scan memory-maps a single file, so what follows
+    holds for regular files. Given `n_rows`, the eager reader stops spawning
     chunks once the chunks already parsed hold more rows, so whether it
     reaches a later chunk that fails (a late `NA` in an inferred integer
     column) depends on thread timing (#147). The scan cuts line batches in
@@ -528,10 +533,11 @@ it. Racket side: `define-compat` with `#:c-id`.
     deterministic, but dependent on the file's size. Both are built
     from one decoded request, and a table-driven Rust test holds the eager,
     one-file-glob and scan reads to identical frames and error texts, with
-    one listed exception, a malformed-quote error's chunk locator. The two
-    readers still part on a stray quote in an unquoted field beside a
-    commented line that holds a quote: the eager reader can fail to parse a
-    field the scan reads (#341).
+    one listed exception, a malformed-quote error's chunk locator. The
+    eager reader's chunk splitter counts the quotes in comment lines, so a
+    quote in one can cut a chunk inside a row and fail the read: a
+    commented read goes through the scan, whose counter skips comment
+    lines (#341), where Python's `read_csv` of a single file fails.
   - With `#:comment-prefix` the scan pushes the slice into the CSV source
     too, through the fork's polars-stream (#270), whose line counter
     skips comment lines. With a prefix the source cuts batches where the
@@ -551,10 +557,20 @@ it. Racket side: `define-compat` with `#:c-id`.
     Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
     a slice parses the whole file and slices afterwards, but a `tail` is
     cut by the counter's count, with or without a prefix, and can return
-    other rows (#339). A file whose last line has no newline and is
-    misjudged by the counter, a comment among them, fails a whole-file scan
-    or a `tail` with `CSV malformed` (#335), where the eager reader reads
-    it.
+    other rows (#339). A last line without a newline is a row unless what
+    follows the counter's last counted newline is comment lines alone
+    (#335): the counter skips comment lines from there, as at the start of
+    any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the
+    `#y` is inside a field and the file has two rows. 0.55 judged the last
+    physical line alone, quote-blind, so a whole-file scan or a `tail` of
+    such a file could fail with `CSV malformed`, as Python's does. The
+    fork's fast count (`count_rows_from_reader_par` /
+    `count_rows_from_slice_par`) applies the same rule, and starts a chunk
+    inside a quoted field without skipping a comment there. A binding
+    reaches it only through a scan's schema inference over a cloud path (or
+    under `POLARS_FORCE_ASYNC`), to size a fetch; polars' fast count of a
+    `select` of `pl.len()` would reach it too, but no binding builds
+    `pl.len()`.
   - A field that opens a quote and never closes it, which only the last
     field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
     final `\r`), is a parse error naming its column and dtype on every
@@ -1299,5 +1315,6 @@ it. Racket side: `define-compat` with `#:c-id`.
   `rkt-polars/<version>` at upstream's release commit, reproduces any
   difference between the crates.io release and that commit, and rebases
   the old branch's change commits onto it, dropping each one upstream has
-  made (slicing a commented CSV; refusing an unclosed quote);
-  `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.
+  made (slicing a commented CSV; refusing an unclosed quote and counting an
+  unterminated last line); `rust/Cargo.toml` and the flake's
+  `outputHashes` move to its tip.
