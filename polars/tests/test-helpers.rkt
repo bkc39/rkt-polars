@@ -214,5 +214,6 @@
     [manifest-text (display-to-file manifest-text manifest)]
     [manifest?
      (call-with-output-file* manifest
-       (lambda (out) (write-json (manifest-jsexpr libs version "tree" "commit") out)))])
+       (lambda (out) (write-json (manifest-jsexpr libs version "tree" "commit") out)))]
+    [else (void)])
   root)
