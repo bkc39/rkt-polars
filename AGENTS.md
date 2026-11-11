@@ -61,7 +61,6 @@ lines after its last counted newline before it judges a last line without
 a newline (#335; see the `read-csv` facts for all three). The
 `polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
 rev, and `polars/native-libs/BUILDING.md` has the mechanics.
-`polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
