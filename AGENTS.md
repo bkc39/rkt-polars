@@ -47,8 +47,10 @@ polars crate comes from crates.io. The branch is upstream's `0.55.2`
 commit, then the crates.io release's `polars-io/src/cloud/options.rs`
 (published from a dirty tree, against crates.io's object_store), then one
 commit per change: polars-stream's streaming CSV source takes a slice with
-a comment prefix (#270; see the `read-csv` fact). The `polars-fork` flake
-check holds `Cargo.toml` and `Cargo.lock` to the one rev, and
+a comment prefix (#270), and polars-io's CSV reader makes an unclosed quote
+in a field a parse error (#347; see the `read-csv` facts for both). The
+`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
+rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -553,6 +555,36 @@ it. Racket side: `define-compat` with `#:c-id`.
     misjudged by the counter, a comment among them, fails a whole-file scan
     or a `tail` with `CSV malformed` (#335), where the eager reader reads
     it.
+  - A field that opens a quote and never closes it, which only the last
+    field of a file can (`"`, `"12`, `"ab""`, `"a"b"`, a quote before a
+    final `\r`), is a parse error naming its column and dtype on every
+    path that parses that column (an eager read of one file that projects
+    it away with `#:columns` returns the row, and with `#:n-rows` returns
+    none; a glob or a scan fails with `CSV malformed`, #350), or a null
+    under `#:ignore-errors` in a numeric, Boolean, Decimal, date or
+    datetime column (#347). The
+    error gives no "You might want to try" list: no null marker matches the
+    field, and `#:ignore-errors` cannot read it in every column. The
+    splitter toggles on every quote, so the fork's polars-io counts a
+    quoted field's quote bytes and an odd count is unclosed. A String,
+    Categorical or Time column refuses it either way, as polars' String
+    reader does; a Time column is read as
+    String and cast, so its error names `str`. A null marker never
+    matches an unclosed field: `"NA` is the null of neither
+    `#:null-values '("\"NA")` nor `'("N")`, which 0.55 and Python match
+    against `N`, the field less its first and last bytes. A closed field
+    is matched on the field less its first and last bytes, escapes kept,
+    as in 0.55 and Python: `"NA"` is the null of `'("NA")`, `"N""A"` of
+    `'("N\"\"A")`. A closed field with bytes after its close (`"ab"c`)
+    reads as in 0.55 and Python: `ab` in a Categorical column, an error in
+    a String one. A header name left unclosed (`x,"ab`) is refused as
+    `Column name ... is not properly escaped`, even under
+    `#:ignore-errors`, since a name is not a value. Every 0.55
+    reader took an escaped pair or a reopened quote for the close (`"ab""`
+    read as `ab`); all but the String reader dropped an unclosed field's
+    first and last bytes (`"12` read as 1, `"ab` as `a`, the header as
+    `a`), and the numeric, Boolean and Decimal readers panicked on a lone
+    quote, as Python 1.42.1 does.
   - `#:columns` is `read-csv`'s alone, as `columns` is Python's
     `read_csv`'s; the scan entry point applies it too, so the test covers it.
   - Every keyword that names a column names it as `#:new-columns` leaves it,
@@ -1267,5 +1299,5 @@ it. Racket side: `define-compat` with `#:c-id`.
   `rkt-polars/<version>` at upstream's release commit, reproduces any
   difference between the crates.io release and that commit, and rebases
   the old branch's change commits onto it, dropping each one upstream has
-  made (slicing a commented CSV); `rust/Cargo.toml` and the flake's
-  `outputHashes` move to its tip.
+  made (slicing a commented CSV; refusing an unclosed quote);
+  `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.

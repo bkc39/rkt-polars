@@ -115,7 +115,7 @@
               lockFile = ./rust/Cargo.lock;
               # The tree of the bkc39/polars commit rust/Cargo.toml takes
               # every polars crate from; one hash covers them all.
-              outputHashes."polars-0.55.2" = "sha256-T69Lb3v6dUHb8EueQlEFOFRRnL3PeBOObteMxaraWxY=";
+              outputHashes."polars-0.55.2" = "sha256-Ec2gVZEHH88LmDi2yfx8Na8g+PGa6cVGqF99qk7YMqo=";
             };
 
             # polars' `nightly` feature (std::simd) on the pinned stable rustc,
