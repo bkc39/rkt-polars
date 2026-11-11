@@ -15,10 +15,13 @@
   ;; otherwise the Racket tests run against the stale library.
   (native        "nix run .#copy-native-libs")
   (compile       "raco make polars/main.rkt")
-  ;; What pkg-build's `raco test --drdr` runs: every module, the manual's
-  ;; .scrbl and their examples too (no -x), each in its own process, red on
-  ;; any write to stderr, a native one included (-e).  The flake's Racket
-  ;; check and scripts/test-local.sh run the same.
+  ;; The modules pkg-build's `raco test --drdr` runs, under its stderr rule:
+  ;; every module but polars/info.rkt's test-omit-paths, the manual's .scrbl
+  ;; and their examples too (no -x), each in its own process, red on any
+  ;; write to stderr, a native one included (-e).  Unlike pkg-build: a
+  ;; 600 s timeout (its default is 90 s, test-timeouts aside), and no fresh
+  ;; PLTUSERHOME, TMPDIR or empty stdin.  The flake's Racket check runs the
+  ;; same.
   (test          "raco test -e --timeout 600 -c polars")
   (guide         "raco test -y -e user-guide")
   ;; Every examples/*.rkt, each in its own process; an example is red if it
