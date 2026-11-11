@@ -53,6 +53,10 @@ jobs:
         if: ${{ !cancelled() }}
         uses: DeterminateSystems/magic-nix-cache-action@v15
 
+      - name: Staging a native package
+        if: ${{ !cancelled() }}
+        run: nix develop --command bash scripts/stage-native-package-test.sh
+
       - name: Resyntax suite tests
         if: ${{ !cancelled() }}
         run: nix develop --command raco test lint

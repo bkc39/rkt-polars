@@ -476,12 +476,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   on the packages by `#:platform` (`x86_64-linux`, pkg-build's
   `x86_64-linux-natipkg`, `aarch64-macosx`) at `native-version`, which the
   `#:version` only bounds below; the loader requires the package's version
-  to equal it. Each failure is an `exn:fail` naming the remedy (the
-  platforms, `raco pkg install`, `raco pkg update polars polars-<platform>`,
-  the dlopen reason). `polars-<platform>/` is a package's skeleton; no
-  binary is committed there, and `scripts/stage-native-package.rkt` adds the
-  library and `manifest.json` (native version, commit, `rust/` tree, each
-  file's sha256).
+  to equal it, read when `native-library.rkt` is compiled
+  (`register-external-file` recompiles it when `info.rkt` changes), so
+  `raco exe` and `raco distribute` are unsupported. Each failure is an
+  `exn:fail` naming the remedy (the platforms, `raco pkg install`, `raco pkg
+  update polars polars-<platform>`, the dlopen reason). A package's skeleton
+  is `native/polars-<platform>/`, under `native/` so the repo root's `'multi`
+  package does not make it a collection; no binary is committed there, and
+  `scripts/stage-native-package.rkt` adds the library and `manifest.json`
+  (native version, the `rust/` tree and commit it was built from, each
+  regular file's sha256; see `polars/native-libs/BUILDING.md`). Its
+  manifest is checked only by the pre-installer, so only when `polars` is
+  set up: installing or updating the native package alone leaves the
+  version check at load.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
@@ -491,7 +498,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   arguments.
 - **Until #254's L3 removes them, a change to any `#[no_mangle]` export
   needs both `polars/native-libs/candidates/` refreshed before it merges.**
-  `scripts/test-local.sh` installs the candidate as the native package. The
+  The pre-installer stages one only on its platform (x86_64 Linux, arm64
+  macOS). `scripts/test-local.sh` installs the candidate as the native
+  package through a `file://` catalog and `--auto`, and fails unless
+  `polars` loads it from there. The
   catalog
   installs those committed binaries (it has no Rust toolchain) and
   `define-compat` resolves every symbol at module load, so a stale candidate

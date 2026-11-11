@@ -4,13 +4,14 @@
          (only-in file/gzip gzip-through-ports)
          (only-in gregor/private/moment-base make-moment)
          (only-in json write-json)
-         (only-in polars/private/native-location current-native-platform library-file manifest-jsexpr)
+         (only-in polars/private/native-location
+                  current-native-platform library-file manifest-jsexpr)
          (only-in polars/private/resource with-release)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file
                   delete-directory/files display-to-file file->bytes make-directory*
                   make-temporary-directory)
-         (only-in racket/match match match-define)
+         (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
          (only-in racket/port with-output-to-string)
          (only-in racket/runtime-path define-runtime-path)
@@ -19,8 +20,9 @@
 
 (provide apply-keywords contains-all? contract-violation-of drops-during drops-once
          explain-failure gzip-file keyword-rejected? make-moment make-native-package! message-of
-         module-text native-package-main not-utf-8-expected not-utf-8-names polars-dir polars-sources read-source refusal
-         refusal-misses refused scratch-file settle! staging-files who-prefix
+         module-text native-package-main not-utf-8-expected not-utf-8-names polars-dir
+         polars-sources read-source refusal refusal-misses refused scratch-file settle! staging-files
+         who-prefix
          with-default-polars-format with-environment-variable with-native-collections
          with-planted-sources)
 
@@ -76,10 +78,10 @@
    (syntax/loc this-syntax
      (call-with-default-polars-format (lambda () body ...)))])
 
-(define (module-text . forms)
+(define (module-text #:lang [lang "racket/base"] . forms)
   (with-output-to-string
     (lambda ()
-      (displayln "#lang racket/base")
+      (printf "#lang ~a\n" lang)
       (for-each writeln forms))))
 
 (define-syntax-parser with-planted-sources
@@ -182,8 +184,6 @@
                    [current-native-platform "x86_64-linux"])
       (proc root))))
 
-;; A scratch collection root, with no links, so that no installed native
-;; package is visible, on the x86_64-linux platform.
 (define-syntax-parser with-native-collections
   [(_ root:id body:expr ...+)
    (syntax/loc this-syntax
@@ -198,19 +198,21 @@
                               #:package [package "polars-x86_64-linux"]
                               #:version [version "0.3"]
                               #:library [library "native bytes"]
-                              #:manifest [manifest 'matching]
+                              #:manifest? [manifest? #t]
+                              #:manifest-text [manifest-text #f]
                               #:main [main native-package-main])
   (define root (build-path collects package))
   (define libs (build-path root "native-libs"))
+  (define manifest (build-path root "manifest.json"))
   (make-directory* libs)
-  (display-to-file (format "#lang info\n(define version ~s)\n" version) (build-path root "info.rkt"))
+  (display-to-file (module-text #:lang "info" `(define version ,version))
+                   (build-path root "info.rkt"))
   (display-to-file main (build-path root "main.rkt"))
   (when library
     (display-to-file library (build-path libs library-file)))
-  (match manifest
-    ['matching
-     (call-with-output-file* (build-path root "manifest.json")
-       (lambda (out) (write-json (manifest-jsexpr libs version "tree" "commit") out)))]
-    [#f (void)]
-    [text (display-to-file text (build-path root "manifest.json"))])
+  (cond
+    [manifest-text (display-to-file manifest-text manifest)]
+    [manifest?
+     (call-with-output-file* manifest
+       (lambda (out) (write-json (manifest-jsexpr libs version "tree" "commit") out)))])
   root)

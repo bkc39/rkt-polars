@@ -4,6 +4,8 @@
   (require rackunit
            (only-in ffi/unsafe _fun _void)
            (only-in ffi/unsafe/define define-ffi-definer)
+           (only-in racket/path file-name-from-path)
+           (only-in threading ~>)
            (only-in polars/private/native-library
                     compat-library missing-export native-library-file)
            (only-in polars/private/native-location library-file)
@@ -22,7 +24,5 @@
                                      "\n  found in: "))))
 
   (test-case "the library loaded is libcompat"
-    (check-equal? (let-values ([(_dir name _dir?) (split-path native-library-file)])
-                    (path->string name))
-                  library-file)
+    (check-equal? (~> native-library-file file-name-from-path path->string) library-file)
     (check-true (file-exists? native-library-file))))

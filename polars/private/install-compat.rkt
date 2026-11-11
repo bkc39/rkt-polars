@@ -2,11 +2,11 @@
 
 (require (only-in racket/file
                   delete-directory/files make-directory* make-temporary-file)
-         (only-in racket/match match)
+         (only-in racket/dict dict-ref)
          (only-in "native-location.rkt"
-                  compat-lib-env-var dev-built? dev-built-library? dev-marker library-file
-                  manifest-problem native-library-problem native-location native-package
-                  outranking-package required-native-version)
+                  dev-built? dev-built-library? dev-marker library-file manifest-problem
+                  missing-message native-library-problem native-package outranking-package
+                  override-dir required-native-version)
          (only-in "resource.rkt" with-release))
 
 (provide pre-installer)
@@ -75,54 +75,36 @@
                         (regexp-match? pattern (path->string f)))
                       (directory-list dir)))))
 
-;; Prebuilt shared objects committed to the repo, one directory per
-;; platform.  pkgs.rkt-lang.org's build host has no Rust toolchain, so it
-;; installs from these instead of compiling.  Names match the directories
-;; produced by scripts/build-so.sh.
-(define (candidate-platforms)
-  (case (system-type 'os)
-    [(macosx) '("darwin")]
-    [(unix) '("linux")]
-    [else '()]))
+(define package-candidates
+  '(("polars-x86_64-linux" . "linux")
+    ("polars-aarch64-macosx" . "darwin")))
 
-;; First committed candidate directory that actually holds a libcompat.*,
-;; or #f when none of the platform candidates are present.
 (define (find-candidate-dir candidates-dir)
-  (for/or ([plat (in-list (candidate-platforms))])
-    (define dir (build-path candidates-dir plat))
-    (and (has-matching-files? dir compat-lib-pattern) dir)))
+  (define platform (dict-ref package-candidates (native-package) #f))
+  (define dir (and platform (build-path candidates-dir platform)))
+  (and dir (has-matching-files? dir compat-lib-pattern) dir))
 
 (define (check-native-package! location wanted)
-  (match (or (native-library-problem location wanted) (manifest-problem location wanted))
-    [#f (void)]
-    [message (preinstall-error "~a" message)]))
+  (define message (or (native-library-problem location wanted) (manifest-problem location wanted)))
+  (when message
+    (preinstall-error "~a" message)))
 
 (define (pre-installer collections-top-path this-collection-path user-specific?)
   (define native-libs-dir
     (build-path this-collection-path "native-libs"))
   (define candidates-dir
     (build-path native-libs-dir "candidates"))
-  (define compat-lib-path
-    (match (getenv compat-lib-env-var)
-      [(or #f "") #f]
-      [path path]))
-  (define package (and (not compat-lib-path) (outranking-package)))
+  (define override (override-dir))
+  (define package (and (not override) (outranking-package)))
   (define dev-library (and package (dev-built-library? native-libs-dir)))
   (cond
-    ;; 1. Explicit override (the Nix build).
-    [compat-lib-path
-     (copy-native-libs! native-libs-dir
-                        (build-path compat-lib-path "lib")
-                        compat-lib-pattern
-                        install-if-different!)]
-    ;; 2. A dev-built library outranks the native package, unchecked.
+    [override
+     (copy-native-libs! native-libs-dir override compat-lib-pattern install-if-different!)]
     [dev-library
      (printf "pre-installer: keeping the dev-built ~a over the package ~a\n"
              (build-path native-libs-dir library-file)
              (native-package))]
-    ;; 3. The native package, which a committed candidate never shadows.
     [package (check-native-package! package (required-native-version this-collection-path))]
-    ;; 4. Committed per-platform prebuilt candidate (until #254's L3).
     [(find-candidate-dir candidates-dir)
      => (lambda (dir)
           (copy-native-libs! native-libs-dir
@@ -130,9 +112,7 @@
                              compat-lib-pattern
                              (install-candidate!
                               (equal? (getenv force-candidate-env-var) "1"))))]
-    ;; 5. Already staged (nothing to do).
     [(has-matching-files? native-libs-dir compat-lib-pattern)
      (void)]
     [else
-     (eprintf "pre-installer: ~a\n"
-              (native-library-problem (native-location 'missing native-libs-dir #f #f #f) #f))]))
+     (eprintf "pre-installer: ~a\n" (missing-message native-libs-dir))]))

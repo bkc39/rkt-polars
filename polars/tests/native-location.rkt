@@ -4,6 +4,7 @@
   (require rackunit
            (only-in racket/file display-to-file make-directory*)
            (only-in racket/list remove-duplicates)
+           (only-in racket/match ==)
            (only-in setup/getinfo get-info/full)
            (only-in polars/private/native-location
                     current-native-platform dev-marker library-file locate-native-library
@@ -28,9 +29,6 @@
     (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH" #f
       (locate-native-library staged)))
 
-  (define (kind-and-dir location)
-    (list (native-location-kind location) (native-location-dir location)))
-
   (define (libs root)
     (simplify-path (build-path root "native-libs")))
 
@@ -40,8 +38,10 @@
       (make-native-package! collects)
       (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH"
                                  (path->bytes (build-path collects "override"))
-        (check-equal? (kind-and-dir (locate-native-library staged))
-                      (list 'override (simplify-path (build-path collects "override" "lib")))))))
+        (check-match (locate-native-library staged)
+                     (native-location 'override
+                                      (== (simplify-path (build-path collects "override" "lib")))
+                                      _ _ _)))))
 
   (test-case "an empty RKT_POLARS_COMPAT_LIB_PATH is unset"
     (with-native-collections collects
@@ -52,13 +52,13 @@
   (test-case "a staged copy is loaded when no native package is installed"
     (with-native-collections collects
       (define staged (staged-library! collects))
-      (check-equal? (kind-and-dir (locate staged)) (list 'staged (simplify-path staged)))))
+      (check-match (locate staged) (native-location 'staged (== (simplify-path staged)) _ _ _))))
 
   (test-case "the native package outranks a staged copy without a dev marker"
     (with-native-collections collects
       (define staged (staged-library! collects))
       (define root (make-native-package! collects))
-      (check-equal? (kind-and-dir (locate staged)) (list 'package (libs root)))))
+      (check-match (locate staged) (native-location 'package (== (libs root)) _ _ _))))
 
   (test-case "a dev-built staged copy outranks the native package"
     (with-native-collections collects
@@ -78,14 +78,14 @@
   (test-case "a native package that holds no library does not shadow a staged copy"
     (with-native-collections collects
       (define staged (staged-library! collects))
-      (make-native-package! collects #:library #f #:manifest #f)
+      (make-native-package! collects #:library #f #:manifest? #f)
       (check-equal? (native-location-kind (locate staged)) 'staged)))
 
   (test-case "with nothing staged the native package is loaded and checked"
     (with-native-collections collects
       (define root (make-native-package! collects))
       (define location (locate (build-path collects "staged")))
-      (check-equal? (kind-and-dir location) (list 'package (libs root)))
+      (check-match location (native-location 'package (== (libs root)) _ _ _))
       (check-false (native-library-problem location "0.3"))))
 
   (test-case "the native version is checked exactly"
@@ -135,8 +135,8 @@
     (with-native-collections collects
       (define root (make-native-package! collects #:package "polars-aarch64-macosx"))
       (parameterize ([current-native-platform "aarch64-macosx"])
-        (check-equal? (kind-and-dir (locate (build-path collects "staged")))
-                      (list 'package (libs root))))))
+        (check-match (locate (build-path collects "staged"))
+                     (native-location 'package (== (libs root)) _ _ _)))))
 
   (test-case "an override whose lib/ holds no library is reported"
     (with-native-collections collects
@@ -170,9 +170,10 @@
   (test-case "a missing export names the Racket binding and how to update"
     (with-native-collections collects
       (make-native-package! collects)
-      (check-true (contains-all? (missing-export-message (locate collects) 'series-new-i32/raw)
-                                 '("libcompat lacks the export for series-new-i32/raw, so it is older than this polars"
-                                   "`raco pkg update polars polars-x86_64-linux`")))))
+      (check-true
+       (contains-all? (missing-export-message (locate collects) 'series-new-i32/raw)
+                      '("libcompat lacks the export for series-new-i32/raw, so it is older"
+                        "`raco pkg update polars polars-x86_64-linux`")))))
 
   (test-case "a manifest that lists the library's sha256 passes"
     (with-native-collections collects
@@ -192,8 +193,9 @@
 
   (test-case "a library the manifest does not list is refused"
     (with-native-collections collects
-      (define root (make-native-package! collects
-                                         #:manifest "{\"native_version\":\"0.3\",\"files\":{}}"))
+      (define root
+        (make-native-package! collects
+                              #:manifest-text "{\"native_version\":\"0.3\",\"files\":{}}"))
       (check-true (contains-all? (manifest-problem (locate collects) "0.3")
                                  (list (format "~a in the package" library-file)
                                        "but its manifest.json does not list it")))))
@@ -203,20 +205,20 @@
       (make-native-package!
        collects
        #:library #f
-       #:manifest "{\"native_version\":\"0.3\",\"files\":{\"libcompat.so\":\"00\"}}")
+       #:manifest-text "{\"native_version\":\"0.3\",\"files\":{\"libcompat.so\":\"00\"}}")
       (check-true (contains-all? (manifest-problem (locate collects) "0.3")
                                  '("libcompat.so in the package polars-x86_64-linux is missing")))))
 
   (test-case "a manifest for another native version is refused"
     (with-native-collections collects
-      (make-native-package! collects #:manifest "{\"native_version\":\"0.2\",\"files\":{}}")
+      (make-native-package! collects #:manifest-text "{\"native_version\":\"0.2\",\"files\":{}}")
       (check-true (contains-all? (manifest-problem (locate collects) "0.3")
                                  '("manifest.json is for native version 0.2"
                                    "this polars needs version 0.3")))))
 
   (test-case "a missing, malformed or misshapen manifest is refused"
     (with-native-collections collects
-      (define root (make-native-package! collects #:manifest #f))
+      (define root (make-native-package! collects #:manifest? #f))
       (check-true (contains-all? (manifest-problem (locate collects) "0.3")
                                  '("the package polars-x86_64-linux has no manifest.json")))
       (scratch-file root "manifest.json" "{\"native_version\":")
@@ -226,14 +228,36 @@
       (check-true (contains-all? (manifest-problem (locate collects) "0.3")
                                  '("manifest.json names no native_version and files")))))
 
-  (test-case "polars' info.rkt names the native version each native package carries"
-    (define wanted (required-native-version polars-dir))
-    (define info (get-info/full polars-dir))
+  (define wanted (required-native-version polars-dir))
+  (define native-package-names (remove-duplicates (map cdr native-packages)))
+  (define repo (simplify-path (build-path polars-dir 'up)))
+  (define skeletons (build-path repo "native"))
+
+  (test-case "polars depends on each native package at its native version"
     (check-equal? wanted "0.3")
-    (check-equal? (info 'version) wanted)
     (check-equal?
-     (for/list ([dep (in-list (info 'deps))] #:when (pair? dep)) dep)
+     (for/list ([dep (in-list ((get-info/full polars-dir) 'deps))] #:when (pair? dep)) dep)
      (for/list ([entry (in-list native-packages)])
        (list (cdr entry) '#:platform (car entry) '#:version wanted)))
-    (check-equal? (remove-duplicates (map cdr native-packages))
-                  '("polars-x86_64-linux" "polars-aarch64-macosx"))))
+    (check-equal? native-package-names '("polars-x86_64-linux" "polars-aarch64-macosx")))
+
+  (test-case "in a checkout, each native package's skeleton is at polars' native version"
+    (when (directory-exists? skeletons)
+      (check-equal? (sort (map path->string (directory-list skeletons)) string<?)
+                    (sort native-package-names string<?))
+      (for ([package (in-list native-package-names)])
+        (check-equal? ((get-info/full (build-path skeletons package)) 'version) wanted package))))
+
+  (test-case "in a checkout, no skeleton is a collection, so none passes for an installed package"
+    (when (directory-exists? skeletons)
+      (for ([package (in-list native-package-names)])
+        (check-false (directory-exists? (build-path repo package)) package))))
+
+  (test-case "a libcompat.* in the package that is not a regular file is refused"
+    (with-native-collections collects
+      (define root (make-native-package! collects))
+      (make-directory* (build-path root "native-libs" "libcompat.d"))
+      (check-true
+       (contains-all? (manifest-problem (locate collects) "0.3")
+                      '("libcompat.d in the package polars-x86_64-linux is not a regular file"
+                        "`raco pkg remove --force polars-x86_64-linux`"))))))

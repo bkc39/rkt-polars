@@ -2,12 +2,9 @@
 
 `polars` loads `libcompat` from the native package for its platform,
 `polars-x86_64-linux` or `polars-aarch64-macosx` (#254), which a release
-builds; `scripts/stage-native-package.rkt` assembles one from a built library,
-with a `manifest.json` the pre-installer checks. The candidates below stay
+builds (see [Native packages](#native-packages)). The candidates below stay
 until #254's L3 removes them: the pre-installer stages one only where no
-native package is installed, and `scripts/test-local.sh` (the `Catalog
-install` and `Committed candidate` jobs) installs the candidate as the native
-package.
+native package is installed, and only on the platform it was built for.
 
 `rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
 host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
@@ -224,3 +221,49 @@ python3 scripts/verify-candidates.py \
 
 and reproduce the catalog install with `scripts/test-local.sh`, in a fresh
 `PLTUSERHOME` as on a CI runner.
+
+## Native packages
+
+`polars/private/native-library.rkt` loads `libcompat` from the first of:
+
+1. `$RKT_POLARS_COMPAT_LIB_PATH/lib`, when the variable is set and not empty;
+2. a staged `polars/native-libs/libcompat.*`, unless a native package holding
+   a library is installed and the staged copy has no dev marker matching it
+   (`.libcompat.*.dev`, which `nix run .#copy-native-libs` and the dev shell
+   write), so a staged committed candidate never shadows the package;
+3. the native package for the platform, found with `collection-file-path`
+   and `dynamic-require`. Its version must equal `native-version` in
+   `polars/info.rkt`, which the loader reads when it is compiled.
+
+A native package is its skeleton, `native/polars-<platform>/` (`info.rkt`
+and `main.rkt`, no binary; under `native/` so the repo root's `'multi`
+package does not make it a collection), plus the licences, the library in
+`native-libs/` and a `manifest.json`: the native version, the `rust/` tree
+and commit the library was built from, and each `libcompat.*`'s sha256.
+
+    racket scripts/stage-native-package.rkt [--rust-tree TREE --commit SHA | --head] \
+      PLATFORM LIBCOMPAT OUT-DIR
+
+assembles one for `x86_64-linux` or `aarch64-macosx` in `OUT-DIR`, which
+must not exist. The tree and commit are `--rust-tree` and `--commit`, or else
+the `rust-tree` and `commit` files CI's build records beside the library, or
+else, given `--head`, this checkout's `HEAD`, which it refuses while `rust/`
+differs from `HEAD`. With none of these it fails. The script requires
+`polars/private/native-location` by collection, so run it where `polars` is
+installed or linked, or with `racket -S <repo>` (`scripts/test-local.sh`
+does). `scripts/stage-native-package-test.sh` (the `stage-native-package`
+gate, and a step of CI's Lint job) holds it there.
+
+The pre-installer (`polars/private/install-compat.rkt`) fails `raco setup` on
+a native package whose version, manifest version or library hashes do not
+match, and checks nothing under the variable or a dev-marked staged copy. It
+runs only when `polars` is set up: `raco pkg install` or `raco pkg update` of
+the native package alone does not run it, and the loader then checks the
+version alone.
+
+`scripts/test-local.sh` (the `Catalog install` and `Committed candidate`
+jobs) stages the candidate as the native package, puts it in a `file://`
+catalog with a copy of the configured ones, installs `polars` from that
+catalog with `--auto`, so a `#:platform` string that does not match leaves
+the package out, and then `scripts/check-native-install.rkt` requires that
+`polars` loads the package's library and staged no candidate.
