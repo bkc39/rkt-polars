@@ -4,10 +4,11 @@
   (require rackunit
            (for-syntax racket/base)
            racket/match
-           (only-in racket/file file->string file->value)
+           (only-in racket/file file->string file->value find-files)
            (only-in racket/list append-map filter-not flatten remove-duplicates take)
-           (only-in racket/path file-name-from-path find-relative-path)
+           (only-in racket/path file-name-from-path find-relative-path simple-form-path)
            (only-in racket/string non-empty-string?)
+           (only-in setup/getinfo get-info/full)
            (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
                     _str _str-list _str/null with-raw-buffer with-release with-release-pool
@@ -424,6 +425,27 @@
                        (sort (inline-test-offenders (polars-sources root #:dirs '("private")))
                              path<?))
                   '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
+
+  (define package-dir (simple-form-path polars-dir))
+  (define (package-relative path)
+    (path->string (find-relative-path package-dir (simple-form-path path))))
+  (define (manual-chapters file)
+    (define-values (dir _name _must-be-dir?) (split-path file))
+    (cons (package-relative file)
+          (append-map (lambda (included) (manual-chapters (build-path dir included)))
+                      (regexp-match* #px"@include-section\\[\"([^\"]+)\"\\]" (file->string file)
+                                     #:match-select cadr))))
+  (match-define (cons manual-root manual-included)
+    (manual-chapters (build-path package-dir "scribblings" "polars.scrbl")))
+  (check-equal? (sort (map package-relative
+                           (find-files (lambda (p) (regexp-match? #rx"[.]scrbl$" p))
+                                       (build-path package-dir "scribblings")))
+                      string<?)
+                (sort (cons manual-root manual-included) string<?)
+                "a .scrbl outside the manual's include tree, whose examples raco test would not run")
+  (check-equal? (sort ((get-info/full package-dir) 'test-omit-paths (lambda () '())) string<?)
+                (sort manual-included string<?)
+                "test-omit-paths is not every chapter polars.scrbl includes: an example runs twice")
 
   (define (definition-name spec)
     (match spec
