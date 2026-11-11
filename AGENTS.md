@@ -46,13 +46,21 @@ bkc39/polars (#362): `rust/Cargo.toml` takes `polars`, `polars-async`,
 polars crate comes from crates.io. The branch is upstream's `0.55.2`
 commit, then the crates.io release's `polars-io/src/cloud/options.rs`
 (published from a dirty tree, against crates.io's object_store), then one
-commit per change: polars-stream's streaming CSV source takes a slice with
-a comment prefix (#270); polars-io's CSV reader makes an unclosed quote in
-a field a parse error (#347); and its line counter skips the comment lines
-after its last counted newline before it judges a last line without a
-newline (#335; see the `read-csv` facts for all three). The `polars-fork`
-flake check holds `Cargo.toml` and `Cargo.lock` to the one rev, and
-`polars/native-libs/BUILDING.md` has the mechanics.
+commit per change. In polars-stream, the streaming CSV source takes a slice
+with a comment prefix (#270), slices a CSV scan under `#:ignore-errors`
+only after parsing, and a slice from the end of a commented or
+`#:ignore-errors` CSV scan is lowered to a buffering slice node above it
+(#339, #340), whose cut it corrects: 0.55's node dropped the frames before
+the slice's start but still counted them in its stop, so a `(slice lf -k
+n)` with `n < k` gave up to `k` rows. `collect` runs polars' default
+engine, which cuts a slice above a `filter` itself, so that slice never
+reaches the node; Python 1.42.1's `engine="streaming"` sends it there and
+returns too many rows. In polars-io, the CSV reader makes an unclosed quote
+in a field a parse error (#347), and its line counter skips the comment
+lines after its last counted newline before it judges a last line without
+a newline (#335; see the `read-csv` facts for all three). The
+`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
+rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -545,19 +553,23 @@ it. Racket side: `define-compat` with `#:c-id`.
     slice's end, and every batch with no counted rows up to the first batch
     past the slice, checking each one's height against its count, so a
     `head` or a slice gives the rows the full read gives at those
-    positions, or fails. A `tail` first counts the rows, parsing only the
-    batches with no counted rows, and those for their row structure alone
-    (the first column parsed with errors ignored, whatever the dtypes and
-    the selection), then reads the last rows as such a slice: in each file
-    it reaches every batch is checked in one pass or the other, so a `tail`
-    of one file too gives the rows the full read gives at those positions,
-    or fails. A glob's `tail` walks back from the last file and never
-    parses the files wholly before it, so a malformed one among them is
-    not reported (#340).
-    Given `#:ignore-errors` too, a mismatch is only a warning: a `head` or
-    a slice parses the whole file and slices afterwards, but a `tail` is
-    cut by the counter's count, with or without a prefix, and can return
-    other rows (#339). A last line without a newline is a row unless what
+    positions, or fails. A `tail`, or any slice counted from the end, is
+    not resolved from per-file row counts: the fork's lowering gives the
+    scan no slice and cuts its output with a buffering slice node above the
+    row index, so it parses every file of a glob and gives the full read's
+    last rows, row index included, or fails as the full read does (#340).
+    That costs one parse of every file and a buffer of the tail's rows.
+    Given `#:ignore-errors`, with or without a prefix, a batch whose height
+    differs from its count is only a warning, so the counter cuts no slice:
+    a `tail` is taken from the end in the same way, and a `head` or a slice
+    parses up to its end and slices afterwards, so each gives the full
+    read's rows at those positions (#339). The source is given no slice
+    there and reads ahead of the node that stops it, so the read stays
+    bounded but costs more than the slice: a `head` of 5 rows of a 500 MB
+    file takes about 60 ms under `#:ignore-errors`, against 5 ms without
+    it, and about 150 MB more memory than a strict `head`, which does not
+    grow with the file: a 97 MB file costs the same. A first read from a cold page cache is much
+    slower. A last line without a newline is a row unless what
     follows the counter's last counted newline is comment lines alone
     (#335): the counter skips comment lines from there, as at the start of
     any line, and its quote state carries over, so in `a\n1\n"x\n#y"` the

@@ -4,7 +4,7 @@
   (require rackunit
            racket/file
            racket/runtime-path
-           (only-in racket/list second)
+           (only-in racket/list range second)
            (only-in racket/string string-contains?)
            (only-in gregor moment)
            (only-in threading ~>)
@@ -21,7 +21,7 @@
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/csv read-csv write-csv)
            (only-in polars/private/generic/reshape
-                    collect explain lazy select [filter frame-filter])
+                    collect explain lazy select slice [filter frame-filter])
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords column contains-all? dtypes-of explain-failure frame frame=?
                     keyword-rejected? message-of polars-null)
@@ -169,6 +169,20 @@
                                            "FILTER col(\"dep_delay\") > 20" "FROM"
                                            "Parquet SCAN [" "PROJECT */19 COLUMNS")))
   (check-true (string-contains? (explain late #:format 'tree) "SELECTION"))
+  (define small-then-large (build-path scratch "small-then-large"))
+  (make-directory small-then-large)
+  (for ([file '("f0" "f1" "f2" "f3")]
+        [rows (list (range 0 10) (range 10 20) (range 20 30) (range 30 1030))])
+    (write-parquet (dataframe (list (series rows #:name "a")))
+                   (build-path small-then-large (format "~a.parquet" file))))
+  (check-equal? (~> (build-path small-then-large "f*.parquet")
+                    scan-parquet
+                    (frame-filter (p> (col "a") -1))
+                    (slice -500 5)
+                    collect
+                    (column "a"))
+                '(530 531 532 533 534)
+                "a slice from the end above a filter is the default engine's cut")
   (define tree (explain (select (lazy produce) "item") #:format 'tree))
   (check-true (contains-all? tree '("DF [\"item\", \"grade\", \"price\"]"
                                     "PROJECT: [\"item\"]; 1/3 COLUMNS")))
