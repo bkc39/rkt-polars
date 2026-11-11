@@ -333,12 +333,17 @@
              #t))))
   (define batch-height-warning
     #px"^UserWarning: CSV malformed: expected \\d+ rows, actual \\d+ rows, in chunk ")
-  (define-values (warned-status warned-runs warned-errors)
+  (define-values (warned-status warned-runs warned-completed warned-errors)
     (call-each-in-child '((only-in polars/tests/generic/test-fixtures column frame=?))
                         warned-forms))
   (check-equal? warned-status 0 warned-errors)
   (match warned-runs
-    [#f (fail (format "the child's stderr is not one section per form:\n~a" warned-errors))]
+    [#f (fail (format "~a:\n~a"
+                      (if (< warned-completed (length warned-labels))
+                          (format "~a did not return in the child"
+                                  (list-ref warned-labels warned-completed))
+                          "the child's results are not one value and one stderr section per case")
+                      warned-errors))]
     [_ (for ([label (in-list warned-labels)]
              [expected (in-list warned-values)]
              [run (in-list warned-runs)])
