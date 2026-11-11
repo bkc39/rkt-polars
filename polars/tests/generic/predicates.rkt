@@ -1,7 +1,8 @@
 #lang racket/base
 
 (module+ test
-  (require rackunit (only-in racket/match match-define) (only-in threading ~>)
+  (require rackunit (only-in gregor moment) (only-in racket/match match-define)
+           (only-in threading ~>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core dataframe ref series)
@@ -109,4 +110,9 @@
                                       "[(]integer-in -9223372036854775808 9223372036854775807[)][)] "
                                       "[(]listof [(]integer-in 0 18446744073709551615[)][)][)]\n"))
                (lambda () (is-in "i" rhs))
-               (format "~a" rhs))))
+               (format "~a" rhs)))
+  (define past-local-range (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))
+  (check-exn #rx"^is-in: value out of range for this dtype\n"
+             (lambda () (is-in "t" (list past-local-range))))
+  (check-exn #rx"^is-between: value out of range for this dtype\n"
+             (lambda () (is-between "t" past-local-range past-local-range))))

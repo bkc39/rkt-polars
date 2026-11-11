@@ -22,7 +22,8 @@
          (only-in (submod polars/private/foreign internal) define-reasoned)
          (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _str _str-list)
-         (only-in polars/private/temporal temporal-encoder temporal-value-dtype))
+         (only-in polars/private/series zoned-temporal-encoder)
+         (only-in polars/private/temporal temporal-value-dtype))
 
 (provide (contract-out [expr->string (->/c Expr-ptr? string?)]
                        [drop-owned (->/c any/c void?)]
@@ -172,7 +173,7 @@
   #:wrap (allocator expr-drop))
 
 (define (temporal-lit who v dtype)
-  (define value ((temporal-encoder who dtype) v))
+  (define value ((zoned-temporal-encoder who dtype) v))
   (match dtype
     [(list 'datetime unit (? string? zone))
      (define code (time-unit-symbol->code unit))

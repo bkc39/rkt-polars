@@ -7,9 +7,9 @@
                     date datetime moment moment->iso8601/tzid posix->moment)
            (only-in gregor/period days hours milliseconds months nanoseconds period weeks)
            (only-in polars/private/temporal
-                    check-date-datetime-mix days->date epoch->datetime epoch->moment nanoseconds->time
-                    offset-unit per-second temporal-encoder temporal-value-dtype temporal-values-dtype
-                    utc-offset)
+                    check-date-datetime-mix chrono-edge? days->date epoch->datetime epoch->moment
+                    nanoseconds->time offset-unit per-second temporal-encoder temporal-value-dtype
+                    temporal-values-dtype utc-offset)
            (only-in (submod polars/private/temporal gregor-private) check-gregor-export)
            (only-in (submod polars/private/temporal internal) int64? ns/second))
 
@@ -202,6 +202,15 @@
              (lambda () ((temporal-encoder 'test '(duration microseconds)) (months 1))))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"
              (lambda () ((temporal-encoder 'test 'date) (date 6000000 1 1))))
+  (for* ([unit '(milliseconds microseconds)]
+         [edge (list (datetime -262143 1 1) (datetime -262143 1 1 23 59 59 999000000)
+                     (datetime 262142 12 31) (datetime 262142 12 31 23 59 59 999000000))])
+    (check-true (chrono-edge? unit ((temporal-encoder 'test (list 'datetime unit #f)) edge))))
+  (for* ([unit '(milliseconds microseconds nanoseconds)]
+         [inner (list (datetime -262143 1 2) (datetime 262142 12 30 23 59 59 999000000)
+                      (datetime 1970) (datetime 2262 4 11))]
+         #:unless (and (eq? unit 'nanoseconds) (> (abs (->posix inner)) 9e9)))
+    (check-false (chrono-edge? unit ((temporal-encoder 'test (list 'datetime unit #f)) inner))))
   (for ([edge (list (date 262142 12 31) (date -262143 1 1))])
     (check-equal? (days->date ((temporal-encoder 'test 'date) edge)) edge))
   (check-exn #rx"^test: value out of range for this dtype\n  dtype: 'date"

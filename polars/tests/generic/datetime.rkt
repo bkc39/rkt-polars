@@ -154,6 +154,10 @@
              (lambda () (series (list (date 300000 1 1)))))
   (check-exn #rx"^lit: value out of range for this dtype"
              (lambda () (lit (datetime 270000 1 1))))
+  (check-exn (regexp (string-append "^lit: value out of range for this dtype\n"
+                                    "  dtype: '\\(datetime microseconds \"Asia/Kathmandu\"\\)\n"
+                                    "  value: #<moment 262143-01-01T01:00:00"))
+             (lambda () (lit (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))))
 
   (define (literal v)
     (define s (ref (select calendar (alias (lit v) "v")) "v"))

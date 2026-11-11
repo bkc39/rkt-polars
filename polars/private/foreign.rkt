@@ -1715,7 +1715,7 @@
            dataframe-unique/who series-drop-nulls/who series-head/who series-n-unique/who
            series-rename/who series-reverse/who series-slice/who series-sort/who series-std/who
            series-tail/who series-unique/who
-           series-cast-to series-var/who typed-reductions define-reasoned named)
+           series-cast-to series-ref-datetime series-var/who typed-reductions define-reasoned named)
   (provide block-reader dataframe-column/who dataframe-drop dataframe-drop-columns/who
            dataframe-head dataframe-hstack dataframe-hstack/who dataframe-join
            dataframe-join-asof dataframe-join-asof/who dataframe-join/who dataframe-rename/who
