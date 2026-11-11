@@ -1,16 +1,15 @@
 use crate::prelude::*;
 use crate::{
-    guard_panic, str_list_out, str_out, without_floors, StrListOut, StrOut,
+    deref_arg, scalar_result, str_list_out, str_out, without_floors,
+    StrListOut, StrOut,
 };
 
 #[no_mangle]
 pub extern "C" fn expr_meta_output_name_v2(e: *const Expr) -> StrOut {
-    if e.is_null() {
-        return ptr::null_mut();
-    }
-    let expr = unsafe { (*e).clone() };
-    guard_panic(|| expr.meta().output_name().ok())
-        .map_or(ptr::null_mut(), |name| str_out(&name))
+    scalar_result(ptr::null_mut(), || {
+        let expr = unsafe { deref_arg(e, "expression") }?;
+        expr.clone().meta().output_name().map(|name| str_out(&name))
+    })
 }
 
 #[no_mangle]

@@ -38,20 +38,29 @@
   (check-equal? (meta-output-name (expr-div a/b (col "c"))) "a")
   (check-true (meta-eq? (expr-div (col "a") (lit 2)) (expr-div (col "a") (lit 2))))
   (check-false (meta-eq? (expr-div (col "a") (lit 2)) a/b))
-  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
+  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.all\\(\\): unable to find root column name for expr 'cs\\.all\\(\\)' when calling 'output_name'$"
              (lambda () (meta-output-name "*")))
   (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.matches\\("
              (lambda () (meta-output-name (col #rx"^he"))))
-  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.by_dtype\\(\\[Float64\\]\\)$"
+  (check-exn #rx"^meta-output-name: cannot determine the output name of cs\\.by_dtype\\(\\[Float64\\]\\): unable to find root column name for expr 'cs\\.by_dtype\\(\\[Float64\\]\\)'"
              (lambda () (meta-output-name (col 'float64))))
-  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of cs\\.all\\(\\)$"
+  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of cs\\.all\\(\\): unable to find root column name"
              (lambda () (expr-meta-output-name (col "*"))))
   (define past-chrono-in
     (expr-is-in (col "*") (series-cast (series-new-i32 "d" '(2000000000)) 'date)))
-  (check-exn #rx"^meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>$"
+  (check-exn #rx"^meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>: polars panicked: out-of-range date$"
              (lambda () (meta-output-name past-chrono-in)))
-  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>$"
+  (check-exn #rx"^expr-meta-output-name: cannot determine the output name of #<expr: cannot print: polars panicked: [^>]+>: polars panicked: out-of-range date$"
              (lambda () (expr-meta-output-name past-chrono-in)))
+  (define (output-name-failure x)
+    (with-handlers ([exn:fail? exn-message])
+      (meta-output-name x)))
+  (define star (col "*"))
+  (check-regexp-match #rx"polars panicked" (output-name-failure past-chrono-in))
+  (define after-a-panic (output-name-failure star))
+  (check-regexp-match #rx"^meta-output-name: cannot determine the output name of cs\\.all\\(\\): unable to find root column name"
+                      after-a-panic)
+  (check-false (regexp-match? #rx"panicked" after-a-panic))
   (check-equal? (meta-root-names (col #rx"^he")) '())
   (check-equal? (meta-root-names (expr-mul (col 'float64) (lit 2))) '())
   (check-true (meta-eq? (col 'float64) (col 'f64)))

@@ -15,7 +15,7 @@
          polars/private/column-pattern
          (only-in polars/private/foreign
                   ->compat-dtype DataFrame-ptr? Series-ptr? _CompatDType _rsstr
-                  _c-string allocator/or-fail call/foreign-error datetime-zone/c
+                  _c-string call/foreign-error datetime-zone/c
                   dataframe-drop define-owned-cpointer-type enum-dtype? polars-null? series-drop
                   printed-or-placeholder sort-flags-mismatch sort-flags/c time-unit-symbol->code
                   write-owned zoned-datetime-dtype?)
@@ -163,9 +163,11 @@
 (define (expr-alias e name [who 'expr-alias])
   (call/foreign-error who (lambda () (expr-alias/raw e name))))
 
-(define-compat expr-lit-temporal
-  (_fun _int64 _CompatDType -> _Expr-ptr/null)
-  #:wrap (allocator/or-fail expr-drop 'expr-lit-temporal))
+(define-reasoned (expr-lit-temporal value dtype) #:who-variant expr-lit-temporal/who
+  (define-compat expr-lit-temporal/raw
+    (_fun _int64 _CompatDType -> _Expr-ptr/null)
+    #:c-id expr_lit_temporal_v2
+    #:wrap (allocator expr-drop)))
 
 (define-compat expr-lit-datetime-tz/raw
   (_fun _int64 _int32 _c-string -> _Expr-ptr/null)
@@ -180,7 +182,7 @@
      (call/foreign-error who
                          (lambda () (expr-lit-datetime-tz/raw value code zone))
                          "no literal of ~v" dtype)]
-    [_ (expr-lit-temporal value (->compat-dtype dtype))]))
+    [_ (expr-lit-temporal/who who value (->compat-dtype dtype))]))
 
 (define lit-integer/c (integer-in int64-min uint64-max))
 
@@ -301,4 +303,5 @@
   (provide col expr->string expr-all expr-drop expr-dtype-col expr-exclude expr-exclude/who lit
            lit-value/c
            multi-column-expr?
-           expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw))
+           expr-dtype-col-datetime-tz/raw expr-lit-datetime-tz/raw
+           expr-lit-temporal expr-lit-temporal/who))

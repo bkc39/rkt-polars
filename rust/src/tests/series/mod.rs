@@ -8,6 +8,7 @@ mod ctors;
 mod dtype_tag;
 mod opt_ctors;
 mod packed_str;
+mod reasoned_ctors;
 mod smoke;
 mod value_access;
 

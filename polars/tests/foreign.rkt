@@ -24,7 +24,7 @@
                     enum-dtype? make-YMDHMS polars-null respell series-add series-add-f64
                     series-and series-cast series-div series-div-f64 series-drop-count
                     series-drop-nulls series-dt-convert-time-zone series-dt-replace-time-zone
-                    series-dtype series-empty series-enum-categories/raw series-eq series-eq-f64
+                    series-dtype series-empty series-enum-categories series-enum-categories/raw series-eq series-eq-f64
                     series-eq-str series-ge series-ge-f64 series-gt series-gt-f64
                     series-is-not-null series-is-null series-le series-le-f64 series-len
                     series-lt series-lt-f64 series-max-f32 series-max-f64 series-max-i16
@@ -68,7 +68,6 @@
            (only-in threading ~>)
            (only-in (submod polars/private/resource internal) str-block->string)
            (only-in racket/function const)
-           (only-in racket/list append-map)
            (only-in racket/string string-join)
            (only-in racket/contract exn:fail:contract:blame?)
            (prefix-in contracted: polars/private/foreign)
@@ -338,6 +337,11 @@
   (check-equal?
    (series-dtype (series-new-ymdhms "name" ex1))
    '(datetime milliseconds #f))
+  (for ([new-ymdhms (in-list (list series-new-ymdhms
+                                   (lambda (name xs) (series-new-ymdhms/vec name (list->vector xs)))))])
+    (check-exn #rx"^series-new-ymdhms(/vec)?: invalid date and time: 2021-02-30 00:00:00$"
+               (lambda ()
+                 (new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0) polars-null)))))
 
   (for ([ctor+dtype
          (in-list (list (list series-new-i8 series-new-i8/vec 'int8)
@@ -578,6 +582,8 @@
              (lambda () (series-cast bears '(enum Polar Polar))))
   (check-exn #rx"unsupported cast target '\\(enum \"Polar\"\\)"
              (lambda () (series-cast bears '(enum "Polar"))))
+  (check-exn #rx"^series-enum-categories: invalid series dtype: expected `Enum`, got `str` for `bears`$"
+             (lambda () (series-enum-categories bears)))
   (check-true (enum-dtype? '(enum)))
   (check-false (enum-dtype? '(enum a . b)))
   (define nul-polar (string->symbol "Po\u0000lar"))
@@ -1504,7 +1510,7 @@
        (cond
          [(eq? type '_pointer) #f]
          [drop (match (memq '#:wrap options)
-                 [(list* _ (list* (or 'allocator 'allocator/or-fail) (== drop) _) _) #t]
+                 [(list* _ (list* 'allocator (== drop) _) _) #t]
                  [_ #f])]
          [else #t])]
       [_ #t]))
@@ -1521,6 +1527,8 @@
                 `(,compat swapped (_fun _string -> _DataFrame-ptr/null)
                           #:wrap (allocator lazyframe-drop))))
   (check-false (releases-result? `(,compat unwrapped (_fun _string -> _LazyFrame-ptr/null))))
+  (check-false (releases-result? `(,compat or-fail (_fun _str -> _Expr-ptr/null)
+                                           #:wrap (allocator/or-fail expr-drop 'or-fail))))
   (check > (length bindings) 200)
   (define (shared-signature-result form)
     (match form
@@ -1537,73 +1545,6 @@
                            #:unless (releases-result? form))
                   (cadr form))
                 '())
-  (define (discards-reason? form)
-    (match* ((memq '#:c-id form) (memq '#:wrap form))
-      [((list* _ (? symbol? id) _) (list* _ (list* 'allocator/or-fail _) _))
-       (regexp-match? #rx"_v[0-9]+$" (symbol->string id))]
-      [(_ _) #f]))
-  (check-true (discards-reason? `(,compat p (_fun _str -> _Expr-ptr/null) #:c-id p_v2
-                                          #:wrap (allocator/or-fail expr-drop 'p))))
-  (check-false (discards-reason? `(,compat p (_fun _str -> _Expr-ptr/null) #:c-id p_v2
-                                           #:wrap (allocator expr-drop))))
-  (check-equal? (for/list ([form (in-list bindings)] #:when (discards-reason? form)) (cadr form))
-                '()
-                "a v2 entry point records its reason: read it with call/foreign-error")
-  (define (fails-without-reason? form)
-    (match form
-      [(list 'define-compat _ ... '#:wrap (list 'allocator/or-fail _ ...) _ ...) #t]
-      [_ #f]))
-  (define (macro-name form)
-    (match form
-      [(list* (or 'define-syntax-parse-rule 'define-syntax-parser) (or (cons name _) name) _)
-       #:when (symbol? name)
-       name]
-      [_ #f]))
-  (define (elements v)
-    (match v
-      [(cons a d) (cons a (elements d))]
-      [_ '()]))
-  (define (subforms v)
-    (if (pair? v) (cons v (append-map subforms (elements v))) '()))
-  (define (or-fail-sites sources)
-    (define tops (map read-source sources))
-    (define definitions
-      (for*/list ([top (in-list tops)] [form (in-list (subforms top))] #:when (macro-name form))
-        form))
-    (define (generates? body generators)
-      (for/or ([form (in-list (subforms body))])
-        (or (fails-without-reason? form) (and (memq (car form) generators) #t))))
-    (define generators
-      (let grow ([names '()])
-        (define next
-          (for/list ([definition (in-list definitions)]
-                     #:when (generates? (cddr definition) names))
-            (macro-name definition)))
-        (if (= (length next) (length names)) names (grow next))))
-    (define (sites v)
-      (cond
-        [(or (not (pair? v)) (macro-name v)) '()]
-        [(fails-without-reason? v) (list (cadr v))]
-        [(memq (car v) generators) (list v)]
-        [else (append-map sites (elements v))]))
-    (append-map sites tops))
-  (check-equal? (sort (or-fail-sites (polars-sources #:dirs '("private"))) string<?
-                      #:key (lambda (site) (format "~s" site)))
-                (call-with-input-file (build-path polars-dir "tests" "allocator-or-fail-sites.rktd")
-                  read)
-                "a new allocator/or-fail discards any reason the entry point records")
-  (with-planted-sources (root ["private/planted.rkt"
-                               (format "#lang racket/base\n~s\n~s\n~s\n~s\n~s"
-                                       `(define-syntax-parse-rule (gen n:id)
-                                          (,compat n (_fun -> _Series-ptr/null)
-                                                   #:wrap (allocator/or-fail series-drop 'n)))
-                                       '(define-syntax-parse-rule (gen2 n:id) (gen n))
-                                       '(gen a)
-                                       '(gen2 b)
-                                       `(,compat direct (_fun -> _Series-ptr/null)
-                                                 #:wrap (allocator/or-fail series-drop 'direct)))])
-    (check-equal? (or-fail-sites (polars-sources root #:dirs '("private")))
-                  '((gen a) (gen2 b) direct)))
   (with-planted-sources (root ["tests/planted.rkt"
                                (format "#lang racket/base\n~s"
                                        `(,compat planted (_fun -> _DataFrame-ptr)))])

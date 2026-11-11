@@ -40,7 +40,8 @@
                      dataframe-hstack dataframe-join dataframe-join-asof dataframe-vstack
                      define-frame-op/reason define-reasoned no-problem block-reader c-string-argument
                      c-string/null-argument named result-only series-str-op
-                     series-std series-var series-new-null series-n-unique series-n-unique/raw
+                     series-std series-var series-new-null new-series new-series/valid bool/null->u8
+                     vector-has-null? series-n-unique series-n-unique/raw
                      series-std/raw series-var/raw series-quantile series-quantile/raw
                      define-typed-reduction define-typed-reductions
                      series-head series-tail series-slice
@@ -283,14 +284,6 @@
 (define (printed-or-placeholder what render)
   (define-values (text reason) (call/reason render values))
   (or text (format "#<~a: cannot print: ~a>" what (or reason "no reason recorded"))))
-
-;; only for entry points that record no reason; the others go through call/foreign-error
-(define ((allocator/or-fail drop who) proc)
-  (define allocate ((allocator drop) proc))
-  (procedure-reduce-arity-mask
-   (lambda args (or (apply allocate args) (error who "operation failed")))
-   (procedure-arity-mask allocate)
-   who))
 
 (struct polars-null-sentinel ()
   #:property prop:custom-write
@@ -623,11 +616,13 @@
 
 (define-compat series-enum-categories/raw
   (_fun _Series-ptr -> _Series-ptr/null)
-  #:c-id series_enum_categories
-  #:wrap (allocator/or-fail series-drop 'series-enum-categories))
+  #:c-id series_enum_categories_v2
+  #:wrap (allocator series-drop))
 
 (define (series-enum-categories s)
-  (with-release ([names (series-enum-categories/raw s) series-drop])
+  (with-release ([names (call/polars-reason 'series-enum-categories
+                                            (lambda () (series-enum-categories/raw s)))
+                        series-drop])
     (map string->symbol (series-strings names 0 (series-len names)))))
 
 (define-compat series-time-zone
@@ -810,6 +805,17 @@
 (define (contains-polars-null? values)
   (ormap polars-null? values))
 
+(define (vector-has-null? xs)
+  (for/or ([x (in-vector xs)])
+    (polars-null? x)))
+
+(define (new-series who name make)
+  ((named who name) (call/polars-reason who make)))
+
+(define (new-series/valid who name xs default opt-raw)
+  (define-values (clean valid) (values+valid xs default))
+  (new-series who name (lambda () (opt-raw clean valid))))
+
 (define-syntax-parse-rule (define-series-constructors rs-type:id ctype:id default-value:expr)
   #:with list-constructor-name (format-id #'rs-type "series-new-~a" #'rs-type)
   #:with vector-constructor-name (format-id #'rs-type
@@ -820,45 +826,38 @@
                                                 "series-new-~a/vec/raw"
                                                 #'rs-type)
   #:with opt-constructor-name (format-id #'rs-type "series-new-~a/opt/raw" #'rs-type)
-  #:with rust-id (format-id #'rs-type "series_new_~a" #'rs-type)
-  #:with rust-opt-id (format-id #'rs-type "series_new_opt_~a" #'rs-type)
+  #:with rust-id (format-id #'rs-type "series_new_~a_v2" #'rs-type)
+  #:with rust-opt-id (format-id #'rs-type "series_new_opt_~a_v2" #'rs-type)
   (begin
     (define-compat list-constructor-raw-name
-      (_fun (_c-string = "")
-            (v : (_list i ctype))
+      (_fun (v : (_list i ctype))
             (_size = (length v))
             -> _Series-ptr/null)
       #:c-id rust-id
-      #:wrap (allocator/or-fail series-drop 'list-constructor-name))
+      #:wrap (allocator series-drop))
     (define-compat vector-constructor-raw-name
-      (_fun (_c-string = "")
-            (v : (_vector i ctype))
+      (_fun (v : (_vector i ctype))
             (_size = (vector-length v))
             -> _Series-ptr/null)
       #:c-id rust-id
-      #:wrap (allocator/or-fail series-drop 'vector-constructor-name))
+      #:wrap (allocator series-drop))
     (define-compat opt-constructor-name
-      (_fun (_c-string = "")
-            (v : (_list i ctype))
+      (_fun (v : (_list i ctype))
             (valid : (_list i _uint8))
             (_size = (length v))
             -> _Series-ptr/null)
       #:c-id rust-opt-id
-      #:wrap (allocator/or-fail series-drop 'list-constructor-name))
-    (define (list-constructor-name name values)
-      ((named 'list-constructor-name name)
-       (if (contains-polars-null? values)
-           (let-values ([(clean-values valid) (values+valid values default-value)])
-             (opt-constructor-name clean-values valid))
-           (list-constructor-raw-name values))))
-    (define (vector-constructor-name name values)
-      ((named 'vector-constructor-name name)
-       (if (for/or ([value (in-vector values)])
-             (polars-null? value))
-           (let-values ([(clean-values valid)
-                         (values+valid (vector->list values) default-value)])
-             (opt-constructor-name clean-values valid))
-           (vector-constructor-raw-name values))))))
+      #:wrap (allocator series-drop))
+    (define (list-constructor-name name xs)
+      (if (contains-polars-null? xs)
+          (new-series/valid 'list-constructor-name name xs default-value opt-constructor-name)
+          (new-series 'list-constructor-name name (lambda () (list-constructor-raw-name xs)))))
+    (define (vector-constructor-name name xs)
+      (if (vector-has-null? xs)
+          (new-series/valid 'vector-constructor-name name (vector->list xs) default-value
+                            opt-constructor-name)
+          (new-series 'vector-constructor-name name
+                      (lambda () (vector-constructor-raw-name xs)))))))
 
 (define-series-constructors i32 _int32 0)
 
@@ -878,62 +877,57 @@
 
 (define-series-constructors u64 _uint64 0)
 
-;; Bools cross the boundary as u8 (0/1).  Racket-side wrappers translate
-;; #f/#t to 0/1.
+;; Bools cross the boundary as u8 (0/1).
 (define-compat series-new-bool/raw
-  (_fun (_c-string = "")
-        (v : (_list i _uint8))
+  (_fun (v : (_list i _uint8))
         (_size = (length v))
         -> _Series-ptr/null)
-  #:c-id series_new_bool
-  #:wrap (allocator/or-fail series-drop 'series-new-bool))
+  #:c-id series_new_bool_v2
+  #:wrap (allocator series-drop))
 
 (define-compat series-new-bool/vec/raw
-  (_fun (_c-string = "")
-        (v : (_vector i _uint8))
+  (_fun (v : (_vector i _uint8))
         (_size = (vector-length v))
         -> _Series-ptr/null)
-  #:c-id series_new_bool
-  #:wrap (allocator/or-fail series-drop 'series-new-bool/vec))
+  #:c-id series_new_bool_v2
+  #:wrap (allocator series-drop))
 
 (define-compat series-new-bool/opt/raw
-  (_fun (_c-string = "")
-        (v : (_list i _uint8))
+  (_fun (v : (_list i _uint8))
         (valid : (_list i _uint8))
         (_size = (length v))
         -> _Series-ptr/null)
-  #:c-id series_new_opt_bool
-  #:wrap (allocator/or-fail series-drop 'series-new-bool))
+  #:c-id series_new_opt_bool_v2
+  #:wrap (allocator series-drop))
 
 (define (bool->u8 b) (if b 1 0))
 
+(define (bool/null->u8 b)
+  (if (polars-null? b) b (bool->u8 b)))
+
 (define (series-new-bool name bools)
-  ((named 'series-new-bool name)
-   (cond
-     [(contains-polars-null? bools)
-      (define-values (clean-values valid) (values+valid bools #f))
-      (series-new-bool/opt/raw (map bool->u8 clean-values) valid)]
-     [else (series-new-bool/raw (map bool->u8 bools))])))
+  (if (contains-polars-null? bools)
+      (new-series/valid 'series-new-bool name (map bool/null->u8 bools) 0 series-new-bool/opt/raw)
+      (new-series 'series-new-bool name (lambda () (series-new-bool/raw (map bool->u8 bools))))))
 
 (define (series-new-bool/vec name bools)
-  ((named 'series-new-bool/vec name)
-   (cond
-     [(for/or ([value (in-vector bools)])
-        (polars-null? value))
-      (define-values (clean-values valid) (values+valid (vector->list bools) #f))
-      (series-new-bool/opt/raw (map bool->u8 clean-values) valid)]
-     [else
-      (series-new-bool/vec/raw (for/vector #:length (vector-length bools)
-                                           ([b (in-vector bools)])
-                                 (bool->u8 b)))])))
+  (cond
+    [(vector-has-null? bools)
+     (new-series/valid 'series-new-bool/vec name (map bool/null->u8 (vector->list bools)) 0
+                       series-new-bool/opt/raw)]
+    [else
+     (define u8s
+       (for/vector #:length (vector-length bools) ([b (in-vector bools)])
+         (bool->u8 b)))
+     (new-series 'series-new-bool/vec name (lambda () (series-new-bool/vec/raw u8s)))]))
 
 (define-compat series-new-null/raw
-  (_fun (_c-string = "") _size -> _Series-ptr/null)
-  #:c-id series_new_null
-  #:wrap (allocator/or-fail series-drop 'series-new-null))
+  (_fun _size -> _Series-ptr/null)
+  #:c-id series_new_null_v2
+  #:wrap (allocator series-drop))
 
 (define (series-new-null name length)
-  ((named 'series-new-null name) (series-new-null/raw length)))
+  (new-series 'series-new-null name (lambda () (series-new-null/raw length))))
 
 ;; The buffer and validity are GC memory the collector may move: never #:blocking?.
 (define-compat series-new-str/raw

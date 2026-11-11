@@ -61,7 +61,6 @@ lines after its last counted newline before it judges a last line without
 a newline (#335; see the `read-csv` facts for all three). The
 `polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
 rev, and `polars/native-libs/BUILDING.md` has the mechanics.
-`polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -156,18 +155,16 @@ it. Racket side: `define-compat` with `#:c-id`.
   error on NULL, before any reason can be reported. Never `cast` +
   `register-finalizer` by hand: that breaks the pairing with the
   `deallocator`-wrapped `<type>-drop/raw`, which `<type>-drop` wraps,
-  refusing a dropped value, so an explicit drop frees twice (#47). Where the Rust side records no reason, `#:wrap (allocator/or-fail
-  <type>-drop 'who)` (`foreign.rkt`) registers the release and raises
-  `who: operation failed` itself, so no wrapper is needed. A test in
+  refusing a dropped value, so an explicit drop frees twice (#47). A
+  wrapper reads the reason of an entry point that records one through
+  `call/foreign-error`; #320 retired `allocator/or-fail`, which raised
+  `who: operation failed` over any reason. Four wrappers still read `#f`
+  from an entry point that records none and raise a text of their own
+  (#353): `dataframe-new` and `expr-dtype-col` (`operation failed`),
+  `expr-sort` and `expr-sort-by`. A test in
   `polars/tests/foreign.rkt` reads every `define-compat` under
   `polars/private` and `polars/tests` and fails on one of these four result
-  types without its allocator, or on a `_pointer` result. It also fails on
-  `allocator/or-fail` around a `_v2` (or later) entry point, which records a
-  reason that `operation failed` would discard, and on a site under
-  `polars/private` that binds through `allocator/or-fail` and is not in
-  `polars/tests/allocator-or-fail-sites.rktd`: a `define-compat` outside a
-  macro, by its name, or a use of a macro whose template holds one (or a
-  use of such a macro, at any depth), as the whole form.
+  types without `allocator` and its drop, or on a `_pointer` result.
 - The `series`, `dataframe` and `lazyframe` wrappers carry
   `prop:owned-pointer`, so `series-drop` and its siblings given a wrapper
   release the pointer the allocator registered, once. A new wrapper struct
@@ -218,7 +215,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `lazyframe_collect`, `lazyframe_explain_v2`, `dataframe_to_string_v2`,
   `expr_to_string_v2`, `series_cast`, `dataframe_pivot_v2`,
   `dataframe_unpivot_v2`, `dataframe_sort_with_options_v2`,
-  `series_sort_with_options`, `series_new_str_packed`, the series-by-series
+  `series_sort_with_options`, `series_new_str_packed`, the `_v2`
+  constructors (`series_new_<dtype>_v2` and `series_new_opt_<dtype>_v2` over
+  the ten numeric dtypes, `bool` and `ymdhms`, and `series_new_null_v2`),
+  `series_enum_categories_v2`, `expr_lit_temporal_v2`,
+  `expr_meta_output_name_v2`, the series-by-series
   operators (`series_add`, `series_sub`, `series_mul`, `series_div`,
   `series_mod`, `series_eq`, `series_ne`, `series_gt`, `series_ge`,
   `series_lt`, `series_le`, `series_and`, `series_or`, `series_xor`,
@@ -303,7 +304,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   body is one) as an argument, a `match` on one, or a local bound to one by
   `let`; a helper is guarding when every function of its name is guarded in
   that sense. It does not check what runs before the guard or in an adapter
-  after it. Every other entry point is listed in `rust/src/tests/unguarded.txt`,
+  after it. A second walk holds every guarded entry point to clearing the
+  last error before anything that can return (#291): its body opens with
+  `clear_last_error()` or a call to a helper that does (`boxed_result`,
+  `scalar_result`, `write_checked_frame`, ...), whose arguments cannot
+  return, after nothing but `let`s that cannot return (no `else`, `?`,
+  `return` or macro, whose expansion it does not read). Every other entry point is listed in `rust/src/tests/unguarded.txt`,
   one `name class` per line: `drop` and `count` (which must be the `_drop`
   and `_drop_count` names), `accessor`, `builder`, `constructor` and
   `error`. The audit fails on a stale or misclassified line, so guarding an
@@ -359,9 +365,10 @@ it. Racket side: `define-compat` with `#:c-id`.
     error, never a read past the block. Those that run polars code on caller
     data share `boxed_result` / `scalar_result` (`rust/src/ffi/results.rs`);
     a builder or accessor that runs none uses `boxed_unguarded`.
-  - The `series-new-*` constructors keep their C symbols: each is called with
-    the constant empty name, and the wrapper renames the fresh series with
-    `series_rename_v2`.
+  - The numeric, Boolean, Null and `ymdhms` `series-new-*` constructors call
+    `_v2` symbols that take no name, and `series_new_str_packed` takes the
+    constant empty name; the wrapper renames the fresh series with
+    `series_rename_v2`. The old symbols, which take a name, stay exported.
   - `series-eq-str` and `series-ne-str` compare against a one-row String
     series through `series_eq` / `series_ne`, so they take what `=` takes
     beside a series: a Categorical or Enum operand compares by value (a value
@@ -385,7 +392,8 @@ it. Racket side: `define-compat` with `#:c-id`.
     contract error (see the zoned datetime fact).
   - A C string still crossing is `_c-string` / `_c-string/null`
     (`foreign.rkt`), which refuse a NUL: a path, a zone's name, the
-    `#:ambiguous` / `#:non-existent` names and the constructors' empty name.
+    `#:ambiguous` / `#:non-existent` names and the String constructor's
+    empty name.
   - A test in `polars/tests/resource.rkt` reads every module under
     `polars/private` and `polars/tests` as data and fails on a
     pointer-holding ctype (`_string`, `_bytes`, `_path`, `_file`, `_symbol`,
@@ -830,7 +838,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   one, as Python's `pl.Series([])` (#98); every constructor, native ones
   included, takes zero rows. A list or vector of `polars-null` alone infers
   `'null` too, as `pl.Series([None])` does, and a null among other values
-  takes their dtype; `#:dtype 'null` (`series_new_null`) takes `polars-null`
+  takes their dtype; `#:dtype 'null` (`series_new_null_v2`) takes `polars-null`
   elements only. `is-in` reads a list the same way, so `(list polars-null)`
   is a Null literal, and an empty list is a member of nothing (`#f`, null for
   a null), as Python's `is_in([])` is; a list holding an exact integer and
@@ -973,7 +981,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   the wrong dtype.
   A constructor reads its arrays through `slice_or_empty`
   (`rust/src/ffi/slices.rs`): NULL with length 0 is empty, NULL with rows
-  is refused.
+  is refused, and the `_v2` constructors record that as the reason.
 - `series` infers int64 / float64 / string / bool, uint64 for integers when
   one is 2^63 or more and none is negative (as Python does; a list of
   integers neither holds, or an integer outside `#:dtype`'s range, is a
@@ -1017,7 +1025,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `dataframe->string`, `expr->string`, a `cast` to a string, `pivot` and
   `unpivot` raise under their own names with polars' panic as the reason. `lit`, and so every comparison,
   `is-between` and `is-in`, takes the same values as literals of the same
-  dtypes (`expr_lit_temporal`, `expr_lit_datetime_tz`).
+  dtypes (`expr_lit_temporal_v2`, `expr_lit_datetime_tz`).
 - A zoned datetime (#140, polars' `timezones` feature) is the datum
   `'(datetime unit "Zone/Name")`, with an explicit unit; its values are gregor
   `moment`s in the column's zone. `CompatDType`'s has-timezone flag carries no

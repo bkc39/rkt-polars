@@ -1,3 +1,4 @@
+use super::args::{optional_values, values_arg};
 use crate::prelude::*;
 use crate::*;
 
@@ -52,4 +53,48 @@ pub extern "C" fn series_new_opt_ymdhms(
         TimeUnit::Milliseconds,
     );
     Box::into_raw(Box::new(ca.into_series()))
+}
+
+fn naive_datetime_arg(ymdhms: &YMDHMS) -> PolarsResult<NaiveDateTime> {
+    ymdhms_to_naive_datetime(ymdhms).ok_or_else(|| {
+        polars_err!(
+            ComputeError: "invalid date and time: {}-{:02}-{:02} {:02}:{:02}:{:02}",
+            ymdhms.year, ymdhms.month, ymdhms.day,
+            ymdhms.hour, ymdhms.minute, ymdhms.second
+        )
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_ymdhms_v2(
+    data: *const YMDHMS,
+    length: usize,
+) -> *mut Series {
+    boxed_result(|| {
+        let values = unsafe { values_arg(data, length) }?;
+        let naive_dates = values
+            .iter()
+            .map(naive_datetime_arg)
+            .collect::<PolarsResult<Vec<NaiveDateTime>>>()?;
+        Ok(Series::new(PlSmallStr::EMPTY, naive_dates))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_opt_ymdhms_v2(
+    data: *const YMDHMS,
+    valid: *const u8,
+    length: usize,
+) -> *mut Series {
+    boxed_result(|| {
+        let naive_dates = unsafe { optional_values(data, valid, length) }?
+            .map(|value| value.map(naive_datetime_arg).transpose())
+            .collect::<PolarsResult<Vec<Option<NaiveDateTime>>>>()?;
+        Ok(DatetimeChunked::from_naive_datetime_options(
+            PlSmallStr::EMPTY,
+            naive_dates,
+            TimeUnit::Milliseconds,
+        )
+        .into_series())
+    })
 }

@@ -73,19 +73,31 @@ pub extern "C" fn series_cast_enum_v2(
         .map_or(ptr::null_mut(), |out| Box::into_raw(Box::new(out)))
 }
 
+fn enum_categories(s: &Series) -> PolarsResult<Series> {
+    match s.dtype() {
+        DataType::Enum(categories, _) => Ok(StringChunked::with_chunk(
+            s.name().clone(),
+            categories.categories().clone(),
+        )
+        .into_series()),
+        dtype => polars_bail!(
+            SchemaMismatch:
+            "invalid series dtype: expected `Enum`, got `{}` for `{}`",
+            dtype, s.name()
+        ),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn series_enum_categories_v2(
+    s_ptr: *const Series,
+) -> *mut Series {
+    boxed_result(|| enum_categories(unsafe { deref_arg(s_ptr, "series") }?))
+}
+
 #[no_mangle]
 pub extern "C" fn series_enum_categories(s_ptr: *const Series) -> *mut Series {
-    let Some(s) = (unsafe { s_ptr.as_ref() }) else {
-        return ptr::null_mut();
-    };
-    match s.dtype() {
-        DataType::Enum(categories, _) => {
-            let names = StringChunked::with_chunk(
-                s.name().clone(),
-                categories.categories().clone(),
-            );
-            Box::into_raw(Box::new(names.into_series()))
-        }
-        _ => ptr::null_mut(),
-    }
+    unsafe { s_ptr.as_ref() }
+        .and_then(|s| enum_categories(s).ok())
+        .map_or(ptr::null_mut(), |names| Box::into_raw(Box::new(names)))
 }

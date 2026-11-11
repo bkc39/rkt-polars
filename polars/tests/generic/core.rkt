@@ -376,7 +376,7 @@
          (write-ndjson (dataframe (list past-chrono-date)) path))
        "^write-ndjson: .*polars panicked: "]
       [(series-new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0)))
-       "^series-new-ymdhms: operation failed"]))
+       "^series-new-ymdhms: invalid date and time: 2021-02-30 00:00:00$"]))
   (define past-chrono-program
     `(write (for/list ([probe (list ,@(for/list ([p (in-list past-chrono-probes)])
                                         (match-define (list probe _) p)

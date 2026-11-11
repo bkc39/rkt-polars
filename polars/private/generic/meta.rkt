@@ -2,8 +2,7 @@
 
 (require racket/contract/base
          (only-in polars/private/expr
-                  Expr-ptr? expr-meta-eq? expr-meta-output-name/raw
-                  expr-meta-root-names)
+                  Expr-ptr? expr-meta-eq? expr-meta-output-name/who expr-meta-root-names)
          (only-in polars/private/generic/expr-util ->col-expr col-expr/c))
 
 (provide (contract-out
@@ -12,9 +11,7 @@
           [meta-eq? (-> col-expr/c col-expr/c boolean?)]))
 
 (define (meta-output-name x)
-  (define e (->col-expr 'meta-output-name x))
-  (or (expr-meta-output-name/raw e)
-      (error 'meta-output-name "cannot determine the output name of ~a" e)))
+  (expr-meta-output-name/who 'meta-output-name (->col-expr 'meta-output-name x)))
 
 (define (meta-root-names x)
   (expr-meta-root-names (->col-expr 'meta-root-names x)))

@@ -131,3 +131,21 @@ fn meta_eq_of_equal_quotients() {
     assert_eq!(expr_meta_eq(&halves[0], &halves[1]), 1);
     assert_eq!(expr_meta_eq(&halves[0], &quotient(&col("a"), &col("b"))), 0);
 }
+
+#[test]
+fn meta_output_name_records_its_own_reason_over_a_stale_one() {
+    let w = Box::into_raw(Box::new(all().as_expr()));
+    set_last_error("stale");
+    assert!(expr_meta_output_name_v2(w).is_null());
+    let reason = recorded_error().expect("a reason");
+    assert_ne!(reason, "stale");
+    assert!(
+        reason.contains("unable to find root column name"),
+        "{}",
+        reason
+    );
+    expr_drop(w);
+    set_last_error("stale");
+    assert!(expr_meta_output_name_v2(ptr::null()).is_null());
+    assert_eq!(recorded_error().as_deref(), Some("expression is null"));
+}

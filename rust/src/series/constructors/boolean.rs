@@ -1,3 +1,4 @@
+use super::args::{optional_values, values_arg};
 use crate::prelude::*;
 use crate::*;
 
@@ -43,4 +44,35 @@ pub extern "C" fn series_new_opt_bool(
         })
         .collect();
     Box::into_raw(Box::new(Series::new(name_from_ptr(name), bools)))
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_bool_v2(
+    data: *const u8,
+    length: usize,
+) -> *mut Series {
+    boxed_result(|| {
+        let values = unsafe { values_arg(data, length) }?;
+        Ok(BooleanChunked::from_iter_values(
+            PlSmallStr::EMPTY,
+            values.iter().map(|&b| b != 0),
+        )
+        .into_series())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn series_new_opt_bool_v2(
+    data: *const u8,
+    valid: *const u8,
+    length: usize,
+) -> *mut Series {
+    boxed_result(|| {
+        let values = unsafe { optional_values(data, valid, length) }?;
+        Ok(BooleanChunked::from_iter_options(
+            PlSmallStr::EMPTY,
+            values.map(|value| value.map(|&b| b != 0)),
+        )
+        .into_series())
+    })
 }

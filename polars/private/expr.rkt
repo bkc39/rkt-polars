@@ -17,7 +17,6 @@
          polars/private/expr-dt
          polars/private/expr-str
          (only-in polars/private/foreign
-                  allocator/or-fail
                   call/foreign-error
                   call/polars-reason
                   _DataFrame-ptr
@@ -116,7 +115,8 @@
          expr-cast-to
          dataframe-with-columns dataframe-select-exprs dataframe-filter-expr
          dataframe-group-by-agg
-         expr-meta-output-name expr-meta-output-name/raw expr-meta-root-names expr-meta-eq?
+         expr-meta-output-name expr-meta-output-name/raw expr-meta-output-name/who
+         expr-meta-root-names expr-meta-eq?
          (contract-out
           [expr-sort (->* (Expr-ptr?) (#:descending boolean? #:nulls-last boolean?) Expr-ptr?)]
           [expr-sort-by (sort-by/c Expr-ptr? 'expr-sort-by/c)]
@@ -128,10 +128,12 @@
   (_fun _Expr-ptr -> _rsstr)
   #:c-id expr_meta_output_name_v2)
 
+(define (expr-meta-output-name/who who e)
+  (call/foreign-error who (lambda () (expr-meta-output-name/raw e))
+                      "cannot determine the output name of ~a" e))
+
 (define (expr-meta-output-name e)
-  (or (expr-meta-output-name/raw e)
-      (error 'expr-meta-output-name
-             "cannot determine the output name of ~a" e)))
+  (expr-meta-output-name/who 'expr-meta-output-name e))
 
 (define-compat expr-meta-root-names
   (_fun _Expr-ptr -> _rsstr-list)
