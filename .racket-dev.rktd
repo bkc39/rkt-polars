@@ -15,8 +15,12 @@
   ;; otherwise the Racket tests run against the stale library.
   (native        "nix run .#copy-native-libs")
   (compile       "raco make polars/main.rkt")
-  (test          "raco test -x --timeout 600 -c polars")
-  (guide         "raco test -y user-guide")
+  ;; -e fails a module that writes to stderr, as pkg-build's `raco test
+  ;; --drdr` does.  Each module runs in its own process, so a native write to
+  ;; fd 2 (polars' warnings) counts too.  The flake's Racket check and
+  ;; scripts/test-local.sh pass it as well.
+  (test          "raco test -x -e --timeout 600 -c polars")
+  (guide         "raco test -y -e user-guide")
   ;; Every examples/*.rkt, each in its own process; an example is red if it
   ;; raises, exits non-zero or writes to stderr.  The flake's Racket check
   ;; runs it too, with -j 4.
