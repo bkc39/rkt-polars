@@ -1265,18 +1265,17 @@ it. Racket side: `define-compat` with `#:c-id`.
   `generic/operand-audit-classes.rkt`. The `test` blocks of one file
   **merge**: a definition name used in one block collides with the same name
   in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x -e --timeout 600 -c polars` (Racket), `raco test -y -e user-guide` (the
+- `raco test -e --timeout 600 -c polars` (Racket), `raco test -y -e user-guide` (the
   guide's paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).
-- `-e` fails a module that writes to stderr, as pkg-build's `raco test --drdr`
-  does (#365); the `test` and `guide` gates, the flake's Racket check and
-  `scripts/test-local.sh` pass it. Over a directory each module runs in its own
-  process with its stderr piped, so a native write to fd 2 counts: polars'
-  `polars_warn!` (`UserWarning: CSV malformed: ...` under `#:ignore-errors`)
-  `eprintln!`s there, past `current-error-port`. A test of a read that warns
-  runs it in a child racket (`call-in-child`, the `test` submodule of
-  `generic/test-fixtures.rkt`) and checks the child's stderr; a single file
-  given to `raco test` runs in-process, where `-e` sees only Racket's port.
+- The Racket run is what pkg-build's `raco test --drdr` runs (#365): every
+  module, the manual's `.scrbl` and their live examples included (no `-x`),
+  each in its own process, failing on any write to stderr (`-e`), a native
+  one such as polars' `UserWarning` under `#:ignore-errors` included. A
+  single file given to `raco test` runs in-process, where `-e` sees only
+  Racket's port. A test of a read that warns runs it through
+  `call-each-in-child` (the `test` submodule of `generic/test-fixtures.rkt`),
+  which returns each form's value and stderr.
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example

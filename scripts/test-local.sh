@@ -37,4 +37,4 @@ raco setup --check-pkg-deps --pkgs threading-doc
 DOCS_CHECK_PKG=polars scripts/docs-check.sh
 
 echo ">> running tests"
-raco test -x -e --timeout 600 -c polars
+raco test -e --timeout 600 -c polars

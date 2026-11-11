@@ -148,7 +148,7 @@ cargo test --manifest-path rust/Cargo.toml
 cargo fmt --manifest-path rust/Cargo.toml --check          # same check as CI
 cd rust && cargo build --release
 cp target/release/libcompat.dylib ../polars/native-libs/   # macOS
-cd .. && raco test -x -e --timeout 600 -c polars
+cd .. && raco test -e --timeout 600 -c polars
 raco test -e user-guide                                    # the guide's scripts
 raco test -e -Q --empty-stdin -j 8 examples                # every numbered example
 ```
@@ -165,7 +165,7 @@ Racket commands (no Cargo at install time):
 nix run .#copy-native-libs
 raco pkg install --name rkt-polars .
 raco setup --pkgs rkt-polars
-raco test -x -e --timeout 600 -c polars
+raco test -e --timeout 600 -c polars
 ```
 
 ### Prebuilt native libraries

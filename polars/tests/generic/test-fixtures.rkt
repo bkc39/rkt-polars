@@ -130,12 +130,12 @@
            (only-in racket/list filter-map)
            (only-in racket/match match match* match-define)
            (only-in racket/port copy-port)
-           (only-in racket/string string-join)
+           (only-in racket/string string-join string-split)
            (only-in polars/private/generic/core shape)
            (only-in polars/private/generic/reshape collect)
            (only-in polars/private/io-contracts size-max))
 
-  (provide call-in-child check-nul-names-round-trip check-readers-agree check-reads-like-every
+  (provide call-each-in-child call-in-child check-nul-names-round-trip check-readers-agree check-reads-like-every
            check-staged-write eager-and-scan eager-reader glob-reader outcome-difference
            read-outcome scan-reader)
 
@@ -227,6 +227,27 @@
         [else (subprocess-kill child #t) 'timeout]))
     (for-each thread-wait copiers)
     (apply values status (map get-output-string texts)))
+
+  (define child-run-marker "-- call-each-in-child --\n")
+
+  (define (call-each-in-child requires forms #:timeout [seconds 120])
+    (define thunks (for/list ([form (in-list forms)]) `(lambda () ,form)))
+    (define-values (status output errors)
+      (call-in-child
+       `(begin
+          (require ,@requires)
+          (write (for/list ([run (in-list (list ,@thunks))])
+                   (begin0 (run)
+                           (write-string ,child-run-marker (current-error-port))
+                           (flush-output (current-error-port))))))
+       #:timeout seconds))
+    (define runs
+      (match (string-split errors child-run-marker #:trim? #f)
+        [(list sections ... "")
+         #:when (and (eqv? status 0) (= (length sections) (length forms)))
+         (map list (read (open-input-string output)) sections)]
+        [_ #f]))
+    (values status runs errors))
 
   (define huge-counts (list (expt 2 62) size-max))
 
