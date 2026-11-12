@@ -30,3 +30,18 @@
 (define test-timeouts
   '(("tests/generic/core.rkt" 600)
     ("tests/generic/csv-options.rkt" 900)))
+
+;; scribblings/polars.scrbl includes every other chapter, so its run alone
+;; runs each example of the manual once.
+(define test-omit-paths
+  '("scribblings/guide.scrbl"
+    "scribblings/reference.scrbl"
+    "scribblings/guide/concepts.scrbl"
+    "scribblings/guide/expressions.scrbl"
+    "scribblings/guide/getting-started.scrbl"
+    "scribblings/guide/interop.scrbl"
+    "scribblings/guide/io-json.scrbl"
+    "scribblings/guide/io-parquet.scrbl"
+    "scribblings/guide/io.scrbl"
+    "scribblings/guide/nycflights.scrbl"
+    "scribblings/guide/time-series.scrbl"))

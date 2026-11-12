@@ -10,8 +10,10 @@
 # pkgs.racket-lang.org (scripts/dependency-catalogs.sh), so `raco pkg
 # install --auto` resolves polars' #:platform dependency on it as the catalog
 # will; the install must load the library from that package.  Then every module
-# is instantiated against it, and the docs and tests are run the way
-# pkg-build.racket-lang.org runs them.
+# is instantiated against it, the docs are built as pkg-build.racket-lang.org
+# builds them, and the modules its `raco test --drdr` runs are run, red on
+# stderr as there, but with a 600 s timeout and this shell's PLTUSERHOME,
+# TMPDIR and stdin.
 #
 # Usage: scripts/test-local.sh
 set -euo pipefail
@@ -74,4 +76,4 @@ raco setup --check-pkg-deps --pkgs threading-doc
 DOCS_CHECK_PKG=polars scripts/docs-check.sh
 
 echo ">> running tests"
-raco test -x --timeout 600 -c polars
+raco test -e --timeout 600 -c polars

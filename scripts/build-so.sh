@@ -77,9 +77,11 @@ if [[ "$platform" == "linux" ]]; then
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
-      cargo build --profile dist --locked \
-        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
-      cp /tmp/target/dist/libcompat.so /out/
+      # --icf=all must reach the final link alone, as cargo rustc passes it.
+      cargo rustc --lib --profile dist-linux --locked \
+        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target \
+        -- -C link-arg=-Wl,--icf=all
+      cp /tmp/target/dist-linux/libcompat.so /out/
       { rustc -vV; echo "image: $MANYLINUX_IMAGE"; } > /out/toolchain
     '
   echo ">> staged $dest/$lib"
