@@ -56,6 +56,8 @@ esac
 
 lib="libcompat.${ext}"
 dest="$ROOT/rust/target/libcompat/$platform"
+# An earlier build's library or rust-tree and commit records would label this one.
+rm -rf "$dest"
 mkdir -p "$dest"
 
 if [[ "$platform" == "linux" ]]; then

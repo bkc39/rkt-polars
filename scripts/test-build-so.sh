@@ -12,7 +12,8 @@
 # the record names its rustc, LLVM, linker and minimum macOS.  A failed
 # cargo build stages nothing and writes no record, though an earlier build's
 # dylib is still in the target directory, and a missing otool or ld stops it
-# before rustup installs anything.
+# before rustup installs anything.  An earlier build's library and records
+# (CI's rust-tree and commit) are gone after a build, failed or not.
 #
 # The copy runs under $BASH_UNDER_TEST (default: the bash on PATH), so that
 # macOS's bash 3.2 can be tested; the stubs run under the bash on PATH.  Each
@@ -79,7 +80,7 @@ setup() {
   : > "$log"
   local tool q_log
   q_log="$(printf '%q' "$log")"
-  for tool in awk cat cp dirname head ls mkdir sed; do
+  for tool in awk cat cp dirname head ls mkdir rm sed; do
     ln -s "$(command -v "$tool")" "$bin/$tool"
   done
   for tool in install_name_tool codesign; do
@@ -334,6 +335,24 @@ for tool in otool ld; do
     || fail "$what: a toolchain record was written"
 done
 
+# An earlier build's staged dylib and records in the output directory.
+plant_stale() {
+  local staged="$repo/rust/target/libcompat/darwin" record
+  mkdir -p "$staged"
+  for record in libcompat.dylib rust-tree commit toolchain; do
+    echo stale > "$staged/$record"
+  done
+}
+
+expect_no_stale() {
+  local what="$1" record
+  for record in libcompat.dylib rust-tree commit toolchain; do
+    if grep -qx stale "$repo/rust/target/libcompat/darwin/$record" 2>/dev/null; then
+      fail "$what: the earlier build's $record is still staged"
+    fi
+  done
+}
+
 # A failed build beside an earlier build's dylib, which bash 3.2 would stage
 # if the build's subshell were not checked.
 for mode in rustup no-rustup; do
@@ -341,11 +360,24 @@ for mode in rustup no-rustup; do
   setup "$pinned" "$mode" "$pinned"
   mkdir -p "$repo/rust/target/dist"
   echo stale > "$repo/rust/target/dist/libcompat.dylib"
+  plant_stale
   : > "$cargo_fails"
   expect_refused "$what" "error: could not compile polars"
   [[ ! -e "$repo/rust/target/libcompat/darwin/toolchain" ]] \
     || fail "$what: a toolchain record was written"
+  expect_no_stale "$what"
 done
+
+what="a build over an earlier build's records"
+setup "$pinned" rustup "$pinned"
+plant_stale
+if run_script; then
+  expect_built "$what" "$pinned" rustup
+  expect_no_stale "$what"
+else
+  fail "$what: build-so.sh darwin exited non-zero"
+  show "$out"
+fi
 
 # Environment names that are not identifiers, which bash 3.2 imports as
 # variables: build-so.sh must leave X alone, not fail on the `*`, and not

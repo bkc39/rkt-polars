@@ -3,8 +3,8 @@
 (require (only-in racket/file
                   delete-directory/files make-directory* make-temporary-file)
          (only-in "native-location.rkt"
-                  dev-built-library? library-file manifest-problem missing-message
-                  native-library-problem native-package outranking-package override-dir
+                  dev-built-library? installed-native-package library-file manifest-problem
+                  missing-message native-library-problem native-package override-dir
                   required-native-version)
          (only-in "resource.rkt" with-release))
 
@@ -51,11 +51,6 @@
         #:when (regexp-match? compat-lib-pattern (path->string f)))
     (install-if-different! (build-path source-dir f) (build-path dest-dir f))))
 
-(define (has-matching-files? dir)
-  (and (directory-exists? dir)
-       (for/or ([f (in-list (directory-list dir))])
-         (regexp-match? compat-lib-pattern (path->string f)))))
-
 (define (check-native-package! location wanted)
   (define message (or (native-library-problem location wanted) (manifest-problem location wanted)))
   (when message
@@ -64,7 +59,7 @@
 (define (pre-installer collections-top-path this-collection-path user-specific?)
   (define native-libs-dir (build-path this-collection-path "native-libs"))
   (define override (override-dir))
-  (define package (and (not override) (outranking-package)))
+  (define package (and (not override) (installed-native-package)))
   (define dev-library (and package (dev-built-library? native-libs-dir)))
   (cond
     [override (copy-native-libs! native-libs-dir override)]
@@ -73,5 +68,5 @@
              (build-path native-libs-dir library-file)
              (native-package))]
     [package (check-native-package! package (required-native-version this-collection-path))]
-    [(has-matching-files? native-libs-dir) (void)]
+    [(file-exists? (build-path native-libs-dir library-file)) (void)]
     [else (eprintf "pre-installer: ~a\n" (missing-message native-libs-dir))]))

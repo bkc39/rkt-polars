@@ -32,7 +32,6 @@
           [native-library-problem (-> native-location? (or/c string? #f) (or/c string? #f))]
           [native-package (->* () (string?) (or/c string? #f))]
           [native-packages (listof (cons/c string? string?))]
-          [outranking-package (-> (or/c native-location? #f))]
           [override-dir (-> (or/c path? #f))]
           [required-native-version (-> path-string? (or/c string? #f))]
           [sha256-hex (-> path-string? string?)]

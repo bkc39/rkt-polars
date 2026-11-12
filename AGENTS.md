@@ -70,8 +70,9 @@ not the repo root, and anything the docs need at build time (fixtures, helper
 modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
-docs.racket-lang.org/polars. The package build server rebuilds it from
-`master` on its own cycle, roughly daily, not on each merge.
+docs.racket-lang.org/polars. The package build server rebuilds it from the
+catalog's source for `polars`, a `#v<version>` tag, on its own cycle,
+roughly daily, not on each merge.
 
 ## The three layers
 
@@ -517,11 +518,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   `scripts/release/draft-tag.sh` refuses a Racket-only tag `v<version>`
   whose `rust/` tree differs from the native tag's. The Release build
   workflow builds and installs both packages on a PR that touches `rust/`
-  or the release's inputs. `scripts/test-local.sh LIBCOMPAT` installs a
-  built library as the native package through a `file://` catalog holding a
-  copy of the release catalog and pkgs.racket-lang.org alone
-  (`scripts/dependency-catalogs.sh`) and `--auto`, and fails unless
-  `polars` loads it from there. See `polars/native-libs/BUILDING.md`.
+  or the release's inputs. `scripts/test-local.sh LIBCOMPAT` packs a
+  built library as the native package and runs
+  `scripts/release/catalog-test.sh --full` on it, which installs `polars`
+  through a `file://` catalog holding it, in front of pkgs.racket-lang.org
+  alone, with `--auto`, and fails unless `polars` loads it from there. See
+  `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
@@ -1278,8 +1280,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   matches and prints one line naming it, or else fails `raco setup` unless
   the package's version, its manifest's native version and every
   `libcompat.*` sha256 match. With neither a package nor a staged copy, it
-  warns, naming the package to install or, on another platform, the
-  supported ones, and `raco setup` succeeds. The dev shell does not export
+  only warns, naming the package to install or, on another platform, the
+  supported ones; building the manual, whose evaluator requires `polars`,
+  then fails `raco setup`, and `raco pkg install --no-docs` installs without
+  it. The dev shell does not export
   `RKT_POLARS_COMPAT_LIB_PATH`, which the loader would prefer to the copy
   `nix run .#copy-native-libs` stages; the nix build does.
 - The library's module tests live in `polars/tests/`, in the file at the
@@ -1337,8 +1341,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `grep-gates-test` gate, a push gate and a flake check) runs
   `no-syntax-rule`, `no-inline-tests`, `rustls-only` and `no-dynamic-wind`
   on a scratch tree to hold them there, and `dependency-catalogs-test`'s
-  check that `scripts/test-local.sh` reads its catalogs from
-  `scripts/dependency-catalogs.sh` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
+  check that `scripts/release/catalog-test.sh` reads its catalogs through
+  `release_catalogs` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
   1, as for any warning, on a log it cannot read or a grep error over the
   rendered manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the

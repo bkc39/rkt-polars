@@ -188,30 +188,26 @@ The pre-installer (`polars/private/install-compat.rkt`) fails `raco setup` on
 a native package whose version, manifest version or library hashes do not
 match, and checks nothing under the variable, from which it stages the
 library, or for a dev-marked staged copy. With no package and no staged
-copy it warns, naming the package to install, or on another platform the
-supported ones, and `raco setup` succeeds. It runs only when `polars` is
+copy it only warns, naming the package to install, or on another platform
+the supported ones; building the manual, whose evaluator requires `polars`,
+then fails `raco setup`, and `raco pkg install --no-docs` installs without
+it. It runs only when `polars` is
 set up: `raco pkg install` or `raco pkg update` of the native package alone
 does not run it, and the loader then checks the version alone.
 
 `scripts/test-local.sh LIBCOMPAT` stages a built library (`build-so.sh`'s,
 with its records, or the dev shell's staged copy, named by `HEAD`'s clean
-`rust/`) as the native package, puts it in a `file://` catalog with a copy of
-the configured release catalog and pkgs.racket-lang.org, the only ones
-polars' dependencies come from (`scripts/dependency-catalogs.sh`, held by
-the `dependency-catalogs` gate and a step of CI's Lint job: `raco pkg
-catalog-copy` fails when any catalog it reads does not answer), installs
-`polars`' tracked files from that catalog with `--auto`, so a `#:platform`
-string that does not match leaves the package out, and then
-`scripts/check-native-install.rkt` requires that `polars` loads the
-package's library, staged none and filters a frame. It then renders the
-docs and runs the tests.
+`rust/`) as the native package, packs its zip, catalog entry and manifest as
+the release's package job does, and runs `scripts/release/catalog-test.sh
+PLATFORM DIST --full` on them (see [Releases](#releases)).
 
 ## Releases
 
 `.github/workflows/release.yml` (the `Release build` workflow) runs on a tag
 `v*`, on demand, and on a PR that touches what builds, packages or tests a
 release (`rust/`, `scripts/build-so.sh` and its stub test, `native/`,
-`polars/info.rkt`, `polars/private/native-*.rkt`, `scripts/release/`, the
+`polars/info.rkt`, `polars/private/native-*.rkt`, the pre-installer and the
+`resource.rkt` it requires, `scripts/release/`, the
 scripts it calls, the flake, the workflow and the `install-racket` action).
 It is the only workflow that builds the shipped libraries; `ci.yml` runs the
 nix checks. A PR run checks out the PR's head, not the merge with its base,
@@ -248,14 +244,18 @@ each refusal and stubs `raco` and `gh` to check the other scripts.
 the notices, refuses a library built from a `rust/` tree other than
 `HEAD:rust`, and writes the zip, its catalog entry
 `polars-<platform>.rktd`, the manifest and their `SHA256SUMS`.
-`catalog-test.sh PLATFORM DIST [--full]` installs `polars` from a `file://`
-catalog holding the shipped entry, in front of the catalogs
-`scripts/dependency-catalogs.sh` picks less download.racket-lang.org's
-(#124), runs `scripts/check-native-install.rkt` and
+`catalog-test.sh PLATFORM DIST [--full]` first installs `polars`, in a home
+of its own, over a copy of the package whose manifest lists another sha256,
+and fails unless that install fails on the manifest. It then installs
+`polars` from a `file://` catalog holding the shipped entry, in front of the
+catalogs `scripts/dependency-catalogs.sh` picks less download.racket-lang.org's
+(#124), fails when the install's output holds the pre-installer's
+`libcompat is not installed` warning, as `pkg-build-test.sh` does, runs
+`scripts/check-native-install.rkt` and
 `scripts/check-bindings.rkt`, and on macOS, which has no pkg-build test,
 with `--full` renders the docs and runs the suite as the test gate does.
-The **forward-compat** job runs `catalog-test.sh` again on Racket `stable`
-and the newest runner images; the draft does not wait for it.
+The **forward-compat** job runs `catalog-test.sh --full` again on Racket
+`stable` and the newest runner images; the draft does not wait for it.
 
 The **pkg-build** job runs `pkg-build-test.sh DIST`, which installs
 `polars` with docs in pkg-build's image (`racket/pkg-build:deps-x86_64`,
@@ -272,6 +272,11 @@ longer names the run's commit or that already has a release, and drafts
 one with every file the package jobs wrote.
 
 ### Release checklist
+
+Before anything that makes `master`'s `polars` need an unpublished
+`native-version` merges (first of all, the stack that introduced the native
+packages), the catalog's `polars` source must be on a tag (step 6), or
+pkg-build builds `master` against a native package the catalog lacks.
 
 A native release, when `rust/` or a native package changed:
 

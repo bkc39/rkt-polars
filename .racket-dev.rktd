@@ -69,9 +69,9 @@
   (stage-native-package "bash scripts/stage-native-package-test.sh")
   ;; scripts/release/ against planted libraries and stubs; needs the dev shell's libcompat.
   (release-gates "bash scripts/release/gates-test.sh polars/native-libs/libcompat.so")
-  ;; scripts/test-local.sh copies only the release catalog and
-  ;; pkgs.racket-lang.org, the catalogs polars' dependencies come from, so an
-  ;; outage elsewhere cannot fail it.  Plain bash, raco stubbed.
+  ;; scripts/release/catalog-test.sh (which scripts/test-local.sh runs) reads
+  ;; only pkgs.racket-lang.org behind its file:// catalog, so an outage
+  ;; elsewhere cannot fail it.  Plain bash, raco stubbed.
   (dependency-catalogs ("bash scripts/dependency-catalogs-test.sh" #:shell ""))
   ;; The project's Resyntax suite (lint/) over the same trees, red on any
   ;; suggestion; `scripts/resyntax-lint.sh fix` applies them.  It takes

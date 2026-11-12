@@ -9,6 +9,8 @@ on:
       - native/**
       - polars/info.rkt
       - polars/private/native-*.rkt
+      - polars/private/install-compat.rkt
+      - polars/private/resource.rkt
       - scripts/release/**
       - scripts/stage-native-package.rkt
       - scripts/check-bindings.rkt
@@ -250,7 +252,7 @@ jobs:
     name: Install ${{ matrix.package }} on Racket stable
     needs: package
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -276,7 +278,7 @@ jobs:
           name: ${{ matrix.package }}
           path: ${{ runner.temp }}/dist
       - name: Install from a file:// catalog
-        run: scripts/release/catalog-test.sh ${{ matrix.platform }} "$RUNNER_TEMP/dist"
+        run: scripts/release/catalog-test.sh ${{ matrix.platform }} "$RUNNER_TEMP/dist" --full
 
   draft:
     name: Draft the GitHub Release

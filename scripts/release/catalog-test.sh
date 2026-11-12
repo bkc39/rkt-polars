@@ -38,11 +38,43 @@ racket "$here/catalog.rkt" local-entry "$dist/$package.rktd" "file://$dist/$pack
 listed=$(release_catalogs)
 catalogs=()
 while IFS= read -r catalog; do catalogs+=("$catalog"); done <<<"$listed"
-raco pkg config --set --scope user catalogs "file://$work/catalog" "${catalogs[@]}"
-
 release_tracked_copy "$root" polars "$work/src"
+
+# install_polars USERHOME CATALOG LOG: the tracked polars from CATALOG, in front of the others.
+install_polars() {
+  PLTUSERHOME=$1 raco pkg config --set --scope user catalogs "file://$2" "${catalogs[@]}"
+  PLTUSERHOME=$1 raco pkg install --batch --auto --no-docs --scope user --copy --name polars \
+    "$work/src/polars" 2>&1 | tee "$3"
+}
+
+tampered="$work/tampered"
+mkdir -p "$tampered/catalog/pkg" "$tampered/dist"
+cp -R "$work/native/$package" "$tampered/$package"
+zeros=$(printf '%064d' 0)
+sed -E "s/\"[0-9a-f]{64}\"/\"$zeros\"/" "$work/native/$package/manifest.json" \
+  >"$tampered/$package/manifest.json"
+if cmp -s "$work/native/$package/manifest.json" "$tampered/$package/manifest.json"; then
+  echo "catalog test: $package's manifest.json lists no sha256 to tamper with" >&2
+  exit 1
+fi
+raco pkg create --format zip --dest "$tampered/dist" "$tampered/$package"
+racket "$here/catalog.rkt" entry "$package" "$tampered/$package" "$tampered/dist/$package.zip" \
+  "file://$tampered/dist/$package.zip" >"$tampered/catalog/pkg/$package"
+echo "catalog test: raco pkg install polars over a $package whose manifest lists another sha256 must fail"
+status=0
+install_polars "$tampered/user" "$tampered/catalog" "$tampered/install.log" || status=$?
+if [ "$status" -eq 0 ]; then
+  echo "catalog test: polars installed over a $package whose manifest does not match its library" >&2
+  exit 1
+fi
+release_grep -qF "in the package $package has sha256" "$tampered/install.log" || {
+  echo "catalog test: the install over a tampered $package failed (exit $status), but not on its manifest" >&2
+  exit 1
+}
+
 echo "catalog test: raco pkg install polars, which must pull $package by its #:platform dependency"
-raco pkg install --batch --auto --no-docs --scope user --copy --name polars "$work/src/polars"
+install_polars "$PLTUSERHOME" "$work/catalog" "$work/install.log"
+release_check_install_log "$work/install.log"
 
 racket "$root/scripts/check-native-install.rkt" "$package"
 racket "$root/scripts/check-bindings.rkt"

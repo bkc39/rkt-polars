@@ -36,6 +36,7 @@ in_container() {
         tail -n 60 /work/install.log
         exit 1
       fi
+      release_check_install_log /work/install.log
       racket "$RELEASE_SCRIPTS/check-native-install.rkt" "$package"
       [ -n "$(find "$PLTUSERHOME" -path '*/doc/polars/index.html' -print -quit)" ] || {
         say "no rendered manual under $PLTUSERHOME"

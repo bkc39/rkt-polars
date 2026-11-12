@@ -172,11 +172,7 @@
   (define (marker-for bs)
     (format "~a\n" (sha256-hex bs)))
 
-  (define (call-with-package-install proc
-                                     #:staged [staged #f]
-                                     #:marked? [marked? #f]
-                                     #:marker [marker (and marked? staged
-                                                           (marker-for (string->bytes/utf-8 staged)))])
+  (define (call-with-package-install proc #:staged [staged #f] #:marker [marker #f])
     (with-native-collections collects
       (define collection (build-path collects "fake-polars"))
       (define native (build-path collection "native-libs"))
@@ -192,14 +188,12 @@
   (define-syntax-parser with-package-install
     [(_ (collects:id collection:id native:id)
         (~alt (~optional (~seq #:staged staged:expr))
-              (~optional (~seq #:marked? marked?:expr))
               (~optional (~seq #:marker marker:expr)))
         ...
         body:expr ...+)
      (syntax/loc this-syntax
        (call-with-package-install (lambda (collects collection native) body ...)
                                   (~? (~@ #:staged staged))
-                                  (~? (~@ #:marked? marked?))
                                   (~? (~@ #:marker marker))))])
 
   (define (pre-install collection)
@@ -242,6 +236,15 @@
                                        (format "~a in the package polars-x86_64-linux has sha256"
                                                library-file))))))
 
+  (test-case "a native package holding no library fails the install, naming the remedy"
+    (with-package-install (collects collection native)
+      (make-native-package! collects #:library #f)
+      (check-true (contains-all? (pre-install-error collection)
+                                 '("pre-installer: "
+                                   "the package polars-x86_64-linux holds no libcompat"
+                                   "`raco pkg remove --force polars-x86_64-linux`")))
+      (check-false (staged-bytes native))))
+
   (test-case "a native package of another version fails the install"
     (with-package-install (collects collection native)
       (make-native-package! collects #:version "0.2")
@@ -263,7 +266,9 @@
       (check-true (contains-all? (pre-install-error collection) '("has sha256")))))
 
   (test-case "a dev-built staged copy is kept over the package, unchecked"
-    (with-package-install (collects collection native) #:staged "dev bytes" #:marked? #t
+    (with-package-install (collects collection native)
+      #:staged "dev bytes"
+      #:marker (marker-for #"dev bytes")
       (tampered-package! collects)
       (define marker (build-path native (format ".~a.dev" library-file)))
       (check-equal? (pre-install collection)
@@ -286,7 +291,9 @@
         (check-true (contains-all? (pre-install-error collection) '("has sha256")) contents))))
 
   (test-case "an unreadable marker is stale"
-    (with-package-install (collects collection native) #:staged "dev bytes" #:marked? #t
+    (with-package-install (collects collection native)
+      #:staged "dev bytes"
+      #:marker (marker-for #"dev bytes")
       (tampered-package! collects)
       (define marker (build-path native (format ".~a.dev" library-file)))
       (file-or-directory-permissions marker #o000)
@@ -303,12 +310,12 @@
       (check-equal? (file->bytes (build-path marker "inside")) #"kept")))
 
   (test-case "without a package, a staged copy, dev-built or not, is left alone in silence"
-    (for ([marked? (in-list '(#f #t))])
-      (with-package-install (collects collection native) #:staged "dev bytes" #:marked? marked?
+    (for ([marker (in-list (list #f (marker-for #"dev bytes")))])
+      (with-package-install (collects collection native) #:staged "dev bytes" #:marker marker
         (define target (build-path native library-file))
         (define before (file-or-directory-identity target))
         (define-values (out err) (pre-install-outputs collection))
-        (check-equal? (list out err) '("" "") (format "marked: ~a" marked?))
+        (check-equal? (list out err) '("" "") (format "marker: ~a" marker))
         (check-equal? (file-or-directory-identity target) before)
         (check-equal? (staged-bytes native) #"dev bytes"))))
 
@@ -336,6 +343,14 @@
     (with-native-collections collects
       (define collection (build-path collects "fake-polars"))
       (make-directory* collection)
+      (check-true (contains-all? (pre-install-warning collection)
+                                 '("pre-installer: libcompat is not installed"
+                                   "`raco pkg install polars-x86_64-linux`")))))
+
+  (test-case "another platform's library in native-libs is not this platform's"
+    (with-package-install (collects collection native)
+      (define stray (if (equal? library-file "libcompat.so") "libcompat.dylib" "libcompat.so"))
+      (scratch-file native stray "stray bytes")
       (check-true (contains-all? (pre-install-warning collection)
                                  '("pre-installer: libcompat is not installed"
                                    "`raco pkg install polars-x86_64-linux`")))))

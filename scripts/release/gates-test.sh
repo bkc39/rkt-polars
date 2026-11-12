@@ -247,6 +247,30 @@ catalogs_case pkgs https://pkgs.racket-lang.org https://pkgs.racket-lang.org
 catalogs_case downloads-only "exit 1" "$release_downloads"
 grep -qF "(#124)" "$work/catalogs.err" || problem "release_catalogs: downloads-only said $(cat "$work/catalogs.err")"
 
+install_log_case() {
+  local name=$1 want=$2 status=0
+  (release_check_install_log "$work/$name.log") >"$work/$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "release_check_install_log: $name exited $status, want $want: $(cat "$work/$name.out")"
+}
+printf 'raco setup: --- pre-installing collections ---\nraco setup: version: 9.3\n' >"$work/checked.log"
+install_log_case checked 0
+printf 'raco setup: --- pre-installing collections ---\npre-installer: libcompat is not installed: the package polars-x86_64-linux is missing\n' \
+  >"$work/unchecked.log"
+install_log_case unchecked 1
+grep -qF "the pre-installer found no native package" "$work/unchecked.out" ||
+  problem "release_check_install_log: an unchecked install said $(cat "$work/unchecked.out")"
+install_log_case absent 2
+for script in catalog-test.sh pkg-build-test.sh; do
+  grep -qE '^ *release_check_install_log "?[$/a-z]+/install\.log"?$' "$here/$script" ||
+    problem "$script: does not check its install log with release_check_install_log"
+done
+# shellcheck disable=SC2016
+grep -qF 'in the package $package has sha256' "$here/catalog-test.sh" ||
+  problem "catalog-test.sh: does not require a tampered manifest to fail the install"
+# shellcheck disable=SC2016
+grep -qxF 'bash "$ROOT/scripts/release/catalog-test.sh" "$platform" "$scratch/dist" --full' "$root/scripts/test-local.sh" ||
+  problem "test-local.sh: does not run catalog-test.sh --full"
+
 registry="$work/registry/index.crates.io-0000"
 mkdir -p "$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd" "$registry/lz4-sys-1.10.0/liblz4/lib"
 echo "zstd BSD licence" >"$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd/LICENSE"
