@@ -9,7 +9,7 @@
            (only-in racket/list append* filter-map range remove-duplicates second)
            (only-in racket/match match match-define match-lambda)
            (only-in racket/sequence sequence->list)
-           (only-in racket/string string-append* string-contains? string-join)
+           (only-in racket/string string-append* string-contains? string-join string-split)
            (only-in polars/private/bulk in-series series->list)
            (only-in threading ~>)
            (only-in gregor date datetime moment)
@@ -25,8 +25,8 @@
                     frame=? gzip-file keyword-of keyword-rejected? message-of nul-expected
                     polars-null scratch-file)
            (only-in (submod polars/tests/generic/test-fixtures test)
-                    check-nul-names-round-trip check-readers-agree eager-reader glob-reader
-                    outcome-difference scan-reader [eager-and-scan eager-and-scan*]))
+                    call-each-in-child check-nul-names-round-trip check-readers-agree eager-reader
+                    glob-reader outcome-difference scan-reader [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define eager-and-scan (eager-and-scan* read-csv scan-csv))
@@ -244,8 +244,6 @@
   (check-true (frame=? (~> (scan-csv stray-quote-resynchronised #:comment-prefix "#") (tail 20002) collect)
                        (tail stray-full 20002)))
   (define stray-ignored (scratch-file scratch "stray-ignored.csv" "a,b\n1,5\"\n2,6\n# note\n3,7\n"))
-  (check-equal? (column (read-csv stray-ignored #:comment-prefix "#" #:ignore-errors #t #:n-rows 2) "b")
-                '("5\"" "6"))
   (define unended
     (scratch-file scratch "unended.csv"
                   (~a (apply csv-lines "a" (for/list ([i (in-range 20000)]) (~a "v" i))) "x#y")))
@@ -314,13 +312,47 @@
     (check-regexp-match #rx"CSV malformed" message)
     (check-false (string-contains? message "1999,1999")))
   (define stray-plain (scratch-file scratch "stray-plain.csv" "a,b\n1,5\"\n2,6\n3,7\n"))
-  (for ([scan (list (lambda () (scan-csv stray-ignored #:comment-prefix "#" #:ignore-errors #t))
-                    (lambda () (scan-csv stray-plain #:ignore-errors #t)))])
-    (define full (collect (scan)))
-    (check-equal? (height full) 3)
-    (for ([n (in-range 1 5)])
-      (check-true (frame=? (collect (tail (scan) n)) (tail full n)))
-      (check-true (frame=? (collect (head (scan) n)) (head full n)))))
+  (define stray-scans
+    (list (cons "commented"
+                `(scan-csv ,(path->string stray-ignored) #:comment-prefix "#" #:ignore-errors #t))
+          (cons "plain" `(scan-csv ,(path->string stray-plain) #:ignore-errors #t))))
+  (match-define (list (list warned-labels warned-forms warned-values) ...)
+    (append
+     (list (list "a commented read of a stray quote"
+                 `(column (read-csv ,(path->string stray-ignored) #:comment-prefix "#"
+                                    #:ignore-errors #t #:n-rows 2)
+                          "b")
+                 '("5\"" "6")))
+     (for/list ([(name scan) (in-dict stray-scans)])
+       (list (format "a ~a scan of a stray quote" name) `(height (collect ,scan)) 3))
+     (for*/list ([(name scan) (in-dict stray-scans)]
+                 [n (in-range 1 5)]
+                 [verb (in-list '(tail head))])
+       (list (format "a ~a ~a of ~a of a stray quote" name verb n)
+             `(frame=? (collect (,verb ,scan ,n)) (,verb (collect ,scan) ,n))
+             #t))))
+  (define batch-height-warning
+    #px"^UserWarning: CSV malformed: expected \\d+ rows, actual \\d+ rows, in chunk ")
+  (define-values (warned-status warned-runs warned-completed warned-errors)
+    (call-each-in-child '((only-in polars/tests/generic/test-fixtures column frame=?))
+                        warned-forms))
+  (check-equal? warned-status 0 warned-errors)
+  (match warned-runs
+    [#f (fail (format "~a:\n~a"
+                      (if (< warned-completed (length warned-labels))
+                          (format "~a did not return in the child"
+                                  (list-ref warned-labels warned-completed))
+                          "the child's results are not one value and one stderr section per case")
+                      warned-errors))]
+    [_ (for ([label (in-list warned-labels)]
+             [expected (in-list warned-values)]
+             [run (in-list warned-runs)])
+         (match-define (list result errors) run)
+         (with-check-info (['case label] ['stderr errors])
+           (check-equal? result expected)
+           (check-not-equal? errors "" "the read warns")
+           (for ([warning (in-list (string-split errors "\n"))])
+             (check-regexp-match batch-height-warning warning))))])
   (check-equal? (column (~> (scan-csv unended #:comment-prefix "#" #:ignore-errors #t) (tail 1) collect)
                         "a")
                 '("x#y"))

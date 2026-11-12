@@ -9,7 +9,8 @@
 # it, a zip, its catalog entry and its manifest; then
 # scripts/release/catalog-test.sh --full installs polars' tracked files from a
 # file:// catalog holding it, in a fresh PLTUSERHOME, and checks, renders the
-# docs and runs the tests as the release build does.
+# docs and runs the tests as the release build does: the modules pkg-build's
+# `raco test --drdr` runs, red on stderr.
 #
 # Usage: scripts/test-local.sh LIBCOMPAT
 set -euo pipefail

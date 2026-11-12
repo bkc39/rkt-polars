@@ -232,7 +232,7 @@ check_hook() {
   lines=$(printf '%s\n' \
     "Removed $canon/polars-x86_64-linux: the native skeletons are under native/ (#254)" \
     "Setting up rkt-polars in $want (deps changed or first run)" \
-    "Done. Run 'raco test -x --timeout 600 -c polars' to test." \
+    "Done. Run 'raco test -e --timeout 600 -c polars' to test." \
     "Installing Resyntax in $want" \
     "PATH=$work/lintbin:$work/stub:$base_path")
   if [ "$out" != "$lines" ]; then

@@ -17,7 +17,8 @@
 @subsection[#:tag "io-csv-read-write"]{Read & write}
 
 @examples[#:eval ev #:hidden
-(define path (build-path (find-system-path 'temp-dir) "polars-guide-path.csv"))
+(require (only-in racket/file make-temporary-file))
+(define path (make-temporary-file "polars-guide-~a.csv"))
 ]
 
 Writing a CSV file uses @racket[write-csv], and reading one should look

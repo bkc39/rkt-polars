@@ -907,7 +907,11 @@ by-quarter
   Here @racket[not-parquet] is a path in the temporary directory:
 
   @examples[#:eval ev #:hidden
-(define not-parquet (build-path (find-system-path 'temp-dir) "polars-not-parquet.csv"))]
+(require (only-in racket/file delete-directory/files make-temporary-directory))
+(define doc-data-dir (current-directory))
+(define doc-temp-dir (make-temporary-directory "polars-doc-~a"))
+(current-directory doc-temp-dir)
+(define not-parquet "not-parquet.csv")]
 
   @examples[#:eval ev #:label #f
 (write-csv small not-parquet)
@@ -915,7 +919,8 @@ by-quarter
 (eval:error (read-ndjson not-parquet))]
 
   @examples[#:eval ev #:hidden
-(delete-file not-parquet)]
+(current-directory doc-data-dir)
+(delete-directory/files doc-temp-dir)]
 
   Types. @racket[#:ignore-errors] turns what does not parse into nulls;
   @racket[#:infer-schema-length] widens or narrows the rows types are
@@ -1006,18 +1011,23 @@ stations
   @litchar{;}, and @racket[nothing] is an empty file in the temporary
   directory:
 
-  @examples[#:eval ev #:hidden
-(define nothing (build-path (find-system-path 'temp-dir) "polars-doc-nothing.csv"))
-(call-with-output-file nothing #:exists 'replace void)]
-
   @examples[#:eval ev #:label #f
 (read-csv "eol.csv" #:eol-char #\;)
-(collect (scan-csv "eol.csv" #:eol-char #\; #:row-index-name "row" #:row-index-offset 1))
+(collect (scan-csv "eol.csv" #:eol-char #\; #:row-index-name "row" #:row-index-offset 1))]
+
+  @examples[#:eval ev #:hidden
+(define doc-temp-dir (make-temporary-directory "polars-doc-~a"))
+(current-directory doc-temp-dir)
+(define nothing "nothing.csv")
+(call-with-output-file nothing void)]
+
+  @examples[#:eval ev #:label #f
 (eval:error (read-csv nothing))
 (read-csv nothing #:raise-if-empty #f)]
 
   @examples[#:eval ev #:hidden
-(delete-file nothing)]}
+(current-directory doc-data-dir)
+(delete-directory/files doc-temp-dir)]}
 
 @defproc/arguments[csv-scan-arguments (scan-csv [path path-string?] lazyframe?)]{
   Starts a @tech{lazyframe} plan from CSV without reading it
@@ -1090,7 +1100,8 @@ stations
 
   @examples[#:eval ev #:hidden
 (require racket/file)
-(define out (build-path (find-system-path 'temp-dir) "polars-doc-out.csv"))]
+(define doc-temp-dir (make-temporary-directory "polars-doc-~a"))
+(define out (build-path doc-temp-dir "out.csv"))]
   Here @racket[out] is a path in the temporary directory, and
   @racket[stations] the frame read above:
 
@@ -1110,12 +1121,19 @@ stations
                (select "carrier" "flight" "time_hour"))
            out #:datetime-format "%Y-%m-%dT%H:%M" #:quote-style 'non-numeric
            #:include-bom #t #:batch-size 1)
-(file->string out)
+(file->string out)]
+
+  @examples[#:eval ev #:hidden
+(current-directory doc-temp-dir)
+(define out "out.csv")]
+
+  @examples[#:eval ev #:label #f
 (eval:error (write-csv stations out #:date-format "%H"))
 (eval:error (write-csv stations "/no/such/dir/out.csv"))]
 
   @examples[#:eval ev #:hidden
-(delete-file out)]}
+(current-directory doc-data-dir)
+(delete-directory/files doc-temp-dir)]}
 
 @defproc/arguments[parquet-read-arguments (read-parquet [path path-string?] dataframe?)]{
   Reads Parquet into a @tech{dataframe} (@tt{pl.read_parquet}): it is

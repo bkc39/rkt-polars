@@ -24,23 +24,23 @@ for platform in $RELEASE_PLATFORMS; do
   fi
 done
 
-native_tag_tree() {
-  local ref="refs/tags/v$native" status=0
-  if ! git -C "$root" rev-parse -q --verify "$ref" >/dev/null; then
-    git -C "$root" ls-remote --exit-code --tags origin "$ref" >/dev/null || status=$?
-    case $status in
-      0) git -C "$root" fetch -q --depth 1 --no-tags origin "+$ref:$ref" ;;
-      2)
-        echo "draft-tag: $tag ships polars for native version $native, but origin has no tag v$native: tag v$native first" >&2
-        exit 1
-        ;;
-      *)
-        echo "draft-tag: cannot list origin's tags (git ls-remote exited $status)" >&2
-        exit 1
-        ;;
-    esac
+published_tree() {
+  local dir manifest status=0
+  dir=$(mktemp -d)
+  release_platform x86_64-linux
+  manifest="$RELEASE_PACKAGE.manifest.json"
+  if ! gh release download "v$native" -p "$manifest" -D "$dir" 2>"$dir/err"; then
+    if [[ $(cat "$dir/err") == *"release not found"* ]]; then
+      echo "draft-tag: $tag ships polars for native version $native, which has no published release: publish v$native first" >&2
+    else
+      echo "draft-tag: gh release download v$native $manifest failed: $(cat "$dir/err")" >&2
+    fi
+    rm -rf "$dir"
+    exit 1
   fi
-  git -C "$root" rev-parse "v$native^{commit}:rust"
+  racket "$here/catalog.rkt" manifest "$dir/$manifest" rust_tree || status=$?
+  rm -rf "$dir"
+  return "$status"
 }
 
 case $tag in
@@ -49,14 +49,14 @@ case $tag in
     echo "draft-tag: $tag drafts the native release $native" >&2
     ;;
   "v$polars")
-    released=$(native_tag_tree)
+    released=$(published_tree)
     head=$(git -C "$root" rev-parse HEAD:rust)
     if [ "$released" != "$head" ]; then
-      echo "draft-tag: rust/ changed since v$native (tree $released, HEAD's $head): bump native-version and tag that instead" >&2
+      echo "draft-tag: rust/ changed since the published v$native (tree $released, HEAD's $head): bump native-version and tag that instead" >&2
       exit 1
     fi
     echo "tag="
-    echo "draft-tag: $tag ships polars against the native release v$native, whose rust/ tree is HEAD's, so no native release is drafted" >&2
+    echo "draft-tag: $tag ships polars against the native release v$native, whose published rust/ tree is HEAD's, so no native release is drafted" >&2
     ;;
   "")
     echo "tag="

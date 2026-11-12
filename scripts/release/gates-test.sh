@@ -174,16 +174,46 @@ esac
 gates unknown x86_64-linux "$exporting" glibcxx
 want_status unknown 2
 
+mkdir -p "$work/stub-bin"
+cat >"$work/stub-bin/raco" <<'EOF'
+#!/usr/bin/env bash
+cat "$CATALOGS"
+EOF
+cat >"$work/stub-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >>"$GH_LOG"
+case $1 in
+  api) echo "$GH_TAGGED" ;;
+  release)
+    case $2 in
+      view)
+        case $GH_VIEW in
+          missing) echo "release not found" >&2; exit 1 ;;
+          present) echo "title: v0.3" ;;
+          *) echo "HTTP 502" >&2; exit 1 ;;
+        esac
+        ;;
+      download)
+        case $GH_PUBLISHED in
+          missing) echo "release not found" >&2; exit 1 ;;
+          error) echo "HTTP 502" >&2; exit 1 ;;
+          *) printf '{"native_version":"0.3","rust_tree":"%s"}\n' "$GH_PUBLISHED" >"$7/$5" ;;
+        esac
+        ;;
+      create) ;;
+    esac
+    ;;
+esac
+EOF
+chmod +x "$work/stub-bin/raco" "$work/stub-bin/gh"
+
 tree="$work/tree"
-origin_repo="$work/origin.git"
 g() {
   git -C "$tree" -c user.name=gates-test -c user.email=gates-test@localhost -c commit.gpgsign=false \
-    -c tag.gpgsign=false -c core.hooksPath=/dev/null "$@"
+    -c core.hooksPath=/dev/null "$@"
 }
-git init -q --bare "$origin_repo"
 mkdir -p "$tree/polars" "$tree/native/polars-x86_64-linux" "$tree/native/polars-aarch64-macosx" "$tree/rust"
 git init -q "$tree"
-g remote add origin "$origin_repo"
 info() {
   printf '#lang info\n(define version "%s")\n' "$2" >"$tree/native/polars-$1/info.rkt"
 }
@@ -193,12 +223,12 @@ info aarch64-macosx 0.3
 echo 1 >"$tree/rust/lib.rs"
 g add -A
 g commit -q -m native
-g tag v0.3
-g push -q origin v0.3
-g tag -d v0.3 >/dev/null
+released=$(g rev-parse HEAD:rust)
 draft_case() {
-  local tag=$1 want=$2 got
-  got=$(RELEASE_ROOT=$tree bash "$here/draft-tag.sh" "$tag" 2>"$work/draft.err") || got="exit $?"
+  local tag=$1 want=$2 published=${3:-$released} got
+  : >"$work/draft.gh"
+  got=$(PATH="$work/stub-bin:$PATH" GH_LOG="$work/draft.gh" GH_PUBLISHED=$published RELEASE_ROOT=$tree \
+    bash "$here/draft-tag.sh" "$tag" 2>"$work/draft.err") || got="exit $?"
   [ "$got" = "$want" ] || problem "draft-tag: ${tag:-no tag} said $got, want $want: $(cat "$work/draft.err")"
 }
 draft_said() {
@@ -209,30 +239,27 @@ echo docs >"$tree/polars/README"
 g add -A
 g commit -q -m racket
 draft_case v0.3.1 tag=
-g rev-parse -q --verify refs/tags/v0.3 >/dev/null || problem "draft-tag: v0.3.1 did not fetch the tag v0.3"
+grep -qF "gh release download v0.3 -p polars-x86_64-linux.manifest.json -D " "$work/draft.gh" ||
+  problem "draft-tag: v0.3.1 did not read v0.3's published manifest: $(cat "$work/draft.gh")"
 draft_case "" tag=
 draft_case v0.3.0 "exit 1"
 draft_case v0.4 "exit 1"
+draft_case v0.3.1 "exit 1" 0000000000000000000000000000000000000000
+draft_said "rust/ changed since the published v0.3 (tree 0000000000000000000000000000000000000000"
 echo 2 >"$tree/rust/lib.rs"
 g commit -q -am rust
 draft_case v0.3.1 "exit 1"
-draft_said "rust/ changed since v0.3"
+draft_said "rust/ changed since the published v0.3"
 draft_case "" tag=
-g tag -d v0.3 >/dev/null
-git -C "$origin_repo" tag -d v0.3 >/dev/null
-draft_case v0.3.1 "exit 1"
-draft_said "origin has no tag v0.3: tag v0.3 first"
+draft_case v0.3.1 "exit 1" missing
+draft_said "which has no published release: publish v0.3 first"
+draft_case v0.3.1 "exit 1" error
+draft_said "gh release download v0.3 polars-x86_64-linux.manifest.json failed: HTTP 502"
 info aarch64-macosx 0.2
 draft_case v0.3 "exit 1"
 draft_said "native/polars-aarch64-macosx/info.rkt is version 0.2, but polars/info.rkt's native-version is 0.3"
 draft_case "" "exit 1"
 
-mkdir -p "$work/stub-bin"
-cat >"$work/stub-bin/raco" <<'EOF'
-#!/usr/bin/env bash
-cat "$CATALOGS"
-EOF
-chmod +x "$work/stub-bin/raco"
 catalogs_case() {
   local name=$1 want=$2 got
   printf '%s\n' "$3" >"$work/catalogs.txt"
@@ -287,6 +314,16 @@ for text in "zstd, bundled by zstd-sys 2.0.13+zstd.1.5.6" "zstd BSD licence" \
   "liblz4, bundled by lz4-sys 1.10.0" "lz4 BSD-2-Clause licence"; do
   grep -qF "$text" "$work/bundled.out" || problem "bundled-licenses: no [$text] in $(cat "$work/bundled.out")"
 done
+printf '[[package]]\nname = "lz4-sys"\nversion = "1.9.4"\n\n' >>"$work/Cargo.lock"
+bundled_case second-version 1
+grep -qF "no lz4-sys-1.9.4/liblz4/lib/LICENSE under" "$work/second-version.out" ||
+  problem "bundled-licenses: a second lz4-sys version said $(cat "$work/second-version.out")"
+mkdir -p "$registry/lz4-sys-1.9.4/liblz4/lib"
+echo "lz4 1.9.4 licence" >"$registry/lz4-sys-1.9.4/liblz4/lib/LICENSE"
+bundled_case both-versions 0
+for text in "liblz4, bundled by lz4-sys 1.10.0" "liblz4, bundled by lz4-sys 1.9.4" "lz4 1.9.4 licence"; do
+  grep -qF "$text" "$work/both-versions.out" || problem "bundled-licenses: no [$text] in $(cat "$work/both-versions.out")"
+done
 rm "$registry/lz4-sys-1.10.0/liblz4/lib/LICENSE"
 bundled_case unbundled 1
 grep -qF "no lz4-sys-1.10.0/liblz4/lib/LICENSE under" "$work/unbundled.out" ||
@@ -295,26 +332,6 @@ printf '[[package]]\nname = "zstd-sys"\nversion = "2.0.13+zstd.1.5.6"\n' >"$work
 bundled_case unlocked 1
 grep -qF "has no lz4-sys" "$work/unlocked.out" || problem "bundled-licenses: an absent crate said $(cat "$work/unlocked.out")"
 
-cat >"$work/stub-bin/gh" <<'EOF'
-#!/usr/bin/env bash
-echo "gh $*" >>"$GH_LOG"
-case $1 in
-  api) echo "$GH_TAGGED" ;;
-  release)
-    case $2 in
-      view)
-        case $GH_VIEW in
-          missing) echo "release not found" >&2; exit 1 ;;
-          present) echo "title: v0.3" ;;
-          *) echo "HTTP 502" >&2; exit 1 ;;
-        esac
-        ;;
-      create) ;;
-    esac
-    ;;
-esac
-EOF
-chmod +x "$work/stub-bin/gh"
 mkdir -p "$work/drafted"
 touch "$work/drafted/polars-x86_64-linux.zip" "$work/drafted/polars-aarch64-macosx.zip" \
   "$work/drafted/$RELEASE_NOTICES"
@@ -342,6 +359,25 @@ grep -qF "gh release view v0.3 failed: HTTP 502" "$work/unknown.out" ||
 for name in moved released unknown; do
   if grep -qF "release create" "$work/$name.gh"; then problem "draft.sh: $name drafted a release"; fi
 done
+
+bash3_case() {
+  local name=$1 want=$2 status=0
+  shift 2
+  bash "$here/bash3.sh" "$@" >"$work/$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "bash3: $name exited $status, want $want: $(cat "$work/$name.out")"
+}
+bash3_case shipped 0
+# shellcheck disable=SC2016
+for construct in 'map''file -t deps <<<"$x"' 'read''array -t deps' 'declare -''A seen' 'local -''n ref=$1' \
+  'echo "$''{x,,}"' 'echo "$''{x^^}"' 'echo "$''{list[0]^^}"''  a) ;''&' '  a) ;;''&' 'cmd |''& tee' '[[ -''v x ]]' 'cop''roc cat'; do
+  printf 'set -e\n%s\n' "$construct" >"$work/bash4.sh"
+  bash3_case bash4 1 "$work/bash4.sh"
+  grep -qF "bash4.sh:2:" "$work/bash4.out" || problem "bash3: [$construct] was not named: $(cat "$work/bash4.out")"
+done
+# shellcheck disable=SC2016
+printf 'x=${#list[@]} y=${x%%%%,*} z=${x//,/ }\nlocal -a list\necho 2>&1; a || b\n' >"$work/bash3-ok.sh"
+bash3_case "bash3 constructs" 0 "$work/bash3-ok.sh"
+bash3_case unreadable 2 "$work/absent.sh"
 
 workflow="$root/.github/workflows/release.yml"
 grep -qF "needs.plan.outputs.tag != ''" "$workflow" ||

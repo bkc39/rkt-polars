@@ -34,12 +34,65 @@ strip = "symbols"
 # guard_panic catches polars panics, so panics must unwind.
 panic = "unwind"
 
-# The native packages' libraries (scripts/build-so.sh). Thin LTO keeps the
-# Linux one under the release size gate's 100 MiB (#125); nix and cargo test
-# stay on release, where LTO would link every test and example binary on one
-# core.
+# The native packages' libraries (scripts/build-so.sh), sized for the release
+# size gate's 100 MiB (#125, #216); nix and cargo test stay on release, where
+# LTO would link every test and example binary on one core.
 [profile.dist]
 inherits = "release"
 lto = "thin"
 codegen-units = 1
 
+# Only the cloud sources reach these crates.
+[profile.dist.package]
+form_urlencoded = { opt-level = "s" }
+h2 = { opt-level = "s" }
+http = { opt-level = "s" }
+http-body = { opt-level = "s" }
+http-body-util = { opt-level = "s" }
+httparse = { opt-level = "s" }
+hyper = { opt-level = "s" }
+hyper-rustls = { opt-level = "s" }
+hyper-util = { opt-level = "s" }
+icu_collections = { opt-level = "s" }
+icu_locale_core = { opt-level = "s" }
+icu_normalizer = { opt-level = "s" }
+icu_normalizer_data = { opt-level = "s" }
+icu_properties = { opt-level = "s" }
+icu_properties_data = { opt-level = "s" }
+icu_provider = { opt-level = "s" }
+idna = { opt-level = "s" }
+idna_adapter = { opt-level = "s" }
+ipnet = { opt-level = "s" }
+litemap = { opt-level = "s" }
+md-5 = { opt-level = "s" }
+object_store = { opt-level = "s" }
+potential_utf = { opt-level = "s" }
+quick-xml = { opt-level = "s" }
+reqwest = { opt-level = "s" }
+ring = { opt-level = "s" }
+rustls = { opt-level = "s" }
+rustls-native-certs = { opt-level = "s" }
+rustls-pki-types = { opt-level = "s" }
+rustls-webpki = { opt-level = "s" }
+serde_urlencoded = { opt-level = "s" }
+sync_wrapper = { opt-level = "s" }
+tinystr = { opt-level = "s" }
+tokio-rustls = { opt-level = "s" }
+tower = { opt-level = "s" }
+tower-http = { opt-level = "s" }
+tower-layer = { opt-level = "s" }
+tower-service = { opt-level = "s" }
+try-lock = { opt-level = "s" }
+untrusted = { opt-level = "s" }
+url = { opt-level = "s" }
+want = { opt-level = "s" }
+writeable = { opt-level = "s" }
+yoke = { opt-level = "s" }
+zerofrom = { opt-level = "s" }
+zerotrie = { opt-level = "s" }
+zerovec = { opt-level = "s" }
+
+# The Linux library; scripts/build-so.sh also gives its final link --icf=all.
+[profile.dist-linux]
+inherits = "dist"
+lto = "fat"
