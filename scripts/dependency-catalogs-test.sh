@@ -5,7 +5,8 @@
 # keeps the release catalog and pkgs.racket-lang.org and drops Rhombus's and
 # planet-compats, from CI's (the release catalog dropped) it keeps
 # pkgs.racket-lang.org alone, and from one with neither it fails, naming
-# what it read.
+# what it read. scripts/test-local.sh must read its catalogs from it and
+# never pass --from-config; an unreadable test-local.sh fails with 2.
 #
 # Usage: scripts/dependency-catalogs-test.sh  (plain bash)
 set -euo pipefail
@@ -21,11 +22,8 @@ fail() {
 }
 
 mkdir "$work/bin"
-cat > "$work/bin/raco" << 'EOF'
-#!/usr/bin/env bash
-[[ "$*" == "pkg config catalogs" ]] || exit 3
-cat "$CATALOGS"
-EOF
+printf '#!%s\n[[ "$*" == "pkg config catalogs" ]] || exit 3\ncat "$CATALOGS"\n' \
+  "$(command -v bash)" > "$work/bin/raco"
 chmod +x "$work/bin/raco"
 
 # catalogs NAME CONFIGURED: runs the script on CONFIGURED, leaving $out and $err.
@@ -76,6 +74,24 @@ $planet
 [[ -z "$out" ]] || fail "neither configured: printed [$out]"
 [[ "$err" == *"no release catalog or pkgs.racket-lang.org among"*"$planet"* ]] \
   || fail "neither configured: stderr is [$err]"
+
+# in_test_local PATTERN: grep's status for PATTERN in scripts/test-local.sh;
+# above 1 (a missing or unreadable file) fails the gate with 2.
+in_test_local() {
+  local code=0
+  grep -qE -- "$1" "$here/test-local.sh" || code=$?
+  if [[ $code -gt 1 ]]; then
+    echo "FAIL: cannot read $here/test-local.sh (grep status $code)" >&2
+    exit 2
+  fi
+  return $code
+}
+
+in_test_local '^listed=\$\(scripts/dependency-catalogs\.sh\)$' \
+  || fail "scripts/test-local.sh does not read its catalogs from scripts/dependency-catalogs.sh"
+if in_test_local '--from-config'; then
+  fail "scripts/test-local.sh copies every configured catalog (--from-config)"
+fi
 
 if [[ $status -eq 0 ]]; then
   echo "dependency-catalogs: ok"

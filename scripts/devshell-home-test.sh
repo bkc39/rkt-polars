@@ -296,14 +296,20 @@ check_bench() {
   fi
 }
 
-# stale LABEL WANT ROOT SKELETON: runs scripts/remove-stale-skeletons.sh on
-# ROOT and checks that ROOT/SKELETON is kept, printing nothing, or removed,
-# printing its one line.
+# stale LABEL WANT ROOT SKELETON [REASON]: runs
+# scripts/remove-stale-skeletons.sh on ROOT and checks that ROOT/SKELETON is
+# removed, printing its one line, or kept, printing nothing or, given REASON,
+# the one line naming it and REASON.
 stale() {
-  local label=$1 want=$2 root=$3 dir=$3/$4 out
+  local label=$1 want=$2 root=$3 dir=$3/$4 reason=${5-} out kept=
+  if [ -n "$reason" ]; then
+    kept="Kept $dir: $reason; collection-file-path finds its main.rkt or compiled/main_rkt.zo as the native package, so delete it unless something in it is yours (#254)"
+  fi
   out=$(bash "$here/remove-stale-skeletons.sh" "$root" 2> "$work/err") \
     || { fail "stale skeletons, $label: status $?: [$(cat "$work/err")]"; return 0; }
-  if [ "$want" = kept ] && { [ -e "$dir" ] || [ -L "$dir" ]; } && [ -z "$out" ]; then
+  if [ -s "$work/err" ]; then
+    fail "stale skeletons, $label: stderr is [$(cat "$work/err")]"
+  elif [ "$want" = kept ] && { [ -e "$dir" ] || [ -L "$dir" ]; } && [ "$out" = "$kept" ]; then
     echo "ok: stale skeletons, $label: kept"
   elif [ "$want" = removed ] && [ ! -e "$dir" ] \
     && [ "$out" = "Removed $dir: the native skeletons are under native/ (#254)" ]; then
@@ -338,23 +344,46 @@ check_stale_skeletons() {
   git -C "$root" add polars-x86_64-linux/info.rkt
   stale "a tracked file" kept "$root" polars-x86_64-linux
   git -C "$root" rm -q --cached polars-x86_64-linux/info.rkt
-  stale "an untracked file beside compiled/" kept "$root" polars-x86_64-linux
+  stale "an untracked file beside compiled/" kept "$root" polars-x86_64-linux \
+    "git tracks nothing in it, but it holds more than compiled/"
+  rm -rf "$root/polars-x86_64-linux"
+
+  mkdir -p "$root/polars-x86_64-linux/compiled" "$root/polars-x86_64-linux/native-libs"
+  touch "$root/polars-x86_64-linux/compiled/main_rkt.zo" \
+    "$root/polars-x86_64-linux/native-libs/libcompat.so" \
+    "$root/polars-x86_64-linux/manifest.json" "$root/polars-x86_64-linux/LICENSE-MIT"
+  stale "a hand-staged package beside compiled/" kept "$root" polars-x86_64-linux \
+    "git tracks nothing in it, but it holds more than compiled/"
+  rm -rf "$root/polars-x86_64-linux"
+
+  mkdir -p "$root/polars-x86_64-linux"
+  printf '#lang racket/base\n' > "$root/polars-x86_64-linux/main.rkt"
+  stale "an untracked main.rkt" kept "$root" polars-x86_64-linux \
+    "git tracks nothing in it, but it holds more than compiled/"
+  rm -rf "$root/polars-x86_64-linux"
+
+  mkdir -p "$root/polars-x86_64-linux"
+  touch "$root/polars-x86_64-linux/notes.txt"
+  stale "neither main.rkt nor compiled/" kept "$root" polars-x86_64-linux
   rm -rf "$root/polars-x86_64-linux"
 
   mkdir -p "$work/elsewhere/compiled"
   touch "$work/elsewhere/compiled/main_rkt.zo"
   ln -s "$work/elsewhere" "$root/polars-x86_64-linux"
-  stale "a symbolic link" kept "$root" polars-x86_64-linux
+  stale "a symbolic link" kept "$root" polars-x86_64-linux \
+    "git tracks nothing in it, but it is a symbolic link"
   rm "$root/polars-x86_64-linux"
   mkdir -p "$root/polars-x86_64-linux"
   ln -s "$work/elsewhere/compiled" "$root/polars-x86_64-linux/compiled"
-  stale "compiled/ a symbolic link" kept "$root" polars-x86_64-linux
+  stale "compiled/ a symbolic link" kept "$root" polars-x86_64-linux \
+    "git tracks nothing in it, but its compiled/ is a symbolic link"
   [ -e "$work/elsewhere/compiled/main_rkt.zo" ] \
     || fail "stale skeletons: a linked compiled/ was emptied"
   rm -rf "$root/polars-x86_64-linux"
 
   mkdir -p "$work/nogit/polars-x86_64-linux/compiled"
-  stale "outside git" kept "$work/nogit" polars-x86_64-linux
+  stale "outside git" kept "$work/nogit" polars-x86_64-linux \
+    "git cannot list what $work/nogit tracks"
 }
 
 check_stale_skeletons

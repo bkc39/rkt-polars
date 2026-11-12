@@ -485,7 +485,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   package does not make it a collection (the dev shell's hook removes a
   root `polars-<platform>/` that git tracks nothing under and that holds
   only `compiled/`, which a `raco setup` before the move left and whose
-  `main_rkt.zo` `collection-file-path` would find:
+  `main_rkt.zo` `collection-file-path` would find, and names one it keeps
+  that holds a `main.rkt` or a `compiled/` beside anything else:
   `scripts/remove-stale-skeletons.sh`); no binary is committed there, and
   `scripts/stage-native-package.rkt` adds the library and `manifest.json`
   (native version, the `rust/` tree and commit it was built from, each
@@ -1342,7 +1343,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
   `grep-gates-test` gate, a push gate and a flake check) runs
   `no-syntax-rule`, `no-inline-tests`, `rustls-only` and `no-dynamic-wind`
-  on a scratch tree to hold them there. `docs-check.sh`'s `scan` fails with
+  on a scratch tree to hold them there, and `dependency-catalogs-test`'s
+  check that `scripts/test-local.sh` reads its catalogs from
+  `scripts/dependency-catalogs.sh` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
   1, as for any warning, on a log it cannot read or a grep error over the
   rendered manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
