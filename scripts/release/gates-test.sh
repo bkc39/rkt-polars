@@ -385,6 +385,14 @@ grep -qF "needs.plan.outputs.tag != ''" "$workflow" ||
 [ "$(grep -c 'contents: write' "$workflow")" = 1 ] ||
   problem "release.yml: want contents: write in the draft job alone"
 
+mkdir -p "$work/deps-info"
+printf '%s\n' '#lang info' \
+  '(define deps (quote ("base" "rkt-polars-absent" ("rkt-polars-versioned" #:version "1.0") ("rkt-polars-native" #:platform "x86_64-linux"))))' \
+  >"$work/deps-info/info.rkt"
+missing=$(racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
+[ "$missing" = "$(printf 'rkt-polars-absent\nrkt-polars-versioned')" ] ||
+  problem "missing-deps: want the two uninstalled platform-free deps, not base (installed in a wider scope): [$missing]"
+
 host=$(racket -e '(display (system-library-subpath #f))')
 case $host in
   x86_64-linux*) p=x86_64-linux ;;

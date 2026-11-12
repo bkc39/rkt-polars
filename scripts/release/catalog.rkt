@@ -4,6 +4,7 @@
          (only-in json read-json)
          (only-in racket/match match)
          (only-in racket/pretty pretty-write)
+         (only-in pkg/lib installed-pkg-names)
          (only-in setup/getinfo get-info/full))
 
 (define (info-ref dir key)
@@ -28,10 +29,14 @@
     (raise-user-error 'catalog "~a is not a catalog entry" rktd))
   (hash-set shipped 'source source))
 
-(define (platform-free-deps dir)
-  (for/list ([dep (in-list (info-ref dir 'deps))]
-             #:unless (and (pair? dep) (memq '#:platform dep)))
-    (if (pair? dep) (car dep) dep)))
+(define (missing-deps dir)
+  (define installed
+    (append (installed-pkg-names #:scope 'installation) (installed-pkg-names #:scope 'user)))
+  (for*/list ([dep (in-list (info-ref dir 'deps))]
+              #:unless (and (pair? dep) (memq '#:platform dep))
+              [name (in-value (if (pair? dep) (car dep) dep))]
+              #:unless (member name installed))
+    name))
 
 (define (manifest-field manifest key)
   (define value (hash-ref (call-with-input-file manifest read-json) key #f))
@@ -49,7 +54,7 @@
     [(vector "info" dir keys ..1)
      (for ([key (in-list keys)])
        (displayln (info-ref dir (string->symbol key))))]
-    [(vector "deps" dir) (for-each displayln (platform-free-deps dir))]
+    [(vector "missing-deps" dir) (for-each displayln (missing-deps dir))]
     [_
      (raise-user-error
       'catalog
@@ -57,4 +62,4 @@
                      " | local-entry ENTRY.rktd SOURCE"
                      " | manifest MANIFEST.json KEY..."
                      " | info INFO-DIR KEY..."
-                     " | deps INFO-DIR"))]))
+                     " | missing-deps INFO-DIR"))]))
