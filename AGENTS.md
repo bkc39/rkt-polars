@@ -1285,7 +1285,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   port. A test of a read that warns runs it through
   `call-each-in-child` (the `test` submodule of `generic/test-fixtures.rkt`),
   which returns each form's value and stderr, with the forms' stdout
-  discarded, or `#f` and the number of forms that returned.
+  discarded, or `#f` and the number of forms that returned. The nix sandbox
+  has no `/etc/fonts`, and Fontconfig reports the missing config on stderr
+  when a module draws (the manual, the guide's `interop-test.rkt` and
+  `nycflights-test.rkt`), so the flake's Racket build sets `FONTCONFIG_FILE`
+  to a config of its own.
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example
