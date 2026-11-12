@@ -216,6 +216,8 @@
             nativeBuildInputs = [ pkgs.racket ];
             buildInputs = [ rust ];
 
+            FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+
             buildPhase = ''
               runHook preBuild
 
