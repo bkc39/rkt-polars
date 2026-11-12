@@ -1159,11 +1159,13 @@ it. Racket side: `define-compat` with `#:c-id`.
 - **Every guide or reference example is a test case.** The PR that adds or
   changes an example adds a test in the module's file under `polars/tests/`
   (or its inline `test` submodule until #256 moves it) asserting the same
-  result, or, for an `eval:error`, the failure and its `who:` (#152 will run
-  the examples themselves under `raco test`). An `eval:error` shows a failure
-  that is the behaviour being documented, with a message that names the
-  function the reader called; an example that errors because of a gap, or
-  blames an internal binding, is a bug (#151).
+  result, or, for an `eval:error`, the failure and its `who:`. The examples
+  themselves run under `raco test`, so one that raises unexpectedly or
+  writes to stderr fails the run, but their results are not asserted
+  (#152). An `eval:error` shows a failure that is the behaviour being
+  documented, with a message that names the function the reader called; an
+  example that errors because of a gap, or blames an internal binding, is a
+  bug (#151).
 - Every `@section` has an explicit `#:tag`. Guide chapters mirror the upstream
   user guide in fluent style with terse prose; where a binding has no
   spelling for an upstream call, say so in an "API gap" note rather than
@@ -1273,9 +1275,25 @@ it. Racket side: `define-compat` with `#:c-id`.
   `generic/operand-audit-classes.rkt`. The `test` blocks of one file
   **merge**: a definition name used in one block collides with the same name
   in another. Rust tests live in `rust/src/tests/`.
-- `raco test -x --timeout 600 -c polars` (Racket), `raco test -y user-guide` (the guide's
-  paired scripts), `raco test -x bench` (strict mode's comparison),
+- `raco test -e --timeout 600 -c polars` (Racket), `raco test -y -e user-guide` (the
+  guide's paired scripts), `raco test -x bench` (strict mode's comparison),
   `cargo test --manifest-path rust/Cargo.toml` (Rust).
+- The Racket run takes the modules pkg-build's `raco test --drdr` takes,
+  under its stderr rule (#365): every module but those `polars/info.rkt`'s
+  `test-omit-paths` lists, the manual's `.scrbl` and their live examples
+  included (no `-x`), each in its own process, failing on any write to
+  stderr (`-e`), a native one such as polars' `UserWarning` under
+  `#:ignore-errors` included. `test-omit-paths` leaves the manual's
+  examples to `scribblings/polars.scrbl`, which includes every chapter, so
+  each runs once. Unlike pkg-build it allows 600 s a module, where
+  `--drdr`'s default is 90 s (`test-timeouts` aside), and it keeps the
+  shell's `PLTUSERHOME`, `TMPDIR` and stdin, where pkg-build gives each
+  module a fresh home and temporary directory and empty stdin. A single
+  file given to `raco test` runs in-process, where `-e` sees only Racket's
+  port. A test of a read that warns runs it through
+  `call-each-in-child` (the `test` submodule of `generic/test-fixtures.rkt`),
+  which returns each form's value and stderr, with the forms' stdout
+  discarded, or `#f` and the number of forms that returned.
 - `raco test -y -e -Q --empty-stdin -j 8 examples` runs every `examples/*.rkt`
   (the `examples` gate, in `push-gates` too; about 12 s). No `-x`: the
   examples have no `test` submodule, so `-x` would run nothing. An example

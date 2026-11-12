@@ -127,7 +127,7 @@
            (only-in compiler/find-exe find-exe)
            (only-in racket/dict dict-set in-dict)
            (only-in racket/file delete-directory/files file->string make-temporary-directory)
-           (only-in racket/list filter-map)
+           (only-in racket/list append-map filter-map)
            (only-in racket/match match match* match-define)
            (only-in racket/port copy-port)
            (only-in racket/string string-join)
@@ -135,9 +135,9 @@
            (only-in polars/private/generic/reshape collect)
            (only-in polars/private/io-contracts size-max))
 
-  (provide call-in-child check-nul-names-round-trip check-readers-agree check-reads-like-every
-           check-staged-write eager-and-scan eager-reader glob-reader outcome-difference
-           read-outcome scan-reader)
+  (provide call-each-in-child call-in-child check-nul-names-round-trip check-readers-agree
+           check-reads-like-every check-staged-write eager-and-scan eager-reader glob-reader
+           outcome-difference read-outcome scan-reader)
 
   (define (read-outcome thunk)
     (with-handlers ([exn:fail? (lambda (e) (cause-of (exn-message e)))]) (thunk)))
@@ -213,9 +213,12 @@
     [(_ readers:expr path:expr kvs:expr (~optional message:expr))
      (syntax/loc this-syntax (check-readers-agree* readers path kvs (~? message)))])
 
-  (define (call-in-child form #:timeout [seconds 120])
+  (define (call-in-child form #:timeout [seconds 120] #:libraries [libraries '("polars")])
     (define-values (child out in err)
-      (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "polars" "-e" (format "~s" form)))
+      (apply subprocess #f #f #f (find-exe)
+             (append (append-map (lambda (library) (list "-l" library))
+                                 (cons "racket/base" libraries))
+                     (list "-e" (format "~s" form)))))
     (close-output-port in)
     (define texts (list (open-output-string) (open-output-string)))
     (define copiers
@@ -227,6 +230,59 @@
         [else (subprocess-kill child #t) 'timeout]))
     (for-each thread-wait copiers)
     (apply values status (map get-output-string texts)))
+
+  (define child-run-marker "-- call-each-in-child --\n")
+
+  (define (call-each-in-child requires forms
+                              #:timeout [seconds 120] #:libraries [libraries '("polars")])
+    (define thunks (for/list ([form (in-list forms)]) `(lambda () ,form)))
+    (define-values (status output errors)
+      (call-in-child
+       `(let ([results (current-output-port)])
+          (local-require (only-in racket/port open-output-nowhere) ,@requires)
+          (write (parameterize ([current-output-port (open-output-nowhere)])
+                   (for/list ([run (in-list (list ,@thunks))])
+                     (begin0 (run)
+                             (write-string ,child-run-marker (current-error-port))
+                             (flush-output (current-error-port)))))
+                 results))
+       #:timeout seconds
+       #:libraries libraries))
+    (define sections (regexp-split (regexp-quote child-run-marker) errors))
+    (define completed (sub1 (length sections)))
+    (define results (and (eqv? status 0) (= completed (length forms)) (read-all output)))
+    (define runs
+      (match* (results sections)
+        [((? list?) (list sections ... "")) #:when (= (length results) (length forms))
+         (map list results sections)]
+        [(_ _) #f]))
+    (values status runs completed errors))
+
+  (define (read-all text)
+    (define in (open-input-string text))
+    (with-handlers ([exn:fail? (lambda (e) #f)])
+      (define value (read in))
+      (and (eof-object? (read in)) value)))
+
+  (define-check (check-child-runs requires forms expected)
+    (define-values (status runs completed errors)
+      (call-each-in-child requires forms #:libraries '()))
+    (define actual (list status runs completed))
+    (with-check-info (['actual actual] ['expected expected] ['stderr errors])
+      (unless (equal? actual expected)
+        (fail-check))))
+
+  (check-child-runs '() '() '(0 () 0))
+  (check-child-runs '()
+                    '((begin (display "(5)") (newline) 3)
+                      (begin (write-string "w\n" (current-error-port)) 'x))
+                    '(0 ((3 "") (x "w\n")) 2))
+  (check-child-runs '() '(1 (car '()) 3) (list 1 #f 1))
+  (check-child-runs '() '(1 (exit 3)) (list 3 #f 1))
+  (check-child-runs '()
+                    `((begin (write-string ,child-run-marker (current-error-port)) 1))
+                    (list 0 #f 2))
+  (check-child-runs '((only-in racket/list first)) '((first '(2)) (lambda () 1)) (list 0 #f 2))
 
   (define huge-counts (list (expt 2 62) size-max))
 

@@ -228,7 +228,7 @@ check_hook() {
     bash -c "$hook"$'\nprintf "PATH=%s\\n" "$PATH"') || fail "hook: status $?"
   lines=$(printf '%s\n' \
     "Setting up rkt-polars in $want (deps changed or first run)" \
-    "Done. Run 'raco test -x --timeout 600 -c polars' to test." \
+    "Done. Run 'raco test -e --timeout 600 -c polars' to test." \
     "Installing Resyntax in $want" \
     "PATH=$work/lintbin:$work/stub:$base_path")
   if [ "$out" != "$lines" ]; then
