@@ -429,12 +429,26 @@
   (define package-dir (simple-form-path polars-dir))
   (define (package-relative path)
     (path->string (find-relative-path package-dir (simple-form-path path))))
+  (define (included-sections in)
+    (define form
+      (parameterize ([read-accept-reader #t] [read-accept-lang #t])
+        (read in)))
+    (let walk ([datum form])
+      (match datum
+        [(list 'include-section (? string? section)) (list section)]
+        [(cons head tail) (append (walk head) (walk tail))]
+        [_ '()])))
   (define (manual-chapters file)
     (define-values (dir _name _must-be-dir?) (split-path file))
     (cons (package-relative file)
           (append-map (lambda (included) (manual-chapters (build-path dir included)))
-                      (regexp-match* #px"@include-section\\[\"([^\"]+)\"\\]" (file->string file)
-                                     #:match-select cadr))))
+                      (call-with-input-file file included-sections))))
+  (check-equal? (included-sections
+                 (open-input-string (string-append "#lang scribble/manual\n"
+                                                   "@;@include-section[\"off.scrbl\"]\n"
+                                                   "@include-section[\"on.scrbl\"]\n")))
+                '("on.scrbl")
+                "a commented-out include is not part of the manual")
   (match-define (cons manual-root manual-included)
     (manual-chapters (build-path package-dir "scribblings" "polars.scrbl")))
   (check-equal? (sort (map package-relative
