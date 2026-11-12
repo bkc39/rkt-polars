@@ -34,17 +34,15 @@ strip = "symbols"
 # guard_panic catches polars panics, so panics must unwind.
 panic = "unwind"
 
-# The committed candidates (scripts/build-so.sh), sized for GitHub's 100 MiB
+# The candidates (scripts/build-so.sh), sized for GitHub's 100 MiB
 # file limit (#125, #216); nix and cargo test stay on release, where LTO would
-# link every test and example binary on one core.  The Linux build takes fat
-# LTO on top (scripts/build-so.sh), whose 7 GiB peak a 7 GB macOS runner lacks.
+# link every test and example binary on one core.
 [profile.dist]
 inherits = "release"
 lto = "thin"
 codegen-units = 1
 
-# The crates only the cloud sources reach (object_store's HTTP and TLS stack),
-# built for size: a request's cost is the network's.
+# Only the cloud sources reach these crates.
 [profile.dist.package]
 form_urlencoded = { opt-level = "s" }
 h2 = { opt-level = "s" }
@@ -94,3 +92,7 @@ zerofrom = { opt-level = "s" }
 zerotrie = { opt-level = "s" }
 zerovec = { opt-level = "s" }
 
+# The Linux candidate; scripts/build-so.sh also gives its final link --icf=all.
+[profile.dist-linux]
+inherits = "dist"
+lto = "fat"

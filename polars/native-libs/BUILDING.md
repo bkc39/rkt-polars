@@ -188,12 +188,12 @@ candidate and stages it, with its `toolchain` record, in
 - **linux** needs Docker. It builds inside the pinned manylinux2014 image
   against glibc 2.17. Do not post-process a `.so` built against a newer glibc
   with `polyfill-glibc`: that corrupts the ELF and segfaults on newer glibc.
-  It builds `[profile.dist]` with fat LTO in place of thin, which takes the
-  final crate about 15 minutes at four jobs and 7 GiB at its peak, and links
-  with rust-lld, rustc's default there, passing the final link alone
-  `--icf=all`, which GNU ld lacks: a toolchain whose default linker is not
-  lld fails the link (#216). The darwin build keeps thin LTO: the macOS
-  runner has 7 GB.
+  It builds `[profile.dist-linux]`, `dist` with fat LTO in place of thin,
+  whose single-threaded final step takes about 15 minutes and 7 GiB at its
+  peak, and links with rust-lld, rustc's default there, passing the final
+  link alone `--icf=all`, which GNU ld lacks: a toolchain whose default
+  linker is not lld fails the link (#216). The darwin build keeps
+  `[profile.dist]`, thin LTO: the macOS runner has 7 GB.
 - **darwin** needs a Mac with rustup, from which the script installs the
   pinned rustc and builds with `rustup run <channel> cargo`, whatever `cargo`
   is first on `PATH` (nix's, in the dev shell). Without rustup, the rustc on
