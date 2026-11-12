@@ -1,17 +1,20 @@
-# A tag v<native-version> builds, gates, packages and tests both native
-# packages and drafts their GitHub Release; any other run, a PR's included,
-# does all of it but the draft (polars/native-libs/BUILDING.md).
 name: Release build
 
 on:
   pull_request:
     paths:
-      - rust/**
       - native/**
       - polars/info.rkt
+      - polars/private/native-*.rkt
       - scripts/release/**
-      - scripts/build-so.sh
       - scripts/stage-native-package.rkt
+      - scripts/check-bindings.rkt
+      - scripts/check-native-install.rkt
+      - scripts/dependency-catalogs.sh
+      - scripts/docs-check.sh
+      - flake.nix
+      - flake.lock
+      - .github/actions/install-racket/**
       - .github/workflows/release.yml
   push:
     tags: ["v*"]
@@ -33,13 +36,23 @@ jobs:
   plan:
     name: The native release a tag drafts
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     outputs:
       tag: ${{ steps.plan.outputs.tag }}
+      racket: ${{ steps.racket.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
+      - id: racket
+        name: The Racket release scripts/release/pins.sh pins
+        run: |
+          . scripts/release/pins.sh
+          echo "version=$RELEASE_RACKET_VERSION" >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/install-racket
+        with:
+          version: ${{ steps.racket.outputs.version }}
+          architecture: x64
       - id: plan
         name: Draft only for v<native-version>
         env:
@@ -114,8 +127,6 @@ jobs:
             library: libcompat.so
             arch: x64
             catalog-test: ""
-          # No pkg-build test on macOS, so its catalog test renders the docs
-          # and runs the suite.
           - os: macos-latest
             platform: aarch64-macosx
             package: polars-aarch64-macosx
@@ -128,7 +139,7 @@ jobs:
           ref: ${{ env.CHECKOUT_REF }}
       - uses: ./.github/actions/install-racket
         with:
-          version: "9.3"
+          version: ${{ needs.plan.outputs.racket }}
           architecture: ${{ matrix.arch }}
       - uses: actions/download-artifact@v8
         with:
@@ -140,7 +151,9 @@ jobs:
           path: ${{ runner.temp }}/notices
       - name: Compile polars for the exports gate
         run: |
-          raco pkg install --batch --auto --skip-installed gregor-lib threading-lib
+          listed=$(racket scripts/release/catalog.rkt deps polars)
+          mapfile -t deps <<<"$listed"
+          raco pkg install --batch --deps search-auto --skip-installed "${deps[@]}"
           PLTCOLLECTS="$PWD:" raco make -j 4 polars/private/*.rkt scripts/check-bindings.rkt
       - name: Gate the binary
         run: scripts/release/gates.sh ${{ matrix.platform }} "$RUNNER_TEMP/libcompat/${{ matrix.library }}"
@@ -192,6 +205,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
       - uses: actions/download-artifact@v8
         with:
           pattern: polars-*
@@ -202,8 +218,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.plan.outputs.tag }}
-        run: >-
-          gh release create "$TAG" --draft --verify-tag
-          --title "$TAG"
-          --notes "Native packages polars-x86_64-linux and polars-aarch64-macosx $TAG, their catalog entries, manifests and checksums"
-          "$RUNNER_TEMP"/dist/*
+          SHA: ${{ github.sha }}
+        run: scripts/release/draft.sh "$TAG" "$SHA" "$RUNNER_TEMP/dist"

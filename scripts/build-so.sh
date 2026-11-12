@@ -108,10 +108,7 @@ else
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
     exit 1
   fi
-  # The release gates refuse a builder's home in the dylib, where panic
-  # locations name every crate's source under cargo's home.  A cfg table's
-  # rustflags join rust/.cargo/config.toml's for the target, which RUSTFLAGS
-  # would replace.
+  # A cfg table's rustflags join rust/.cargo/config.toml's; RUSTFLAGS would replace them.
   remap="target.'cfg(all())'.rustflags=['--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo']"
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the

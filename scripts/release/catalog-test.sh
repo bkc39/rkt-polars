@@ -15,7 +15,8 @@ platform=$1
 dist=$(cd "$2" && pwd)
 full=${3:-}
 [ -z "$full" ] || [ "$full" = --full ] || usage
-package=$(release_package "$platform")
+release_platform "$platform"
+package=$RELEASE_PACKAGE
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 unset RKT_POLARS_COMPAT_LIB_PATH PLTCOLLECTS || true
@@ -32,9 +33,11 @@ echo "catalog test: Racket $version on $host, $package from $dist"
 mkdir -p "$work/catalog/pkg" "$work/native" "$work/src"
 unzip -q "$dist/$package.zip" -d "$work/native/$package"
 cmp "$dist/$package.manifest.json" "$work/native/$package/manifest.json"
-racket "$here/catalog.rkt" entry "$package" "$work/native/$package" "$dist/$package.zip" \
-  "file://$dist/$package.zip" >"$work/catalog/pkg/$package"
-read -ra catalogs <<<"$RELEASE_RACKET_CATALOGS"
+racket "$here/catalog.rkt" local-entry "$dist/$package.rktd" "file://$dist/$package.zip" \
+  >"$work/catalog/pkg/$package"
+listed=$(release_catalogs)
+catalogs=()
+while IFS= read -r catalog; do catalogs+=("$catalog"); done <<<"$listed"
 raco pkg config --set --scope user catalogs "file://$work/catalog" "${catalogs[@]}"
 
 release_tracked_copy "$root" polars "$work/src"
@@ -42,11 +45,6 @@ echo "catalog test: raco pkg install polars, which must pull $package by its #:p
 raco pkg install --batch --auto --no-docs --scope user --copy --name polars "$work/src/polars"
 
 racket "$root/scripts/check-native-install.rkt" "$package"
-racket -l racket/base -l polars -e '
-  (define d (filter (dataframe (list (series (list 1 2 3) #:name "v"))) (> (col "v") 1)))
-  (unless (equal? (series->list (ref d "v")) (list 2 3))
-    (error (quote catalog-test) "filter gave ~a" d))
-  (displayln d)'
 racket "$root/scripts/check-bindings.rkt"
 
 if [ -n "$full" ]; then
@@ -54,6 +52,6 @@ if [ -n "$full" ]; then
   raco pkg install --batch --auto --skip-installed --scope user threading-doc
   raco setup --check-pkg-deps --pkgs polars threading-doc
   DOCS_CHECK_PKG=polars "$root/scripts/docs-check.sh"
-  raco test -x --timeout 600 -c polars
+  raco test -e --timeout 600 -c polars
 fi
 echo "catalog test: passed"

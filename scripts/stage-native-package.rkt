@@ -3,6 +3,7 @@
 (require (only-in json write-json)
          (only-in racket/cmdline command-line)
          (only-in racket/file file->string make-directory*)
+         (only-in racket/match match-define)
          (only-in racket/path file-name-from-path path-only)
          (only-in racket/port with-output-to-string)
          racket/runtime-path
@@ -64,7 +65,7 @@
                           "--committed-candidate")
            library)]))
 
-(define (stage! platform library out rust-tree commit notices)
+(define (stage! platform library out rust-tree commit #:notices [notices #f])
   (define package (or (native-package platform) (fail "no native package for ~a" platform)))
   (define skeleton (build-path repo "native" package))
   (define version ((get-info/full skeleton) 'version))
@@ -78,14 +79,13 @@
     (fail "~a already exists" out))
   (define libs (build-path out "native-libs"))
   (make-directory* libs)
-  (for ([source (list* (build-path skeleton "info.rkt")
-                       (build-path skeleton "main.rkt")
-                       (build-path repo "LICENSE-APACHE")
-                       (build-path repo "LICENSE-MIT")
-                       library
-                       (if notices (list notices) '()))]
-        [target (list "info.rkt" "main.rkt" "LICENSE-APACHE" "LICENSE-MIT"
-                      (build-path "native-libs" name) "THIRD-PARTY-NOTICES.txt")])
+  (for ([copy (in-list `((,(build-path skeleton "info.rkt") "info.rkt")
+                         (,(build-path skeleton "main.rkt") "main.rkt")
+                         (,(build-path repo "LICENSE-APACHE") "LICENSE-APACHE")
+                         (,(build-path repo "LICENSE-MIT") "LICENSE-MIT")
+                         (,library ,(build-path "native-libs" name))
+                         ,@(if notices `((,notices "THIRD-PARTY-NOTICES.txt")) '())))])
+    (match-define (list source target) copy)
     (copy-file source (build-path out target)))
   (call-with-output-file* (build-path out "manifest.json")
     (lambda (port) (write-json (manifest-jsexpr libs version rust-tree commit) port)))
@@ -115,4 +115,4 @@
    (define library-path (path->complete-path library))
    (define-values (tree built) (provenance library-path rust-tree commit fallback))
    (parameterize ([current-native-platform platform])
-     (stage! platform library-path (path->complete-path out) tree built notices))))
+     (stage! platform library-path (path->complete-path out) tree built #:notices notices))))

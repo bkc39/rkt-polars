@@ -22,6 +22,17 @@
         'tags '()
         'modules '()))
 
+(define (local-entry rktd source)
+  (define shipped (call-with-input-file rktd read))
+  (unless (and (hash? shipped) (hash-has-key? shipped 'source))
+    (raise-user-error 'catalog "~a is not a catalog entry" rktd))
+  (hash-set shipped 'source source))
+
+(define (platform-free-deps dir)
+  (for/list ([dep (in-list (info-ref dir 'deps))]
+             #:unless (and (pair? dep) (memq '#:platform dep)))
+    (if (pair? dep) (car dep) dep)))
+
 (define (manifest-field manifest key)
   (define value (hash-ref (call-with-input-file manifest read-json) key #f))
   (unless (string? value)
@@ -31,8 +42,19 @@
 (module+ main
   (match (current-command-line-arguments)
     [(vector "entry" name dir zip source) (pretty-write (entry name dir zip source))]
-    [(vector "manifest" manifest key) (displayln (manifest-field manifest (string->symbol key)))]
+    [(vector "local-entry" rktd source) (pretty-write (local-entry rktd source))]
+    [(vector "manifest" manifest keys ..1)
+     (for ([key (in-list keys)])
+       (displayln (manifest-field manifest (string->symbol key))))]
+    [(vector "info" dir keys ..1)
+     (for ([key (in-list keys)])
+       (displayln (info-ref dir (string->symbol key))))]
+    [(vector "deps" dir) (for-each displayln (platform-free-deps dir))]
     [_
      (raise-user-error
       'catalog
-      "usage: catalog.rkt entry NAME INFO-DIR ZIP SOURCE | manifest MANIFEST.json KEY")]))
+      (string-append "usage: catalog.rkt entry NAME INFO-DIR ZIP SOURCE"
+                     " | local-entry ENTRY.rktd SOURCE"
+                     " | manifest MANIFEST.json KEY..."
+                     " | info INFO-DIR KEY..."
+                     " | deps INFO-DIR"))]))

@@ -67,9 +67,7 @@
   ;; given or finds recorded, or HEAD's under --head only while rust/ is clean,
   ;; and fails naming why otherwise.  Needs racket and git: the dev shell.
   (stage-native-package "bash scripts/stage-native-package-test.sh")
-  ;; The release gates (scripts/release/gates.sh) against planted libraries,
-  ;; draft-tag.sh's verdicts and package.sh's refusals.  Needs cc, racket and
-  ;; the dev shell's staged libcompat, which exports every binding.
+  ;; scripts/release/ against planted libraries and stubs; needs the dev shell's libcompat.
   (release-gates "bash scripts/release/gates-test.sh polars/native-libs/libcompat.so")
   ;; scripts/test-local.sh copies only the release catalog and
   ;; pkgs.racket-lang.org, the catalogs polars' dependencies come from, so an

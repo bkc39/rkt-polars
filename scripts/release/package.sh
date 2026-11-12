@@ -14,8 +14,8 @@ platform=$1
 artifact=$(cd "$2" && pwd)
 notices=$3
 dist=$4
-package=$(release_package "$platform")
-library=$(release_library "$platform")
+release_platform "$platform"
+package=$RELEASE_PACKAGE
 mkdir -p "$dist"
 dist=$(cd "$dist" && pwd)
 work=$(mktemp -d)
@@ -26,16 +26,18 @@ if [ ! -s "$notices" ]; then
   exit 1
 fi
 racket -S "$root" "$root/scripts/stage-native-package.rkt" --notices "$notices" \
-  "$platform" "$artifact/$library" "$work/$package"
+  "$platform" "$artifact/$RELEASE_LIBRARY" "$work/$package"
 
 manifest="$work/$package/manifest.json"
-built=$(racket "$here/catalog.rkt" manifest "$manifest" rust_tree)
+{
+  read -r built
+  read -r version
+} < <(racket "$here/catalog.rkt" manifest "$manifest" rust_tree native_version)
 tree=$(git -C "$root" rev-parse HEAD:rust)
 if [ "$built" != "$tree" ]; then
   echo "package: $package was built from rust/ tree $built, but this checkout's HEAD:rust is $tree" >&2
   exit 1
 fi
-version=$(racket "$here/catalog.rkt" manifest "$manifest" native_version)
 
 rm -f "$dist/$package".*
 raco pkg create --format zip --dest "$dist" "$work/$package"

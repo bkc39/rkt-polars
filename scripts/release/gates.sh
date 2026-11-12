@@ -16,12 +16,8 @@ usage() {
 platform=$1
 lib=$2
 shift 2
-case $platform in
-  x86_64-linux) gate_names="file runpath store-paths home-paths glibc needed size exports" ;;
-  aarch64-macosx) gate_names="file runpath store-paths home-paths needed size exports" ;;
-  *) usage ;;
-esac
-gates=${*:-$gate_names}
+release_platform "$platform" || usage
+gates=${*:-$RELEASE_GATES}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
@@ -59,28 +55,37 @@ macho() {
     esac
   fi
 }
-dynamic() { { readelf -d "$lib" 2>/dev/null || true; } | sed -n "s/.*($1).*\[\(.*\)\]\$/\1/p"; }
+# reader GATE OUT COMMAND...: COMMAND's output in $scratch/OUT, or GATE fails with its error.
+reader() {
+  local gate=$1 out=$scratch/$2
+  shift 2
+  "$@" >"$out" 2>"$scratch/reader.err" && return 0
+  fail "$gate" "$1 cannot read it: $(line "$(cat "$scratch/reader.err")")"
+  return 1
+}
+dynamic() { sed -n "s/.*($1).*\[\(.*\)\]\$/\1/p" "$scratch/dynamic"; }
 load_command() {
-  { macho -l "$lib" 2>/dev/null || true; } | awk -v want="$1" '
+  awk -v want="$1" '
     $1 == "cmd" { take = ($2 == want); next }
-    take && ($1 == "path" || $1 == "name") { print $2 }'
+    take && ($1 == "path" || $1 == "name") { print $2 }' "$scratch/load"
 }
 version_le() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$2" ]; }
 
 gate_file() {
-  local header segments kind
+  local kind
   if [ ! -f "$lib" ]; then
     fail file "missing"
     return
   fi
   case $platform in
     x86_64-linux)
-      header=$(readelf -h "$lib" 2>/dev/null) || true
-      segments=$(readelf -l "$lib" 2>/dev/null) || true
-      if ! grep -q '^ *Class: *ELF64$' <<<"$header" || ! grep -q '^ *Type: *DYN ' <<<"$header" ||
-        ! grep -q '^ *Machine: *Advanced Micro Devices X86-64$' <<<"$header"; then
+      reader file header readelf -h "$lib" || return 0
+      reader file segments readelf -l "$lib" || return 0
+      if ! release_grep -q '^ *Class: *ELF64$' "$scratch/header" ||
+        ! release_grep -q '^ *Type: *DYN ' "$scratch/header" ||
+        ! release_grep -q '^ *Machine: *Advanced Micro Devices X86-64$' "$scratch/header"; then
         fail file "not an x86-64 ELF64 shared object"
-      elif grep -q '^ *INTERP ' <<<"$segments"; then
+      elif release_grep -q '^ *INTERP ' "$scratch/segments"; then
         fail file "has a PT_INTERP: an executable, not a shared object"
       fi
       ok file "x86-64 ELF64 shared object"
@@ -101,6 +106,7 @@ gate_runpath() {
   local runpath rpath id bad
   case $platform in
     x86_64-linux)
+      reader runpath dynamic readelf -d "$lib" || return 0
       runpath=$(dynamic RUNPATH)
       rpath=$(dynamic RPATH)
       { [ -z "$runpath" ] || [ "$runpath" = "$origin" ]; } && [ -z "$rpath" ] ||
@@ -108,8 +114,9 @@ gate_runpath() {
       ok runpath "none outside \$ORIGIN"
       ;;
     aarch64-macosx)
+      reader runpath load macho -l "$lib" || return 0
       id=$(load_command LC_ID_DYLIB)
-      bad=$(load_command LC_RPATH | grep -v '^@loader_path' || true)
+      bad=$(load_command LC_RPATH | sed '/^@loader_path/d')
       [ "$id" = "@rpath/libcompat.dylib" ] || fail runpath "install name [$id], want @rpath/libcompat.dylib"
       [ -z "$bad" ] || fail runpath "LC_RPATH [$(line "$bad")] outside @loader_path"
       ok runpath "none outside @loader_path"
@@ -117,24 +124,30 @@ gate_runpath() {
   esac
 }
 
+first_paths() {
+  release_matches -aoE "$1" "$lib" >"$scratch/paths"
+  sort -u "$scratch/paths" | sed -n 1,3p
+}
+
 gate_store_paths() {
   local found
-  found=$(grep -aoE '/nix/store/[A-Za-z0-9._+-]+' "$lib" | sort -u | head -n 3 || true)
+  found=$(first_paths '/nix/store/[A-Za-z0-9._+-]+')
   [ -z "$found" ] || fail store-paths "names $(line "$found")"
   ok store-paths "no /nix/store path"
 }
 
 gate_home_paths() {
   local found
-  found=$(grep -aoE '/(home|Users|root)/[A-Za-z0-9._-]+' "$lib" | sort -u | head -n 3 || true)
+  found=$(first_paths '/(home|Users|root)/[A-Za-z0-9._-]+')
   [ -z "$found" ] || fail home-paths "names $(line "$found"), a builder's home"
   ok home-paths "no /home, /Users or /root path"
 }
 
 gate_glibc() {
   local highest
-  highest=$({ objdump -T "$lib" 2>/dev/null || true; } | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' |
-    sed 's/^GLIBC_//' | sort -V | tail -n1)
+  reader glibc symbols objdump -T "$lib" || return 0
+  release_matches -oE 'GLIBC_[0-9]+(\.[0-9]+)+' "$scratch/symbols" >"$scratch/glibc"
+  highest=$(sed 's/^GLIBC_//' "$scratch/glibc" | sort -V | tail -n1)
   if [ -z "$highest" ]; then
     fail glibc "no GLIBC_ symbol versions"
   elif ! version_le "$highest" "$RELEASE_GLIBC_MAX"; then
@@ -147,16 +160,18 @@ gate_needed() {
   local actual allowed extra id
   case $platform in
     x86_64-linux)
+      reader needed dynamic readelf -d "$lib" || return 0
       actual=$(dynamic NEEDED | sort -u)
-      allowed=$(words "$RELEASE_LINUX_NEEDED")
       ;;
     aarch64-macosx)
+      reader needed load macho -l "$lib" || return 0
+      reader needed dylibs macho -L "$lib" || return 0
       id=$(load_command LC_ID_DYLIB)
-      actual=$({ macho -L "$lib" 2>/dev/null || true; } | sed -n '2,$s/^[[:space:]]*\([^ ]*\) (.*/\1/p' |
-        grep -vxF "${id:-@rpath/libcompat.dylib}" | sort -u || true)
-      allowed=$(sort -u <<<"$RELEASE_DARWIN_NEEDED")
+      actual=$(sed -n '2,$s/^[[:space:]]*\([^ ]*\) (.*/\1/p' "$scratch/dylibs" |
+        awk -v id="${id:-@rpath/libcompat.dylib}" '$0 != id' | sort -u)
       ;;
   esac
+  allowed=$(sort -u <<<"$RELEASE_NEEDED")
   extra=$(comm -23 <(printf '%s\n' "$actual") <(printf '%s\n' "$allowed") | sed '/^$/d')
   [ -n "$actual" ] || fail needed "links no library"
   [ -z "$extra" ] || fail needed "links $(line "$extra"), outside the allow-list (scripts/release/pins.sh)"
@@ -175,24 +190,29 @@ gate_size() {
 }
 
 gate_exports() {
-  local host out status=0
+  local host status=0 out=$scratch/exports.out why=$scratch/exports.why
   host=$(racket -e '(display (system-library-subpath #f))')
   if [[ $host != "$platform"* ]]; then
     fail exports "loads only on $platform, and this host is $host"
     return
   fi
   mkdir -p "$scratch/exports/lib"
-  cp "$lib" "$scratch/exports/lib/$(release_library "$platform")"
-  out=$(RKT_POLARS_COMPAT_LIB_PATH="$scratch/exports" PLTCOLLECTS="$root:${PLTCOLLECTS:-}" \
-    racket "$root/scripts/check-bindings.rkt" 2>&1) || status=$?
-  [ "$status" -eq 0 ] ||
-    fail exports "$(line "$(grep -E '^(MISSING|FAILED)' <<<"$out" | head -n 5 || echo "$out" | tail -n 3)")"
-  ok exports "$(grep -E 'modules under polars/private instantiate' <<<"$out" || true)"
+  cp "$lib" "$scratch/exports/lib/$RELEASE_LIBRARY"
+  RKT_POLARS_COMPAT_LIB_PATH="$scratch/exports" PLTCOLLECTS="$root:${PLTCOLLECTS:-}" \
+    racket "$root/scripts/check-bindings.rkt" >"$out" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    release_matches -E '^(MISSING|FAILED)' "$out" >"$why"
+    [ -s "$why" ] || sed -n 1,3p "$out" >"$why"
+    fail exports "check-bindings.rkt exited $status: $(line "$(sed -n 1,5p "$why")")"
+    return
+  fi
+  release_matches 'modules under polars/private instantiate' "$out" >"$why"
+  ok exports "$(cat "$why")"
 }
 
 for gate in $gates; do
-  if ! [[ " $gate_names " == *" $gate "* ]]; then
-    echo "gates.sh: no gate $gate for $platform (gates: $gate_names)" >&2
+  if ! [[ " $RELEASE_GATES " == *" $gate "* ]]; then
+    echo "gates.sh: no gate $gate for $platform (gates: $RELEASE_GATES)" >&2
     exit 2
   fi
   gate_failed=0
