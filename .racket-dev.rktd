@@ -74,8 +74,9 @@
   ;; given or finds recorded, or HEAD's under --head only while rust/ is clean,
   ;; and fails naming why otherwise.  Needs racket and git: the dev shell.
   (stage-native-package "bash scripts/stage-native-package-test.sh")
-  ;; scripts/release/ against planted libraries and stubs; needs the dev shell's libcompat.
-  (release-gates "bash scripts/release/gates-test.sh polars/native-libs/libcompat.so")
+  ;; scripts/release/ against planted libraries and stubs; needs the dev
+  ;; shell's libcompat, which it takes from the directory by the host's name.
+  (release-gates "bash scripts/release/gates-test.sh polars/native-libs")
   ;; scripts/test-local.sh copies only the release catalog and
   ;; pkgs.racket-lang.org, the catalogs polars' dependencies come from, so an
   ;; outage elsewhere cannot fail it.  Plain bash, raco stubbed.
