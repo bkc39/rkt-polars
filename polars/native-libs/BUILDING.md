@@ -1,35 +1,26 @@
-# The committed `libcompat` candidates
-
-`polars` loads `libcompat` from the native package for its platform,
-`polars-x86_64-linux` or `polars-aarch64-macosx` (#254), which a release
-builds (see [Native packages](#native-packages)). The candidates below stay
-until #254's L3 removes them: the pre-installer stages one only where no
-native package is installed, and only on the platform it was built for.
+# Building and releasing `libcompat`
 
 `rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
-host at **pkgs.racket-lang.org has no Rust toolchain**, so the package ships a
-prebuilt binary per platform, and the pre-installer
-(`polars/private/install-compat.rkt`) copies it into place. It leaves an
-identical library alone and replaces a differing one by a rename, as
-`scripts/install-native-libs.sh` does (#267). It keeps a library that
-script installed, which it marks with `.libcompat.*.dev` beside it, until
-`RKT_POLARS_FORCE_CANDIDATE=1` or the dev shell installs another (#306):
+host at **pkgs.racket-lang.org has no Rust toolchain**, so `polars` loads a
+prebuilt library from the native package for its platform,
+`polars-x86_64-linux` or `polars-aarch64-macosx` (#254), which `polars/info.rkt`
+depends on by `#:platform`. No binary is committed: a tag
+`v<native-version>` builds both libraries and drafts the GitHub Release that
+holds the two packages (see [Releases](#releases)), and a developer loads the
+dev shell's staged copy (`nix run .#copy-native-libs`) or the library
+`RKT_POLARS_COMPAT_LIB_PATH` names.
 
-| Platform | Committed file | Installed on |
-|----------|----------------|--------------|
-| `linux`  | `candidates/linux/libcompat.so`     | **pkgs.racket-lang.org** + Linux x86-64 users |
-| `darwin` | `candidates/darwin/libcompat.dylib` | macOS arm64 users |
-
-`define-compat` resolves each C symbol **at module load**, so a candidate that
+`define-compat` resolves each C symbol **at module load**, so a library that
 lacks an export the Racket side binds makes `raco setup` fail for every catalog
-user, not just the call. **A PR that adds or changes a `#[no_mangle] pub extern
-"C"` function in `rust/src` needs both candidates refreshed before it merges.**
-Any other Rust change reaches catalog users only once they are refreshed.
+user, not just the call. **A change to a `#[no_mangle] pub extern "C"`
+function in `rust/src`, or any other Rust change, reaches catalog users only
+through a native release**, which must be published before `polars`' catalog
+source moves to a tag that binds it.
 
 ## The toolchain
 
-The candidates are built by the same rustc release as the tests run on, but
-not the same build of it:
+The released libraries are built by the same rustc release as the tests run
+on, but not the same build of it:
 
 - `rust/rust-toolchain.toml` pins the release rustc. `scripts/build-so.sh`
   builds with it, and the `release-toolchain` flake check fails when it is not
@@ -38,79 +29,20 @@ not the same build of it:
   `cargo` run in `rust/`. The release and commit match, but rustup's build of
   a release carries its own LLVM, which can differ from nixpkgs' (22.1.8
   against 21.1.8 for 1.98.1), so `nix flake check` does not cover the shipped
-  code generation. The CI jobs that install the built candidates and run the
-  tests do.
+  code generation. The Release build jobs that install the built packages
+  and run the tests do.
 - `scripts/build-so.sh` names the manylinux2014 image, which supplies the
-  Linux candidate's linker and glibc, by digest. The darwin linker is the CI
+  Linux library's linker and glibc, by digest. The darwin linker is the CI
   runner's Xcode, which nothing pins.
 - Each build writes `toolchain` beside the library: the `rustc -vV` that built
   it, and the image (Linux) or the linker (darwin). CI uploads it in the
-  artifact with `rust-tree`.
+  artifact with `rust-tree` and `commit`.
 
 The same rustc release, `rust/` and image give a byte-identical Linux
-candidate: a build on another host in the pinned image matched CI's. The
-darwin candidate also depends on the runner's Xcode, which nothing pins: CI
+library: a build on another host in the pinned image matched CI's. The
+darwin library also depends on the runner's Xcode, which nothing pins: CI
 runs on one runner image have matched, but a runner update can change its
 bytes.
-
-## What CI checks
-
-- **Build libcompat (linux, darwin)** builds both from the pushed commit with
-  `scripts/build-so.sh` and uploads them as the artifacts `libcompat-linux` and
-  `libcompat-darwin`. The Linux build runs in the manylinux2014 container, so
-  the `.so` needs only glibc ≤ 2.17 (the catalog's test host is older than
-  2.27), and the job asserts that floor.
-- **Old-glibc load test** `dlopen`s the Linux artifact in the image that built
-  it.
-- **Catalog install** installs those fresh artifacts the way the catalog does,
-  then builds the docs and runs the tests.
-- **Committed candidate (linux, darwin)** does the same with the **committed**
-  binaries (`scripts/test-local.sh`, which first instantiates every module
-  under `polars/private` with `scripts/check-bindings.rkt`). The Linux job also
-  checks both committed files with `scripts/verify-candidates.py`. It is red on
-  a PR that adds an export, or whose tests need its new Rust behaviour, without
-  refreshing the candidates, and its error says what to run. It cannot see a
-  Rust change that no test exercises. A stack refreshes the candidates once,
-  on its top PR, so on a PR that another open PR is stacked on (one whose
-  base is its branch) a failed install or test is a warning naming the PR
-  above, and Catalog install still tests that PR's own build. The top and
-  `master` stay strict, and the stack lands in one merge on the top.
-
-## Refreshing the candidates from CI
-
-On a checkout of the PR branch:
-
-```sh
-scripts/refresh-candidates.sh <PR>            # or: --run <run-id>
-git add polars/native-libs/candidates
-git commit -F ~/rkt-polars-candidates/<run-id>/commit-msg.txt
-git push
-```
-
-The script re-runs itself inside `nix develop`, then:
-
-1. takes the CI run for the PR's head commit (its `pull_request` run, which
-   builds the merge with `master`);
-2. waits for the run's Build libcompat jobs and downloads both artifacts to
-   `~/rkt-polars-candidates/<run-id>/` (`--dir` to change);
-3. refuses unless each build recorded its `rust/` tree and toolchain, the tree
-   is the checkout's, the rustc release is the dev shell's (the flake's), and
-   the Linux image is the one the checkout's `scripts/build-so.sh` names (the
-   script lies outside `rust/`, so the tree check misses an image change); it
-   prints each toolchain;
-4. stops if they already match the committed files (see "The toolchain" for
-   when builds are byte-identical);
-5. checks them with `scripts/verify-candidates.py` (an x86-64 ELF needing
-   glibc ≤ 2.17, an arm64 Mach-O with a code signature, the same exports on
-   both) and with `scripts/check-bindings.rkt` (every module under
-   `polars/private` instantiates against this host's candidate, staged in
-   place of the nix-built library);
-6. copies them into `candidates/` and writes the commit message, which lists
-   the toolchains and the exports added and removed.
-
-A run from before the toolchain record (#138) records none and is refused, so
-a PR opened before #138 merged must merge `master`, push, and wait for the new
-CI run before its next refresh.
 
 ## Refreshing the toolchain
 
@@ -137,8 +69,9 @@ It benches the tree (`nix run .#bench`), then:
    versions before and after, the `cargo update` log, both bench tables) under
    `~/rkt-polars-toolchain/<time>/` (`--dir` to change).
 
-Commit, push and open the PR as it prints; once the PR's CI has built both
-candidates, refresh them with `scripts/refresh-candidates.sh <PR>`.
+Commit, push and open the PR as it prints. Its Release build run builds,
+gates and installs both packages; once it merges, a native release ships them
+(see [Release checklist](#release-checklist)).
 
 When a step fails, nothing is committed. A new `racket-deps` hash goes in
 `outputHash` in `flake.nix` (nix prints it). A build that fails on the new
@@ -149,9 +82,9 @@ of its own, not a refresh.
 To move only the image, set `MANYLINUX_IMAGE` in `scripts/build-so.sh` to
 `quay.io/pypa/manylinux2014_x86_64:<tag>@<digest>`, a dated tag and its digest
 from [quay.io's tag list](https://quay.io/repository/pypa/manylinux2014_x86_64?tab=tags).
-A new image can change the Linux candidate's bytes; refresh the candidates
-from that PR's run (`scripts/refresh-candidates.sh` refuses an older run,
-built in the old image).
+A new image can change the Linux library's bytes. It lies outside `rust/`,
+so `draft-tag.sh` does not ask for a native release: bump `native-version`
+to ship it.
 
 ## The polars fork
 
@@ -185,11 +118,11 @@ cargo fetches the fork with its history (about 160 MB) once per
 time; `fetchgit` takes the one commit. A polars bump starts a new branch, as
 `AGENTS.md`'s toolchain rule says.
 
+
 ## Building by hand
 
-When CI is not available, `scripts/build-so.sh <platform>` builds one
-candidate and stages it, with its `toolchain` record, in
-`candidates/<platform>/`:
+`scripts/build-so.sh <platform>` builds one library, with its `toolchain`
+record, in `rust/target/libcompat/<platform>/`:
 
 - **linux** needs Docker. It builds inside the pinned manylinux2014 image
   against glibc 2.17. Do not post-process a `.so` built against a newer glibc
@@ -205,22 +138,14 @@ candidate and stages it, with its `toolchain` record, in
   (`minos`), which nothing pins. `scripts/test-build-so.sh` checks all of
   this against fakes (the `build-so-darwin` flake check, under nixpkgs'
   bash); `BASH_UNDER_TEST=/bin/bash` runs it under macOS's bash 3.2,
-  which nixpkgs lacks. The script
-  rewrites the install name to
+  which nixpkgs lacks. The script rewrites the install name to
   `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
   invalidates the linker's signature, and Apple Silicon kills an unsigned
   dylib (`Killed: 9`) the moment Racket `dlopen()`s it.
 
-Check the pair with
-
-```sh
-python3 scripts/verify-candidates.py \
-  polars/native-libs/candidates/linux/libcompat.so \
-  polars/native-libs/candidates/darwin/libcompat.dylib
-```
-
-and reproduce the catalog install with `scripts/test-local.sh`, in a fresh
-`PLTUSERHOME` as on a CI runner.
+`scripts/release/gates.sh` checks a built library as a release does, and
+`scripts/test-local.sh LIBCOMPAT` reproduces the catalog install from it,
+in a fresh `PLTUSERHOME` as on a CI runner (see below).
 
 ## Native packages
 
@@ -230,7 +155,7 @@ and reproduce the catalog install with `scripts/test-local.sh`, in a fresh
 2. a staged `polars/native-libs/libcompat.*`, unless a native package holding
    a library is installed and the staged copy has no dev marker matching it
    (`.libcompat.*.dev`, which `nix run .#copy-native-libs` and the dev shell
-   write), so a staged committed candidate never shadows the package;
+   write), so a stale staged copy never shadows the package;
 3. the native package for the platform, found with `collection-file-path`
    and `dynamic-require`. Its version must equal `native-version` in
    `polars/info.rkt`, which the loader reads when it is compiled.
@@ -245,16 +170,14 @@ package does not make it a collection; the dev shell's hook removes a root
 and commit the library was built from, and each `libcompat.*`'s sha256.
 
     racket scripts/stage-native-package.rkt \
-      [--rust-tree TREE --commit SHA] [--head | --committed-candidate] \
+      [--rust-tree TREE --commit SHA] [--head] \
       [--notices FILE] PLATFORM LIBCOMPAT OUT-DIR
 
 assembles one for `x86_64-linux` or `aarch64-macosx` in `OUT-DIR`, which
 must not exist. The tree and commit are `--rust-tree` and `--commit`, or else
 the `rust-tree` and `commit` files CI's build records beside the library, or
 else, given `--head`, this checkout's `HEAD`, which it refuses while `rust/`
-differs from `HEAD`, or, given `--committed-candidate`, the placeholder
-`committed-candidate` for both: a committed candidate records neither, and
-`HEAD` need not be what built it. With none of these it fails. `--notices` ships FILE
+differs from `HEAD`. With none of these it fails. `--notices` ships FILE
 as `THIRD-PARTY-NOTICES.txt`, which a release does. The script requires
 `polars/private/native-location` by collection, so run it where `polars` is
 installed or linked, or with `racket -S <repo>` (`scripts/test-local.sh`
@@ -263,38 +186,40 @@ gate, and a step of CI's Lint job) holds it there.
 
 The pre-installer (`polars/private/install-compat.rkt`) fails `raco setup` on
 a native package whose version, manifest version or library hashes do not
-match, and checks nothing under the variable or a dev-marked staged copy. It
-runs only when `polars` is set up: `raco pkg install` or `raco pkg update` of
-the native package alone does not run it, and the loader then checks the
-version alone.
+match, and checks nothing under the variable, from which it stages the
+library, or for a dev-marked staged copy. With no package and no staged
+copy it warns, naming the package to install, or on another platform the
+supported ones, and `raco setup` succeeds. It runs only when `polars` is
+set up: `raco pkg install` or `raco pkg update` of the native package alone
+does not run it, and the loader then checks the version alone.
 
-`scripts/test-local.sh` (the `Catalog install` and `Committed candidate`
-jobs) stages the candidate as the native package (`--committed-candidate`,
-so CI's recorded tree and commit name a fresh build's), puts it in a
-`file://` catalog with a copy of the configured release catalog and
-pkgs.racket-lang.org, the only ones polars' dependencies come from
-(`scripts/dependency-catalogs.sh`, held by the `dependency-catalogs` gate
-and a step of CI's Lint job: `raco pkg catalog-copy` fails when any catalog
-it reads does not answer), installs `polars` from that
-catalog with `--auto`, so a `#:platform` string that does not match leaves
-the package out, and then `scripts/check-native-install.rkt` requires that
-`polars` loads the package's library, staged no candidate and filters a
-frame.
+`scripts/test-local.sh LIBCOMPAT` stages a built library (`build-so.sh`'s,
+with its records, or the dev shell's staged copy, named by `HEAD`'s clean
+`rust/`) as the native package, puts it in a `file://` catalog with a copy of
+the configured release catalog and pkgs.racket-lang.org, the only ones
+polars' dependencies come from (`scripts/dependency-catalogs.sh`, held by
+the `dependency-catalogs` gate and a step of CI's Lint job: `raco pkg
+catalog-copy` fails when any catalog it reads does not answer), installs
+`polars`' tracked files from that catalog with `--auto`, so a `#:platform`
+string that does not match leaves the package out, and then
+`scripts/check-native-install.rkt` requires that `polars` loads the
+package's library, staged none and filters a frame. It then renders the
+docs and runs the tests.
 
 ## Releases
 
 `.github/workflows/release.yml` (the `Release build` workflow) runs on a tag
-`v*`, on demand, and on a PR that touches what packages or tests a release
-(`native/`, `polars/info.rkt`, `polars/private/native-*.rkt`,
-`scripts/release/`, the scripts it calls, the flake, the workflow and the
-`install-racket` action). A PR that touches only `rust/` or
-`scripts/build-so.sh` does not run it, since `native.yml` already builds
-both libraries; its gates run at the tag. A PR run checks out the PR's
-head, not the merge with its base, so the manifest names a commit that
-outlives the run. Every script below sources `scripts/release/pins.sh`,
-which holds the pins (the Racket release, pkg-build's image, the natipkg
-installer) and one table per platform: the package, the library, its gates
-and its allowed NEEDED or `LC_LOAD_DYLIB` entries.
+`v*`, on demand, and on a PR that touches what builds, packages or tests a
+release (`rust/`, `scripts/build-so.sh` and its stub test, `native/`,
+`polars/info.rkt`, `polars/private/native-*.rkt`, `scripts/release/`, the
+scripts it calls, the flake, the workflow and the `install-racket` action).
+It is the only workflow that builds the shipped libraries; `ci.yml` runs the
+nix checks. A PR run checks out the PR's head, not the merge with its base,
+so the manifest names a commit that outlives the run. Every script below
+sources `scripts/release/pins.sh`, which holds the pins (the Racket release,
+pkg-build's image, the natipkg installer) and one table per platform: the
+package, the library, its gates and its allowed NEEDED or `LC_LOAD_DYLIB`
+entries.
 
 The **plan** job runs `scripts/release/draft-tag.sh`, which fails unless
 both `native/*/info.rkt` versions equal `native-version`, names a draft only
@@ -308,7 +233,10 @@ licences, `about.hbs` the layout) and appends, through
 `lz4-sys` compile in, failing when one is missing. The **build** job runs
 `scripts/build-so.sh` on each platform, with cargo's home remapped to
 `/cargo` in panic locations (#32), and records the `rust/` tree and commit
-beside the library.
+beside the library; on macOS it first runs `scripts/test-build-so.sh` under
+`/bin/bash`, bash 3.2, which the flake check cannot. The **old-glibc-load**
+job `dlopen`s the Linux library in the image that built it, glibc 2.17,
+which the glibc gate's symbol versions only predict.
 
 The **package** job, per platform, runs four scripts. `gates.sh PLATFORM
 LIBRARY [GATE...]` checks the binary against the platform's gates (file
@@ -326,6 +254,8 @@ catalog holding the shipped entry, in front of the catalogs
 (#124), runs `scripts/check-native-install.rkt` and
 `scripts/check-bindings.rkt`, and on macOS, which has no pkg-build test,
 with `--full` renders the docs and runs the suite as the test gate does.
+The **forward-compat** job runs `catalog-test.sh` again on Racket `stable`
+and the newest runner images; the draft does not wait for it.
 
 The **pkg-build** job runs `pkg-build-test.sh DIST`, which installs
 `polars` with docs in pkg-build's image (`racket/pkg-build:deps-x86_64`,
@@ -367,5 +297,6 @@ A Racket-only release bumps `polars`' `version` alone and tags
 `v<native-version>`, builds, gates and tests both packages but drafts
 nothing, and the catalog's `polars` source moves to the new tag (step 6).
 
-Every script but `notices.sh` and `build-so.sh` runs locally on the
-committed candidates, `pkg-build-test.sh` given Docker.
+Every script but `notices.sh` and `build-so.sh` runs locally on a library
+`build-so.sh` built or the dev shell's staged copy, `pkg-build-test.sh`
+given Docker.

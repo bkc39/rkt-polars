@@ -1,6 +1,6 @@
 # One run per commit: a PR commit runs only as pull_request (the merge with
-# its base), which is the run scripts/refresh-candidates.sh reads.  A branch
-# without a PR runs on demand (`gh workflow run ci.yml --ref <branch>`).
+# its base).  A branch without a PR runs on demand (`gh workflow run ci.yml
+# --ref <branch>`).  release.yml builds and installs the native packages.
 on:
   push:
     branches: [master]
@@ -13,11 +13,6 @@ concurrency:
   group: ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
-# CI runs both reusable workflows; the workflow (and its badge) is green only
-# when both the native and nix checks pass.
 jobs:
-  native:
-    uses: ./.github/workflows/native.yml
-
   nix:
     uses: ./.github/workflows/nix.yml

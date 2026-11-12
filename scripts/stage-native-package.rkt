@@ -43,9 +43,7 @@
     (fail "rust/ differs from HEAD, so HEAD does not name the tree the library was built from"))
   (values (git "rev-parse" "HEAD:rust") (git "rev-parse" "HEAD")))
 
-(define committed-candidate "committed-candidate")
-
-(define (provenance library rust-tree commit fallback)
+(define (provenance library rust-tree commit head?)
   (define tree-record (recorded library "rust-tree"))
   (define commit-record (recorded library "commit"))
   (cond
@@ -57,12 +55,10 @@
            (path-only library)
            (if tree-record "rust-tree" "commit")
            (if tree-record "commit" "rust-tree"))]
-    [(eq? fallback 'head) (head-provenance)]
-    [(eq? fallback 'committed-candidate) (values committed-candidate committed-candidate)]
+    [head? (head-provenance)]
     [else
      (fail (string-append "nothing names the rust/ tree and commit ~a was built from: pass "
-                          "--rust-tree and --commit, --head for this checkout's, or "
-                          "--committed-candidate")
+                          "--rust-tree and --commit, or --head for this checkout's")
            library)]))
 
 (define (stage! platform library out rust-tree commit #:notices [notices #f])
@@ -97,7 +93,7 @@
 (module+ main
   (define rust-tree #f)
   (define commit #f)
-  (define fallback #f)
+  (define head? #f)
   (define notices #f)
   (command-line
    #:program "stage-native-package"
@@ -106,13 +102,9 @@
    [("--commit") sha "The commit LIBCOMPAT was built from" (set! commit sha)]
    [("--notices") file "The third-party notices to ship as THIRD-PARTY-NOTICES.txt"
                   (set! notices (path->complete-path file))]
-   #:once-any
-   [("--head") "With no record, name HEAD and its clean rust/" (set! fallback 'head)]
-   [("--committed-candidate")
-    "With no record, name both committed-candidate: built from a tree nothing records"
-    (set! fallback 'committed-candidate)]
+   [("--head") "With no record, name HEAD and its clean rust/" (set! head? #t)]
    #:args (platform library out)
    (define library-path (path->complete-path library))
-   (define-values (tree built) (provenance library-path rust-tree commit fallback))
+   (define-values (tree built) (provenance library-path rust-tree commit head?))
    (parameterize ([current-native-platform platform])
      (stage! platform library-path (path->complete-path out) tree built #:notices notices))))

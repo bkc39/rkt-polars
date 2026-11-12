@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build the libcompat shared object and stage it as a committed, per-platform
-# candidate under polars/native-libs/candidates/<platform>/.  The candidates
-# are what pkgs.rkt-lang.org installs from, since its build host has no Rust
-# toolchain.
+# Build the libcompat shared object a native package ships, into
+# rust/target/libcompat/<platform>/ (polars/native-libs/BUILDING.md).
 #
 # Linux: built inside the manylinux2014 container (glibc 2.17) so the .so
 # requires only GLIBC <= 2.17 and loads on every Linux from the last decade,
@@ -17,7 +15,7 @@
 #
 # Beside the library it writes `toolchain`: the `rustc -vV` that built it, and
 # the image (Linux) or the linker and the minimum macOS (darwin).  CI uploads
-# it with the candidate.
+# it with the library.
 #
 # Usage:
 #   scripts/build-so.sh [platform]      # platform defaults to current OS
@@ -57,14 +55,14 @@ case "$platform" in
 esac
 
 lib="libcompat.${ext}"
-dest="$ROOT/polars/native-libs/candidates/$platform"
+dest="$ROOT/rust/target/libcompat/$platform"
 mkdir -p "$dest"
 
 if [[ "$platform" == "linux" ]]; then
   # Build against glibc 2.17 inside manylinux2014.  The source is mounted
   # read-only; cargo writes to a container-local target dir and copies just
   # the .so, and the record of the toolchain that built it, out to the
-  # mounted candidate directory.
+  # mounted output directory.
   echo ">> building $lib inside $MANYLINUX_IMAGE (glibc 2.17)"
   docker run --rm \
     -e RUSTC_BOOTSTRAP \
@@ -159,7 +157,7 @@ else
 
   # cargo bakes the absolute build path into the dylib's install name (LC_ID).
   # Racket loads libcompat by path via dlopen, so the id is never resolved, but
-  # rewrite it to @rpath so the committed binary carries no machine-specific
+  # rewrite it to @rpath so the shipped binary carries no machine-specific
   # path.
   if command -v install_name_tool >/dev/null 2>&1; then
     install_name_tool -id "@rpath/$lib" "$dest/$lib"
@@ -167,7 +165,7 @@ else
 
   # install_name_tool invalidates the linker's ad-hoc code signature, and on
   # Apple Silicon an unsigned/mismatched dylib is SIGKILL'd ("Killed: 9") the
-  # moment Racket dlopen()s it.  Re-sign ad-hoc so the committed candidate loads.
+  # moment Racket dlopen()s it.  Re-sign ad-hoc so the dylib loads.
   if command -v codesign >/dev/null 2>&1; then
     codesign -f -s - "$dest/$lib"
   fi

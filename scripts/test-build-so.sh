@@ -9,15 +9,14 @@
 # that release, and refuse otherwise.  Either way cargo runs without any
 # NIX_LDFLAGS* or NIX_CFLAGS* variable, a dylib that otool lists as linked
 # against /nix/store or with an LC_RPATH there is refused and not staged, and
-# the record names its minimum macOS and summarises on one line.  A failed
+# the record names its rustc, LLVM, linker and minimum macOS.  A failed
 # cargo build stages nothing and writes no record, though an earlier build's
 # dylib is still in the target directory, and a missing otool or ld stops it
 # before rustup installs anything.
 #
-# The summary is scripts/toolchain-summary.sh's, not the copy's.  Both run
-# under $BASH_UNDER_TEST (default: the bash on PATH), so that macOS's bash 3.2
-# can be tested; the stubs run under the bash on PATH.  Each case runs under
-# `env -i`, so nothing the caller exports reaches the script.
+# The copy runs under $BASH_UNDER_TEST (default: the bash on PATH), so that
+# macOS's bash 3.2 can be tested; the stubs run under the bash on PATH.  Each
+# case runs under `env -i`, so nothing the caller exports reaches the script.
 #
 # Usage: [BASH_UNDER_TEST=bash] scripts/test-build-so.sh [build-so.sh to test]
 set -euo pipefail
@@ -194,9 +193,9 @@ run_script() {
 
 # $3 is the rustc that ran: rustup's, or nix's on PATH.
 expect_built() {
-  local what="$1" channel="$2" rustc="$3" minos="${4:-11.0}" v llvm summary
-  local record="$repo/polars/native-libs/candidates/darwin/toolchain"
-  [[ -f "$repo/polars/native-libs/candidates/darwin/libcompat.dylib" ]] \
+  local what="$1" channel="$2" rustc="$3" minos="${4:-11.0}" v llvm line
+  local record="$repo/rust/target/libcompat/darwin/toolchain"
+  [[ -f "$repo/rust/target/libcompat/darwin/libcompat.dylib" ]] \
     || fail "$what: no staged libcompat.dylib"
   grep -qxF "release: $channel" "$record" \
     || fail "$what: the toolchain record does not name release $channel"
@@ -209,18 +208,10 @@ expect_built() {
     fail "$what: cargo ran with $(sed -n 's/^cargo sees //p' "$log" | paste -sd ' ' -)"
   fi
   case "$rustc" in rustup) llvm=20.1.8 ;; *) llvm=19.1.7 ;; esac
-  summary="$("$SHELL_UNDER_TEST" "$ROOT/scripts/toolchain-summary.sh" "$record")"
-  expect_summary "$what" "$summary" \
-    "rustc $channel ($rustc), LLVM $llvm, ld @(#)PROGRAM:ld fake, minos $minos"
-}
-
-# scripts/refresh-candidates.sh's one-line summary of a toolchain record.
-expect_summary() {
-  local what="$1" summary="$2" want="$3"
-  [[ "$summary" == "$want" ]] || {
-    fail "$what: the record's summary is not '$want' on one line:"
-    printf '%s\n' "$summary" | sed 's/^/  | /' >&2
-  }
+  for line in "rustc $channel ($rustc)" "LLVM version: $llvm" "ld: @(#)PROGRAM:ld fake"; do
+    grep -qxF "$line" "$record" \
+      || { fail "$what: the toolchain record lacks the line '$line':"; show "$record"; }
+  done
 }
 
 expect_refused() {
@@ -229,7 +220,7 @@ expect_refused() {
     fail "$what: build-so.sh darwin succeeded"
   fi
   grep -qF "$message" "$out" || { fail "$what: no '$message' in the output:"; show "$out"; }
-  [[ ! -e "$repo/polars/native-libs/candidates/darwin/libcompat.dylib" ]] \
+  [[ ! -e "$repo/rust/target/libcompat/darwin/libcompat.dylib" ]] \
     || fail "$what: the refused dylib was staged"
 }
 
@@ -323,12 +314,6 @@ for mode in rustup no-rustup; do
   fi
 done
 
-what="a Linux record"
-printf '%s\n' "rustc 1.2.3 (abcdef012 2026-01-01)" "binary: rustc" "release: 1.2.3" \
-  "LLVM version: 20.1.8" "image: quay.io/pypa/manylinux2014_x86_64:tag@sha256:00" > "$tmp/linux-record"
-expect_summary "$what" "$("$SHELL_UNDER_TEST" "$ROOT/scripts/toolchain-summary.sh" "$tmp/linux-record")" \
-  "rustc 1.2.3 (abcdef012 2026-01-01), LLVM 20.1.8, in quay.io/pypa/manylinux2014_x86_64:tag@sha256:00"
-
 what="no load command naming a minimum macOS"
 setup "$pinned" rustup "$pinned"
 fake_otool /usr/lib/libiconv.2.dylib none ""
@@ -345,7 +330,7 @@ for tool in otool ld; do
   if grep -q '^rustup toolchain install ' "$log"; then
     fail "$what: rustup installed the toolchain"
   fi
-  [[ ! -e "$repo/polars/native-libs/candidates/darwin/toolchain" ]] \
+  [[ ! -e "$repo/rust/target/libcompat/darwin/toolchain" ]] \
     || fail "$what: a toolchain record was written"
 done
 
@@ -358,7 +343,7 @@ for mode in rustup no-rustup; do
   echo stale > "$repo/rust/target/dist/libcompat.dylib"
   : > "$cargo_fails"
   expect_refused "$what" "error: could not compile polars"
-  [[ ! -e "$repo/polars/native-libs/candidates/darwin/toolchain" ]] \
+  [[ ! -e "$repo/rust/target/libcompat/darwin/toolchain" ]] \
     || fail "$what: a toolchain record was written"
 done
 

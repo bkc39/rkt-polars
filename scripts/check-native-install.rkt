@@ -22,7 +22,7 @@
   (define staged (build-path (path-only (collection-file-path "main.rkt" "polars")) "native-libs"))
   (define kind (native-location-kind (locate-native-library staged)))
   (define file (dynamic-require 'polars/private/native-library 'native-library-file))
-  (define candidates
+  (define staged-libraries
     (for/list ([name (in-list (directory-list staged))]
                #:when (regexp-match? #rx"^libcompat[.]" (path->string name)))
       name))
@@ -30,8 +30,8 @@
     (fail "polars locates libcompat as ~a, not in the package ~a" kind package))
   (unless (under? file root)
     (fail "polars loads ~a, which is not in the package ~a at ~a" file package root))
-  (unless (null? candidates)
-    (fail "the polars install staged ~a in ~a" candidates staged))
+  (unless (null? staged-libraries)
+    (fail "the polars install staged ~a in ~a" staged-libraries staged))
   (define kept
     (pl:filter (pl:dataframe (list (pl:series '(1 2 3) #:name "v"))) (pl:> (pl:col "v") 1)))
   (unless (equal? (pl:series->list (pl:ref kept "v")) '(2 3))

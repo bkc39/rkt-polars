@@ -166,175 +166,57 @@
        (install! lib collection)
        (check-equal? (file->bytes (build-path native "libcompat.so")) #"fresh"))))
 
-  (define (candidate-dir collection)
-    (build-path collection "native-libs" "candidates" "linux"))
-
-  (define (install-candidate! collection #:force? [force? #f])
-    (parameterize ([current-environment-variables
-                    (environment-variables-copy (current-environment-variables))])
-      (environment-variables-set! (current-environment-variables)
-                                  #"RKT_POLARS_COMPAT_LIB_PATH" #f)
-      (environment-variables-set! (current-environment-variables)
-                                  #"RKT_POLARS_FORCE_CANDIDATE" (and force? #"1"))
-      (with-native-collections _
-        (with-output-to-string (lambda () (pre-installer #f collection #f))))))
-
   (define (sha256-hex bs)
     (bytes->hex-string (sha256-bytes bs)))
 
   (define (marker-for bs)
     (format "~a\n" (sha256-hex bs)))
 
-  (define (call-with-dev-library marker-contents proc #:library [library "dev bytes"])
-    (call-with-install-dirs
-     (lambda (lib collection native)
-       (make-directory* (candidate-dir collection))
-       (scratch-file (candidate-dir collection) "libcompat.so" "candidate bytes")
-       (make-directory* native)
-       (define target (build-path native "libcompat.so"))
-       (when library
-         (scratch-file native "libcompat.so" library))
-       (define marker (build-path native ".libcompat.so.dev"))
-       (when marker-contents
-         (scratch-file native ".libcompat.so.dev" marker-contents))
-       (proc collection target marker))))
-
-  (test-case "a dev-marked library is kept, in one line naming it"
-    (call-with-dev-library
-     (marker-for #"dev bytes")
-     (lambda (collection target marker)
-       (define before (file-or-directory-identity target))
-       (define out (install-candidate! collection))
-       (check-equal? (file->bytes target) #"dev bytes")
-       (check-equal? (file-or-directory-identity target) before)
-       (check-true (file-exists? marker))
-       (check-equal? out
-                     (format (string-append "pre-installer: keeping the dev-built ~a; "
-                                            "RKT_POLARS_FORCE_CANDIDATE=1 installs the "
-                                            "committed candidate\n")
-                             (path->string target))))))
-
-  (test-case "a stale marker is ignored and removed with the candidate's install"
-    (call-with-dev-library
-     (marker-for #"other bytes")
-     (lambda (collection target marker)
-       (check-equal? (install-candidate! collection) "")
-       (check-equal? (file->bytes target) #"candidate bytes")
-       (check-false (file-exists? marker)))))
-
-  (test-case "RKT_POLARS_FORCE_CANDIDATE=1 installs the candidate over a dev-marked library"
-    (call-with-dev-library
-     (marker-for #"dev bytes")
-     (lambda (collection target marker)
-       (check-equal? (install-candidate! collection #:force? #t) "")
-       (check-equal? (file->bytes target) #"candidate bytes")
-       (check-false (file-exists? marker)))))
-
-  (test-case "without a marker the candidate replaces the library"
-    (call-with-dev-library
-     #f
-     (lambda (collection target marker)
-       (check-equal? (install-candidate! collection) "")
-       (check-equal? (file->bytes target) #"candidate bytes")
-       (define before (file-or-directory-identity target))
-       (check-equal? (install-candidate! collection) "")
-       (check-equal? (file-or-directory-identity target) before))))
-
-  (test-case "a marker not in the format, 64 lowercase hex digits and a newline, is stale"
-    (define hex (sha256-hex #"dev bytes"))
-    (for ([contents (list hex
-                          (string-upcase (marker-for #"dev bytes"))
-                          (format "~a\r\n" hex)
-                          (format "~a\n\n" hex)
-                          (format " ~a\n" hex))])
-      (call-with-dev-library
-       contents
-       (lambda (collection target marker)
-         (check-equal? (install-candidate! collection) "" contents)
-         (check-equal? (file->bytes target) #"candidate bytes" contents)
-         (check-false (file-exists? marker) contents)))))
-
-  (test-case "an unreadable marker is ignored and the candidate installed"
-    (call-with-dev-library
-     (marker-for #"dev bytes")
-     (lambda (collection target marker)
-       (file-or-directory-permissions marker #o000)
-       (when (fails-to? (lambda () (call-with-input-file* marker void)))
-         (check-equal? (install-candidate! collection) "")
-         (check-equal? (file->bytes target) #"candidate bytes")))))
-
-  (test-case "a marker without its library is removed and the candidate installed"
-    (call-with-dev-library
-     (marker-for #"dev bytes")
-     #:library #f
-     (lambda (collection target marker)
-       (check-equal? (install-candidate! collection) "")
-       (check-equal? (file->bytes target) #"candidate bytes")
-       (check-false (file-exists? marker)))))
-
-  (test-case "a stale marker a read-only directory keeps does not fail the install"
-    (call-with-dev-library
-     (marker-for #"other bytes")
-     #:library "candidate bytes"
-     (lambda (collection target marker)
-       (define native (build-path collection "native-libs"))
-       (file-or-directory-permissions native #o555)
-       (when (fails-to? (lambda () (delete-file (scratch-file native "probe" ""))))
-         (check-equal? (install-candidate! collection) "")
-         (check-equal? (file->bytes target) #"candidate bytes")
-         (check-true (file-exists? marker))))))
-
-  (test-case "a directory named like the marker is left alone"
-    (call-with-dev-library
-     #f
-     (lambda (collection target marker)
-       (make-directory* marker)
-       (scratch-file marker "inside" "kept")
-       (check-equal? (install-candidate! collection) "")
-       (check-equal? (file->bytes target) #"candidate bytes")
-       (check-equal? (file->bytes (build-path marker "inside")) #"kept"))))
-
-  (define (call-with-package-install proc #:staged [staged #f] #:marked? [marked? #f])
+  (define (call-with-package-install proc
+                                     #:staged [staged #f]
+                                     #:marked? [marked? #f]
+                                     #:marker [marker (and marked? staged
+                                                           (marker-for (string->bytes/utf-8 staged)))])
     (with-native-collections collects
       (define collection (build-path collects "fake-polars"))
       (define native (build-path collection "native-libs"))
-      (for ([platform (in-list '("linux" "darwin"))])
-        (define dir (build-path native "candidates" platform))
-        (make-directory* dir)
-        (scratch-file dir library-file (format "~a candidate bytes" platform)))
+      (make-directory* native)
       (scratch-file collection "info.rkt"
                     (module-text #:lang "info" '(define native-version "0.3")))
       (when staged
         (scratch-file native library-file staged))
-      (when marked?
-        (scratch-file native (format ".~a.dev" library-file)
-                      (marker-for (string->bytes/utf-8 staged))))
+      (when marker
+        (scratch-file native (format ".~a.dev" library-file) marker))
       (proc collects collection native)))
 
   (define-syntax-parser with-package-install
     [(_ (collects:id collection:id native:id)
         (~alt (~optional (~seq #:staged staged:expr))
-              (~optional (~seq #:marked? marked?:expr)))
+              (~optional (~seq #:marked? marked?:expr))
+              (~optional (~seq #:marker marker:expr)))
         ...
         body:expr ...+)
      (syntax/loc this-syntax
        (call-with-package-install (lambda (collects collection native) body ...)
                                   (~? (~@ #:staged staged))
-                                  (~? (~@ #:marked? marked?))))])
+                                  (~? (~@ #:marked? marked?))
+                                  (~? (~@ #:marker marker))))])
 
   (define (pre-install collection)
     (with-environment-variable #"RKT_POLARS_COMPAT_LIB_PATH" #f
-      (with-environment-variable #"RKT_POLARS_FORCE_CANDIDATE" #f
-        (with-output-to-string (lambda () (pre-installer #f collection #f))))))
+      (with-output-to-string (lambda () (pre-installer #f collection #f)))))
 
   (define (pre-install-error collection)
     (message-of (lambda () (pre-install collection))))
 
-  (define (pre-install-warning collection)
+  (define (pre-install-outputs collection)
     (define err (open-output-string))
-    (parameterize ([current-error-port err])
-      (pre-install collection))
-    (get-output-string err))
+    (define out (parameterize ([current-error-port err]) (pre-install collection)))
+    (values out (get-output-string err)))
+
+  (define (pre-install-warning collection)
+    (define-values (_ err) (pre-install-outputs collection))
+    err)
 
   (define (tampered-package! collects)
     (define root (make-native-package! collects))
@@ -345,10 +227,11 @@
     (define library (build-path native library-file))
     (and (file-exists? library) (file->bytes library)))
 
-  (test-case "the native package is checked and no candidate is staged over it"
+  (test-case "the native package is checked and nothing is staged"
     (with-package-install (collects collection native)
       (make-native-package! collects)
-      (check-equal? (pre-install collection) "")
+      (define-values (out err) (pre-install-outputs collection))
+      (check-equal? (list out err) '("" ""))
       (check-false (staged-bytes native))))
 
   (test-case "a native package whose library its manifest does not list fails the install"
@@ -382,10 +265,52 @@
   (test-case "a dev-built staged copy is kept over the package, unchecked"
     (with-package-install (collects collection native) #:staged "dev bytes" #:marked? #t
       (tampered-package! collects)
+      (define marker (build-path native (format ".~a.dev" library-file)))
       (check-equal? (pre-install collection)
                     (format "pre-installer: keeping the dev-built ~a over the package ~a\n"
                             (build-path native library-file)
-                            "polars-x86_64-linux"))))
+                            "polars-x86_64-linux"))
+      (check-equal? (staged-bytes native) #"dev bytes")
+      (check-true (file-exists? marker))))
+
+  (test-case "a marker not in the format, 64 lowercase hex digits and a newline, is stale"
+    (define hex (sha256-hex #"dev bytes"))
+    (for ([contents (list hex
+                          (string-upcase (marker-for #"dev bytes"))
+                          (format "~a\r\n" hex)
+                          (format "~a\n\n" hex)
+                          (format " ~a\n" hex)
+                          (marker-for #"other bytes"))])
+      (with-package-install (collects collection native) #:staged "dev bytes" #:marker contents
+        (tampered-package! collects)
+        (check-true (contains-all? (pre-install-error collection) '("has sha256")) contents))))
+
+  (test-case "an unreadable marker is stale"
+    (with-package-install (collects collection native) #:staged "dev bytes" #:marked? #t
+      (tampered-package! collects)
+      (define marker (build-path native (format ".~a.dev" library-file)))
+      (file-or-directory-permissions marker #o000)
+      (when (fails-to? (lambda () (call-with-input-file* marker void)))
+        (check-true (contains-all? (pre-install-error collection) '("has sha256"))))))
+
+  (test-case "a directory named like the marker is stale and left alone"
+    (with-package-install (collects collection native) #:staged "dev bytes"
+      (tampered-package! collects)
+      (define marker (build-path native (format ".~a.dev" library-file)))
+      (make-directory* marker)
+      (scratch-file marker "inside" "kept")
+      (check-true (contains-all? (pre-install-error collection) '("has sha256")))
+      (check-equal? (file->bytes (build-path marker "inside")) #"kept")))
+
+  (test-case "without a package, a staged copy, dev-built or not, is left alone in silence"
+    (for ([marked? (in-list '(#f #t))])
+      (with-package-install (collects collection native) #:staged "dev bytes" #:marked? marked?
+        (define target (build-path native library-file))
+        (define before (file-or-directory-identity target))
+        (define-values (out err) (pre-install-outputs collection))
+        (check-equal? (list out err) '("" "") (format "marked: ~a" marked?))
+        (check-equal? (file-or-directory-identity target) before)
+        (check-equal? (staged-bytes native) #"dev bytes"))))
 
   (test-case "RKT_POLARS_COMPAT_LIB_PATH skips the package's check"
     (with-package-install (collects collection native)
@@ -415,17 +340,20 @@
                                  '("pre-installer: libcompat is not installed"
                                    "`raco pkg install polars-x86_64-linux`")))))
 
-  (test-case "each supported platform stages its own candidate"
+  (test-case "each supported platform without its package is told which one to install"
     (for ([platform (in-list '("x86_64-linux" "x86_64-linux-natipkg" "aarch64-macosx"))]
-          [candidate (in-list '(#"linux candidate bytes"
-                                #"linux candidate bytes"
-                                #"darwin candidate bytes"))])
+          [package (in-list '("polars-x86_64-linux" "polars-x86_64-linux" "polars-aarch64-macosx"))])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])
-          (check-equal? (pre-install collection) "" platform))
-        (check-equal? (staged-bytes native) candidate platform))))
+          (define-values (out err) (pre-install-outputs collection))
+          (check-equal? out "" platform)
+          (check-true (contains-all? err
+                                     (list (format "the package ~a is missing" package)
+                                           (format "`raco pkg install ~a`" package)))
+                      platform))
+        (check-false (staged-bytes native) platform))))
 
-  (test-case "another platform stages no candidate and is told which platforms polars supports"
+  (test-case "another platform does not fail the install and is told which platforms polars supports"
     (for ([platform (in-list '("aarch64-linux" "x86_64-macosx" "x86_64-freebsd"))])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])

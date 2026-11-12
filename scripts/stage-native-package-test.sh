@@ -4,10 +4,8 @@
 # run in a scratch checkout. Its manifest.json names the rust/ tree and the
 # commit given by --rust-tree and --commit, or else recorded beside the library
 # (CI's rust-tree and commit), or else, under --head, this checkout's HEAD,
-# refused while rust/ differs from HEAD, tracked or untracked, or under
-# --committed-candidate the placeholder committed-candidate for both, whatever
-# rust/ holds. With none of them, half of a pair, --head with
-# --committed-candidate, or --head without git on PATH, it fails, naming why,
+# refused while rust/ differs from HEAD, tracked or untracked. With none of
+# them, half of a pair, or --head without git on PATH, it fails, naming why,
 # and stages nothing.
 #
 # Usage: scripts/stage-native-package-test.sh  (in the dev shell: racket, git)
@@ -86,10 +84,6 @@ refused "--rust-tree alone" "--rust-tree and --commit go together"
 echo 'pub fn g() {}' >> "$repo/rust/lib.rs"
 if stage --head; then fail "--head, rust/ modified: exit 0"; fi
 refused "--head, rust/ modified" "rust/ differs from HEAD"
-stage --committed-candidate || true
-staged "--committed-candidate, rust/ modified" committed-candidate committed-candidate
-if stage --head --committed-candidate; then fail "--head with --committed-candidate: exit 0"; fi
-refused "--head with --committed-candidate" "only one instance of one option from (--head --committed-candidate)"
 git -C "$repo" checkout -q -- rust
 
 echo 'new' > "$repo/rust/new.rs"
@@ -104,8 +98,8 @@ echo c2 > "$work/build/commit"
 stage --head || true
 staged "records, under --head with rust/ dirty" t2 c2
 
-stage --committed-candidate || true
-staged "records, under --committed-candidate" t2 c2
+stage || true
+staged "records, no flag" t2 c2
 
 stage --rust-tree t3 --commit c3 || true
 staged "flags over records" t3 c3

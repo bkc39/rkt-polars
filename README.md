@@ -27,7 +27,9 @@ To install run:
 raco pkg install polars
 ```
 
-then
+On x86-64 Linux and arm64 macOS this also installs the native package that
+holds `libcompat`, `polars-x86_64-linux` or `polars-aarch64-macosx`, so no
+Rust toolchain is needed. Then
 
 ```racket
 (require polars)
@@ -118,8 +120,8 @@ shared library and the Racket package separately, and the Racket package loads
 The pinned toolchain is **Racket 9.3**. `flake.nix` takes Racket from
 `nixpkgs-unstable` rather than a version input, so the `racket-version` check
 asserts the floor explicitly — `nix flake check` fails if a `flake.lock` bump
-ever moves Racket below it. CI additionally runs the catalog install against
-both Racket 9.3 and `stable`, on Linux and macOS.
+ever moves Racket below it. The Release build workflow installs the native
+packages on Racket 9.3 and on `stable`, on Linux and macOS.
 
 ### Build with Nix
 
@@ -177,37 +179,34 @@ staged copy outranks it. `polars/native-libs/BUILDING.md` (Native packages)
 has the load order, the package's layout and manifest, and
 `scripts/stage-native-package.rkt`, which assembles one.
 
-Until #254's L3 removes them, prebuilt shared objects are also committed
-under `polars/native-libs/candidates/` (`linux/libcompat.so`, built on glibc
-2.17 / manylinux2014, and `darwin/libcompat.dylib` for arm64), and with no
-native package installed the pre-installer stages the platform's candidate,
-on x86_64 Linux and arm64 macOS only. It
-leaves an identical library alone and replaces a differing one by a rename, as
-`scripts/install-native-libs.sh` does (#267). It does not copy the candidate
-over a dev-marked library; set `RKT_POLARS_FORCE_CANDIDATE=1` to install the
-candidate anyway (#306). The keep outlasts a branch switch or a pull, so after
-a candidate refresh that adds an export, set it or re-enter the dev shell.
+No binary is committed: a tag `v<native-version>` builds both libraries and
+drafts the GitHub Release that holds the two packages, and developers load the
+dev shell's staged copy or set the variable.
 
-To (re)build and stage a candidate on the matching platform:
+To build the shipped library on the matching platform (Linux needs Docker),
+into `rust/target/libcompat/<platform>/`:
 
 ```sh
 scripts/build-so.sh            # auto-detects linux/darwin
 scripts/build-so.sh darwin     # or name the platform explicitly
 ```
 
-To reproduce a catalog install locally (no toolchain, no env override):
+To reproduce a catalog install locally from a built library (no toolchain, no
+env override), in a fresh `PLTUSERHOME`:
 
 ```sh
-scripts/test-local.sh
+scripts/test-local.sh rust/target/libcompat/linux/libcompat.so
+scripts/test-local.sh polars/native-libs/libcompat.so      # the dev shell's copy
 ```
 
-CI (`.github/workflows/ci.yml`, which calls the reusable `native.yml`) builds
-both candidates with cargo and runs the catalog install on Linux and macOS.
+The Release build workflow (`.github/workflows/release.yml`) builds both
+libraries on a PR that touches `rust/` or the release's inputs, gates,
+packages and installs them, and installs them as the package server does.
 They are built by rustup's build of the flake's rustc release, which
 `rust/rust-toolchain.toml` pins; its LLVM can differ from nixpkgs', so
-`nix flake check` does not cover the shipped code generation; CI's jobs that
-install the built candidates do. `polars/native-libs/BUILDING.md` has the
-refresh procedures.
+`nix flake check` does not cover the shipped code generation; those install
+jobs do. `polars/native-libs/BUILDING.md` has the jobs and the release
+checklist.
 
 ## License
 

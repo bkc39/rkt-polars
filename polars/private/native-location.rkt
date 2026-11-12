@@ -20,7 +20,6 @@
                                    [version (or/c string? #f)]
                                    [cause (or/c string? #f)]))
           [current-native-platform (parameter/c string?)]
-          [dev-built? (-> path-string? path-string? boolean?)]
           [dev-built-library? (-> path-string? boolean?)]
           [dev-marker (-> path-string? path?)]
           [installed-native-package (-> (or/c native-location? #f))]

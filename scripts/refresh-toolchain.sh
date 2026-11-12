@@ -141,8 +141,9 @@ EOF
     done
   fi
   echo
-  echo "The committed candidates are refreshed from this PR's CI run"
-  echo "(\`scripts/refresh-candidates.sh <PR>\`)."
+  echo "The Release build workflow builds and installs both native packages from"
+  echo "this PR; once it merges, a native release ships them"
+  echo "(polars/native-libs/BUILDING.md, Release checklist)."
 } > "$out/pr-body.md"
 
 git diff --stat
@@ -153,6 +154,6 @@ cat <<EOF
    git commit -a -F $q/commit-msg.txt
    git push -u origin HEAD
    gh pr create --title "$title" --body-file - < $q/pr-body.md
->> then, once the PR's CI has built both candidates:
-   scripts/refresh-candidates.sh <PR>
+>> then, once it merges: bump native-version and tag v<native-version>
+   (polars/native-libs/BUILDING.md, Release checklist)
 EOF
