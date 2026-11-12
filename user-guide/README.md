@@ -24,7 +24,7 @@ racket user-guide/getting-started/expressions-and-contexts.rkt
 python user-guide/getting-started/expressions_and_contexts.py
 ```
 
-`raco test user-guide` runs every Racket script; CI does the same.
+`raco test -e user-guide` runs every Racket script; CI does the same.
 
 ## Contents
 
