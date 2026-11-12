@@ -12,6 +12,7 @@ else
     [ "$file" = "$root/scripts/release/bash3.sh" ] || files+=("$file")
   done
   files+=("$root/scripts/dependency-catalogs.sh" "$root/scripts/docs-check.sh"
+    "$root/scripts/build-so.sh" "$root/scripts/test-build-so.sh"
     "$root/.github/workflows/release.yml" "$root/.github/actions/install-racket/action.yml")
 fi
 pattern='\b(mapfile|readarray|coproc)\b|\b(declare|local|typeset) +-[a-zA-Z]*[An]|\$\{[!#]?[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,?|\^\^?)|;;?&|\|&|\[\[ +-v '
