@@ -401,5 +401,9 @@ if [ -n "$p" ]; then
   [ "$(cat "$work/other-tree.status")" = 1 ] || problem "package: another rust/ tree exited $(cat "$work/other-tree.status")"
 fi
 
+for script in "$here"/*.sh; do
+  [ -x "$script" ] || problem "mode: $script is not executable, and the workflow runs it directly"
+done
+
 [ "$failures" -eq 0 ] && echo "gates-test: ok"
 exit "$failures"
