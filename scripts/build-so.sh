@@ -77,7 +77,7 @@ if [[ "$platform" == "linux" ]]; then
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
-      cargo build --profile dist --locked \
+      RUSTFLAGS="--remap-path-prefix=$HOME/.cargo=/cargo" cargo build --profile dist --locked \
         --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
       cp /tmp/target/dist/libcompat.so /out/
       { rustc -vV; echo "image: $MANYLINUX_IMAGE"; } > /out/toolchain
@@ -108,6 +108,11 @@ else
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
     exit 1
   fi
+  # The release gates refuse a builder's home in the dylib, where panic
+  # locations name every crate's source under cargo's home.  A cfg table's
+  # rustflags join rust/.cargo/config.toml's for the target, which RUSTFLAGS
+  # would replace.
+  remap="target.'cfg(all())'.rustflags=['--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo']"
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the
   # search paths its NIX_LDFLAGS* and NIX_CFLAGS* variables name (each in a
@@ -121,7 +126,7 @@ else
         unset -v "$v"
       fi
     done
-    "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
+    "${cargo[@]}" build --profile dist --locked --config "$remap" --manifest-path "$ROOT/rust/Cargo.toml"
   ) || exit $?
 
   built="$ROOT/rust/target/dist/$lib"

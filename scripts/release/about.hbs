@@ -1,0 +1,20 @@
+Third-party software in libcompat
+
+libcompat, the native library of polars, statically links Rust's standard
+library (MIT OR Apache-2.0) and the crates below, each listed under its
+licence.  cargo-about generates this file from rust/Cargo.lock with
+scripts/release/about.toml.
+
+{{#each overview}}
+  {{{name}}} ({{{id}}}), crates: {{count}}
+{{/each}}
+{{#each licenses}}
+
+================================================================================
+{{{name}}} ({{{id}}}), used by:
+{{#each used_by}}
+  {{{crate.name}}} {{{crate.version}}}{{#if crate.repository}} {{{crate.repository}}}{{/if}}
+{{/each}}
+
+{{{text}}}
+{{/each}}

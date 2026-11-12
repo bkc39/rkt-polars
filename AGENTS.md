@@ -489,6 +489,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   manifest is checked only by the pre-installer, so only when `polars` is
   set up: installing or updating the native package alone leaves the
   version check at load.
+- **A native release is a tag** (`.github/workflows/release.yml`, scripts
+  in `scripts/release/`). Every run builds both libraries with
+  `scripts/build-so.sh` (which remaps cargo's home to `/cargo`), gates each
+  binary (`gates.sh`: file type and arch, no RPATH but `$ORIGIN` or
+  `@loader_path`, no `/nix/store` or `/home`, `/Users`, `/root` path,
+  glibc ≤ 2.17, the NEEDED / `LC_LOAD_DYLIB` allow-list in `pins.sh`, under
+  GitHub's 104,857,600 bytes, and every binding exported, through
+  `scripts/check-bindings.rkt`), packages it with the cargo-about notices
+  (`THIRD-PARTY-NOTICES.txt`, generated in CI only), installs it from a
+  `file://` catalog, and installs and tests `polars` in pkg-build's image
+  with the natipkg Racket, offline and as root. A PR touching `rust/`,
+  `native/`, `polars/info.rkt` or the release scripts runs it; only a tag
+  `v<native-version>` drafts a Release (`draft-tag.sh`), a `v<version>` tag
+  that differs drafts nothing, and any other tag fails. `gates-test.sh`
+  (the `release-gates` gate, a push gate and a step of CI's Lint job)
+  plants a library for each refusal. The checklist is in
+  `polars/native-libs/BUILDING.md`.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
@@ -1368,6 +1385,10 @@ it. Racket side: `define-compat` with `#:c-id`.
 - `master` requires one review and the maintainer is the only reviewer, so
   merges are `gh pr merge --squash --admin` once the owner approves.
 - Follow-ups become issues, never TODO comments.
+- A release is a tag: `v<native-version>` when `rust/` or the native
+  packages changed (bump `native-version` and both `native/*/info.rkt`
+  versions together), else `v<version>` alone, which drafts nothing
+  (`polars/native-libs/BUILDING.md`).
 - A PR that adds a public export bumps `version` in `polars/info.rkt` (the
   third number; the second for a breaking change), so that a dependent can
   require a polars new enough to have it. Racket's version form has no

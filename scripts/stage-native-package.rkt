@@ -60,7 +60,7 @@
                           "--rust-tree and --commit, or --head for this checkout's")
            library)]))
 
-(define (stage! platform library out rust-tree commit)
+(define (stage! platform library out rust-tree commit notices)
   (define package (or (native-package platform) (fail "no native package for ~a" platform)))
   (define skeleton (build-path repo "native" package))
   (define version ((get-info/full skeleton) 'version))
@@ -74,13 +74,14 @@
     (fail "~a already exists" out))
   (define libs (build-path out "native-libs"))
   (make-directory* libs)
-  (for ([source (list (build-path skeleton "info.rkt")
-                      (build-path skeleton "main.rkt")
-                      (build-path repo "LICENSE-APACHE")
-                      (build-path repo "LICENSE-MIT")
-                      library)]
+  (for ([source (list* (build-path skeleton "info.rkt")
+                       (build-path skeleton "main.rkt")
+                       (build-path repo "LICENSE-APACHE")
+                       (build-path repo "LICENSE-MIT")
+                       library
+                       (if notices (list notices) '()))]
         [target (list "info.rkt" "main.rkt" "LICENSE-APACHE" "LICENSE-MIT"
-                      (build-path "native-libs" name))])
+                      (build-path "native-libs" name) "THIRD-PARTY-NOTICES.txt")])
     (copy-file source (build-path out target)))
   (call-with-output-file* (build-path out "manifest.json")
     (lambda (port) (write-json (manifest-jsexpr libs version rust-tree commit) port)))
@@ -93,14 +94,17 @@
   (define rust-tree #f)
   (define commit #f)
   (define head? #f)
+  (define notices #f)
   (command-line
    #:program "stage-native-package"
    #:once-each
    [("--rust-tree") tree "The rust/ tree LIBCOMPAT was built from" (set! rust-tree tree)]
    [("--commit") sha "The commit LIBCOMPAT was built from" (set! commit sha)]
    [("--head") "With no record, name HEAD and its clean rust/" (set! head? #t)]
+   [("--notices") file "The third-party notices to ship as THIRD-PARTY-NOTICES.txt"
+                  (set! notices (path->complete-path file))]
    #:args (platform library out)
    (define library-path (path->complete-path library))
    (define-values (tree built) (provenance library-path rust-tree commit head?))
    (parameterize ([current-native-platform platform])
-     (stage! platform library-path (path->complete-path out) tree built))))
+     (stage! platform library-path (path->complete-path out) tree built notices))))
