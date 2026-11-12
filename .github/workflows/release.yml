@@ -139,10 +139,12 @@ jobs:
           path: ${{ runner.temp }}/notices
       - name: Compile polars for the exports gate
         run: |
-          listed=$(racket scripts/release/catalog.rkt deps polars)
-          deps=()
-          while IFS= read -r dep; do deps+=("$dep"); done <<<"$listed"
-          raco pkg install --batch --deps search-auto --skip-installed "${deps[@]}"
+          missing=$(racket scripts/release/catalog.rkt missing-deps polars)
+          if [ -n "$missing" ]; then
+            deps=()
+            while IFS= read -r dep; do deps+=("$dep"); done <<<"$missing"
+            raco pkg install --batch --deps search-auto "${deps[@]}"
+          fi
           PLTCOLLECTS="$PWD:" raco make -j 4 polars/private/*.rkt scripts/check-bindings.rkt
       - name: Gate the binary
         run: scripts/release/gates.sh ${{ matrix.platform }} "$RUNNER_TEMP/libcompat/${{ matrix.library }}"
