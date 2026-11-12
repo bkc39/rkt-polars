@@ -246,7 +246,9 @@ The **package** job, per platform, runs four scripts. `gates.sh PLATFORM
 LIBRARY [GATE...]` checks the binary against the platform's gates (file
 type, RPATH, store and home paths, glibc, NEEDED, size, exports) and exits
 2 when it cannot read the library. `gates-test.sh LIBCOMPAT` (the
-`release-gates` gate, also a step of CI's Lint job) plants a library for
+`release-gates` gate, also a step of CI's Lint job, which pass the staged
+`polars/native-libs`: given a directory, it takes the host's
+`libcompat.so` or `libcompat.dylib` from it) plants a library for
 each refusal, stubs `raco` and `gh` to check the other scripts, and runs
 `bash3.sh`, which refuses a bash 4 construct in what the macOS jobs run
 under `/bin/bash` 3.2.

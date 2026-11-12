@@ -6,10 +6,28 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 . "$here/pins.sh"
 root=$(cd "$here/../.." && pwd)
 if [ $# -ne 1 ]; then
-  echo "usage: gates-test.sh LIBCOMPAT (a libcompat for this host that exports every binding)" >&2
+  echo "usage: gates-test.sh LIBCOMPAT|DIR (a libcompat for this host that exports every binding, or the directory holding it)" >&2
   exit 2
 fi
-exporting=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+host_platform() {
+  case $(racket -e '(display (system-library-subpath #f))') in
+    x86_64-linux*) echo x86_64-linux ;;
+    aarch64-macosx) echo aarch64-macosx ;;
+  esac
+}
+host_library() {
+  local platform
+  platform=$(host_platform)
+  if [ -z "$platform" ]; then
+    echo "gates-test.sh: no release platform for this host, so $1 names no library" >&2
+    return 2
+  fi
+  release_platform "$platform"
+  echo "$1/$RELEASE_LIBRARY"
+}
+lib=$1
+if [ -d "$lib" ]; then lib=$(host_library "$lib"); fi
+exporting=$(cd "$(dirname "$lib")" && pwd)/$(basename "$lib")
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export NIX_DONT_SET_RPATH=1
@@ -393,12 +411,21 @@ missing=$(racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || pro
 [ "$missing" = "$(printf 'rkt-polars-absent\nrkt-polars-versioned')" ] ||
   problem "missing-deps: want the two uninstalled platform-free deps, not base (installed in a wider scope): [$missing]"
 
-host=$(racket -e '(display (system-library-subpath #f))')
-case $host in
-  x86_64-linux*) p=x86_64-linux ;;
-  aarch64-macosx) p=aarch64-macosx ;;
-  *) p="" ;;
+case $(uname -s) in
+  Linux) want_library=libcompat.so ;;
+  Darwin) want_library=libcompat.dylib ;;
+  *) want_library="" ;;
 esac
+if [ -n "$want_library" ]; then
+  mkdir -p "$work/staged"
+  resolved=$(host_library "$work/staged") || problem "host_library: exited non-zero on $(uname -s)"
+  [ "$resolved" = "$work/staged/$want_library" ] ||
+    problem "host_library: a directory on $(uname -s) names [$resolved], want its $want_library"
+fi
+grep -qF '(release-gates "bash scripts/release/gates-test.sh polars/native-libs")' "$root/.racket-dev.rktd" ||
+  problem ".racket-dev.rktd: release-gates must pass the staged directory, which names the host's libcompat"
+
+p=$(host_platform)
 if [ -n "$p" ]; then
   release_platform "$p"
   package=$RELEASE_PACKAGE
