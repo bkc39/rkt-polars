@@ -366,6 +366,14 @@
                                  '("the package polars-x86_64-linux is version 0.2"
                                    "`raco pkg update polars polars-x86_64-linux`")))))
 
+  (test-case "a native package whose info.rkt does not read fails the install, naming the remedy"
+    (with-package-install (collects collection native)
+      (make-native-package! collects #:info-text "#lang info\n(define version \"0.3\"")
+      (check-true (contains-all? (pre-install-error collection)
+                                 '("pre-installer: "
+                                   "the package polars-x86_64-linux is installed but would not load"
+                                   "`raco pkg remove --force polars-x86_64-linux`")))))
+
   (test-case "a staged copy without a dev marker does not skip the package's check"
     (with-package-install (collects collection native) #:staged "dev bytes"
       (tampered-package! collects)

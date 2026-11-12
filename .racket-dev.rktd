@@ -71,6 +71,10 @@
   ;; draft-tag.sh's verdicts and package.sh's refusals.  Needs cc, racket and
   ;; the dev shell's staged libcompat, which exports every binding.
   (release-gates "bash scripts/release/gates-test.sh polars/native-libs/libcompat.so")
+  ;; scripts/test-local.sh copies only the release catalog and
+  ;; pkgs.racket-lang.org, the catalogs polars' dependencies come from, so an
+  ;; outage elsewhere cannot fail it.  Plain bash, raco stubbed.
+  (dependency-catalogs ("bash scripts/dependency-catalogs-test.sh" #:shell ""))
   ;; The project's Resyntax suite (lint/) over the same trees, red on any
   ;; suggestion; `scripts/resyntax-lint.sh fix` applies them.  It takes
   ;; minutes, so it is not a push gate; CI runs it.
@@ -87,4 +91,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test devshell-home install-native-libs stage-native-package release-gates compile test examples fmt)))
+ (push-gates (no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test devshell-home install-native-libs stage-native-package release-gates dependency-catalogs compile test examples fmt)))

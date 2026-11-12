@@ -482,7 +482,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `exn:fail` naming the remedy (the platforms, `raco pkg install`, `raco pkg
   update polars polars-<platform>`, the dlopen reason). A package's skeleton
   is `native/polars-<platform>/`, under `native/` so the repo root's `'multi`
-  package does not make it a collection; no binary is committed there, and
+  package does not make it a collection (the dev shell's hook removes a
+  root `polars-<platform>/` that git tracks nothing under and that holds
+  only `compiled/`, which a `raco setup` before the move left and whose
+  `main_rkt.zo` `collection-file-path` would find:
+  `scripts/remove-stale-skeletons.sh`); no binary is committed there, and
   `scripts/stage-native-package.rkt` adds the library and `manifest.json`
   (native version, the `rust/` tree and commit it was built from, each
   regular file's sha256; see `polars/native-libs/BUILDING.md`). Its
@@ -517,7 +521,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   needs both `polars/native-libs/candidates/` refreshed before it merges.**
   The pre-installer stages one only on its platform (x86_64 Linux, arm64
   macOS). `scripts/test-local.sh` installs the candidate as the native
-  package through a `file://` catalog and `--auto`, and fails unless
+  package through a `file://` catalog holding a copy of the release catalog
+  and pkgs.racket-lang.org alone (`scripts/dependency-catalogs.sh`) and
+  `--auto`, and fails unless
   `polars` loads it from there. The
   catalog
   installs those committed binaries (it has no Rust toolchain) and

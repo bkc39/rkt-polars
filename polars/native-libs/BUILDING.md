@@ -237,18 +237,24 @@ and reproduce the catalog install with `scripts/test-local.sh`, in a fresh
 
 A native package is its skeleton, `native/polars-<platform>/` (`info.rkt`
 and `main.rkt`, no binary; under `native/` so the repo root's `'multi`
-package does not make it a collection), plus the licences, the library in
+package does not make it a collection; the dev shell's hook removes a root
+`polars-<platform>/` that git tracks nothing under and that holds only the
+`compiled/` a `raco setup` before the move left,
+`scripts/remove-stale-skeletons.sh`), plus the licences, the library in
 `native-libs/` and a `manifest.json`: the native version, the `rust/` tree
 and commit the library was built from, and each `libcompat.*`'s sha256.
 
-    racket scripts/stage-native-package.rkt [--rust-tree TREE --commit SHA | --head] \
+    racket scripts/stage-native-package.rkt \
+      [--rust-tree TREE --commit SHA] [--head | --committed-candidate] \
       [--notices FILE] PLATFORM LIBCOMPAT OUT-DIR
 
 assembles one for `x86_64-linux` or `aarch64-macosx` in `OUT-DIR`, which
 must not exist. The tree and commit are `--rust-tree` and `--commit`, or else
 the `rust-tree` and `commit` files CI's build records beside the library, or
 else, given `--head`, this checkout's `HEAD`, which it refuses while `rust/`
-differs from `HEAD`. With none of these it fails. `--notices` ships FILE
+differs from `HEAD`, or, given `--committed-candidate`, the placeholder
+`committed-candidate` for both: a committed candidate records neither, and
+`HEAD` need not be what built it. With none of these it fails. `--notices` ships FILE
 as `THIRD-PARTY-NOTICES.txt`, which a release does. The script requires
 `polars/private/native-location` by collection, so run it where `polars` is
 installed or linked, or with `racket -S <repo>` (`scripts/test-local.sh`
@@ -263,8 +269,13 @@ the native package alone does not run it, and the loader then checks the
 version alone.
 
 `scripts/test-local.sh` (the `Catalog install` and `Committed candidate`
-jobs) stages the candidate as the native package, puts it in a `file://`
-catalog with a copy of the configured ones, installs `polars` from that
+jobs) stages the candidate as the native package (`--committed-candidate`,
+so CI's recorded tree and commit name a fresh build's), puts it in a
+`file://` catalog with a copy of the configured release catalog and
+pkgs.racket-lang.org, the only ones polars' dependencies come from
+(`scripts/dependency-catalogs.sh`, held by the `dependency-catalogs` gate
+and a step of CI's Lint job: `raco pkg catalog-copy` fails when any catalog
+it reads does not answer), installs `polars` from that
 catalog with `--auto`, so a `#:platform` string that does not match leaves
 the package out, and then `scripts/check-native-install.rkt` requires that
 `polars` loads the package's library and staged no candidate.

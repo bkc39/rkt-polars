@@ -45,6 +45,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/no-dynamic-wind.sh
 
+      - name: The catalog install copies only the dependencies' catalogs
+        if: ${{ !cancelled() }}
+        run: scripts/dependency-catalogs-test.sh
+
       - name: Install Nix
         if: ${{ !cancelled() }}
         uses: DeterminateSystems/nix-installer-action@v23

@@ -6,7 +6,8 @@
 # `polars` -- not the repo root -- with no Rust toolchain and no env-var
 # override.  The candidate for this platform is first staged as the native
 # package polars-<platform> (scripts/stage-native-package.rkt) and put in a
-# file:// catalog that also holds a copy of the configured ones, so `raco pkg
+# file:// catalog that also holds a copy of the release catalog and
+# pkgs.racket-lang.org (scripts/dependency-catalogs.sh), so `raco pkg
 # install --auto` resolves polars' #:platform dependency on it as the catalog
 # will; the install must load the library from that package.  Then every module
 # is instantiated against it, and the docs and tests are run the way
@@ -44,11 +45,17 @@ echo ">> staging $pkg from ${libs[0]}"
 # The staging script reads polars' native-location module, which needs
 # threading, before polars is installed.
 raco pkg install --batch --auto --skip-installed threading-lib
-racket -S "$ROOT" scripts/stage-native-package.rkt --head "$stage" "${libs[0]}" "$scratch/$pkg"
+# CI's build records the candidate's rust/ tree and commit beside it; a
+# committed candidate has no record, and HEAD need not be what built it.
+racket -S "$ROOT" scripts/stage-native-package.rkt --committed-candidate \
+  "$stage" "${libs[0]}" "$scratch/$pkg"
 raco pkg create --format zip --dest "$scratch" "$scratch/$pkg"
 
-echo ">> a file:// catalog of the configured catalogs and $pkg"
-raco pkg catalog-copy --from-config "$catalog"
+echo ">> a file:// catalog of the dependencies' catalogs and $pkg"
+listed=$(scripts/dependency-catalogs.sh)
+sources=()
+while IFS= read -r source; do sources+=("$source"); done <<< "$listed"
+raco pkg catalog-copy "${sources[@]}" "$catalog"
 racket scripts/add-catalog-entry.rkt "$catalog" "$pkg" "$scratch/$pkg.zip"
 
 echo ">> installing the polars collection (pulls deps: $pkg, gregor-lib, etc.)"
