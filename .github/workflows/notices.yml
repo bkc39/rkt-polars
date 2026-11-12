@@ -1,0 +1,35 @@
+name: Third-party notices
+
+on:
+  workflow_call:
+  pull_request:
+    paths:
+      - rust/Cargo.lock
+      - rust/Cargo.toml
+      - flake.lock
+      - scripts/release/notices.sh
+      - scripts/release/bundled-licenses.sh
+      - scripts/release/about.*
+      - .github/workflows/notices.yml
+
+permissions:
+  contents: read
+
+jobs:
+  notices:
+    name: Third-party notices
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - uses: DeterminateSystems/magic-nix-cache-action@v15
+      - name: cargo-about, at flake.lock's nixpkgs
+        run: scripts/release/notices.sh "$RUNNER_TEMP/notices/THIRD-PARTY-NOTICES.txt"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: notices
+          path: ${{ runner.temp }}/notices
+          if-no-files-found: error

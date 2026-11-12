@@ -15,21 +15,23 @@ lz4-sys liblz4 liblz4/lib/LICENSE"
 printf '\n%s\n\n%s\n' "================================================================================" \
   "C libraries compiled into libcompat by the crates that bundle them, with their licences:"
 while read -r crate library file; do
-  version=$(awk -v name="\"$crate\"" '
-    $1 == "name" && $3 == name { found = 1; next }
-    found && $1 == "version" { gsub(/"/, "", $3); print $3; exit }' "$lock")
-  if [ -z "$version" ]; then
+  versions=$(awk -v name="\"$crate\"" '
+    $1 == "name" { found = ($3 == name); next }
+    found && $1 == "version" { gsub(/"/, "", $3); print $3; found = 0 }' "$lock")
+  if [ -z "$versions" ]; then
     echo "bundled-licenses: $lock has no $crate, which bundles $library" >&2
     exit 1
   fi
-  text=""
-  for dir in "$registry"/*/"$crate-$version"; do
-    if [ -f "$dir/$file" ]; then text="$dir/$file"; fi
-  done
-  if [ -z "$text" ]; then
-    echo "bundled-licenses: no $crate-$version/$file under $registry, the licence of the $library it bundles" >&2
-    exit 1
-  fi
-  printf '\n%s, bundled by %s %s (%s):\n\n' "$library" "$crate" "$version" "$file"
-  cat "$text"
+  while read -r version; do
+    text=""
+    for dir in "$registry"/*/"$crate-$version"; do
+      if [ -f "$dir/$file" ]; then text="$dir/$file"; fi
+    done
+    if [ -z "$text" ]; then
+      echo "bundled-licenses: no $crate-$version/$file under $registry, the licence of the $library it bundles" >&2
+      exit 1
+    fi
+    printf '\n%s, bundled by %s %s (%s):\n\n' "$library" "$crate" "$version" "$file"
+    cat "$text"
+  done <<<"$versions"
 done <<<"$bundled"

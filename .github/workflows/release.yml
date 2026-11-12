@@ -15,6 +15,7 @@ on:
       - flake.nix
       - flake.lock
       - .github/actions/install-racket/**
+      - .github/workflows/notices.yml
       - .github/workflows/release.yml
   push:
     tags: ["v*"]
@@ -57,25 +58,12 @@ jobs:
         name: Draft only for v<native-version>
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: scripts/release/draft-tag.sh "$TAG" >>"$GITHUB_OUTPUT"
 
   notices:
-    name: Third-party notices
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ env.CHECKOUT_REF }}
-      - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
-      - name: cargo-about, at flake.lock's nixpkgs
-        run: scripts/release/notices.sh "$RUNNER_TEMP/notices/THIRD-PARTY-NOTICES.txt"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: notices
-          path: ${{ runner.temp }}/notices
-          if-no-files-found: error
+    uses: ./.github/workflows/notices.yml
 
   build:
     name: Build libcompat (${{ matrix.platform }})
@@ -152,7 +140,8 @@ jobs:
       - name: Compile polars for the exports gate
         run: |
           listed=$(racket scripts/release/catalog.rkt deps polars)
-          mapfile -t deps <<<"$listed"
+          deps=()
+          while IFS= read -r dep; do deps+=("$dep"); done <<<"$listed"
           raco pkg install --batch --deps search-auto --skip-installed "${deps[@]}"
           PLTCOLLECTS="$PWD:" raco make -j 4 polars/private/*.rkt scripts/check-bindings.rkt
       - name: Gate the binary
@@ -185,10 +174,20 @@ jobs:
         with:
           name: polars-x86_64-linux
           path: ${{ runner.temp }}/dist
+      - id: natipkg
+        name: The natipkg installer scripts/release/pins.sh pins
+        run: |
+          . scripts/release/pins.sh
+          echo "sha256=$RELEASE_NATIPKG_RACKET_SHA256" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/release-cache
+          key: natipkg-racket-${{ steps.natipkg.outputs.sha256 }}
       - name: pkg-build's image and natipkg Racket
         env:
           RELEASE_CPUS: "4"
           RELEASE_LOGS: ${{ runner.temp }}/pkg-build-logs
+          RELEASE_CACHE: ${{ runner.temp }}/release-cache
         run: scripts/release/pkg-build-test.sh "$RUNNER_TEMP/dist"
       - if: failure()
         uses: actions/upload-artifact@v7

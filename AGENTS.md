@@ -1388,10 +1388,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `flake.nix`'s `version` carry the same string. `rust/Cargo.toml` keeps its
   own, and `flake.nix` reads it for the `rkt-polars-compat` derivation, so a
   Racket-side bump does not rebuild the native library. A release is a tag
-  of that version, `v<version>`; when `rust/` changed since the tag
-  `v<native-version>`, bump `native-version` and both `native/*/info.rkt`
-  versions together and tag `v<native-version>` first
-  (`polars/native-libs/BUILDING.md`).
+  of that version, `v<version>`; when `rust/` changed since the published
+  Release `v<native-version>`, bump `native-version` and both
+  `native/*/info.rkt` versions together, and tag and publish
+  `v<native-version>` first (`polars/native-libs/BUILDING.md`).
 - The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh

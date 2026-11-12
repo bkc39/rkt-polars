@@ -299,9 +299,11 @@ and its allowed NEEDED or `LC_LOAD_DYLIB` entries.
 The **plan** job runs `scripts/release/draft-tag.sh`, which fails unless
 both `native/*/info.rkt` versions equal `native-version`, names a draft only
 for the tag `v<native-version>`, and for the tag `v<version>` fails unless
-origin has the tag `v<native-version>` and its `rust/` tree is the
-checkout's; any other tag fails. The **notices** job runs
-`scripts/release/notices.sh`, which writes `THIRD-PARTY-NOTICES.txt` with
+the published Release `v<native-version>` (drafts are invisible to the
+job's token) has a `polars-x86_64-linux.manifest.json` whose `rust_tree`
+is the checkout's; any other tag fails. The **notices** job, also run alone
+by `notices.yml` on a PR that changes `rust/Cargo.lock` or
+`rust/Cargo.toml`, runs `scripts/release/notices.sh`, which writes `THIRD-PARTY-NOTICES.txt` with
 cargo-about at `flake.lock`'s nixpkgs (`about.toml` lists the accepted
 licences, `about.hbs` the layout) and appends, through
 `bundled-licenses.sh`, the licences of the C libraries `zstd-sys` and
@@ -315,7 +317,9 @@ LIBRARY [GATE...]` checks the binary against the platform's gates (file
 type, RPATH, store and home paths, glibc, NEEDED, size, exports) and exits
 2 when it cannot read the library. `gates-test.sh LIBCOMPAT` (the
 `release-gates` gate, also a step of CI's Lint job) plants a library for
-each refusal and stubs `raco` and `gh` to check the other scripts.
+each refusal, stubs `raco` and `gh` to check the other scripts, and runs
+`bash3.sh`, which refuses a bash 4 construct in what the macOS jobs run
+under `/bin/bash` 3.2.
 `package.sh PLATFORM ARTIFACT NOTICES DIST` stages the native package with
 the notices, refuses a library built from a `rust/` tree other than
 `HEAD:rust`, and writes the zip, its catalog entry
@@ -335,7 +339,8 @@ installer, as root, with `PLT_PKG_BUILD_SERVICE=1`, `CI=true` and
 pkgs.racket-lang.org alone behind it, so the `x86_64-linux-natipkg`
 dependency must pull `polars-x86_64-linux`; it then runs `raco test --jobs
 2 --drdr --package polars` with `--network none`, and `RELEASE_LOGS` names
-a directory for its logs. The **draft** job, for the tag
+a directory for its logs; the natipkg installer is cached by its sha256,
+so a warm run does not download it. The **draft** job, for the tag
 `v<native-version>` alone and the only job that may write to the
 repository, runs `draft.sh TAG SHA DIST`, which refuses a tag that no
 longer names the run's commit or that already has a release, and drafts
@@ -363,8 +368,8 @@ A native release, when `rust/` or a native package changed:
    tests passed there.
 
 A Racket-only release bumps `polars`' `version` alone and tags
-`v<version>`: its run fails unless `rust/` is unchanged since the tag
-`v<native-version>`, builds, gates and tests both packages but drafts
+`v<version>`: its run fails unless `rust/` is the tree the published
+Release `v<native-version>` was built from, builds, gates and tests both packages but drafts
 nothing, and the catalog's `polars` source moves to the new tag (step 6).
 
 Every script but `notices.sh` and `build-so.sh` runs locally on the
