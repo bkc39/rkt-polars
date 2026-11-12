@@ -30,11 +30,20 @@ build is rustup's build of the release, whose LLVM can differ from nixpkgs',
 so `nix flake check` does not test the shipped code generation. The Linux
 build's manylinux2014 image is pinned by digest in the script. The committed
 candidates are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
-thin LTO and one codegen unit (#125), which keeps the Linux `.so` at 81.6 MB
-against GitHub's 104,857,600-byte file limit (102.2 MB without it), before
-the IO features of #176, which added 2.5 MB to the first and 3.3 MB to the
-second on the previous toolchain. Only
-`scripts/build-so.sh` uses it. The nix build, `cargo test` and the bench stay
+thin LTO, one codegen unit and `opt-level = "s"` for the crates only the cloud
+sources reach (object_store's HTTP and TLS stack) (#125, #216). For Linux
+`scripts/build-so.sh` adds fat LTO and gives the final link alone rust-lld's
+`--icf=all`. Against GitHub's 104,857,600-byte file limit that takes the
+Linux `.so` from 85.2 MB to 79.0 MB (fat LTO 4.8 MB, ICF 1.0 MB, the cloud
+crates 0.9 MB, each alone): 25.9 MB of headroom, which the owner accepted
+where #216 asked for 30. `cargo bloat --crates` puts `.text` at 65.1 MiB
+before and 60.7 after, `std` at 6.3 and 5.1, `rayon_core` (polars' kernels,
+inlined into its jobs) at 14.2 and 13.4 and `object_store` at 0.98 and 0.70.
+Fat LTO costs the final crate about 15 minutes and 7 GiB at four jobs,
+against 6 minutes and 4.9 GiB thin, so darwin, whose CI runner has 7 GB and
+whose dylib has 33 MB of headroom, stays thin; ld64 already folds identical
+code by default. `-C force-unwind-tables=no` saves nothing. Only
+`scripts/build-so.sh` uses the profile. The nix build, `cargo test` and the bench stay
 on `release`, because under LTO every test and example binary links on one
 core (the nix check went from 30 to 145 minutes on CI), so the bench measures
 the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`

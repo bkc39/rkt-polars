@@ -77,8 +77,14 @@ if [[ "$platform" == "linux" ]]; then
       curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
-      cargo build --profile dist --locked \
-        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target
+      # Fat LTO, and rust-lld (the linker rustc uses by default here)
+      # folding identical code, which Rust permits: it promises no distinct
+      # function addresses (#216).  cargo rustc gives the flag to the final
+      # link alone.
+      cargo rustc --lib --profile dist --locked \
+        --config "profile.dist.lto=\"fat\"" \
+        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target \
+        -- -C link-arg=-Wl,--icf=all
       cp /tmp/target/dist/libcompat.so /out/
       { rustc -vV; echo "image: $MANYLINUX_IMAGE"; } > /out/toolchain
     '
