@@ -47,6 +47,9 @@
             ${pkgs.bash}/bin/bash ${./scripts/install-native-libs.sh} \
             ${rust}/lib "$project_root/polars/native-libs"
 
+          PATH="${pkgs.coreutils}/bin:${pkgs.git}/bin:$PATH" \
+            ${pkgs.bash}/bin/bash ${./scripts/remove-stale-skeletons.sh} "$project_root"
+
           # Stamp is keyed on info.rkt so dep changes auto-invalidate it.
           info_hash=$(${pkgs.coreutils}/bin/sha256sum "$project_root/info.rkt" | cut -c1-16)
           deps_stamp="$PLTUSERHOME/.setup-installed-$info_hash"
