@@ -159,6 +159,15 @@
                                    "broken on purpose"
                                    "`raco pkg remove --force polars-x86_64-linux`")))))
 
+  (test-case "a native package whose info.rkt does not read is reported with its reason"
+    (with-native-collections collects
+      (make-native-package! collects #:info-text "#lang info\n(define version \"0.3\"")
+      (define location (locate (staged-library! collects)))
+      (check-equal? (native-location-kind location) 'broken)
+      (check-true (contains-all? (native-library-problem location "0.3")
+                                 '("the package polars-x86_64-linux is installed but would not load"
+                                   "`raco pkg remove --force polars-x86_64-linux`")))))
+
   (test-case "an unloadable library passes on the loader's reason"
     (with-native-collections collects
       (define location (locate (staged-library! collects)))

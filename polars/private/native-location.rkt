@@ -110,9 +110,9 @@
     [#f #f]
     [main
      (define root (simplify-path (path-only main)))
-     (define version (info-field root 'version))
      (with-handlers ([exn:fail?
                       (lambda (e) (native-location 'broken root root #f (exn-message e)))])
+       (define version (info-field root 'version))
        (native-location 'package
                         (simplify-path (dynamic-require main 'native-libs-dir))
                         root

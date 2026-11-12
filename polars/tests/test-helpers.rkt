@@ -197,6 +197,8 @@
 (define (make-native-package! collects
                               #:package [package "polars-x86_64-linux"]
                               #:version [version "0.3"]
+                              #:info-text [info-text (module-text #:lang "info"
+                                                                  `(define version ,version))]
                               #:library [library "native bytes"]
                               #:manifest? [manifest? #t]
                               #:manifest-text [manifest-text #f]
@@ -205,8 +207,7 @@
   (define libs (build-path root "native-libs"))
   (define manifest (build-path root "manifest.json"))
   (make-directory* libs)
-  (display-to-file (module-text #:lang "info" `(define version ,version))
-                   (build-path root "info.rkt"))
+  (display-to-file info-text (build-path root "info.rkt"))
   (display-to-file main (build-path root "main.rkt"))
   (when library
     (display-to-file library (build-path libs library-file)))
