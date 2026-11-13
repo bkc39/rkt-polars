@@ -1,5 +1,5 @@
-# Reusable workflow: invoked by ci.yml so a single CI run (and its badge)
-# aggregates both the native and nix checks.
+# Reusable workflow: invoked by ci.yml, so the CI run (and its badge) is
+# green only when these checks pass.
 on: workflow_call
 name: Nix
 

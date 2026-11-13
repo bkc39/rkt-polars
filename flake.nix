@@ -412,7 +412,7 @@
             ${pkgs.bash}/bin/bash $src/scripts/devshell-home-test.sh
             touch $out
           '';
-          # scripts/build-so.sh builds the committed candidates with the rustc
+          # scripts/build-so.sh builds the released libraries with the rustc
           # rust/rust-toolchain.toml pins; this holds it to the release of the
           # rustc the flake's build, tests and dev shell use (rustup's build of
           # that release carries its own LLVM).

@@ -54,10 +54,13 @@ platform's package) brings the two together. A native package installed or
 updated on its own is not set up with @racketmodname[polars], so only its
 version is checked, when @racket[(require polars)] loads it.
 
-On a supported platform without the native package, @racketmodname[polars]
-loads the copy of @tt{libcompat} it ships itself. On any other platform,
-@racket[(require polars)] raises @racket[exn:fail], naming the supported
-platforms.
+On a supported platform without the native package, the pre-installer
+only warns and @racket[(require polars)] raises @racket[exn:fail], each
+naming the package to install with @exec{raco pkg install}; on any other
+platform both name the supported platforms instead. Building this manual
+requires @racketmodname[polars], so @exec{raco setup} fails until the native
+package is installed; @exec{raco pkg install --no-docs} installs
+@racketmodname[polars] without it.
 
 When @envvar{RKT_POLARS_COMPAT_LIB_PATH} is set and not empty,
 @racketmodname[polars] loads the @tt{libcompat} in the @filepath{lib}

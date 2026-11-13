@@ -3,12 +3,13 @@
 # Prints, one per line, the configured package catalogs polars' dependencies
 # resolve from: a release catalog
 # (https://download.racket-lang.org/releases/<version>/catalog/) and
-# https://pkgs.racket-lang.org. scripts/test-local.sh copies only these into
-# its file:// catalog, since `raco pkg catalog-copy` fails when any catalog it
-# reads does not answer, and the others (Rhombus's, planet-compats) hold
-# nothing polars needs. CI's install-racket action drops the release catalog
-# (#124), and a full installation has every package it lists. Fails, naming
-# the catalogs it read, when neither is configured.
+# https://pkgs.racket-lang.org. The release tests (release_catalogs in
+# scripts/release/pins.sh) put only these, less the release catalog (#124),
+# behind their file:// catalog, so an outage of the others (Rhombus's,
+# planet-compats), which hold nothing polars needs, cannot fail them. CI's
+# install-racket action drops the release catalog, and a full installation
+# has every package it lists. Fails, naming the catalogs it read, when
+# neither is configured.
 #
 # Usage: scripts/dependency-catalogs.sh
 set -euo pipefail

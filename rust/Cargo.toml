@@ -34,9 +34,9 @@ strip = "symbols"
 # guard_panic catches polars panics, so panics must unwind.
 panic = "unwind"
 
-# The candidates (scripts/build-so.sh), sized for GitHub's 100 MiB
-# file limit (#125, #216); nix and cargo test stay on release, where LTO would
-# link every test and example binary on one core.
+# The native packages' libraries (scripts/build-so.sh), sized for the release
+# size gate's 100 MiB (#125, #216); nix and cargo test stay on release, where
+# LTO would link every test and example binary on one core.
 [profile.dist]
 inherits = "release"
 lto = "thin"
@@ -92,7 +92,7 @@ zerofrom = { opt-level = "s" }
 zerotrie = { opt-level = "s" }
 zerovec = { opt-level = "s" }
 
-# The Linux candidate; scripts/build-so.sh also gives its final link --icf=all.
+# The Linux library; scripts/build-so.sh also gives its final link --icf=all.
 [profile.dist-linux]
 inherits = "dist"
 lto = "fat"

@@ -9,18 +9,11 @@ polars/doc/
 rust/target/
 polars/private/compat/target/
 **/*.rs.bk
-# Ignore the staged copy of the shared object, but keep the committed
-# per-platform prebuilt candidates that pkgs.rkt-lang.org installs from.
+# The dev shell's staged copy of the shared object, never committed.
 polars/native-libs/libcompat.*
 # scripts/install-native-libs.sh's temporary copy, left by a killed install,
 # and its marker beside each library it installed (#306), never committed.
 polars/native-libs/.libcompat.*
-!polars/native-libs/candidates/
-# CI's record of the rust/ tree a candidate artifact was built from, and
-# scripts/build-so.sh's of the toolchain that built it.
-polars/native-libs/candidates/*/rust-tree
-polars/native-libs/candidates/*/commit
-polars/native-libs/candidates/*/toolchain
 # A native package's library, manifest and licences are added when it is
 # staged from a built library (scripts/stage-native-package.rkt), never
 # committed.

@@ -2,16 +2,14 @@
 
 (require (only-in racket/file
                   delete-directory/files make-directory* make-temporary-file)
-         (only-in racket/dict dict-ref)
          (only-in "native-location.rkt"
-                  dev-built? dev-built-library? dev-marker library-file manifest-problem
-                  missing-message native-library-problem native-package outranking-package
-                  override-dir required-native-version)
+                  dev-built-library? installed-native-package library-file manifest-problem
+                  missing-message native-library-problem native-package override-dir
+                  required-native-version)
          (only-in "resource.rkt" with-release))
 
 (provide pre-installer)
 
-(define force-candidate-env-var "RKT_POLARS_FORCE_CANDIDATE")
 (define compat-lib-pattern #rx"^libcompat\\.")
 
 (define (preinstall-error . args)
@@ -47,42 +45,11 @@
       (copy-file src staged #:exists-ok? #t #:permissions #o755)
       (rename-file-or-directory staged dst #t))))
 
-(define (copy-native-libs! dest-dir source-dir pattern install!)
+(define (copy-native-libs! dest-dir source-dir)
   (make-directory* dest-dir)
   (for ([f (in-list (directory-list source-dir))]
-        #:when (regexp-match? pattern (path->string f)))
-    (install! (build-path source-dir f) (build-path dest-dir f))))
-
-(define (remove-marker! marker)
-  (when (or (link-exists? marker) (file-exists? marker))
-    (with-handlers ([exn:fail:filesystem? void])
-      (delete-file marker))))
-
-(define ((install-candidate! force?) src dst)
-  (define marker (dev-marker dst))
-  (cond
-    [(and (not force?) (dev-built? dst marker))
-     (printf "pre-installer: keeping the dev-built ~a; ~a=1 installs the committed candidate\n"
-             dst
-             force-candidate-env-var)]
-    [else
-     (install-if-different! src dst)
-     (remove-marker! marker)]))
-
-(define (has-matching-files? dir pattern)
-  (and (directory-exists? dir)
-       (pair? (filter (lambda (f)
-                        (regexp-match? pattern (path->string f)))
-                      (directory-list dir)))))
-
-(define package-candidates
-  '(("polars-x86_64-linux" . "linux")
-    ("polars-aarch64-macosx" . "darwin")))
-
-(define (find-candidate-dir candidates-dir)
-  (define platform (dict-ref package-candidates (native-package) #f))
-  (define dir (and platform (build-path candidates-dir platform)))
-  (and dir (has-matching-files? dir compat-lib-pattern) dir))
+        #:when (regexp-match? compat-lib-pattern (path->string f)))
+    (install-if-different! (build-path source-dir f) (build-path dest-dir f))))
 
 (define (check-native-package! location wanted)
   (define message (or (native-library-problem location wanted) (manifest-problem location wanted)))
@@ -90,29 +57,16 @@
     (preinstall-error "~a" message)))
 
 (define (pre-installer collections-top-path this-collection-path user-specific?)
-  (define native-libs-dir
-    (build-path this-collection-path "native-libs"))
-  (define candidates-dir
-    (build-path native-libs-dir "candidates"))
+  (define native-libs-dir (build-path this-collection-path "native-libs"))
   (define override (override-dir))
-  (define package (and (not override) (outranking-package)))
+  (define package (and (not override) (installed-native-package)))
   (define dev-library (and package (dev-built-library? native-libs-dir)))
   (cond
-    [override
-     (copy-native-libs! native-libs-dir override compat-lib-pattern install-if-different!)]
+    [override (copy-native-libs! native-libs-dir override)]
     [dev-library
      (printf "pre-installer: keeping the dev-built ~a over the package ~a\n"
              (build-path native-libs-dir library-file)
              (native-package))]
     [package (check-native-package! package (required-native-version this-collection-path))]
-    [(find-candidate-dir candidates-dir)
-     => (lambda (dir)
-          (copy-native-libs! native-libs-dir
-                             dir
-                             compat-lib-pattern
-                             (install-candidate!
-                              (equal? (getenv force-candidate-env-var) "1"))))]
-    [(has-matching-files? native-libs-dir compat-lib-pattern)
-     (void)]
-    [else
-     (eprintf "pre-installer: ~a\n" (missing-message native-libs-dir))]))
+    [(file-exists? (build-path native-libs-dir library-file)) (void)]
+    [else (eprintf "pre-installer: ~a\n" (missing-message native-libs-dir))]))

@@ -29,14 +29,14 @@ flake's build and dev shell and `scripts/build-so.sh` set.
 the `release-toolchain` flake check fails when the two differ. The release
 build is rustup's build of the release, whose LLVM can differ from nixpkgs',
 so `nix flake check` does not test the shipped code generation. The Linux
-build's manylinux2014 image is pinned by digest in the script.
-`scripts/build-so.sh` builds the candidates with `[profile.dist]` in
-`rust/Cargo.toml`: release plus thin LTO, one codegen unit and
-`opt-level = "s"` for the crates only the cloud sources reach (#125, #216).
-The Linux one is built with `[profile.dist-linux]`, `dist` with fat LTO, and
-`scripts/build-so.sh` gives its final link alone rust-lld's `--icf=all`
-through `cargo rustc`, since a target's `rustflags` would reach the build
-scripts too. Against GitHub's 104,857,600-byte file limit a `dist-linux` build
+build's manylinux2014 image is pinned by digest in the script. The released
+libraries are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
+thin LTO, one codegen unit and `opt-level = "s"` for the crates only the cloud
+sources reach (#125, #216). The Linux one is built with `[profile.dist-linux]`,
+`dist` with fat LTO, and `scripts/build-so.sh` gives its final link alone
+rust-lld's `--icf=all` through `cargo rustc`, since a target's `rustflags`
+would reach the build scripts too. Against the release's size gate, GitHub's
+104,857,600-byte file limit (`scripts/release/gates.sh`), a `dist-linux` build
 is 78,965,360 B, 6.2 MB under a thin-LTO `dist` build without the cloud
 crates' `opt-level` (fat LTO 4.8 MB, ICF 1.0 MB, the cloud crates 0.9 MB, each
 alone). Fat LTO's final step is single-threaded, about 15 minutes and 7 GiB
@@ -77,8 +77,9 @@ not the repo root, and anything the docs need at build time (fixtures, helper
 modules) must live under `polars/` or the catalog's doc build cannot see it.
 
 The manual (`polars/scribblings/`) is published at
-docs.racket-lang.org/polars. The package build server rebuilds it from
-`master` on its own cycle, roughly daily, not on each merge.
+docs.racket-lang.org/polars. The package build server rebuilds it from the
+catalog's source for `polars`, a `#v<version>` tag, on its own cycle,
+roughly daily, not on each merge.
 
 ## The three layers
 
@@ -480,7 +481,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   platform, found with `collection-file-path` and `dynamic-require` (no
   static require, so `polars` compiles anywhere). A native package that
   holds a library outranks a staged copy whose dev marker does not match it,
-  so a staged committed candidate never shadows it. `polars/info.rkt` depends
+  so a stale staged copy never shadows it. `polars/info.rkt` depends
   on the packages by `#:platform` (`x86_64-linux`, pkg-build's
   `x86_64-linux-natipkg`, `aarch64-macosx`) at `native-version`, which the
   `#:version` only bounds below; the loader requires the package's version
@@ -513,22 +514,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `define-compat` cannot resolve the symbol (`libcompat lacks the export
   for <binding>`, through `#:default-make-fail`), instead of misreading its
   arguments.
-- **Until #254's L3 removes them, a change to any `#[no_mangle]` export
-  needs both `polars/native-libs/candidates/` refreshed before it merges.**
-  The pre-installer stages one only on its platform (x86_64 Linux, arm64
-  macOS). `scripts/test-local.sh` installs the candidate as the native
-  package through a `file://` catalog holding a copy of the release catalog
-  and pkgs.racket-lang.org alone (`scripts/dependency-catalogs.sh`) and
-  `--auto`, and fails unless
-  `polars` loads it from there. The
-  catalog
-  installs those committed binaries (it has no Rust toolchain) and
-  `define-compat` resolves every symbol at module load, so a stale candidate
-  breaks `raco setup` on pkgs.racket-lang.org. CI's `Committed candidate`
-  jobs go red on it, except below a stack's top, which refreshes once for
-  the stack and where they only warn. Refresh with `scripts/refresh-candidates.sh <PR>` on the
-  branch; any other Rust change also reaches catalog users only through a
-  refresh. See `polars/native-libs/BUILDING.md`.
+- **A change to any `#[no_mangle]` export reaches catalog users only
+  through a native release.** No binary is committed: the catalog installs
+  the native packages from a published Release, and `define-compat`
+  resolves every symbol at module load, so a polars that binds an export
+  its native version lacks breaks `raco setup` for them. Before `polars`'
+  catalog source moves to a tag, any `rust/` change since the tag
+  `v<native-version>` needs `native-version` and both `native/*/info.rkt`
+  versions bumped and that `v<native-version>` released;
+  `scripts/release/draft-tag.sh` refuses a Racket-only tag `v<version>`
+  whose `rust/` tree differs from the native tag's. The Release build
+  workflow builds and installs both packages on a PR that touches `rust/`
+  or the release's inputs. `scripts/test-local.sh LIBCOMPAT` packs a
+  built library as the native package and runs
+  `scripts/release/catalog-test.sh --full` on it, which installs `polars`
+  through a `file://` catalog holding it, in front of pkgs.racket-lang.org
+  alone, with `--auto`, and fails unless `polars` loads it from there. See
+  `polars/native-libs/BUILDING.md`.
 
 ## Behavioural facts to know before changing semantics
 
@@ -1274,29 +1276,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `scripts/install-native-libs.sh`, which leaves an identical library alone
   and replaces a differing one by a rename, never in place, so a racket in
   another shell that has the old one mapped keeps running (#265); the
-  `install-native-libs` gate and flake check hold it there. The
-  pre-installer (`polars/private/install-compat.rkt`) does the same on every
-  `raco setup`: it writes a replacement at mode `0755`, and an identical
-  library keeps its mode (#267). The script also writes a marker beside each
-  library, `.<name>.dev` (gitignored), holding the installed bytes'
-  sha256 as exactly 64 lowercase hex digits and a newline (any other
-  content is a stale marker), by rename after hashing the source, and
-  leaves it alone when it already holds that hash. Without
-  `RKT_POLARS_COMPAT_LIB_PATH` and with no native package installed, the
-  pre-installer keeps a library whose
-  marker matches its bytes instead of copying the committed candidate over
-  it, and prints one line naming it; a stale marker (a regular file or a
-  link, never a directory) is removed when the candidate goes in, and a
-  failed removal does not fail `raco setup`;
-  `RKT_POLARS_FORCE_CANDIDATE=1` installs the candidate and removes the
-  marker (#306). A hash, not mtimes, since a checkout or a copy rewrites
-  those. The keep outlasts a branch switch or a pull, so after a candidate
-  refresh that adds an export, set the variable or re-enter the dev shell.
-  It takes no lock: a `raco setup` run concurrently with dev-shell entry in
-  the same tree may install the candidate. With a native package holding a
-  library installed, it stages nothing: it keeps a dev-marked copy, or else
-  fails `raco setup` unless the package's version, its manifest's native
-  version and every `libcompat.*` sha256 match. The dev shell does not export
+  `install-native-libs` gate and flake check hold it there. The script also
+  writes a marker beside each library, `.<name>.dev` (gitignored), holding
+  the installed bytes' sha256 as exactly 64 lowercase hex digits and a
+  newline (any other content, or a directory, is a stale marker), by rename
+  after hashing the source, and leaves it alone when it already holds that
+  hash (#306). A hash, not mtimes, since a checkout or a copy rewrites
+  those. The pre-installer (`polars/private/install-compat.rkt`) stages a
+  library only from `RKT_POLARS_COMPAT_LIB_PATH`, by the same rename, at
+  mode `0755`, leaving an identical one and its mode alone (#267). With a
+  native package holding a library installed, it keeps a copy whose marker
+  matches and prints one line naming it, or else fails `raco setup` unless
+  the package's version, its manifest's native version and every
+  `libcompat.*` sha256 match. With neither a package nor a staged copy, it
+  only warns, naming the package to install or, on another platform, the
+  supported ones; building the manual, whose evaluator requires `polars`,
+  then fails `raco setup`, and `raco pkg install --no-docs` installs without
+  it. The dev shell does not export
   `RKT_POLARS_COMPAT_LIB_PATH`, which the loader would prefer to the copy
   `nix run .#copy-native-libs` stages; the nix build does.
 - The library's module tests live in `polars/tests/`, in the file at the
@@ -1374,8 +1370,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `grep-gates-test` gate, a push gate and a flake check) runs
   `no-syntax-rule`, `no-inline-tests`, `rustls-only` and `no-dynamic-wind`
   on a scratch tree to hold them there, and `dependency-catalogs-test`'s
-  check that `scripts/test-local.sh` reads its catalogs from
-  `scripts/dependency-catalogs.sh` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
+  check that `scripts/release/catalog-test.sh` reads its catalogs through
+  `release_catalogs` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
   1, as for any warning, on a log it cannot read or a grep error over the
   rendered manual, and `docs-check-test` plants both.
 - `nix run .#bench` (the `bench` gate, not in the push subset) fetches the
@@ -1424,7 +1420,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `v<native-version>` first (`polars/native-libs/BUILDING.md`).
 - The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
   crates within the polars minor) moves only in a refresh PR of its own,
-  `scripts/refresh-toolchain.sh`, which ends with a candidate refresh
+  `scripts/refresh-toolchain.sh`, and a native release ships its build
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.
   A polars bump, a patch release included, starts a fork branch
   `rkt-polars/<version>` at upstream's release commit, reproduces any

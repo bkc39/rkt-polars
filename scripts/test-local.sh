@@ -1,80 +1,55 @@
 #!/usr/bin/env bash
 #
-# Reproduce the pkgs.rkt-lang.org catalog build locally.  The catalog
-# publishes the `polars` collection (its source is the repo with
-# ?path=polars), so install exactly that subdirectory as the package
-# `polars` -- not the repo root -- with no Rust toolchain and no env-var
-# override.  The candidate for this platform is first staged as the native
-# package polars-<platform> (scripts/stage-native-package.rkt) and put in a
-# file:// catalog that also holds a copy of the release catalog and
-# pkgs.racket-lang.org (scripts/dependency-catalogs.sh), so `raco pkg
-# install --auto` resolves polars' #:platform dependency on it as the catalog
-# will; the install must load the library from that package.  Then every module
-# is instantiated against it, the docs are built as pkg-build.racket-lang.org
-# builds them, and the modules its `raco test --drdr` runs are run, red on
-# stderr as there, but with a 600 s timeout and this shell's PLTUSERHOME,
-# TMPDIR and stdin.
+# Reproduce the pkgs.racket-lang.org catalog install locally, against a
+# libcompat built for this platform: the dev shell's staged copy
+# (polars/native-libs/libcompat.*) or scripts/build-so.sh's output.  LIBCOMPAT
+# is staged as the native package polars-<platform>
+# (scripts/stage-native-package.rkt: the rust-tree and commit recorded beside
+# it, else HEAD's clean rust/) and packed as the release's package job packs
+# it, a zip, its catalog entry and its manifest; then
+# scripts/release/catalog-test.sh --full installs polars' tracked files from a
+# file:// catalog holding it, in a fresh PLTUSERHOME, and checks, renders the
+# docs and runs the tests as the release build does: the modules pkg-build's
+# `raco test --drdr` runs, red on stderr.
 #
-# Usage: scripts/test-local.sh
+# Usage: scripts/test-local.sh LIBCOMPAT
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT"
+if [[ $# -ne 1 ]]; then
+  echo "usage: scripts/test-local.sh LIBCOMPAT" >&2
+  exit 2
+fi
 
-# Make sure no override leaks in from the dev shell / Nix.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+library=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 unset RKT_POLARS_COMPAT_LIB_PATH || true
 
-platform=$(racket -e '(display (system-library-subpath #f))')
-case "$platform" in
-  x86_64-linux*)  candidate=linux  stage=x86_64-linux   pkg=polars-x86_64-linux ;;
-  aarch64-macosx) candidate=darwin stage=aarch64-macosx pkg=polars-aarch64-macosx ;;
-  *) echo "test-local: no native package for $platform" >&2; exit 1 ;;
+host=$(racket -e '(display (system-library-subpath #f))')
+case "$host" in
+  x86_64-linux*) platform=x86_64-linux pkg=polars-x86_64-linux ;;
+  aarch64-macosx) platform=aarch64-macosx pkg=polars-aarch64-macosx ;;
+  *) echo "test-local: no native package for $host" >&2; exit 1 ;;
 esac
-
-echo ">> removing any previously installed polars and $pkg"
-raco pkg remove polars 2>/dev/null || true
-raco pkg remove "$pkg" 2>/dev/null || true
-
-echo ">> clearing staged native libs (load from the native package)"
-rm -f polars/native-libs/libcompat.* || true
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-libs=(polars/native-libs/candidates/"$candidate"/libcompat.*)
-catalog="$scratch/catalog"
+mkdir -p "$scratch/built" "$scratch/dist"
+cp "$library" "$scratch/built/"
+for record in rust-tree commit; do
+  if [[ -f "$(dirname "$library")/$record" ]]; then
+    cp "$(dirname "$library")/$record" "$scratch/built/"
+  fi
+done
 
-echo ">> staging $pkg from ${libs[0]}"
+echo ">> staging $pkg from $library"
 # The staging script reads polars' native-location module, which needs
 # threading, before polars is installed.
 raco pkg install --batch --auto --skip-installed threading-lib
-# CI's build records the candidate's rust/ tree and commit beside it; a
-# committed candidate has no record, and HEAD need not be what built it.
-racket -S "$ROOT" scripts/stage-native-package.rkt --committed-candidate \
-  "$stage" "${libs[0]}" "$scratch/$pkg"
-raco pkg create --format zip --dest "$scratch" "$scratch/$pkg"
+racket -S "$ROOT" "$ROOT/scripts/stage-native-package.rkt" --head \
+  "$platform" "$scratch/built/$(basename "$library")" "$scratch/$pkg"
+raco pkg create --format zip --dest "$scratch/dist" "$scratch/$pkg"
+racket "$ROOT/scripts/release/catalog.rkt" entry "$pkg" "$scratch/$pkg" \
+  "$scratch/dist/$pkg.zip" "file://$scratch/dist/$pkg.zip" > "$scratch/dist/$pkg.rktd"
+cp "$scratch/$pkg/manifest.json" "$scratch/dist/$pkg.manifest.json"
 
-echo ">> a file:// catalog of the dependencies' catalogs and $pkg"
-listed=$(scripts/dependency-catalogs.sh)
-sources=()
-while IFS= read -r source; do sources+=("$source"); done <<< "$listed"
-raco pkg catalog-copy "${sources[@]}" "$catalog"
-racket scripts/release/catalog.rkt entry "$pkg" "$scratch/$pkg" "$scratch/$pkg.zip" \
-  "file://$scratch/$pkg.zip" > "$catalog/pkg/$pkg"
-
-echo ">> installing the polars collection (pulls deps: $pkg, gregor-lib, etc.)"
-raco pkg install --batch --auto --copy --no-docs --catalog "file://$catalog" \
-  --name polars "$ROOT/polars"
-
-echo ">> polars loads libcompat from $pkg, and staged no candidate"
-racket "$ROOT/scripts/check-native-install.rkt" "$pkg"
-
-echo ">> instantiating every module against $pkg's libcompat"
-racket "$ROOT/scripts/check-bindings.rkt"
-
-echo ">> building docs + checking declared deps (as the package server does)"
-# --no-docs above skipped threading-doc too; the manual's `~>` links need it.
-raco setup --check-pkg-deps --pkgs threading-doc
-DOCS_CHECK_PKG=polars scripts/docs-check.sh
-
-echo ">> running tests"
-raco test -e --timeout 600 -c polars
+bash "$ROOT/scripts/release/catalog-test.sh" "$platform" "$scratch/dist" --full

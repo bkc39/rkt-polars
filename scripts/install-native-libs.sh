@@ -12,9 +12,9 @@
 # installed library's sha256 as 64 lowercase hex digits and a newline, also
 # by rename and left alone when it already holds that hash. The source is
 # hashed before anything is written, so a kill leaves a new library behind
-# an old marker only between the two renames. The pre-installer (polars/private/install-compat.rkt)
-# keeps a library whose marker matches it instead of copying the committed
-# candidate over it (#306).
+# an old marker only between the two renames. The loader and the pre-installer
+# (polars/private/native-location.rkt) prefer a library whose marker matches it
+# to an installed native package (#306).
 #
 # Called by the dev shell's hook (flake.nix's devSetup) and by
 # `nix run .#copy-native-libs`; tested by scripts/install-native-libs-test.sh.

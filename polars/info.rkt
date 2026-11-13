@@ -22,8 +22,8 @@
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 
-;; Checks the native package's manifest, or stages a committed candidate
-;; where none is installed; see private/install-compat.rkt.
+;; Checks the native package's manifest, or says how to install it where
+;; none is; see private/install-compat.rkt.
 (define pre-install-collection "private/install-compat.rkt")
 (define compile-omit-files '("private/install-compat.rkt"))
 

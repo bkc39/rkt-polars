@@ -5,8 +5,9 @@
 # keeps the release catalog and pkgs.racket-lang.org and drops Rhombus's and
 # planet-compats, from CI's (the release catalog dropped) it keeps
 # pkgs.racket-lang.org alone, and from one with neither it fails, naming
-# what it read. scripts/test-local.sh must read its catalogs from it and
-# never pass --from-config; an unreadable test-local.sh fails with 2.
+# what it read. scripts/release/catalog-test.sh, which scripts/test-local.sh
+# runs, must read its catalogs from it through release_catalogs and never
+# pass --from-config; an unreadable catalog-test.sh fails with 2.
 #
 # Usage: scripts/dependency-catalogs-test.sh  (plain bash)
 set -euo pipefail
@@ -22,6 +23,7 @@ fail() {
 }
 
 mkdir "$work/bin"
+# shellcheck disable=SC2016
 printf '#!%s\n[[ "$*" == "pkg config catalogs" ]] || exit 3\ncat "$CATALOGS"\n' \
   "$(command -v bash)" > "$work/bin/raco"
 chmod +x "$work/bin/raco"
@@ -75,22 +77,23 @@ $planet
 [[ "$err" == *"no release catalog or pkgs.racket-lang.org among"*"$planet"* ]] \
   || fail "neither configured: stderr is [$err]"
 
-# in_test_local PATTERN: grep's status for PATTERN in scripts/test-local.sh;
-# above 1 (a missing or unreadable file) fails the gate with 2.
-in_test_local() {
+# in_catalog_test PATTERN: grep's status for PATTERN in
+# scripts/release/catalog-test.sh; above 1 (a missing or unreadable file)
+# fails the gate with 2.
+in_catalog_test() {
   local code=0
-  grep -qE -- "$1" "$here/test-local.sh" || code=$?
+  grep -qE -- "$1" "$here/release/catalog-test.sh" || code=$?
   if [[ $code -gt 1 ]]; then
-    echo "FAIL: cannot read $here/test-local.sh (grep status $code)" >&2
+    echo "FAIL: cannot read $here/release/catalog-test.sh (grep status $code)" >&2
     exit 2
   fi
   return $code
 }
 
-in_test_local '^listed=\$\(scripts/dependency-catalogs\.sh\)$' \
-  || fail "scripts/test-local.sh does not read its catalogs from scripts/dependency-catalogs.sh"
-if in_test_local '--from-config'; then
-  fail "scripts/test-local.sh copies every configured catalog (--from-config)"
+in_catalog_test '^listed=\$\(release_catalogs\)$' \
+  || fail "scripts/release/catalog-test.sh does not read its catalogs from release_catalogs"
+if in_catalog_test '--from-config'; then
+  fail "scripts/release/catalog-test.sh copies every configured catalog (--from-config)"
 fi
 
 if [[ $status -eq 0 ]]; then

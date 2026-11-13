@@ -60,6 +60,15 @@ release_grep() {
 }
 release_matches() { release_grep "$@" || return 0; }
 
+# Fails when the install log $1 holds the pre-installer's warning that no
+# native package is installed, which leaves its manifest unchecked.
+release_check_install_log() {
+  if release_grep -qF "libcompat is not installed" "$1"; then
+    echo "release: the pre-installer found no native package, so no manifest was checked (log: $1)" >&2
+    return 1
+  fi
+}
+
 release_catalogs() {
   local listed kept status=0
   listed=$(bash "$RELEASE_SCRIPTS/dependency-catalogs.sh") || return 1
