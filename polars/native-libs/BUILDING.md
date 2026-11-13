@@ -252,7 +252,7 @@ and commit the library was built from, and each `libcompat.*`'s sha256.
 
     racket scripts/stage-native-package.rkt \
       [--rust-tree TREE --commit SHA] [--head | --committed-candidate] \
-      PLATFORM LIBCOMPAT OUT-DIR
+      [--notices FILE] PLATFORM LIBCOMPAT OUT-DIR
 
 assembles one for `x86_64-linux` or `aarch64-macosx` in `OUT-DIR`, which
 must not exist. The tree and commit are `--rust-tree` and `--commit`, or else
@@ -260,7 +260,8 @@ the `rust-tree` and `commit` files CI's build records beside the library, or
 else, given `--head`, this checkout's `HEAD`, which it refuses while `rust/`
 differs from `HEAD`, or, given `--committed-candidate`, the placeholder
 `committed-candidate` for both: a committed candidate records neither, and
-`HEAD` need not be what built it. With none of these it fails. The script requires
+`HEAD` need not be what built it. With none of these it fails. `--notices` ships FILE
+as `THIRD-PARTY-NOTICES.txt`, which a release does. The script requires
 `polars/private/native-location` by collection, so run it where `polars` is
 installed or linked, or with `racket -S <repo>` (`scripts/test-local.sh`
 does). `scripts/stage-native-package-test.sh` (the `stage-native-package`
@@ -283,4 +284,101 @@ and a step of CI's Lint job: `raco pkg catalog-copy` fails when any catalog
 it reads does not answer), installs `polars` from that
 catalog with `--auto`, so a `#:platform` string that does not match leaves
 the package out, and then `scripts/check-native-install.rkt` requires that
-`polars` loads the package's library and staged no candidate.
+`polars` loads the package's library, staged no candidate and filters a
+frame.
+
+## Releases
+
+`.github/workflows/release.yml` (the `Release build` workflow) runs on a tag
+`v*`, on demand, and on a PR that touches what packages or tests a release
+(`native/`, `polars/info.rkt`, `polars/private/native-*.rkt`,
+`scripts/release/`, the scripts it calls, the flake, the workflow and the
+`install-racket` action). A PR that touches only `rust/` or
+`scripts/build-so.sh` does not run it, since `native.yml` already builds
+both libraries; its gates run at the tag. A PR run checks out the PR's
+head, not the merge with its base, so the manifest names a commit that
+outlives the run. Every script below sources `scripts/release/pins.sh`,
+which holds the pins (the Racket release, pkg-build's image, the natipkg
+installer) and one table per platform: the package, the library, its gates
+and its allowed NEEDED or `LC_LOAD_DYLIB` entries.
+
+The **plan** job runs `scripts/release/draft-tag.sh`, which fails unless
+both `native/*/info.rkt` versions equal `native-version`, names a draft only
+for the tag `v<native-version>`, and for the tag `v<version>` fails unless
+the published Release `v<native-version>` (drafts are invisible to the
+job's token) has a `polars-x86_64-linux.manifest.json` whose `rust_tree`
+is the checkout's; any other tag fails. The **notices** job, also run alone
+by `notices.yml` on a PR that changes `rust/Cargo.lock` or
+`rust/Cargo.toml`, runs `scripts/release/notices.sh`, which writes `THIRD-PARTY-NOTICES.txt` with
+cargo-about at `flake.lock`'s nixpkgs (`about.toml` lists the accepted
+licences, `about.hbs` the layout) and appends, through
+`bundled-licenses.sh`, the licences of the C libraries `zstd-sys` and
+`lz4-sys` compile in, failing when one is missing. The **build** job runs
+`scripts/build-so.sh` on each platform, with cargo's home remapped to
+`/cargo` in panic locations (#32), and records the `rust/` tree and commit
+beside the library.
+
+The **package** job, per platform, runs four scripts. `gates.sh PLATFORM
+LIBRARY [GATE...]` checks the binary against the platform's gates (file
+type, RPATH, store and home paths, glibc, NEEDED, size, exports) and exits
+2 when it cannot read the library. `gates-test.sh LIBCOMPAT` (the
+`release-gates` gate, also a step of CI's Lint job, which pass the staged
+`polars/native-libs`: given a directory, it takes the host's
+`libcompat.so` or `libcompat.dylib` from it) plants a library for
+each refusal, stubs `raco` and `gh` to check the other scripts, and runs
+`bash3.sh`, which refuses a bash 4 construct in what the macOS jobs run
+under `/bin/bash` 3.2.
+`package.sh PLATFORM ARTIFACT NOTICES DIST` stages the native package with
+the notices, refuses a library built from a `rust/` tree other than
+`HEAD:rust`, and writes the zip, its catalog entry
+`polars-<platform>.rktd`, the manifest and their `SHA256SUMS`.
+`catalog-test.sh PLATFORM DIST [--full]` installs `polars` from a `file://`
+catalog holding the shipped entry, in front of the catalogs
+`scripts/dependency-catalogs.sh` picks less download.racket-lang.org's
+(#124), runs `scripts/check-native-install.rkt` and
+`scripts/check-bindings.rkt`, and on macOS, which has no pkg-build test,
+with `--full` renders the docs and runs the suite as the test gate does.
+
+The **pkg-build** job runs `pkg-build-test.sh DIST`, which installs
+`polars` with docs in pkg-build's image (`racket/pkg-build:deps-x86_64`,
+Debian buster, glibc 2.28, by digest) with racket-lang.org's natipkg
+installer, as root, with `PLT_PKG_BUILD_SERVICE=1`, `CI=true` and
+`PLT_INFO_ALLOW_VARS=;PLT_PKG_BUILD_SERVICE`, from such a catalog with
+pkgs.racket-lang.org alone behind it, so the `x86_64-linux-natipkg`
+dependency must pull `polars-x86_64-linux`; it then runs `raco test --jobs
+2 --drdr --package polars` with `--network none`, and `RELEASE_LOGS` names
+a directory for its logs; the natipkg installer is cached by its sha256,
+so a warm run does not download it. The **draft** job, for the tag
+`v<native-version>` alone and the only job that may write to the
+repository, runs `draft.sh TAG SHA DIST`, which refuses a tag that no
+longer names the run's commit or that already has a release, and drafts
+one with every file the package jobs wrote.
+
+### Release checklist
+
+A native release, when `rust/` or a native package changed:
+
+1. On `master`, set `native-version` in `polars/info.rkt` and `version` in
+   both `native/*/info.rkt` to the new version, and usually `polars`'
+   `version` too.
+2. Tag that commit `v<native-version>` and push the tag.
+3. Read the draft the run makes: each manifest's `rust_tree` is the tag's
+   `rust/` tree (`git rev-parse v<native-version>:rust`), each
+   `.SHA256SUMS` checks, and the notices are attached.
+4. Publish the draft.
+5. On pkgs.racket-lang.org, register (the first time) or update
+   `polars-x86_64-linux` and `polars-aarch64-macosx` with the source
+   `https://github.com/bkc39/rkt-polars/releases/download/v<native-version>/polars-<platform>.zip`;
+   `polars-<platform>.rktd` holds the entry, the checksum included.
+6. Set `polars`' source to
+   `https://github.com/bkc39/rkt-polars.git?path=polars#v<version>`.
+7. After pkg-build's next cycle, check that polars' docs rendered and its
+   tests passed there.
+
+A Racket-only release bumps `polars`' `version` alone and tags
+`v<version>`: its run fails unless `rust/` is the tree the published
+Release `v<native-version>` was built from, builds, gates and tests both packages but drafts
+nothing, and the catalog's `polars` source moves to the new tag (step 6).
+
+Every script but `notices.sh` and `build-so.sh` runs locally on the
+committed candidates, `pkg-build-test.sh` given Docker.

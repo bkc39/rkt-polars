@@ -1,0 +1,223 @@
+name: Release build
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - polars/info.rkt
+      - polars/private/native-*.rkt
+      - scripts/release/**
+      - scripts/stage-native-package.rkt
+      - scripts/check-bindings.rkt
+      - scripts/check-native-install.rkt
+      - scripts/dependency-catalogs.sh
+      - scripts/docs-check.sh
+      - flake.nix
+      - flake.lock
+      - .github/actions/install-racket/**
+      - .github/workflows/notices.yml
+      - .github/workflows/release.yml
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A PR's head, not the merge with its base, so the manifest's commit is one
+# that exists after the run.
+env:
+  CHECKOUT_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  plan:
+    name: The native release a tag drafts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      racket: ${{ steps.racket.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - id: racket
+        name: The Racket release scripts/release/pins.sh pins
+        run: |
+          . scripts/release/pins.sh
+          echo "version=$RELEASE_RACKET_VERSION" >>"$GITHUB_OUTPUT"
+      - uses: ./.github/actions/install-racket
+        with:
+          version: ${{ steps.racket.outputs.version }}
+          architecture: x64
+      - id: plan
+        name: Draft only for v<native-version>
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: scripts/release/draft-tag.sh "$TAG" >>"$GITHUB_OUTPUT"
+
+  notices:
+    uses: ./.github/workflows/notices.yml
+
+  build:
+    name: Build libcompat (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: x86_64-linux
+            target: linux
+          - os: macos-latest
+            platform: aarch64-macosx
+            target: darwin
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - name: Cache cargo build
+        if: matrix.target == 'darwin'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Build shared object
+        run: scripts/build-so.sh ${{ matrix.target }}
+      - name: Record the rust/ tree and commit built
+        run: |
+          git rev-parse HEAD:rust > polars/native-libs/candidates/${{ matrix.target }}/rust-tree
+          git rev-parse HEAD > polars/native-libs/candidates/${{ matrix.target }}/commit
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: polars/native-libs/candidates/${{ matrix.target }}/
+          if-no-files-found: error
+
+  package:
+    name: Gate, package and install ${{ matrix.package }}
+    needs: [plan, notices, build]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: x86_64-linux
+            package: polars-x86_64-linux
+            library: libcompat.so
+            arch: x64
+            catalog-test: ""
+          - os: macos-latest
+            platform: aarch64-macosx
+            package: polars-aarch64-macosx
+            library: libcompat.dylib
+            arch: arm64
+            catalog-test: --full
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: ./.github/actions/install-racket
+        with:
+          version: ${{ needs.plan.outputs.racket }}
+          architecture: ${{ matrix.arch }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: libcompat-${{ matrix.platform }}
+          path: ${{ runner.temp }}/libcompat
+      - uses: actions/download-artifact@v8
+        with:
+          name: notices
+          path: ${{ runner.temp }}/notices
+      - name: Compile polars for the exports gate
+        run: |
+          missing=$(racket scripts/release/catalog.rkt missing-deps polars)
+          if [ -n "$missing" ]; then
+            deps=()
+            while IFS= read -r dep; do deps+=("$dep"); done <<<"$missing"
+            raco pkg install --batch --deps search-auto "${deps[@]}"
+          fi
+          PLTCOLLECTS="$PWD:" raco make -j 4 polars/private/*.rkt scripts/check-bindings.rkt
+      - name: Gate the binary
+        run: scripts/release/gates.sh ${{ matrix.platform }} "$RUNNER_TEMP/libcompat/${{ matrix.library }}"
+      - name: Gate tests
+        if: ${{ !cancelled() }}
+        run: scripts/release/gates-test.sh "$RUNNER_TEMP/libcompat/${{ matrix.library }}"
+      - name: Package
+        run: >-
+          scripts/release/package.sh ${{ matrix.platform }} "$RUNNER_TEMP/libcompat"
+          "$RUNNER_TEMP/notices/THIRD-PARTY-NOTICES.txt" "$RUNNER_TEMP/dist"
+      - name: Install from a file:// catalog
+        run: scripts/release/catalog-test.sh ${{ matrix.platform }} "$RUNNER_TEMP/dist" ${{ matrix.catalog-test }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.package }}
+          path: ${{ runner.temp }}/dist
+          if-no-files-found: error
+
+  pkg-build:
+    name: Install with docs and test offline as root, as pkg-build does
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: polars-x86_64-linux
+          path: ${{ runner.temp }}/dist
+      - id: natipkg
+        name: The natipkg installer scripts/release/pins.sh pins
+        run: |
+          . scripts/release/pins.sh
+          echo "sha256=$RELEASE_NATIPKG_RACKET_SHA256" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/release-cache
+          key: natipkg-racket-${{ steps.natipkg.outputs.sha256 }}
+      - name: pkg-build's image and natipkg Racket
+        env:
+          RELEASE_CPUS: "4"
+          RELEASE_LOGS: ${{ runner.temp }}/pkg-build-logs
+          RELEASE_CACHE: ${{ runner.temp }}/release-cache
+        run: scripts/release/pkg-build-test.sh "$RUNNER_TEMP/dist"
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pkg-build-logs
+          path: ${{ runner.temp }}/pkg-build-logs
+
+  draft:
+    name: Draft the GitHub Release
+    if: needs.plan.outputs.tag != ''
+    needs: [plan, package, pkg-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: polars-*
+          path: ${{ runner.temp }}/dist
+          merge-multiple: true
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: scripts/release/draft.sh "$TAG" "$SHA" "$RUNNER_TEMP/dist"

@@ -61,6 +61,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: nix develop --command bash scripts/stage-native-package-test.sh
 
+      - name: Release gates against planted libraries
+        if: ${{ !cancelled() }}
+        run: nix develop --command bash scripts/release/gates-test.sh polars/native-libs
+
       - name: Resyntax suite tests
         if: ${{ !cancelled() }}
         run: nix develop --command raco test lint

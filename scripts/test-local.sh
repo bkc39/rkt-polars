@@ -58,7 +58,8 @@ listed=$(scripts/dependency-catalogs.sh)
 sources=()
 while IFS= read -r source; do sources+=("$source"); done <<< "$listed"
 raco pkg catalog-copy "${sources[@]}" "$catalog"
-racket scripts/add-catalog-entry.rkt "$catalog" "$pkg" "$scratch/$pkg.zip"
+racket scripts/release/catalog.rkt entry "$pkg" "$scratch/$pkg" "$scratch/$pkg.zip" \
+  "file://$scratch/$pkg.zip" > "$catalog/pkg/$pkg"
 
 echo ">> installing the polars collection (pulls deps: $pkg, gregor-lib, etc.)"
 raco pkg install --batch --auto --copy --no-docs --catalog "file://$catalog" \

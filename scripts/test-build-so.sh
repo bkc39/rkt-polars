@@ -246,7 +246,7 @@ for channel in "$pinned" 1.2.3; do
   fi
   for want in \
     "rustup toolchain install $channel --profile minimal --no-self-update" \
-    "run $channel cargo build --profile dist --locked --manifest-path $repo/rust/Cargo.toml RUSTC=/rustup/toolchains/$channel/bin/rustc"; do
+    "run $channel cargo build --profile dist --locked --config target.'cfg(all())'.rustflags=['--remap-path-prefix=$tmp/case/home/.cargo=/cargo'] --manifest-path $repo/rust/Cargo.toml RUSTC=/rustup/toolchains/$channel/bin/rustc"; do
     grep -qxF "$want" "$log" || { fail "$what: no line '$want' in the log:"; show "$log"; }
   done
   if grep -q '^PATH ' "$log"; then
@@ -259,7 +259,7 @@ done
 what="no rustup, PATH rustc $pinned"
 setup "$pinned" no-rustup "$pinned"
 if run_script; then
-  want="PATH cargo build --profile dist --locked --manifest-path $repo/rust/Cargo.toml RUSTC=unset"
+  want="PATH cargo build --profile dist --locked --config target.'cfg(all())'.rustflags=['--remap-path-prefix=$tmp/case/home/.cargo=/cargo'] --manifest-path $repo/rust/Cargo.toml RUSTC=unset"
   grep -qxF "$want" "$log" || { fail "$what: no line '$want' in the log:"; show "$log"; }
   expect_built "$what" "$pinned" nix
 else

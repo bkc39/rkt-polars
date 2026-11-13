@@ -502,6 +502,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   manifest is checked only by the pre-installer, so only when `polars` is
   set up: installing or updating the native package alone leaves the
   version check at load.
+- **A native release is a tag** `v<native-version>`: `release.yml` builds,
+  gates (`scripts/release/gates.sh`), packages and tests both native
+  packages and drafts their Release; `gates-test.sh` is the `release-gates`
+  gate. The jobs and the checklist are in `polars/native-libs/BUILDING.md`.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then
@@ -1413,7 +1417,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   trailing `.0`: `0.1`, `0.1.1`, `0.2`. The repo-root `info.rkt` and
   `flake.nix`'s `version` carry the same string. `rust/Cargo.toml` keeps its
   own, and `flake.nix` reads it for the `rkt-polars-compat` derivation, so a
-  Racket-side bump does not rebuild the native library.
+  Racket-side bump does not rebuild the native library. A release is a tag
+  of that version, `v<version>`; when `rust/` changed since the published
+  Release `v<native-version>`, bump `native-version` and both
+  `native/*/info.rkt` versions together, and tag and publish
+  `v<native-version>` first (`polars/native-libs/BUILDING.md`).
 - The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, which ends with a candidate refresh

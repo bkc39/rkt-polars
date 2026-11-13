@@ -4,6 +4,7 @@
          (only-in racket/match match)
          (only-in racket/path path-only)
          (only-in pkg/lib pkg-directory)
+         (prefix-in pl: (only-in polars col dataframe filter ref series series->list >))
          (only-in polars/private/native-location
                   locate-native-library native-location-dir native-location-kind))
 
@@ -31,6 +32,10 @@
     (fail "polars loads ~a, which is not in the package ~a at ~a" file package root))
   (unless (null? candidates)
     (fail "the polars install staged ~a in ~a" candidates staged))
+  (define kept
+    (pl:filter (pl:dataframe (list (pl:series '(1 2 3) #:name "v"))) (pl:> (pl:col "v") 1)))
+  (unless (equal? (pl:series->list (pl:ref kept "v")) '(2 3))
+    (fail "a filter of v > 1 over 1, 2, 3 kept ~a" kept))
   (printf "polars loads ~a from the package ~a\n" file package))
 
 (module+ main

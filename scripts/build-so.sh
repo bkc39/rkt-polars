@@ -78,7 +78,7 @@ if [[ "$platform" == "linux" ]]; then
         | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
       . "$HOME/.cargo/env"
       # --icf=all must reach the final link alone, as cargo rustc passes it.
-      cargo rustc --lib --profile dist-linux --locked \
+      RUSTFLAGS="--remap-path-prefix=$HOME/.cargo=/cargo" cargo rustc --lib --profile dist-linux --locked \
         --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target \
         -- -C link-arg=-Wl,--icf=all
       cp /tmp/target/dist-linux/libcompat.so /out/
@@ -110,6 +110,8 @@ else
     echo "error: rustc is ${release:-missing}; rust/rust-toolchain.toml pins $RUST_TOOLCHAIN" >&2
     exit 1
   fi
+  # A cfg table's rustflags join rust/.cargo/config.toml's; RUSTFLAGS would replace them.
+  remap="target.'cfg(all())'.rustflags=['--remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo']"
   echo ">> ${cargo[*]} build --profile dist --locked (manifest: rust/Cargo.toml)"
   # In the nix dev shell rustc links through nix's cc wrapper, which adds the
   # search paths its NIX_LDFLAGS* and NIX_CFLAGS* variables name (each in a
@@ -123,7 +125,7 @@ else
         unset -v "$v"
       fi
     done
-    "${cargo[@]}" build --profile dist --locked --manifest-path "$ROOT/rust/Cargo.toml"
+    "${cargo[@]}" build --profile dist --locked --config "$remap" --manifest-path "$ROOT/rust/Cargo.toml"
   ) || exit $?
 
   built="$ROOT/rust/target/dist/$lib"
