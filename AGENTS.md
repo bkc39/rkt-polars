@@ -28,17 +28,25 @@ flake's build and dev shell and `scripts/build-so.sh` set.
 the `release-toolchain` flake check fails when the two differ. The release
 build is rustup's build of the release, whose LLVM can differ from nixpkgs',
 so `nix flake check` does not test the shipped code generation. The Linux
-build's manylinux2014 image is pinned by digest in the script. The committed
-candidates are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
-thin LTO and one codegen unit (#125), which keeps the Linux `.so` at 81.6 MB
-against GitHub's 104,857,600-byte file limit (102.2 MB without it), before
-the IO features of #176, which added 2.5 MB to the first and 3.3 MB to the
-second on the previous toolchain. Only
-`scripts/build-so.sh` uses it. The nix build, `cargo test` and the bench stay
-on `release`, because under LTO every test and example binary links on one
-core (the nix check went from 30 to 145 minutes on CI), so the bench measures
-the release build, not the shipped one. `panic` stays `unwind`: `guard_panic`
-depends on it.
+build's manylinux2014 image is pinned by digest in the script.
+`scripts/build-so.sh` builds the candidates with `[profile.dist]` in
+`rust/Cargo.toml`: release plus thin LTO, one codegen unit and
+`opt-level = "s"` for the crates only the cloud sources reach (#125, #216).
+The Linux one is built with `[profile.dist-linux]`, `dist` with fat LTO, and
+`scripts/build-so.sh` gives its final link alone rust-lld's `--icf=all`
+through `cargo rustc`, since a target's `rustflags` would reach the build
+scripts too. Against GitHub's 104,857,600-byte file limit a `dist-linux` build
+is 78,965,360 B, 6.2 MB under a thin-LTO `dist` build without the cloud
+crates' `opt-level` (fat LTO 4.8 MB, ICF 1.0 MB, the cloud crates 0.9 MB, each
+alone). Fat LTO's final step is single-threaded, about 15 minutes and 7 GiB
+against 6 minutes and 4.9 GiB thin, whatever the jobs count, which sets only
+the dependencies' parallelism; so darwin, whose CI runner has 7 GB and whose
+dylib has 33 MB of headroom, stays on `dist`, and ld64 already folds identical
+code by default. No other build uses the two profiles. The nix build,
+`cargo test` and the bench stay on `release`, because under LTO every test and
+example binary links on one core (the nix check went from 30 to 145 minutes on
+CI), so the bench measures the release build, not the shipped one. `panic`
+stays `unwind`: `guard_panic` depends on it.
 
 Every polars crate comes from the branch `rkt-polars/0.55.2` of the fork
 bkc39/polars (#362): `rust/Cargo.toml` takes `polars`, `polars-async`,
