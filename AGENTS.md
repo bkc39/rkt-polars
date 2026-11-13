@@ -1251,12 +1251,19 @@ it. Racket side: `define-compat` with `#:c-id`.
   --timeout 600 -c polars` on Racket's current pre-release
   (`Bogdanp/setup-racket`, `version: pre-release`), so a release
   candidate's regression shows before pkg-build reports it (#146). It runs
-  after the flake checks and takes their Linux library with `nix build
-  .#rust --max-jobs 0`, which substitutes and never compiles, so a missed
-  cache fails that step; its link is under `$RUNNER_TEMP`, outside the
-  linked package. The library links nix's glibc, but under the
-  installer's Racket it binds the system's, so it needs `GLIBC_2.39`, which
-  ubuntu-24.04 has.
+  after the flake checks and takes their Linux leg's library, which that
+  leg copies out of its store (`nix build .#rust --max-jobs 0`, which
+  builds nothing) and uploads as the artifact `libcompat-nix-x86_64-linux`,
+  kept a day; magic-nix-cache is no hand-off, since the Actions cache
+  behind it throttles uploads. Without the artifact (that leg failed before
+  the upload) the job fails at `Check libcompat`. The job downloads it
+  under `$RUNNER_TEMP`, outside the linked package, and has no nix. The
+  library's RUNPATH names nix's glibc and gcc in a store the runner lacks,
+  so its NEEDED entries (`libgcc_s.so.1`, `libm.so.6`, `libc.so.6`,
+  `ld-linux-x86-64.so.2`) resolve from the system's, and it needs
+  `GLIBC_2.39` (`pidfd_spawnp`, `pidfd_getpid`), which ubuntu-24.04 has.
+  That floor is nixpkgs' glibc's, whatever image the flake leg runs on,
+  so a nixpkgs refresh can raise it.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME`, keyed on its root as
