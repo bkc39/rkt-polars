@@ -10,9 +10,7 @@
 
 (define polars-dir (path-only (collection-file-path "main.rkt" "polars")))
 
-(define lib
-  (build-path polars-dir "native-libs"
-              (path-add-extension "libcompat" (system-type 'so-suffix))))
+(define lib (dynamic-require 'polars/private/native-library 'native-library-file))
 
 (define modules
   (sort (for/list ([f (in-directory (build-path polars-dir "private"))]
@@ -22,8 +20,7 @@
 
 (define (missing-symbol message)
   (match message
-    [(regexp #rx"could not find export from foreign library\n  name: ([^\n]+)"
-             (list _ name))
+    [(regexp #rx"libcompat lacks the export for ([^,\n]+), so" (list _ name))
      name]
     [_ #f]))
 

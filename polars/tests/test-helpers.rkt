@@ -3,10 +3,14 @@
 (require (for-syntax racket/base)
          (only-in file/gzip gzip-through-ports)
          (only-in gregor/private/moment-base make-moment)
+         (only-in json write-json)
+         (only-in polars/private/native-location
+                  current-native-platform library-file manifest-jsexpr)
          (only-in polars/private/resource with-release)
          (only-in racket/contract contract-name exn:fail:contract:blame?)
          (only-in racket/file
-                  delete-directory/files display-to-file file->bytes make-temporary-directory)
+                  delete-directory/files display-to-file file->bytes make-directory*
+                  make-temporary-directory)
          (only-in racket/match match-define)
          (only-in racket/path path-has-extension?)
          (only-in racket/port with-output-to-string)
@@ -15,10 +19,12 @@
          syntax/parse/define)
 
 (provide apply-keywords contains-all? contract-violation-of drops-during drops-once
-         explain-failure gzip-file keyword-rejected? make-moment message-of module-text
-         not-utf-8-expected not-utf-8-names polars-dir polars-sources read-source refusal
-         refusal-misses refused scratch-file settle! staging-files who-prefix
-         with-default-polars-format with-environment-variable with-planted-sources)
+         explain-failure gzip-file keyword-rejected? make-moment make-native-package! message-of
+         module-text native-package-main not-utf-8-expected not-utf-8-names polars-dir
+         polars-sources read-source refusal refusal-misses refused scratch-file settle! staging-files
+         who-prefix
+         with-default-polars-format with-environment-variable with-native-collections
+         with-planted-sources)
 
 (define-runtime-path polars-dir "..")
 
@@ -72,10 +78,10 @@
    (syntax/loc this-syntax
      (call-with-default-polars-format (lambda () body ...)))])
 
-(define (module-text . forms)
+(define (module-text #:lang [lang "racket/base"] . forms)
   (with-output-to-string
     (lambda ()
-      (displayln "#lang racket/base")
+      (printf "#lang ~a\n" lang)
       (for-each writeln forms))))
 
 (define-syntax-parser with-planted-sources
@@ -170,3 +176,45 @@
 
 (define (refusal-misses rows)
   (filter values (map refusal-miss rows)))
+
+(define (call-with-native-collections proc)
+  (with-release ([root (make-temporary-directory "rkt-polars-native-~a") delete-directory/files])
+    (parameterize ([current-library-collection-links (list #f)]
+                   [current-library-collection-paths (cons root (current-library-collection-paths))]
+                   [current-native-platform "x86_64-linux"])
+      (proc root))))
+
+(define-syntax-parser with-native-collections
+  [(_ root:id body:expr ...+)
+   (syntax/loc this-syntax
+     (call-with-native-collections (lambda (root) body ...)))])
+
+(define native-package-main
+  (module-text '(require racket/runtime-path)
+               '(provide native-libs-dir)
+               '(define-runtime-path native-libs-dir "native-libs")))
+
+(define (make-native-package! collects
+                              #:package [package "polars-x86_64-linux"]
+                              #:version [version "0.3"]
+                              #:info-text [info-text (module-text #:lang "info"
+                                                                  `(define version ,version))]
+                              #:library [library "native bytes"]
+                              #:manifest? [manifest? #t]
+                              #:manifest-text [manifest-text #f]
+                              #:main [main native-package-main])
+  (define root (build-path collects package))
+  (define libs (build-path root "native-libs"))
+  (define manifest (build-path root "manifest.json"))
+  (make-directory* libs)
+  (display-to-file info-text (build-path root "info.rkt"))
+  (display-to-file main (build-path root "main.rkt"))
+  (when library
+    (display-to-file library (build-path libs library-file)))
+  (cond
+    [manifest-text (display-to-file manifest-text manifest)]
+    [manifest?
+     (call-with-output-file* manifest
+       (lambda (out) (write-json (manifest-jsexpr libs version "tree" "commit") out)))]
+    [else (void)])
+  root)

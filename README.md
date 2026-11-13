@@ -168,22 +168,25 @@ raco setup --pkgs rkt-polars
 raco test -e --timeout 600 -c polars
 ```
 
-### Prebuilt native libraries
+### Native packages
 
-The package catalog's build host has no Rust toolchain, so prebuilt shared
-objects are committed per platform under `polars/native-libs/candidates/`
-(`linux/libcompat.so`, built on glibc 2.17 / manylinux2014, and
-`darwin/libcompat.dylib` for arm64). The `pre-install-collection` hook
-(`polars/private/install-compat.rkt`) selects a library at `raco pkg install`
-time, preferring `RKT_POLARS_COMPAT_LIB_PATH`, then the committed candidate for
-the platform, then an already-staged `polars/native-libs/libcompat.*`. It
+`polars` loads `libcompat` from the native package for the platform,
+`polars-x86_64-linux` or `polars-aarch64-macosx`, which `polars/info.rkt`
+depends on by `#:platform`; `RKT_POLARS_COMPAT_LIB_PATH` or a dev-built
+staged copy outranks it. `polars/native-libs/BUILDING.md` (Native packages)
+has the load order, the package's layout and manifest, and
+`scripts/stage-native-package.rkt`, which assembles one.
+
+Until #254's L3 removes them, prebuilt shared objects are also committed
+under `polars/native-libs/candidates/` (`linux/libcompat.so`, built on glibc
+2.17 / manylinux2014, and `darwin/libcompat.dylib` for arm64), and with no
+native package installed the pre-installer stages the platform's candidate,
+on x86_64 Linux and arm64 macOS only. It
 leaves an identical library alone and replaces a differing one by a rename, as
 `scripts/install-native-libs.sh` does (#267). It does not copy the candidate
-over a library `nix run .#copy-native-libs` or the dev shell installed, which
-those mark with `polars/native-libs/.libcompat.*.dev`; set
-`RKT_POLARS_FORCE_CANDIDATE=1` to install the candidate anyway (#306). The
-keep outlasts a branch switch or a pull, so after a candidate refresh that
-adds an export, set it or re-enter the dev shell.
+over a dev-marked library; set `RKT_POLARS_FORCE_CANDIDATE=1` to install the
+candidate anyway (#306). The keep outlasts a branch switch or a pull, so after
+a candidate refresh that adds an export, set it or re-enter the dev shell.
 
 To (re)build and stage a candidate on the matching platform:
 

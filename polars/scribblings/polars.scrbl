@@ -10,8 +10,8 @@
 @hyperlink["https://pola.rs/"]{Polars} DataFrame library. The bindings call
 into a native compatibility library (@tt{libcompat}) built from the Rust
 @tt{polars} crate; prebuilt shared objects for Linux (x86-64) and macOS
-(arm64) ship with the package and are installed automatically, so no Rust
-toolchain is required at install time.
+(arm64) are installed with the package, so no Rust toolchain is required at
+install time (see @secref["install"]).
 
 The @racketmodname[polars] module re-exports three groups of operations:
 
@@ -39,6 +39,32 @@ and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
 @racket[~>]. We are grateful for all of them.
 
 @local-table-of-contents[]
+
+@section[#:tag "install"]{Installation}
+
+@commandline{raco pkg install polars}
+
+installs @racketmodname[polars] and, as a dependency for the platform, the
+native package that holds @tt{libcompat}: @tt{polars-x86_64-linux} on x86-64
+Linux, @tt{polars-aarch64-macosx} on arm64 macOS. When @racketmodname[polars]
+is set up, @exec{raco setup} fails if the native package is not the version
+this @racketmodname[polars] needs or its library is not the one the package
+was built with; @exec{raco pkg update polars polars-x86_64-linux} (with the
+platform's package) brings the two together. A native package installed or
+updated on its own is not set up with @racketmodname[polars], so only its
+version is checked, when @racket[(require polars)] loads it.
+
+On a supported platform without the native package, @racketmodname[polars]
+loads the copy of @tt{libcompat} it ships itself. On any other platform,
+@racket[(require polars)] raises @racket[exn:fail], naming the supported
+platforms.
+
+When @envvar{RKT_POLARS_COMPAT_LIB_PATH} is set and not empty,
+@racketmodname[polars] loads the @tt{libcompat} in the @filepath{lib}
+directory it names instead, unchecked.
+
+@exec{raco exe} and @exec{raco distribute} are not supported yet: an
+executable does not find the native package.
 
 @include-section["guide.scrbl"]
 @include-section["reference.scrbl"]

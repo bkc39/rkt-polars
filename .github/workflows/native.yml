@@ -46,13 +46,14 @@ jobs:
 
       # A pull_request run builds the merge with the base branch, not the PR
       # head: scripts/refresh-candidates.sh commits a candidate only where
-      # rust/ is the tree recorded here.  build-so.sh has written `toolchain`
+      # rust/ is the tree recorded here, and scripts/stage-native-package.rkt
+      # writes both records into the native package's manifest.json.  build-so.sh has written `toolchain`
       # beside it, which the script prints and checks against the flake's
       # rustc release and, on Linux, build-so.sh's image.
-      - name: Record the rust/ tree built
-        run: >-
-          git rev-parse HEAD:rust
-          > polars/native-libs/candidates/${{ matrix.platform }}/rust-tree
+      - name: Record the rust/ tree and commit built
+        run: |
+          git rev-parse HEAD:rust > polars/native-libs/candidates/${{ matrix.platform }}/rust-tree
+          git rev-parse HEAD > polars/native-libs/candidates/${{ matrix.platform }}/commit
 
       # Guard the deploy requirement: the committed linux candidate must not
       # require glibc newer than 2.17 (pkg-build.racket-lang.org's test host is

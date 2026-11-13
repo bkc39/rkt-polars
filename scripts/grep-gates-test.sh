@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
-# The grep-gates-test gate (#298, #302): each grep gate run on a scratch tree, which
-# it reads because it works from its own script's parent.  A clean tree
+# The grep-gates-test gate (#298, #302): each grep gate, and
+# dependency-catalogs-test.sh's check of test-local.sh, run on a scratch
+# tree, which it reads because it works from its own script's parent.  A clean tree
 # passes, a planted hit fails with 1, and a tree missing a directory or file
 # the gate reads fails with 2 and the gate's message, where a grep error
 # taken for "no match" would pass.
@@ -30,7 +31,9 @@ tree() {
   printf '[[package]]\nname = "rustls"\nversion = "0.23.0"\n' > "$work/tree/rust/Cargo.lock"
   printf '(("tests/allowed.rkt" f "a reason"))\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
   cp "$here"/no-syntax-rule.sh "$here"/no-inline-tests.sh "$here"/rustls-only.sh \
-    "$here"/no-dynamic-wind.sh "$work/tree/scripts/"
+    "$here"/no-dynamic-wind.sh "$here"/dependency-catalogs.sh \
+    "$here"/dependency-catalogs-test.sh "$here"/test-local.sh "$work/tree/scripts/"
+  chmod -R u+w "$work/tree/scripts"
 }
 
 expect() {
@@ -109,5 +112,19 @@ expect "a missing directory" no-dynamic-wind 2 "no-dynamic-wind: grep failed (ex
 tree
 rm "$work/tree/polars/tests/dynamic-wind-sites.rktd"
 expect "a missing list of sites" no-dynamic-wind 2 "no-dynamic-wind: cannot read the listed sites"
+
+tree
+expect "this checkout's test-local.sh" dependency-catalogs-test 0 "dependency-catalogs: ok"
+tree
+printf 'raco pkg catalog-copy --from-config "$catalog"\n' >> "$work/tree/scripts/test-local.sh"
+expect "--from-config" dependency-catalogs-test 1 \
+  "scripts/test-local.sh copies every configured catalog (--from-config)"
+tree
+sed -i.bak '/^listed=/d' "$work/tree/scripts/test-local.sh"
+expect "no filter" dependency-catalogs-test 1 \
+  "scripts/test-local.sh does not read its catalogs from scripts/dependency-catalogs.sh"
+tree
+rm "$work/tree/scripts/test-local.sh"
+expect "a missing test-local.sh" dependency-catalogs-test 2 "cannot read $work/tree/scripts/test-local.sh"
 
 exit $status

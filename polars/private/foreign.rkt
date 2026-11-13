@@ -17,13 +17,13 @@
          (only-in racket/function negate)
          (only-in racket/list check-duplicates)
          (only-in racket/string non-empty-string? string-replace)
-         racket/runtime-path
          syntax/parse/define
          (only-in polars/private/enum-misses enum-cast-reason enum-misses-reason)
          (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
          (only-in polars/private/join-options
                   asof-keys asof-strategy-symbol->code asof-tolerance->parts frame-join-asof/c
                   frame-join/c join-keys join-symbol->code)
+         (only-in polars/private/native-library compat-library missing-export)
          (only-in polars/private/resource
                   _str _str-list utf-8-name/c with-raw-buffer with-release)
          (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
@@ -111,11 +111,10 @@
 (provide-row-windows Series-ptr? series-head series-tail series-slice)
 (provide-row-windows DataFrame-ptr? dataframe-head dataframe-tail dataframe-slice)
 
-(define-runtime-path native-libs-dir "../native-libs")
-
 (define-ffi-definer define-compat
-  (ffi-lib (build-path native-libs-dir "libcompat"))
-  #:make-c-id convention:hyphen->underscore)
+  compat-library
+  #:make-c-id convention:hyphen->underscore
+  #:default-make-fail missing-export)
 
 (define-compat str-block-drop
   (_fun _pointer -> _void))
