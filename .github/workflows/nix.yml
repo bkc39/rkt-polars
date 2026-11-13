@@ -23,6 +23,42 @@ jobs:
       - name: Run flake checks
         run: nix flake check --print-build-logs
 
+  racket-pre-release:
+    name: Racket pre-release tests
+    needs: flake-check
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Configure Nix Cache
+        uses: DeterminateSystems/magic-nix-cache-action@v15
+
+      # --max-jobs 0 substitutes the library the flake checks built and
+      # never compiles it.
+      - name: Fetch libcompat
+        run: nix build .#rust --max-jobs 0 --out-link libcompat
+
+      - name: Install Racket pre-release
+        uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
+        with:
+          version: pre-release
+
+      - name: Install rkt-polars
+        env:
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ github.workspace }}/libcompat
+        run: |
+          racket -e '(displayln (version))'
+          raco pkg install --batch --auto --no-docs --name rkt-polars --link "$PWD"
+
+      - name: Test
+        env:
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ github.workspace }}/libcompat
+        run: raco test -e --timeout 600 -c polars
+
   lint:
     name: Lint (no-syntax-rule, no-inline-tests, rustls-only, no-dynamic-wind, resyntax)
     runs-on: ubuntu-latest

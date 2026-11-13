@@ -69,6 +69,11 @@
 (define outside-specials "\\.+*?()|[]{}^$#&-~")
 (define class-specials "\\[]^-&~")
 (define never-matches "[a&&b]")
+(define racket-other-categories
+  (string-append*
+   (for/list ([ch (in-list '(#\nul #\u00AD #\uFFFF #\uE000 #\u00A9))]
+              #:when (regexp-match? #px"\\p{C}" (string ch)))
+     (format "\\p{~a}" (~> ch char-general-category symbol->string string-titlecase)))))
 (define any-char "(?s:.)")
 
 (define (escape ch specials)
@@ -148,7 +153,7 @@
   (define negated? (xor (string=? p "P") (string=? caret "^")))
   (match name
     ["L&" (class-of negated? "\\p{Ll}\\p{Lu}\\p{Lt}\\p{Lm}")]
-    ["C" (class-of negated? "\\p{Cc}\\p{Cf}\\p{Cn}\\p{So}")]
+    ["C" (class-of negated? racket-other-categories)]
     [(or "Cs" ".") (if negated? any-char never-matches)]
     [_ (string-append (if negated? "\\P{" "\\p{") name "}")]))
 
@@ -214,3 +219,6 @@
         [(or "m" "-s") (values fold? 'on)]
         [(or "s" "-m") (values fold? 'off)])))
   (values (case multi [(on) "(?m-s:"] [(off) "(?s-m:"] [else "(?:"]) fold?))
+
+(module+ internal
+  (provide regexp->rust))

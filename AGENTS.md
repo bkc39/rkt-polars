@@ -1185,9 +1185,12 @@ it. Racket side: `define-compat` with `#:c-id`.
   differs from Racket's; it expands case-insensitive literals and ranges
   itself. `\p{...}` classes follow each side's Unicode tables, and Racket
   misjudges some classes above U+00FF (#85), so the oracle's names stay out of
-  both. Lookaround, backreferences, atomic groups and conditionals, which the
-  crate lacks, are rejected by `col` and `exclude`, naming the construct
-  (#151).
+  both. `\p{C}` is the categories the running Racket reads it as, probed
+  when the module is instantiated: Cc, Cf, Cn and So on 9.3, Cc, Cf, Cn and
+  Co on 9.4's pre-release, where Unicode's C is Cc, Cf, Cs, Co and Cn
+  (#146); every other name reads the same on both. Lookaround,
+  backreferences, atomic groups and conditionals, which the crate lacks, are
+  rejected by `col` and `exclude`, naming the construct (#151).
 
 ## Documentation
 
@@ -1236,6 +1239,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars-fork`, every polars crate from the fork at one rev).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
+- CI's `Racket pre-release tests` job (`nix.yml`) runs `raco test -e
+  --timeout 600 -c polars` on Racket's current pre-release
+  (`Bogdanp/setup-racket`, `version: pre-release`), so a release
+  candidate's regression shows before pkg-build reports it (#146). It runs
+  after the flake checks and takes their Linux library with `nix build
+  .#rust --max-jobs 0`, which substitutes and never compiles, so a missed
+  cache fails that step. The library links nix's glibc, but under the
+  installer's Racket it binds the system's, so it needs `GLIBC_2.39`, which
+  ubuntu-24.04 has.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME`, keyed on its root as
