@@ -24,12 +24,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 library=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 unset RKT_POLARS_COMPAT_LIB_PATH || true
 
+# shellcheck source=scripts/release/pins.sh
+. "$ROOT/scripts/release/pins.sh"
 host=$(racket -e '(display (system-library-subpath #f))')
-case "$host" in
-  x86_64-linux*) platform=x86_64-linux pkg=polars-x86_64-linux ;;
-  aarch64-macosx) platform=aarch64-macosx pkg=polars-aarch64-macosx ;;
-  *) echo "test-local: no native package for $host" >&2; exit 1 ;;
-esac
+platform=$(release_host_platform "$host")
+if [[ -z "$platform" ]]; then
+  echo "test-local: no native package for $host (platforms: $RELEASE_PLATFORMS)" >&2
+  exit 1
+fi
+release_platform "$platform"
+pkg=$RELEASE_PACKAGE
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT

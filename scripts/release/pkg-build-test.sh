@@ -5,9 +5,28 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scripts/release/pins.sh
 . "$here/pins.sh"
 
-release_platform x86_64-linux
-package=$RELEASE_PACKAGE
 say() { echo "pkg-build test${phase:+ ($phase)}: $*"; }
+usage() {
+  echo "usage: pkg-build-test.sh PLATFORM DIST (platforms pkg-build checks: $(pkg_build_platforms))" >&2
+  exit 2
+}
+pkg_build_platforms() {
+  local platform checked=()
+  for platform in $RELEASE_PLATFORMS; do
+    release_platform "$platform"
+    [ -z "$RELEASE_PKG_BUILD_IMAGE" ] || checked+=("$platform")
+  done
+  echo "${checked[*]}"
+}
+# use_platform PLATFORM: its package, image and installer, or the usage.
+use_platform() {
+  release_platform "$1" || usage
+  [ -n "$RELEASE_PKG_BUILD_IMAGE" ] || {
+    echo "pkg-build-test.sh: pkg-build does not check $1" >&2
+    usage
+  }
+  package=$RELEASE_PACKAGE
+}
 
 in_container() {
   phase=$1
@@ -68,15 +87,14 @@ in_container() {
 }
 
 if [ "${1:-}" = --in-container ]; then
-  in_container "$2"
+  use_platform "$2"
+  in_container "$3"
   exit 0
 fi
-if [ $# -ne 1 ]; then
-  echo "usage: pkg-build-test.sh DIST" >&2
-  exit 2
-fi
+[ $# -eq 2 ] || usage
+use_platform "$1"
 root=$(cd "$here/../.." && pwd)
-dist=$(cd "$1" && pwd)
+dist=$(cd "$2" && pwd)
 cache=${RELEASE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/rkt-polars-release}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -93,5 +111,5 @@ run() {
     -e PLT_PKG_BUILD_SERVICE=1 -e CI=true -e "PLT_INFO_ALLOW_VARS=;PLT_PKG_BUILD_SERVICE" \
     --entrypoint /bin/bash "$@"
 }
-run "$RELEASE_PKG_BUILD_IMAGE" /scripts/release/pkg-build-test.sh --in-container install
-run --network none -e HOME=/work "$RELEASE_PKG_BUILD_IMAGE" /scripts/release/pkg-build-test.sh --in-container test
+run "$RELEASE_PKG_BUILD_IMAGE" /scripts/release/pkg-build-test.sh --in-container "$1" install
+run --network none -e HOME=/work "$RELEASE_PKG_BUILD_IMAGE" /scripts/release/pkg-build-test.sh --in-container "$1" test

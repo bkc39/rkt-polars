@@ -6,7 +6,8 @@
 # (CI's rust-tree and commit), or else, under --head, this checkout's HEAD,
 # refused while rust/ differs from HEAD, tracked or untracked. With none of
 # them, half of a pair, or --head without git on PATH, it fails, naming why,
-# and stages nothing.
+# and stages nothing, as it does for another platform's library, by its name
+# or, on Linux, by its ELF machine.
 #
 # Usage: scripts/stage-native-package-test.sh  (in the dev shell: racket, git)
 set -euo pipefail
@@ -35,7 +36,12 @@ git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q -m
 head_tree=$(git -C "$repo" rev-parse HEAD:rust)
 head_commit=$(git -C "$repo" rev-parse HEAD)
 lib=$work/build/libcompat.so
-printf 'built bytes' > "$lib"
+# elf FILE MACHINE: a little-endian ELF64 header's first 20 bytes, for the
+# e_machine whose octal escape is MACHINE (076 x86-64, 267 AArch64), then bytes.
+elf() {
+  printf '\177ELF\002\001\001\000\000\000\000\000\000\000\000\000\003\000%b\000built bytes' "\\0$2" > "$1"
+}
+elf "$lib" 076
 
 n=0
 # stage NAME ARGS...: stages into $work/out-N, leaving its stderr in $err.
@@ -104,6 +110,49 @@ staged "records, no flag" t2 c2
 stage --rust-tree t3 --commit c3 || true
 staged "flags over records" t3 c3
 rm "$work/build/rust-tree" "$work/build/commit" "$repo/rust/new.rs"
+
+cp -R "$root/native/polars-aarch64-linux" "$repo/native/"
+# stage_for PLATFORM LIBRARY NAME: stages into $work/out-NAME.
+stage_for() {
+  out=$work/out-$3
+  err=$work/err-$3
+  racket "$repo/scripts/stage-native-package.rkt" --rust-tree t4 --commit c4 "$1" "$2" "$out" 2> "$err"
+}
+
+if stage_for aarch64-linux "$lib" aarch64-linux-x86-64; then
+  fail "aarch64-linux, an x86-64 library: exit 0"
+fi
+refused "aarch64-linux, an x86-64 library" \
+  "is built for ELF machine 62, not aarch64-linux's AArch64 (ELF machine 183)"
+
+elf "$lib" 267
+if stage_for x86_64-linux "$lib" x86_64-linux-aarch64; then
+  fail "x86_64-linux, an AArch64 library: exit 0"
+fi
+refused "x86_64-linux, an AArch64 library" \
+  "is built for ELF machine 183, not x86_64-linux's x86-64 (ELF machine 62)"
+
+stage_for aarch64-linux "$lib" aarch64-linux || true
+staged "aarch64-linux" t4 c4
+grep -qF '(define collection "polars-aarch64-linux")' "$out/info.rkt" 2> /dev/null \
+  || fail "aarch64-linux: staged no polars-aarch64-linux skeleton: $(cat "$err")"
+[[ -f "$out/native-libs/libcompat.so" ]] || fail "aarch64-linux: no native-libs/libcompat.so"
+printf 'built bytes' > "$work/build/libcompat.dylib"
+if stage_for aarch64-linux "$work/build/libcompat.dylib" aarch64-linux-dylib; then
+  fail "aarch64-linux, a dylib: exit 0"
+fi
+refused "aarch64-linux, a dylib" "is not aarch64-linux's library, libcompat.so"
+rm "$work/build/libcompat.dylib"
+
+for bytes in 'built bytes' ''; do
+  printf '%s' "$bytes" > "$lib"
+  if stage_for aarch64-linux "$lib" "not-elf-${#bytes}"; then
+    fail "aarch64-linux, ${#bytes} bytes that are not ELF: exit 0"
+  fi
+  refused "aarch64-linux, ${#bytes} bytes that are not ELF" \
+    "is not an ELF library, not aarch64-linux's AArch64"
+done
+elf "$lib" 076
 
 mkdir "$work/bin"
 ln -s "$(command -v racket)" "$work/bin/racket"

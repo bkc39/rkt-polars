@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Stub test of scripts/build-so.sh's darwin branch (#161): runs a copy of the
-# script against fake rustup, cargo and rustc on a PATH of its own and builds
-# nothing.  With rustup it must install and call the channel
+# Stub test of scripts/build-so.sh (#161, #377).  The darwin branch runs a
+# copy of the script against fake rustup, cargo and rustc on a PATH of its
+# own and builds nothing.  With rustup it must install and call the channel
 # rust/rust-toolchain.toml names, `rustup run <channel> cargo build ...`,
 # though a nix cargo and rustc that reject `+toolchain` come first on PATH.
 # Without rustup it must build with the cargo on PATH when the rustc there is
@@ -14,6 +14,13 @@
 # dylib is still in the target directory, and a missing otool or ld stops it
 # before rustup installs anything.  An earlier build's library and records
 # (CI's rust-tree and commit) are gone after a build, failed or not.
+#
+# Its linux branch runs against a fake docker: for BUILD_SO_MACHINE, without
+# asking docker, or else for Docker's machine, x86_64 or aarch64, it runs
+# scripts/build-so-linux.sh in the manylinux2014 image pinned by digest for
+# that machine, which links the library with rustc's rust-lld and --icf=all
+# and records that image.  For another machine, or with no machine from
+# `docker info` (podman's), it runs nothing.
 #
 # The copy runs under $BASH_UNDER_TEST (default: the bash on PATH), so that
 # macOS's bash 3.2 can be tested; the stubs run under the bash on PATH.  Each
@@ -397,6 +404,143 @@ for odd in 'NIX_CFLAGS X=1' 'NIX_CFLAGS*=1'; do
     show "$out"
   fi
 done
+
+# The linux branch against a fake docker on Docker machine $1, where an empty
+# $1 is a `docker info` that fails, as podman's does on this format.  The rest
+# are NAME=value pairs for the script's environment.
+linux_case() {
+  local machine="$1" q_log
+  shift
+  rm -rf "$tmp/case"
+  repo="$tmp/case/repo"
+  bin="$tmp/case/bin"
+  log="$tmp/case/log"
+  out="$tmp/case/out"
+  mkdir -p "$repo/scripts" "$repo/rust" "$bin" "$tmp/case/home"
+  cp "$SCRIPT" "$repo/scripts/build-so.sh"
+  cp "$LINUX_SCRIPT" "$repo/scripts/build-so-linux.sh"
+  printf '[toolchain]\nchannel = "%s"\n' "$pinned" > "$repo/rust/rust-toolchain.toml"
+  : > "$log"
+  q_log="$(printf '%q' "$log")"
+  for tool in cat dirname head ls mkdir rm sed; do
+    ln -s "$(command -v "$tool")" "$bin/$tool"
+  done
+  cat > "$bin/docker" <<EOF
+#!$BASH_BIN
+case "\$1" in
+  info)
+    echo "docker info" >> $q_log
+    [[ -n $(printf '%q' "$machine") ]] || { echo 'Error: template: info:1:2: executing "info" at <.Architecture>: can'"'"'t evaluate field Architecture' >&2; exit 125; }
+    echo $(printf '%q' "$machine"); exit 0 ;;
+  run) shift ;;
+  *) exit 2 ;;
+esac
+dest= src=
+while [[ \$# -gt 0 && "\$1" == -* ]]; do
+  case "\$1" in
+    -v)
+      [[ "\$2" != *:/out ]] || dest="\${2%:/out}"
+      [[ "\$2" != *:/src:ro ]] || src="\${2%:/src:ro}"
+      shift 2 ;;
+    -e) shift 2 ;;
+    *) shift ;;
+  esac
+done
+echo "docker run \$*" >> $q_log
+[[ "\$3" != /src/* || -f "\$src\${3#/src}" ]] || { echo "bash: \$3: No such file or directory" >&2; exit 127; }
+: > "\$dest/libcompat.so"
+printf 'rustc $pinned\nimage: %s\n' "\$1" > "\$dest/toolchain"
+EOF
+  chmod +x "$bin/docker"
+  env -i PATH="$bin" HOME="$tmp/case/home" "$@" \
+    "$SHELL_UNDER_TEST" "$repo/scripts/build-so.sh" linux > "$out" 2>&1
+}
+
+pinned_image() {
+  sed -n "s|^MANYLINUX_IMAGE_$1=\\(.*\\)\$|\\1|p" "$SCRIPT"
+}
+
+# expect_linux_built WHAT MACHINE: the image pinned for MACHINE ran the
+# container script, and the record names it.
+expect_linux_built() {
+  local what="$1" machine="$2" image
+  image="$(pinned_image "$machine")"
+  [[ "$image" == "quay.io/pypa/manylinux2014_$machine:"*@sha256:* ]] \
+    || fail "$what: build-so.sh pins [$image], not manylinux2014_$machine by digest"
+  grep -qxF "docker run $image bash /src/scripts/build-so-linux.sh" "$log" \
+    || { fail "$what: docker did not run scripts/build-so-linux.sh in $image:"; show "$log"; show "$out"; }
+  grep -qxF "image: $image" "$repo/rust/target/libcompat/linux/toolchain" \
+    || fail "$what: the record does not name $image"
+}
+
+expect_linux_refused() {
+  local what="$1" message="$2"
+  grep -qF -- "$message" "$out" || { fail "$what: no [$message] in the output:"; show "$out"; }
+  if grep -q '^docker run' "$log"; then
+    fail "$what: docker ran an image:"
+    show "$log"
+  fi
+}
+
+LINUX_SCRIPT="$(dirname "$SCRIPT")/build-so-linux.sh"
+# shellcheck disable=SC2016
+for flag in '-C "link-arg=-B$gcc_ld"' '-C link-arg=-fuse-ld=lld' '-C link-arg=-Wl,--icf=all' \
+  '[ ! -x "$gcc_ld/ld.lld" ]' '--profile dist-linux' 'echo "image: $MANYLINUX_IMAGE"'; do
+  grep -qF -- "$flag" "$LINUX_SCRIPT" \
+    || fail "scripts/build-so-linux.sh lacks [$flag]"
+done
+
+for machine in x86_64 aarch64; do
+  what="linux on $machine"
+  if linux_case "$machine"; then
+    expect_linux_built "$what" "$machine"
+  else
+    fail "$what: build-so.sh linux exited non-zero"
+    show "$out"
+  fi
+done
+
+for machine in x86_64 aarch64; do
+  what="linux, BUILD_SO_MACHINE=$machine on another Docker"
+  case "$machine" in x86_64) docker_machine=aarch64 ;; *) docker_machine=x86_64 ;; esac
+  if linux_case "$docker_machine" BUILD_SO_MACHINE="$machine"; then
+    expect_linux_built "$what" "$machine"
+    if grep -q '^docker info' "$log"; then
+      fail "$what: build-so.sh asked docker info"
+    fi
+  else
+    fail "$what: build-so.sh linux exited non-zero"
+    show "$out"
+  fi
+done
+
+what="linux, BUILD_SO_MACHINE=x86_64 under a docker info that fails"
+if linux_case "" BUILD_SO_MACHINE=x86_64; then
+  expect_linux_built "$what" x86_64
+else
+  fail "$what: build-so.sh linux exited non-zero"
+  show "$out"
+fi
+
+what="linux on armv7l"
+if linux_case armv7l; then
+  fail "$what: build-so.sh linux succeeded"
+fi
+expect_linux_refused "$what" "error: Docker runs on 'armv7l'; the Linux library builds on one of: aarch64 x86_64"
+
+for machine in armv7l x86-64 'x86_64 ' ../x86_64; do
+  what="linux, BUILD_SO_MACHINE=[$machine]"
+  if linux_case x86_64 BUILD_SO_MACHINE="$machine"; then
+    fail "$what: build-so.sh linux succeeded"
+  fi
+  expect_linux_refused "$what" "error: BUILD_SO_MACHINE is '$machine'; the Linux library builds on one of: aarch64 x86_64"
+done
+
+what="linux, no BUILD_SO_MACHINE and a docker info that fails"
+if linux_case ""; then
+  fail "$what: build-so.sh linux succeeded"
+fi
+expect_linux_refused "$what" "error: docker info names no machine; set BUILD_SO_MACHINE to one of: aarch64 x86_64"
 
 if ((failures > 0)); then
   echo "test-build-so: $failures failure(s)" >&2

@@ -46,13 +46,14 @@ and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
 
 installs @racketmodname[polars] and, as a dependency for the platform, the
 native package that holds @tt{libcompat}: @tt{polars-x86_64-linux} on x86-64
-Linux, @tt{polars-aarch64-macosx} on arm64 macOS. When @racketmodname[polars]
-is set up, @exec{raco setup} fails if the native package is not the version
-this @racketmodname[polars] needs or its library is not the one the package
-was built with; @exec{raco pkg update polars polars-x86_64-linux} (with the
-platform's package) brings the two together. A native package installed or
-updated on its own is not set up with @racketmodname[polars], so only its
-version is checked, when @racket[(require polars)] loads it.
+Linux, @tt{polars-aarch64-linux} on arm64 Linux, @tt{polars-aarch64-macosx} on
+arm64 macOS. When @racketmodname[polars] is set up, @exec{raco setup} fails if
+the native package is not the version this @racketmodname[polars] needs or its
+library is not the one the package was built with;
+@exec{raco pkg update polars polars-x86_64-linux} (with the platform's package)
+brings the two together. A native package installed or updated on its own is
+not set up with @racketmodname[polars], so only its version is checked, when
+@racket[(require polars)] loads it.
 
 On a supported platform without the native package, the pre-installer
 only warns and @racket[(require polars)] raises @racket[exn:fail], each

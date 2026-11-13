@@ -11,6 +11,8 @@
   `("base" "gregor-lib" "threading-lib"
     ("polars-x86_64-linux" #:platform "x86_64-linux" #:version ,native-version)
     ("polars-x86_64-linux" #:platform "x86_64-linux-natipkg" #:version ,native-version)
+    ("polars-aarch64-linux" #:platform "aarch64-linux" #:version ,native-version)
+    ("polars-aarch64-linux" #:platform "aarch64-linux-natipkg" #:version ,native-version)
     ("polars-aarch64-macosx" #:platform "aarch64-macosx" #:version ,native-version)))
 (define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"
                       "sandbox-lib" "plot-lib" "plot-gui-lib" "plot-doc"))

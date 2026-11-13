@@ -52,6 +52,8 @@
 (define native-packages
   '(("x86_64-linux" . "polars-x86_64-linux")
     ("x86_64-linux-natipkg" . "polars-x86_64-linux")
+    ("aarch64-linux" . "polars-aarch64-linux")
+    ("aarch64-linux-natipkg" . "polars-aarch64-linux")
     ("aarch64-macosx" . "polars-aarch64-macosx")))
 
 (define current-native-platform

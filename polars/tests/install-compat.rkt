@@ -3,13 +3,15 @@
 (module+ test
   (require rackunit
            (only-in file/sha1 bytes->hex-string)
+           (only-in racket/dict in-dict)
            (only-in racket/file
                     delete-directory/files file->bytes make-directory* make-temporary-directory)
            (only-in racket/port port->bytes with-output-to-string)
            (only-in polars/private/install-compat pre-installer)
            syntax/parse/define
            (for-syntax racket/base)
-           (only-in polars/private/native-location current-native-platform library-file)
+           (only-in polars/private/native-location
+                    current-native-platform library-file native-packages)
            (only-in polars/private/resource with-release)
            (only-in polars/tests/test-helpers
                     contains-all? make-native-package! message-of module-text scratch-file
@@ -356,8 +358,7 @@
                                    "`raco pkg install polars-x86_64-linux`")))))
 
   (test-case "each supported platform without its package is told which one to install"
-    (for ([platform (in-list '("x86_64-linux" "x86_64-linux-natipkg" "aarch64-macosx"))]
-          [package (in-list '("polars-x86_64-linux" "polars-x86_64-linux" "polars-aarch64-macosx"))])
+    (for ([(platform package) (in-dict native-packages)])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])
           (define-values (out err) (pre-install-outputs collection))
@@ -369,12 +370,13 @@
         (check-false (staged-bytes native) platform))))
 
   (test-case "another platform does not fail the install and is told which platforms polars supports"
-    (for ([platform (in-list '("aarch64-linux" "x86_64-macosx" "x86_64-freebsd"))])
+    (for ([platform (in-list '("riscv64-linux" "x86_64-macosx" "x86_64-freebsd"))])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])
           (check-true
            (contains-all? (pre-install-warning collection)
                           (list "pre-installer: libcompat is not installed: polars ships it for "
-                                (format "x86_64-linux and aarch64-macosx, not ~a" platform)))
+                                (format "x86_64-linux, aarch64-linux and aarch64-macosx, not ~a"
+                                        platform)))
            platform))
         (check-false (staged-bytes native) platform)))))

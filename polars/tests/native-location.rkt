@@ -2,6 +2,7 @@
 
 (module+ test
   (require rackunit
+           (only-in racket/dict in-dict)
            (only-in racket/file display-to-file make-directory*)
            (only-in racket/list remove-duplicates)
            (only-in racket/match ==)
@@ -111,12 +112,6 @@
                               "RKT_POLARS_COMPAT_LIB_PATH to the directory whose lib/ holds it")
                (simplify-path staged)))))
 
-  (test-case "on pkg-build's natipkg platform the Linux package is the one to install"
-    (with-native-collections collects
-      (parameterize ([current-native-platform "x86_64-linux-natipkg"])
-        (check-true (contains-all? (native-library-problem (locate collects) "0.3")
-                                   '("`raco pkg install polars-x86_64-linux`"))))))
-
   (test-case "an unsupported platform names the supported ones and the override"
     (with-native-collections collects
       (make-native-package! collects)
@@ -125,18 +120,28 @@
         (check-equal? (native-location-kind location) 'missing)
         (check-equal?
          (native-library-problem location "0.3")
-         (format (string-append "libcompat is not installed: polars ships it for x86_64-linux "
-                                "and aarch64-macosx, not riscv64-linux\n  looked in: ~a\n  to "
+         (format (string-append "libcompat is not installed: polars ships it for x86_64-linux, "
+                                "aarch64-linux and aarch64-macosx, not riscv64-linux\n  looked "
+                                "in: ~a\n  to "
                                 "use a libcompat built by hand, set RKT_POLARS_COMPAT_LIB_PATH "
                                 "to the directory whose lib/ holds it")
                  (simplify-path (build-path collects "staged")))))))
 
-  (test-case "the macOS package is looked up on aarch64-macosx"
-    (with-native-collections collects
-      (define root (make-native-package! collects #:package "polars-aarch64-macosx"))
-      (parameterize ([current-native-platform "aarch64-macosx"])
-        (check-match (locate (build-path collects "staged"))
-                     (native-location 'package (== (libs root)) _ _ _)))))
+  (define native-package-names (remove-duplicates (map cdr native-packages)))
+
+  (test-case "each platform names its own package while it is missing, then loads it"
+    (for ([(platform package) (in-dict native-packages)])
+      (with-native-collections collects
+        (for ([other (in-list (remove package native-package-names))])
+          (make-native-package! collects #:package other))
+        (parameterize ([current-native-platform platform])
+          (check-true (contains-all? (native-library-problem (locate collects) "0.3")
+                                     (list (format "the package ~a is missing" package)
+                                           (format "`raco pkg install ~a`" package)))
+                      platform)
+          (define root (make-native-package! collects #:package package))
+          (check-match (locate (build-path collects "staged"))
+                       (native-location 'package (== (libs root)) _ _ _))))))
 
   (test-case "an override whose lib/ holds no library is reported"
     (with-native-collections collects
@@ -238,7 +243,6 @@
                                  '("manifest.json names no native_version and files")))))
 
   (define wanted (required-native-version polars-dir))
-  (define native-package-names (remove-duplicates (map cdr native-packages)))
   (define repo (simplify-path (build-path polars-dir 'up)))
   (define skeletons (build-path repo "native"))
 
@@ -248,7 +252,8 @@
      (for/list ([dep (in-list ((get-info/full polars-dir) 'deps))] #:when (pair? dep)) dep)
      (for/list ([entry (in-list native-packages)])
        (list (cdr entry) '#:platform (car entry) '#:version wanted)))
-    (check-equal? native-package-names '("polars-x86_64-linux" "polars-aarch64-macosx")))
+    (check-equal? native-package-names
+                  '("polars-x86_64-linux" "polars-aarch64-linux" "polars-aarch64-macosx")))
 
   (test-case "in a checkout, each native package's skeleton is at polars' native version"
     (when (directory-exists? skeletons)

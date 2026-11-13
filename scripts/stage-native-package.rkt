@@ -3,7 +3,7 @@
 (require (only-in json write-json)
          (only-in racket/cmdline command-line)
          (only-in racket/file file->string make-directory*)
-         (only-in racket/match match-define)
+         (only-in racket/match match match-define)
          (only-in racket/path file-name-from-path path-only)
          (only-in racket/port with-output-to-string)
          racket/runtime-path
@@ -22,6 +22,29 @@
 
 (define (library-suffix platform)
   (if (regexp-match? #rx"macosx" platform) ".dylib" ".so"))
+
+(define elf-machines
+  '(("x86_64-linux" 62 "x86-64")
+    ("aarch64-linux" 183 "AArch64")))
+
+(define (elf-machine library)
+  (define header (call-with-input-file* library (lambda (in) (read-bytes 20 in))))
+  (and (bytes? header)
+       (= (bytes-length header) 20)
+       (equal? (subbytes header 0 4) #"\177ELF")
+       (memv (bytes-ref header 5) '(1 2))
+       (integer-bytes->integer header #f (= (bytes-ref header 5) 2) 18 20)))
+
+(define (check-machine! platform library)
+  (match (assoc platform elf-machines)
+    [(list _ machine name)
+     (define found (elf-machine library))
+     (unless (eqv? found machine)
+       (fail "~a is ~a, not ~a's ~a (ELF machine ~a)"
+             library
+             (if found (format "built for ELF machine ~a" found) "not an ELF library")
+             platform name machine))]
+    [#f (void)]))
 
 (define (git . args)
   (define exe
@@ -71,6 +94,7 @@
     (fail "~a is version ~a, but polars/info.rkt's native-version is ~a" package version wanted))
   (unless (equal? name (string-append "libcompat" (library-suffix platform)))
     (fail "~a is not ~a's library, libcompat~a" library platform (library-suffix platform)))
+  (check-machine! platform library)
   (when (or (directory-exists? out) (file-exists? out))
     (fail "~a already exists" out))
   (define libs (build-path out "native-libs"))
