@@ -37,7 +37,7 @@ polars=$(racket "$check" pkg-directory polars)
 native=$(racket "$here/catalog.rkt" info "$polars" native-version)
 zip="$downloads/v$native/$package.zip"
 echo "catalog live: the published $zip"
-fetched=$(release_fetch "$zip" "" "$work")
+fetched=$(release_fetch "$zip" unchecked "$work")
 unzip -q "$fetched" -d "$work/release"
 racket "$check" installed "$package" "$work/release"
 echo "catalog live: passed"

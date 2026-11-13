@@ -358,19 +358,27 @@ fetch_case checked 0 "$fetched_sha"
 cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" || problem "release_fetch checked: did not fetch thing.zip"
 fetch_case wrong 1 "$(printf '%064d' 0)"
 [ ! -e "$fetched/to/thing.zip" ] || problem "release_fetch wrong: kept a file whose sha256 is not the one given"
+fetch_case empty 1 ""
+[ ! -e "$fetched/to/thing.zip" ] || problem "release_fetch empty: fetched thing.zip given no sha256"
+release_grep -qF "no sha256 given" "$work/fetch-empty.out" ||
+  problem "release_fetch empty: said $(cat "$work/fetch-empty.out"), want ...no sha256 given..."
 printf 'stale bytes' >"$fetched/to/thing.zip"
-fetch_case unchecked 0 ""
+fetch_case unchecked 0 unchecked
 cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" || problem "release_fetch unchecked: kept a stale thing.zip"
 release_grep -qxF "$fetched/to/thing.zip" "$work/fetch-unchecked.out" ||
   problem "release_fetch unchecked: printed $(cat "$work/fetch-unchecked.out"), want $fetched/to/thing.zip"
 
-raco make -v "$here/catalog-check.rkt" >/dev/null
+roots=$(racket -e '(display (string-join (for/list ([r (current-compiled-file-roots)]) (if (eq? r (quote same)) "@" (path->string r))) ":"))')
+compiled_roots="$work/compiled:$roots"
+PLTCOMPILEDROOTS=$compiled_roots raco make -v "$here/catalog-check.rkt" >/dev/null
+[ -f "$work/compiled$here/compiled/catalog-check_rkt.zo" ] ||
+  problem "raco make: did not compile catalog-check.rkt into $work/compiled"
 live="$work/live"
 mkdir -p "$live/pkg/native-libs" "$live/polars/native-libs" "$live/release/native-libs" "$live/catalog/pkg"
 check_case() {
   local name=$1 want=$2 status=0
   shift 2
-  racket "$here/catalog-check.rkt" "$@" >"$work/$name.out" 2>&1 || status=$?
+  PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog-check.rkt" "$@" >"$work/$name.out" 2>&1 || status=$?
   [ "$status" = "$want" ] || problem "catalog-check.rkt $1: $name exited $status, want $want: $(cat "$work/$name.out")"
 }
 check_said() {
@@ -549,7 +557,7 @@ mkdir -p "$work/deps-info"
 printf '%s\n' '#lang info' \
   '(define deps (quote ("base" "rkt-polars-absent" ("rkt-polars-versioned" #:version "1.0") ("rkt-polars-native" #:platform "x86_64-linux"))))' \
   >"$work/deps-info/info.rkt"
-missing=$(racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
+missing=$(PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
 [ "$missing" = "$(printf 'rkt-polars-absent\nrkt-polars-versioned')" ] ||
   problem "missing-deps: want the two uninstalled platform-free deps, not base (installed in a wider scope): [$missing]"
 
@@ -602,7 +610,7 @@ p=$(host_platform)
 if [ -n "$p" ]; then
   release_platform "$p"
   package=$RELEASE_PACKAGE
-  native=$(racket "$here/catalog.rkt" info "$root/polars" native-version)
+  native=$(PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog.rkt" info "$root/polars" native-version)
   artifact="$work/artifact"
   mkdir -p "$artifact"
   cp "$exporting" "$artifact/$RELEASE_LIBRARY"

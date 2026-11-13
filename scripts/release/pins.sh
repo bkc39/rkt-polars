@@ -116,10 +116,16 @@ release_catalogs() {
 }
 
 # Downloads URL $1 into the directory $3 and prints the file's path, checking
-# its sha256 against $2 unless $2 is empty; a file there with sha256 $2 is kept.
+# its sha256 against $2 unless $2 is the word unchecked; an empty $2 is refused.
+# A file there with sha256 $2 is kept.
 release_fetch() {
   local url=$1 sha=$2 dir=$3
   local file="$dir/${url##*/}"
+  [ -n "$sha" ] || {
+    echo "release_fetch: $url: no sha256 given (pass unchecked to fetch it unchecked)" >&2
+    return 1
+  }
+  [ "$sha" != unchecked ] || sha=
   mkdir -p "$dir" || return 1
   if [ -n "$sha" ] && [ -f "$file" ] && echo "$sha  $file" | release_sha256 -c --status; then
     printf '%s\n' "$file"
