@@ -36,7 +36,8 @@ Round-trip through CSV with @racket[write-csv] and @racket[read-csv];
 @racket[#:try-parse-dates] reads the dates back as dates.
 
 @examples[#:eval ev #:hidden
-(define csv-path (build-path (find-system-path 'temp-dir) "polars-guide.csv"))
+(require (only-in racket/file make-temporary-file))
+(define csv-path (make-temporary-file "polars-guide-~a.csv"))
 ]
 
 @examples[#:eval ev #:label #f

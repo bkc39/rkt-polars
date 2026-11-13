@@ -7,8 +7,9 @@
 # override.  This forces the pre-installer (polars/private/install-compat.rkt)
 # to copy the prebuilt shared object out of
 # polars/native-libs/candidates/<platform>/, then instantiates every module
-# against it, builds docs and runs tests the way pkg-build.racket-lang.org
-# does.
+# against it, builds docs as pkg-build.racket-lang.org does, and runs the
+# modules its `raco test --drdr` runs, red on stderr as there, but with a
+# 600 s timeout and this shell's PLTUSERHOME, TMPDIR and stdin.
 #
 # Usage: scripts/test-local.sh
 set -euo pipefail
@@ -37,4 +38,4 @@ raco setup --check-pkg-deps --pkgs threading-doc
 DOCS_CHECK_PKG=polars scripts/docs-check.sh
 
 echo ">> running tests"
-raco test -x --timeout 600 -c polars
+raco test -e --timeout 600 -c polars

@@ -56,7 +56,7 @@
                  --name rkt-polars "$project_root" \
               && ${pkgs.bash}/bin/bash "$project_root/scripts/docs-check.sh" --record; then
               touch "$deps_stamp"
-              echo "Done. Run 'raco test -x --timeout 600 -c polars' to test."
+              echo "Done. Run 'raco test -e --timeout 600 -c polars' to test."
             else
               echo "rkt-polars setup FAILED — stamp not written; will retry next shell entry." >&2
             fi
@@ -212,6 +212,8 @@
             nativeBuildInputs = [ pkgs.racket ];
             buildInputs = [ rust ];
 
+            FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+
             buildPhase = ''
               runHook preBuild
 
@@ -249,8 +251,8 @@
             checkPhase = ''
               runHook preCheck
               export RKT_POLARS_COMPAT_LIB_PATH=${rust}
-              raco test -x --timeout 600 -c polars
-              raco test user-guide
+              raco test -e --timeout 600 -c polars
+              raco test -e user-guide
               raco test -e -Q --empty-stdin -j 4 examples
               raco test -x bench
               runHook postCheck
