@@ -16,6 +16,7 @@ permissions:
 jobs:
   live:
     name: Install polars from pkgs.racket-lang.org on ${{ matrix.platform }}
+    if: github.event_name != 'schedule' || vars.CATALOG_LIVE_SCHEDULED == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:

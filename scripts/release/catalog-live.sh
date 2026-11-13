@@ -18,26 +18,26 @@ downloads=${CATALOG_LIVE_DOWNLOADS:-$RELEASE_DOWNLOADS}
 check="$here/catalog-check.rkt"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-unset RKT_POLARS_COMPAT_LIB_PATH PLTCOLLECTS || true
+unset RKT_POLARS_COMPAT_LIB_PATH PLTCOLLECTS
 export PLTUSERHOME="$work/user"
 
-host=$(racket -e '(display (system-library-subpath #f))')
-echo "catalog live: Racket $(racket -e '(display (version))') on $host, polars and $package from $*"
+host=$(racket "$check" host)
+echo "catalog live: Racket $(racket "$check" racket-version) on $host, polars and $package from $*"
 [ "$(release_host_platform "$host")" = "$platform" ] || {
   echo "catalog live: $package is for $platform, and this host is $host" >&2
   exit 1
 }
 
-racket "$check" catalog "$package" "$@"
+racket "$check" catalog "$package" "$downloads" "$@"
 raco pkg config --set --scope user catalogs "$@"
 raco pkg install --batch --auto --scope user polars 2>&1 | tee "$work/install.log"
 release_check_install_log "$work/install.log"
 
-polars=$(racket -l racket/base -l pkg/lib -e '(display (pkg-directory "polars"))')
+polars=$(racket "$check" pkg-directory polars)
 native=$(racket "$here/catalog.rkt" info "$polars" native-version)
 zip="$downloads/v$native/$package.zip"
 echo "catalog live: the published $zip"
-curl -fsSL --retry 3 -o "$work/$package.zip" "$zip"
-unzip -q "$work/$package.zip" -d "$work/release"
+fetched=$(release_fetch "$zip" "" "$work")
+unzip -q "$fetched" -d "$work/release"
 racket "$check" installed "$package" "$work/release"
 echo "catalog live: passed"

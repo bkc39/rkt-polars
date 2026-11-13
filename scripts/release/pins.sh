@@ -115,11 +115,13 @@ release_catalogs() {
   esac
 }
 
+# Downloads URL $1 into the directory $3 and prints the file's path, checking
+# its sha256 against $2 unless $2 is empty; a file there with sha256 $2 is kept.
 release_fetch() {
   local url=$1 sha=$2 dir=$3
   local file="$dir/${url##*/}"
   mkdir -p "$dir" || return 1
-  if [ -f "$file" ] && echo "$sha  $file" | release_sha256 -c --status; then
+  if [ -n "$sha" ] && [ -f "$file" ] && echo "$sha  $file" | release_sha256 -c --status; then
     printf '%s\n' "$file"
     return 0
   fi
@@ -129,7 +131,7 @@ release_fetch() {
     rm -f "$file.part"
     return 1
   }
-  echo "$sha  $file.part" | release_sha256 -c --status || {
+  [ -z "$sha" ] || echo "$sha  $file.part" | release_sha256 -c --status || {
     echo "release_fetch: $url: sha256 is not $sha" >&2
     rm -f "$file.part"
     return 1

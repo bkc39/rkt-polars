@@ -7,6 +7,9 @@
          (only-in pkg/lib installed-pkg-names)
          (only-in setup/getinfo get-info/full))
 
+(provide info-ref
+         read-manifest)
+
 (define (info-ref dir key)
   (define info
     (or (get-info/full dir) (raise-user-error 'catalog "~a has no info.rkt" dir)))
@@ -38,8 +41,11 @@
               #:unless (member name installed))
     name))
 
+(define (read-manifest manifest)
+  (call-with-input-file manifest read-json))
+
 (define (manifest-field manifest key)
-  (define value (hash-ref (call-with-input-file manifest read-json) key #f))
+  (define value (hash-ref (read-manifest manifest) key #f))
   (unless (string? value)
     (raise-user-error 'catalog "~a names no ~a" manifest key))
   value)

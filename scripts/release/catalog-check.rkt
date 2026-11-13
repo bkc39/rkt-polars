@@ -2,34 +2,31 @@
 
 (require (only-in ffi/unsafe _fun _path _uint32 get-ffi-obj)
          (only-in file/sha1 bytes->hex-string)
-         (only-in json read-json)
          (only-in net/url string->url)
          (only-in racket/file file->lines)
          (only-in racket/lazy-require lazy-require)
          (only-in racket/list remove-duplicates)
-         (only-in racket/match match)
+         (only-in racket/match match match*)
          (only-in racket/path normalize-path)
          (only-in racket/string string-join)
          (only-in pkg/lib
                   current-pkg-catalogs current-pkg-error get-pkg-details-from-catalogs pkg-directory)
-         (only-in setup/getinfo get-info/full))
+         (only-in "catalog.rkt" info-ref read-manifest))
 
-(lazy-require [polars
-               ((col pl:col)
-                (dataframe pl:dataframe)
-                (filter pl:filter)
-                (ref pl:ref)
-                (series pl:series)
-                (series->list pl:series->list)
-                (> pl:>))])
+(lazy-require ["catalog-round-trip.rkt" (filter-round-trip)])
 
 (define library-file (string-append "libcompat" (bytes->string/utf-8 (system-type 'so-suffix))))
 
+(define (failure message)
+  (printf "FAIL ~a\n" message)
+  (list message))
+
 (define (check ok? pass fail)
-  (printf "~a ~a\n" (if ok? "ok  " "FAIL") (if ok? pass fail))
-  (if ok?
-      '()
-      (list fail)))
+  (cond
+    [ok?
+     (printf "ok   ~a\n" pass)
+     '()]
+    [else (failure fail)]))
 
 (define (catalog-entry name)
   (let/ec absent
@@ -41,7 +38,29 @@
     [(cons name _) name]
     [name name]))
 
-(define (in-catalogs package catalogs)
+(define (dependency-version dependency)
+  (match (and (pair? dependency) (member '#:version dependency))
+    [(list* _ version _) version]
+    [_ #f]))
+
+(define (dependency-versions dependencies package)
+  (remove-duplicates (for/list ([dependency (in-list dependencies)]
+                                #:when (equal? (dependency-name dependency) package))
+                       (dependency-version dependency))))
+
+(define (released package native versions downloads)
+  (match* (native versions)
+    [(#f _) '()]
+    [(_ '()) '()]
+    [((hash* ['source source]) (list (? string? version)))
+     (define zip (format "~a/v~a/~a.zip" downloads version package))
+     (check (equal? source zip)
+            (format "the catalog's ~a is the Release v~a's ~a" package version zip)
+            (format "the catalog's ~a is from ~a, not the Release v~a's ~a" package source version zip))]
+    [(_ _)
+     (failure (format "the catalog's polars depends on ~a at ~s, not at one #:version" package versions))]))
+
+(define (in-catalogs package downloads catalogs)
   (define where (string-join catalogs " "))
   (define-values (polars native)
     (parameterize ([current-pkg-catalogs (map string->url catalogs)])
@@ -58,9 +77,13 @@
           (match polars
             [#f '()]
             [(hash* ['source source] ['dependencies dependencies #:default '()])
-             (check (member package (map dependency-name dependencies))
-                    (format "the catalog's polars depends on ~a" package)
-                    (format "the catalog's polars, from ~a, does not depend on ~a" source package))])))
+             (define versions (dependency-versions dependencies package))
+             (append (check (pair? versions)
+                            (format "the catalog's polars depends on ~a" package)
+                            (format "the catalog's polars, from ~a, does not depend on ~a"
+                                    source
+                                    package))
+                     (released package native versions downloads))])))
 
 (define (canonical path)
   (if (file-exists? path)
@@ -108,9 +131,6 @@
         (values (path->string name) (file-sha256 (build-path dir name))))
       (hash)))
 
-(define (read-manifest path)
-  (call-with-input-file path read-json))
-
 (define (manifest-files manifest)
   (for/hash ([(name sha) (in-hash (hash-ref manifest 'files (hash)))])
     (values (symbol->string name) sha)))
@@ -136,14 +156,8 @@
                  (format "~a differs from the published Release's ~a" manifest-path released))
           (matches-manifest manifest-path (build-path release "native-libs"))))
 
-(define (info-ref dir key)
-  (define info (get-info/full dir))
-  (and info (info key (lambda () #f))))
-
 (define (round-trip)
-  (define kept
-    (pl:filter (pl:dataframe (list (pl:series '(1 2 3) #:name "v"))) (pl:> (pl:col "v") 1)))
-  (define got (pl:series->list (pl:ref kept "v")))
+  (define got (filter-round-trip))
   (check (equal? got '(2 3))
          "a filter of v > 1 over 1, 2, 3 keeps 2, 3"
          (format "a filter of v > 1 over 1, 2, 3 kept ~a" got)))
@@ -173,22 +187,29 @@
   (define polars-dir (pkg-directory "polars"))
   (printf "polars ~a loaded from ~a\n" (info-ref polars-dir 'version) polars-dir)
   (match (pkg-directory package)
-    [#f (check #f "" (format "~a is not installed, so polars did not pull it" package))]
+    [#f (failure (format "~a is not installed, so polars did not pull it" package))]
     [root (installed-package package root polars-dir release)]))
 
 (module+ main
-  (define failures
-    (match (current-command-line-arguments)
-      [(vector "catalog" package catalogs ..1) (in-catalogs package catalogs)]
-      [(vector "installed" package release) (installed package release)]
-      [(vector "mapped" listing library) (mapped-once (file->lines listing) library)]
-      [(vector "manifest" manifest dir) (matches-manifest manifest dir)]
-      [(vector "release" manifest release) (matches-release manifest release)]
-      [_
-       (raise-user-error 'catalog-check
-                         (string-append "usage: catalog-check.rkt catalog PACKAGE CATALOG..."
-                                        " | installed PACKAGE RELEASE-DIR"
-                                        " | mapped LISTING LIBRARY"
-                                        " | manifest MANIFEST.json DIR"
-                                        " | release MANIFEST.json RELEASE-DIR"))]))
-  (exit (if (null? failures) 0 1)))
+  (define (exit-with failures)
+    (exit (if (null? failures) 0 1)))
+  (match (current-command-line-arguments)
+    [(vector "host") (displayln (system-library-subpath #f))]
+    [(vector "racket-version") (displayln (version))]
+    [(vector "pkg-directory" name)
+     (displayln (or (pkg-directory name) (raise-user-error 'catalog-check "~a is not installed" name)))]
+    [(vector "catalog" package downloads catalogs ..1)
+     (exit-with (in-catalogs package downloads catalogs))]
+    [(vector "installed" package release) (exit-with (installed package release))]
+    [(vector "mapped" listing library) (exit-with (mapped-once (file->lines listing) library))]
+    [(vector "manifest" manifest dir) (exit-with (matches-manifest manifest dir))]
+    [(vector "release" manifest release) (exit-with (matches-release manifest release))]
+    [_
+     (raise-user-error 'catalog-check
+                       (string-append "usage: catalog-check.rkt host | racket-version"
+                                      " | pkg-directory NAME"
+                                      " | catalog PACKAGE DOWNLOADS CATALOG..."
+                                      " | installed PACKAGE RELEASE-DIR"
+                                      " | mapped LISTING LIBRARY"
+                                      " | manifest MANIFEST.json DIR"
+                                      " | release MANIFEST.json RELEASE-DIR"))]))
