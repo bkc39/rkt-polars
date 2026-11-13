@@ -127,7 +127,7 @@ release_fetch() {
   }
   [ "$sha" != unchecked ] || sha=
   mkdir -p "$dir" || return 1
-  if [ -n "$sha" ] && [ -f "$file" ] && echo "$sha  $file" | release_sha256 -c --status; then
+  if [ -n "$sha" ] && [ -f "$file" ] && release_sha256_is "$file" "$sha"; then
     printf '%s\n' "$file"
     return 0
   fi
@@ -137,7 +137,7 @@ release_fetch() {
     rm -f "$file.part"
     return 1
   }
-  [ -z "$sha" ] || echo "$sha  $file.part" | release_sha256 -c --status || {
+  [ -z "$sha" ] || release_sha256_is "$file.part" "$sha" || {
     echo "release_fetch: $url: sha256 is not $sha" >&2
     rm -f "$file.part"
     return 1
@@ -158,4 +158,11 @@ release_sha256() {
   else
     shasum -a 256 "$@"
   fi
+}
+
+# Whether file $1's sha256 is $2; macOS's sha256sum has no --status.
+release_sha256_is() {
+  local got
+  got=$(release_sha256 "$1") || return 2
+  [ "${got%% *}" = "$2" ]
 }

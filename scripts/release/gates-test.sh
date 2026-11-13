@@ -367,6 +367,19 @@ fetch_case unchecked 0 unchecked
 cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" || problem "release_fetch unchecked: kept a stale thing.zip"
 release_grep -qxF "$fetched/to/thing.zip" "$work/fetch-unchecked.out" ||
   problem "release_fetch unchecked: printed $(cat "$work/fetch-unchecked.out"), want $fetched/to/thing.zip"
+mkdir -p "$work/bsd-bin"
+real_sha256=$(command -v sha256sum || command -v shasum)
+case $real_sha256 in */shasum) real_sha256="$real_sha256 -a 256" ;; esac
+cat >"$work/bsd-bin/sha256sum" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do case \$a in --status) echo "usage: sha256sum [-bctwz] [files ...]" >&2; exit 1 ;; esac; done
+exec $real_sha256 "\$@"
+EOF
+chmod +x "$work/bsd-bin/sha256sum"
+rm -rf "$fetched/to"
+PATH="$work/bsd-bin:$PATH" fetch_case bsd 0 "$fetched_sha"
+cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" ||
+  problem "release_fetch bsd: did not fetch thing.zip with a sha256sum that takes no long options"
 
 roots=$(racket -e '(display (string-join (for/list ([r (current-compiled-file-roots)]) (if (eq? r (quote same)) "@" (path->string r))) ":"))')
 compiled_roots="$work/compiled:$roots"
