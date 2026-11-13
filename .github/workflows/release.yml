@@ -5,6 +5,7 @@ on:
     paths:
       - rust/**
       - scripts/build-so.sh
+      - scripts/build-so-linux.sh
       - scripts/test-build-so.sh
       - native/**
       - polars/info.rkt
@@ -162,7 +163,7 @@ jobs:
           '
 
   package:
-    name: Gate, package and install ${{ matrix.package }}
+    name: Gate, package and install polars-${{ matrix.platform }}
     needs: [plan, notices, build]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -172,19 +173,16 @@ jobs:
         include:
           - os: ubuntu-22.04
             platform: x86_64-linux
-            package: polars-x86_64-linux
             library: libcompat.so
             arch: x64
             catalog-test: ""
           - os: ubuntu-24.04-arm
             platform: aarch64-linux
-            package: polars-aarch64-linux
             library: libcompat.so
             arch: arm64
             catalog-test: ""
           - os: macos-latest
             platform: aarch64-macosx
-            package: polars-aarch64-macosx
             library: libcompat.dylib
             arch: arm64
             catalog-test: --full
@@ -226,7 +224,7 @@ jobs:
         run: scripts/release/catalog-test.sh ${{ matrix.platform }} "$RUNNER_TEMP/dist" ${{ matrix.catalog-test }}
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.package }}
+          name: polars-${{ matrix.platform }}
           path: ${{ runner.temp }}/dist
           if-no-files-found: error
 
@@ -241,17 +239,15 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: x86_64-linux
-            package: polars-x86_64-linux
           - os: ubuntu-24.04-arm
             platform: aarch64-linux
-            package: polars-aarch64-linux
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ env.CHECKOUT_REF }}
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.package }}
+          name: polars-${{ matrix.platform }}
           path: ${{ runner.temp }}/dist
       - id: natipkg
         name: The natipkg installer scripts/release/pins.sh pins
@@ -280,7 +276,7 @@ jobs:
   # The packages on the newest Racket and runner images, which the catalog
   # moves to; the draft does not wait for it.
   forward-compat:
-    name: Install ${{ matrix.package }} on Racket stable
+    name: Install polars-${{ matrix.platform }} on Racket stable
     needs: package
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -290,15 +286,12 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: x86_64-linux
-            package: polars-x86_64-linux
             arch: x64
           - os: ubuntu-24.04-arm
             platform: aarch64-linux
-            package: polars-aarch64-linux
             arch: arm64
           - os: macos-latest
             platform: aarch64-macosx
-            package: polars-aarch64-macosx
             arch: arm64
     steps:
       - uses: actions/checkout@v7
@@ -310,7 +303,7 @@ jobs:
           architecture: ${{ matrix.arch }}
       - uses: actions/download-artifact@v8
         with:
-          name: ${{ matrix.package }}
+          name: polars-${{ matrix.platform }}
           path: ${{ runner.temp }}/dist
       - name: Install from a file:// catalog
         run: scripts/release/catalog-test.sh ${{ matrix.platform }} "$RUNNER_TEMP/dist" --full

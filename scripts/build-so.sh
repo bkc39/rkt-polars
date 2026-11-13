@@ -7,7 +7,9 @@
 # requires only GLIBC <= 2.17 and loads on every Linux from the last decade,
 # including pkg-build.racket-lang.org's test host (glibc < 2.27).  Building
 # natively against an old glibc avoids any ELF post-processing.  The image is
-# the one for Docker's machine, x86_64 or aarch64, so the library is too.
+# the one for BUILD_SO_MACHINE, x86_64 or aarch64, or else for Docker's
+# machine, and the library is built for it.  scripts/build-so-linux.sh is
+# what runs inside.
 #
 # Darwin: built natively with cargo, on the pinned rustc: with rustup, its
 # toolchain (installed when missing) through `rustup run`, whatever cargo is
@@ -19,7 +21,8 @@
 # it with the library.
 #
 # Usage:
-#   scripts/build-so.sh [platform]      # platform defaults to current OS
+#   [BUILD_SO_MACHINE=x86_64|aarch64] scripts/build-so.sh [platform]
+#   (platform defaults to the current OS)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,11 +39,14 @@ if [[ -z "$RUST_TOOLCHAIN" ]]; then
 fi
 export RUSTC_BOOTSTRAP=1
 
-# The Linux build images, one per machine, by digest: their tags move every
-# few days, and each supplies the linker.  scripts/refresh-toolchain.sh moves
-# them.
-MANYLINUX_IMAGE_X86_64=quay.io/pypa/manylinux2014_x86_64:2026.09.30-1@sha256:3462ead9a7152857bb8efd2ddc0014c729be718c531a95c5a949a28b99e5e585
-MANYLINUX_IMAGE_AARCH64=quay.io/pypa/manylinux2014_aarch64:2026.09.30-1@sha256:cbff235f535d4ebe35de292945da6a1d46f2099974d590cb480147d6d65701aa
+# The Linux build images, MANYLINUX_IMAGE_<machine>, by digest: their tags
+# move every few days, and each supplies the linker.  These lines are the one
+# list of machines and images, which scripts/refresh-toolchain.sh reads and
+# moves.
+# shellcheck disable=SC2034
+MANYLINUX_IMAGE_x86_64=quay.io/pypa/manylinux2014_x86_64:2026.09.30-1@sha256:3462ead9a7152857bb8efd2ddc0014c729be718c531a95c5a949a28b99e5e585
+# shellcheck disable=SC2034
+MANYLINUX_IMAGE_aarch64=quay.io/pypa/manylinux2014_aarch64:2026.09.30-1@sha256:cbff235f535d4ebe35de292945da6a1d46f2099974d590cb480147d6d65701aa
 
 platform="${1:-}"
 if [[ -z "$platform" ]]; then
@@ -64,42 +70,33 @@ rm -rf "$dest"
 mkdir -p "$dest"
 
 if [[ "$platform" == "linux" ]]; then
-  machine="$(docker info --format '{{.Architecture}}')"
-  case "$machine" in
-    x86_64) MANYLINUX_IMAGE="$MANYLINUX_IMAGE_X86_64" ;;
-    aarch64) MANYLINUX_IMAGE="$MANYLINUX_IMAGE_AARCH64" ;;
-    *) echo "error: Docker runs on '$machine'; the Linux library builds on x86_64 or aarch64" >&2; exit 1 ;;
-  esac
-  # Build against glibc 2.17 inside manylinux2014.  The source is mounted
-  # read-only; cargo writes to a container-local target dir and copies just
-  # the .so, and the record of the toolchain that built it, out to the
-  # mounted output directory.
-  echo ">> building $lib inside $MANYLINUX_IMAGE (glibc 2.17)"
+  machines=""
+  for v in "${!MANYLINUX_IMAGE_@}"; do machines="$machines ${v#MANYLINUX_IMAGE_}"; done
+  if [[ -n "${BUILD_SO_MACHINE:-}" ]]; then
+    machine="$BUILD_SO_MACHINE"
+    from="BUILD_SO_MACHINE is"
+  elif machine="$(docker info --format '{{.Architecture}}' 2>/dev/null)" && [[ -n "$machine" ]]; then
+    from="Docker runs on"
+  else
+    echo "error: docker info names no machine; set BUILD_SO_MACHINE to one of:$machines" >&2
+    exit 1
+  fi
+  image_var="MANYLINUX_IMAGE_$machine"
+  if [[ ! "$machine" =~ ^[A-Za-z0-9_]+$ || -z "${!image_var:-}" ]]; then
+    echo "error: $from '$machine'; the Linux library builds on one of:$machines" >&2
+    exit 1
+  fi
+  MANYLINUX_IMAGE="${!image_var}"
+  # The source is mounted read-only; only the library and its record are
+  # written to the mounted output directory.
+  echo ">> building $lib for $machine inside $MANYLINUX_IMAGE (glibc 2.17)"
   docker run --rm \
     -e RUSTC_BOOTSTRAP \
     -e RUST_TOOLCHAIN="$RUST_TOOLCHAIN" \
     -e MANYLINUX_IMAGE="$MANYLINUX_IMAGE" \
     -v "$ROOT:/src:ro" \
     -v "$dest:/out" \
-    "$MANYLINUX_IMAGE" bash -ec '
-      set -euo pipefail
-      curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain "$RUST_TOOLCHAIN" --profile minimal
-      . "$HOME/.cargo/env"
-      # GNU ld lacks --icf=all, and rustc links with rust-lld by default on
-      # x86_64 alone, so the link names rustc'"'"'s gcc-ld wrapper for it.
-      gcc_ld="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n "s/^host: //p")/bin/gcc-ld"
-      if [ ! -x "$gcc_ld/ld.lld" ]; then
-        echo "error: rustc $RUST_TOOLCHAIN has no $gcc_ld/ld.lld to link with --icf=all" >&2
-        exit 1
-      fi
-      # --icf=all must reach the final link alone, as cargo rustc passes it.
-      RUSTFLAGS="--remap-path-prefix=$HOME/.cargo=/cargo" cargo rustc --lib --profile dist-linux --locked \
-        --manifest-path /src/rust/Cargo.toml --target-dir /tmp/target \
-        -- -C "link-arg=-B$gcc_ld" -C link-arg=-fuse-ld=lld -C link-arg=-Wl,--icf=all
-      cp /tmp/target/dist-linux/libcompat.so /out/
-      { rustc -vV; echo "image: $MANYLINUX_IMAGE"; } > /out/toolchain
-    '
+    "$MANYLINUX_IMAGE" bash /src/scripts/build-so-linux.sh
   echo ">> staged $dest/$lib"
 else
   if ! command -v otool >/dev/null 2>&1; then

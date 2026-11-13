@@ -32,8 +32,9 @@ on, but not the same build of it:
   against 21.1.8 for 1.98.1), so `nix flake check` does not cover the shipped
   code generation. The Release build jobs that install the built packages
   and run the tests do.
-- `scripts/build-so.sh` names the manylinux2014 images, x86_64 and aarch64,
-  which supply the Linux libraries' linker and glibc, by digest. The darwin
+- `scripts/build-so.sh` names the manylinux2014 images, one
+  `MANYLINUX_IMAGE_<machine>` line each for x86_64 and aarch64, which supply
+  the Linux libraries' linker and glibc, by digest. The darwin
   linker is the CI runner's Xcode, which nothing pins.
 - Each build writes `toolchain` beside the library: the `rustc -vV` that built
   it, and the image (Linux) or the linker (darwin). CI uploads it in the
@@ -81,8 +82,8 @@ rustc (polars' `nightly` feature tracks `std::simd`) becomes an issue, and the
 refresh waits for it. A new polars minor (0.55 → 0.56) breaks API and is a leg
 of its own, not a refresh.
 
-To move only an image, set `MANYLINUX_IMAGE_X86_64` or
-`MANYLINUX_IMAGE_AARCH64` in `scripts/build-so.sh` to
+To move only an image, set `MANYLINUX_IMAGE_x86_64` or
+`MANYLINUX_IMAGE_aarch64` in `scripts/build-so.sh` to
 `quay.io/pypa/manylinux2014_<machine>:<tag>@<digest>`, a dated tag and its
 digest from quay.io's tag list
 ([x86_64](https://quay.io/repository/pypa/manylinux2014_x86_64?tab=tags),
@@ -129,10 +130,16 @@ time; `fetchgit` takes the one commit. A polars bump starts a new branch, as
 `scripts/build-so.sh <platform>` builds one library, with its `toolchain`
 record, in `rust/target/libcompat/<platform>/`:
 
-- **linux** needs Docker. It builds inside the pinned manylinux2014 image
-  for Docker's machine (`docker info`'s architecture, `x86_64` or
-  `aarch64`; any other fails), so a library for `x86_64-linux` or
-  `aarch64-linux`, against glibc 2.17. Do not post-process a `.so` built
+- **linux** needs Docker. It runs `scripts/build-so-linux.sh` inside the
+  pinned manylinux2014 image for `BUILD_SO_MACHINE` (`x86_64` or `aarch64`)
+  or, unset, for Docker's machine (`docker info`'s architecture; any other
+  machine fails, and so does a `docker info` that names none, as podman's
+  does, until `BUILD_SO_MACHINE` is set), so a library for `x86_64-linux` or
+  `aarch64-linux`, against glibc 2.17. Docker on Apple Silicon reports
+  `aarch64`: set `BUILD_SO_MACHINE=x86_64` for the x86-64 library, which
+  then builds under emulation, much more slowly.
+  `scripts/stage-native-package.rkt` refuses a library whose ELF machine is
+  not its platform's. Do not post-process a `.so` built
   against a newer glibc with `polyfill-glibc`: that corrupts the ELF and
   segfaults on newer glibc. It builds `[profile.dist-linux]`, `dist` with
   fat LTO in place of thin, whose single-threaded final step takes about 15
@@ -285,7 +292,7 @@ The **forward-compat** job runs `catalog-test.sh --full` again on Racket
 `stable` and the newest runner images; the draft does not wait for it.
 
 The **pkg-build** job, per Linux platform, runs `pkg-build-test.sh PLATFORM
-DIST`, which installs `polars` with docs in pkg-build's image for the
+DIST` on a runner of that machine, which installs `polars` with docs in pkg-build's image for the
 platform (`racket/pkg-build:deps-x86_64` or `deps-aarch64`, Debian buster,
 glibc 2.28, by digest) with racket-lang.org's natipkg installer for it, as
 root, with `PLT_PKG_BUILD_SERVICE=1`, `CI=true` and
@@ -335,4 +342,7 @@ nothing, and the catalog's `polars` source moves to the new tag (step 6).
 
 Every script but `notices.sh` and `build-so.sh` runs locally on a library
 `build-so.sh` built or the dev shell's staged copy, `pkg-build-test.sh`
-given Docker.
+given Docker. `pkg-build-test.sh aarch64-linux` needs an arm64 host, or
+binfmt_misc with QEMU registered for arm64 on an x86-64 one, since its
+image and natipkg Racket are arm64 binaries; likewise `x86_64-linux` on an
+arm64 host.

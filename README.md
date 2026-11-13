@@ -185,7 +185,8 @@ and drafts the GitHub Release that holds their packages, and developers load the
 dev shell's staged copy or set the variable.
 
 To build the shipped library on the matching platform (Linux needs Docker,
-and builds for Docker's machine, x86_64 or aarch64), into
+and builds for `BUILD_SO_MACHINE`, `x86_64` or `aarch64`, or else Docker's
+machine), into
 `rust/target/libcompat/<platform>/`:
 
 ```sh

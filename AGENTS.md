@@ -31,11 +31,13 @@ the `release-toolchain` flake check fails when the two differ. The release
 build is rustup's build of the release, whose LLVM can differ from nixpkgs',
 so `nix flake check` does not test the shipped code generation. The Linux
 builds' manylinux2014 images, x86_64 and aarch64, are pinned by digest in the
-script, which runs the one for Docker's machine. The released
+script, which runs the one for `BUILD_SO_MACHINE`, or else Docker's machine.
+The released
 libraries are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
 thin LTO, one codegen unit and `opt-level = "s"` for the crates only the cloud
 sources reach (#125, #216). The Linux ones are built with `[profile.dist-linux]`,
-`dist` with fat LTO, and `scripts/build-so.sh` gives their final link alone
+`dist` with fat LTO, and `scripts/build-so-linux.sh`, which `build-so.sh` runs
+in the image, gives their final link alone
 rust-lld's `--icf=all` through `cargo rustc`, since a target's `rustflags`
 would reach the build scripts too, naming rustc's `gcc-ld` wrapper for
 rust-lld, rustc's default linker on x86_64 Linux alone. Against the

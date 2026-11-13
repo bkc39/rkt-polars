@@ -38,7 +38,10 @@ cd "$ROOT"
 out="$dir/$(date -u +%Y-%m-%dT%H%MZ)"
 mkdir -p "$out"
 
-image_repos="quay.io/pypa/manylinux2014_x86_64 quay.io/pypa/manylinux2014_aarch64"
+# The image repositories are those scripts/build-so.sh pins, one per machine.
+image_line='^MANYLINUX_IMAGE_[A-Za-z0-9_]*='
+image_repos="$(sed -n "s|$image_line\([^:@]*\):.*|\1|p" scripts/build-so.sh)"
+[[ -n "$image_repos" ]] || die "scripts/build-so.sh pins no MANYLINUX_IMAGE_<machine> image"
 
 # One tool from the nixpkgs flake.lock pins, which `nix flake update` moves.
 tool() { local pkg="$1"; shift; nix shell --inputs-from . "nixpkgs#$pkg" --command "$@"; }
@@ -52,7 +55,7 @@ versions() {
   local image_repo
   for image_repo in $image_repos; do
     printf '%s\t%s\n' "${image_repo##*/}" \
-      "$(sed -n "s|^MANYLINUX_IMAGE_[A-Z0-9_]*=$image_repo:\([^@]*\)@.*|\1|p" scripts/build-so.sh)"
+      "$(sed -n "s|$image_line$image_repo:\([^@]*\)@.*|\1|p" scripts/build-so.sh)"
   done
 }
 
@@ -79,9 +82,7 @@ for image_repo in $image_repos; do
     '[.tags[] | select(.name != "latest" and .manifest_digest == $d) | .name] | max // "latest"' \
     <<< "$tags")"
   echo ">> ${image_repo##*/} image: $dated ($digest)"
-  grep -q "^MANYLINUX_IMAGE_[A-Z0-9_]*=$image_repo:" scripts/build-so.sh \
-    || die "scripts/build-so.sh names no $image_repo image"
-  sed -i.orig "s|^\(MANYLINUX_IMAGE_[A-Z0-9_]*=\)$image_repo:.*|\1$image_repo:$dated@$digest|" scripts/build-so.sh
+  sed -i.orig "s|^\(MANYLINUX_IMAGE_[A-Za-z0-9_]*=\)$image_repo:.*|\1$image_repo:$dated@$digest|" scripts/build-so.sh
   rm scripts/build-so.sh.orig
 done
 

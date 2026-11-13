@@ -2,6 +2,7 @@
 
 (module+ test
   (require rackunit
+           (only-in racket/dict in-dict)
            (only-in racket/file display-to-file make-directory*)
            (only-in racket/list remove-duplicates)
            (only-in racket/match ==)
@@ -111,12 +112,6 @@
                               "RKT_POLARS_COMPAT_LIB_PATH to the directory whose lib/ holds it")
                (simplify-path staged)))))
 
-  (test-case "on pkg-build's natipkg platform the Linux package is the one to install"
-    (with-native-collections collects
-      (parameterize ([current-native-platform "x86_64-linux-natipkg"])
-        (check-true (contains-all? (native-library-problem (locate collects) "0.3")
-                                   '("`raco pkg install polars-x86_64-linux`"))))))
-
   (test-case "an unsupported platform names the supported ones and the override"
     (with-native-collections collects
       (make-native-package! collects)
@@ -132,31 +127,21 @@
                                 "to the directory whose lib/ holds it")
                  (simplify-path (build-path collects "staged")))))))
 
-  (test-case "the macOS package is looked up on aarch64-macosx"
-    (with-native-collections collects
-      (define root (make-native-package! collects #:package "polars-aarch64-macosx"))
-      (parameterize ([current-native-platform "aarch64-macosx"])
-        (check-match (locate (build-path collects "staged"))
-                     (native-location 'package (== (libs root)) _ _ _)))))
+  (define native-package-names (remove-duplicates (map cdr native-packages)))
 
-  (test-case "the aarch64 Linux package is looked up on aarch64-linux and its natipkg build"
-    (with-native-collections collects
-      (define root (make-native-package! collects #:package "polars-aarch64-linux"))
-      (make-native-package! collects)
-      (for ([platform (in-list '("aarch64-linux" "aarch64-linux-natipkg"))])
-        (parameterize ([current-native-platform platform])
-          (check-match (locate (build-path collects "staged"))
-                       (native-location 'package (== (libs root)) _ _ _))))))
-
-  (test-case "on aarch64 Linux a missing package names polars-aarch64-linux"
-    (with-native-collections collects
-      (make-native-package! collects)
-      (for ([platform (in-list '("aarch64-linux" "aarch64-linux-natipkg"))])
+  (test-case "each platform names its own package while it is missing, then loads it"
+    (for ([(platform package) (in-dict native-packages)])
+      (with-native-collections collects
+        (for ([other (in-list (remove package native-package-names))])
+          (make-native-package! collects #:package other))
         (parameterize ([current-native-platform platform])
           (check-true (contains-all? (native-library-problem (locate collects) "0.3")
-                                     '("the package polars-aarch64-linux is missing"
-                                       "`raco pkg install polars-aarch64-linux`"))
-                      platform)))))
+                                     (list (format "the package ~a is missing" package)
+                                           (format "`raco pkg install ~a`" package)))
+                      platform)
+          (define root (make-native-package! collects #:package package))
+          (check-match (locate (build-path collects "staged"))
+                       (native-location 'package (== (libs root)) _ _ _))))))
 
   (test-case "an override whose lib/ holds no library is reported"
     (with-native-collections collects
@@ -258,7 +243,6 @@
                                  '("manifest.json names no native_version and files")))))
 
   (define wanted (required-native-version polars-dir))
-  (define native-package-names (remove-duplicates (map cdr native-packages)))
   (define repo (simplify-path (build-path polars-dir 'up)))
   (define skeletons (build-path repo "native"))
 
