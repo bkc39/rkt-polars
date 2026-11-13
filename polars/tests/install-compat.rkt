@@ -356,8 +356,10 @@
                                    "`raco pkg install polars-x86_64-linux`")))))
 
   (test-case "each supported platform without its package is told which one to install"
-    (for ([platform (in-list '("x86_64-linux" "x86_64-linux-natipkg" "aarch64-macosx"))]
-          [package (in-list '("polars-x86_64-linux" "polars-x86_64-linux" "polars-aarch64-macosx"))])
+    (for ([platform (in-list '("x86_64-linux" "x86_64-linux-natipkg" "aarch64-linux"
+                               "aarch64-linux-natipkg" "aarch64-macosx"))]
+          [package (in-list '("polars-x86_64-linux" "polars-x86_64-linux" "polars-aarch64-linux"
+                              "polars-aarch64-linux" "polars-aarch64-macosx"))])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])
           (define-values (out err) (pre-install-outputs collection))
@@ -369,12 +371,13 @@
         (check-false (staged-bytes native) platform))))
 
   (test-case "another platform does not fail the install and is told which platforms polars supports"
-    (for ([platform (in-list '("aarch64-linux" "x86_64-macosx" "x86_64-freebsd"))])
+    (for ([platform (in-list '("riscv64-linux" "x86_64-macosx" "x86_64-freebsd"))])
       (with-package-install (collects collection native)
         (parameterize ([current-native-platform platform])
           (check-true
            (contains-all? (pre-install-warning collection)
                           (list "pre-installer: libcompat is not installed: polars ships it for "
-                                (format "x86_64-linux and aarch64-macosx, not ~a" platform)))
+                                (format "x86_64-linux, aarch64-linux and aarch64-macosx, not ~a"
+                                        platform)))
            platform))
         (check-false (staged-bytes native) platform)))))

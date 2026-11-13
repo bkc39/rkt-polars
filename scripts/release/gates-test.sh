@@ -10,10 +10,7 @@ if [ $# -ne 1 ]; then
   exit 2
 fi
 host_platform() {
-  case $(racket -e '(display (system-library-subpath #f))') in
-    x86_64-linux*) echo x86_64-linux ;;
-    aarch64-macosx) echo aarch64-macosx ;;
-  esac
+  release_host_platform "$(racket -e '(display (system-library-subpath #f))')"
 }
 host_library() {
   local platform
@@ -78,7 +75,19 @@ cc_shared() { "${CC:-cc}" -shared -fPIC -o "$@"; }
 
 case $(uname -s) in
   Linux)
-    p=x86_64-linux
+    p=$(host_platform)
+    case $p in
+      x86_64-linux) other=aarch64-linux other_byte=b7 ;;
+      aarch64-linux) other=x86_64-linux other_byte=3e ;;
+      *)
+        problem "no Linux release platform for this host"
+        p=x86_64-linux other=aarch64-linux other_byte=b7
+        ;;
+    esac
+    release_platform "$other"
+    other_machine=$RELEASE_MACHINE
+    release_platform "$p"
+    machine=$RELEASE_MACHINE
     cc_shared "$work/plain.so" "$work/stub.c"
     gates plain "$p" "$work/plain.so"
     for gate in file runpath store-paths home-paths glibc needed size; do want_ok plain "$gate"; done
@@ -131,11 +140,19 @@ case $(uname -s) in
     cp "$work/plain.so" "$work/elf32.so"
     patch_byte "$work/elf32.so" 4 01
     gates elf32 "$p" "$work/elf32.so" file
-    want_fail elf32 file "not an x86-64 ELF64 shared object"
-    cp "$work/plain.so" "$work/aarch64.so"
-    patch_byte "$work/aarch64.so" 18 b7
-    gates aarch64 "$p" "$work/aarch64.so" file
-    want_fail aarch64 file "not an x86-64 ELF64 shared object"
+    want_fail elf32 file "not an $machine ELF64 shared object"
+    cp "$work/plain.so" "$work/other.so"
+    patch_byte "$work/other.so" 18 "$other_byte"
+    gates other "$p" "$work/other.so" file
+    want_fail other file "not an $machine ELF64 shared object"
+    gates as-other "$other" "$work/other.so" file runpath needed size
+    for gate in file runpath needed size; do want_ok as-other "$gate"; done
+    want_status as-other 0
+    grep -qF "ok   file: $other_machine ELF64 shared object" "$work/as-other.out" ||
+      problem "as-other: want $other's file gate to name $other_machine"
+    gates on-other "$other" "$work/plain.so" file exports
+    want_fail on-other file "not an $other_machine ELF64 shared object"
+    want_fail on-other exports "loads only on $other"
     gates absent "$p" "$work/absent.so" file
     want_fail absent file "missing"
 
@@ -230,14 +247,14 @@ g() {
   git -C "$tree" -c user.name=gates-test -c user.email=gates-test@localhost -c commit.gpgsign=false \
     -c core.hooksPath=/dev/null "$@"
 }
-mkdir -p "$tree/polars" "$tree/native/polars-x86_64-linux" "$tree/native/polars-aarch64-macosx" "$tree/rust"
+mkdir -p "$tree/polars" "$tree/rust"
 git init -q "$tree"
 info() {
+  mkdir -p "$tree/native/polars-$1"
   printf '#lang info\n(define version "%s")\n' "$2" >"$tree/native/polars-$1/info.rkt"
 }
 printf '#lang setup/infotab\n(define native-version "0.3")\n(define version "0.3.1")\n' >"$tree/polars/info.rkt"
-info x86_64-linux 0.3
-info aarch64-macosx 0.3
+for platform in $RELEASE_PLATFORMS; do info "$platform" 0.3; done
 echo 1 >"$tree/rust/lib.rs"
 g add -A
 g commit -q -m native
@@ -277,6 +294,13 @@ info aarch64-macosx 0.2
 draft_case v0.3 "exit 1"
 draft_said "native/polars-aarch64-macosx/info.rkt is version 0.2, but polars/info.rkt's native-version is 0.3"
 draft_case "" "exit 1"
+info aarch64-macosx 0.3
+info aarch64-linux 0.2
+draft_case v0.3 "exit 1"
+draft_said "native/polars-aarch64-linux/info.rkt is version 0.2, but polars/info.rkt's native-version is 0.3"
+rm -r "$tree/native/polars-aarch64-linux"
+draft_case v0.3 "exit 1"
+draft_said "native/polars-aarch64-linux has no info.rkt"
 
 catalogs_case() {
   local name=$1 want=$2 got
@@ -351,8 +375,11 @@ bundled_case unlocked 1
 grep -qF "has no lz4-sys" "$work/unlocked.out" || problem "bundled-licenses: an absent crate said $(cat "$work/unlocked.out")"
 
 mkdir -p "$work/drafted"
-touch "$work/drafted/polars-x86_64-linux.zip" "$work/drafted/polars-aarch64-macosx.zip" \
-  "$work/drafted/$RELEASE_NOTICES"
+for platform in $RELEASE_PLATFORMS; do
+  release_platform "$platform"
+  touch "$work/drafted/$RELEASE_PACKAGE.zip"
+done
+touch "$work/drafted/$RELEASE_NOTICES"
 draft_job() {
   local name=$1 tagged=$2 view=$3 want=$4 status=0
   : >"$work/$name.gh"
@@ -363,7 +390,7 @@ draft_job() {
 draft_job drafts aaaa missing 0
 grep -qF "gh api repos/o/r/commits/v0.3 --jq .sha" "$work/drafts.gh" || problem "draft.sh: did not read the tag's commit"
 grep -qF "release create v0.3 --draft --verify-tag" "$work/drafts.gh" || problem "draft.sh: drafted no release"
-grep -qF "Native packages polars-aarch64-macosx polars-x86_64-linux v0.3" "$work/drafts.gh" ||
+grep -qF "Native packages polars-aarch64-linux polars-aarch64-macosx polars-x86_64-linux v0.3" "$work/drafts.gh" ||
   problem "draft.sh: the notes do not name dist's packages: $(cat "$work/drafts.gh")"
 draft_job moved bbbb missing 1
 grep -qF "v0.3 is commit bbbb now, but this run built aaaa" "$work/moved.out" ||
@@ -410,6 +437,37 @@ printf '%s\n' '#lang info' \
 missing=$(racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
 [ "$missing" = "$(printf 'rkt-polars-absent\nrkt-polars-versioned')" ] ||
   problem "missing-deps: want the two uninstalled platform-free deps, not base (installed in a wider scope): [$missing]"
+
+for pair in x86_64-linux:x86_64-linux x86_64-linux-natipkg:x86_64-linux aarch64-linux:aarch64-linux \
+  aarch64-linux-natipkg:aarch64-linux aarch64-macosx:aarch64-macosx x86_64-macosx: riscv64-linux: \
+  aarch64-linux-musl: aarch64-macosx-natipkg:aarch64-macosx; do
+  got=$(release_host_platform "${pair%%:*}")
+  [ "$got" = "${pair#*:}" ] || problem "release_host_platform: ${pair%%:*} gave [$got], want [${pair#*:}]"
+done
+
+pkg_build_case() {
+  local name=$1 want=$2 status=0
+  shift 2
+  bash "$here/pkg-build-test.sh" "$@" >"$work/$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "pkg-build-test.sh: $name exited $status, want $want: $(cat "$work/$name.out")"
+}
+pkg_build_case macosx 2 aarch64-macosx "$work"
+grep -qF "pkg-build does not check aarch64-macosx" "$work/macosx.out" ||
+  problem "pkg-build-test.sh: aarch64-macosx said $(cat "$work/macosx.out")"
+grep -qF "(platforms pkg-build checks: x86_64-linux aarch64-linux)" "$work/macosx.out" ||
+  problem "pkg-build-test.sh: the usage does not name the Linux platforms: $(cat "$work/macosx.out")"
+pkg_build_case no-platform 2 "$work"
+pkg_build_case unknown-platform 2 riscv64-linux "$work"
+
+# Each platform's package is built, gated, packaged and installed on stable,
+# and a Linux one is loaded under glibc 2.17 and installed as pkg-build does.
+for platform in $RELEASE_PLATFORMS; do
+  release_platform "$platform"
+  want=3
+  [ -z "$RELEASE_PKG_BUILD_IMAGE" ] || want=5
+  got=$(grep -cxE " +platform: $platform" "$workflow" || true)
+  [ "$got" = "$want" ] || problem "release.yml: $got matrix entries for $platform, want $want"
+done
 
 case $(uname -s) in
   Linux) want_library=libcompat.so ;;

@@ -77,35 +77,35 @@ gate_file() {
     fail file "missing"
     return
   fi
-  case $platform in
-    x86_64-linux)
+  case $RELEASE_FORMAT in
+    elf)
       reader file header readelf -h "$lib" || return 0
       reader file segments readelf -l "$lib" || return 0
       if ! release_grep -q '^ *Class: *ELF64$' "$scratch/header" ||
         ! release_grep -q '^ *Type: *DYN ' "$scratch/header" ||
-        ! release_grep -q '^ *Machine: *Advanced Micro Devices X86-64$' "$scratch/header"; then
-        fail file "not an x86-64 ELF64 shared object"
+        ! release_grep -qx " *Machine: *$RELEASE_MACHINE" "$scratch/header"; then
+        fail file "not an $RELEASE_MACHINE ELF64 shared object"
       elif release_grep -q '^ *INTERP ' "$scratch/segments"; then
         fail file "has a PT_INTERP: an executable, not a shared object"
       fi
-      ok file "x86-64 ELF64 shared object"
+      ok file "$RELEASE_MACHINE ELF64 shared object"
       ;;
-    aarch64-macosx)
+    macho)
       kind=$(file -b "$lib")
-      if [[ $kind != *Mach-O\ 64-bit* || $kind != *arm64* || $kind != *"dynamically linked shared library"* ]]; then
-        fail file "not an arm64 Mach-O dylib: $kind"
+      if [[ $kind != *Mach-O\ 64-bit* || $kind != *"$RELEASE_MACHINE"* || $kind != *"dynamically linked shared library"* ]]; then
+        fail file "not an $RELEASE_MACHINE Mach-O dylib: $kind"
       elif command -v codesign >/dev/null 2>&1 && ! codesign --verify "$lib" 2>"$scratch/codesign"; then
         fail file "its code signature does not verify: $(line "$(cat "$scratch/codesign")")"
       fi
-      ok file "arm64 Mach-O dylib"
+      ok file "$RELEASE_MACHINE Mach-O dylib"
       ;;
   esac
 }
 
 gate_runpath() {
   local runpath rpath id bad
-  case $platform in
-    x86_64-linux)
+  case $RELEASE_FORMAT in
+    elf)
       reader runpath dynamic readelf -d "$lib" || return 0
       runpath=$(dynamic RUNPATH)
       rpath=$(dynamic RPATH)
@@ -113,7 +113,7 @@ gate_runpath() {
         fail runpath "RUNPATH [$runpath] RPATH [$rpath], want none or RUNPATH \$ORIGIN"
       ok runpath "none outside \$ORIGIN"
       ;;
-    aarch64-macosx)
+    macho)
       reader runpath load macho -l "$lib" || return 0
       id=$(load_command LC_ID_DYLIB)
       bad=$(load_command LC_RPATH | sed '/^@loader_path/d')
@@ -158,12 +158,12 @@ gate_glibc() {
 
 gate_needed() {
   local actual allowed extra id
-  case $platform in
-    x86_64-linux)
+  case $RELEASE_FORMAT in
+    elf)
       reader needed dynamic readelf -d "$lib" || return 0
       actual=$(dynamic NEEDED | sort -u)
       ;;
-    aarch64-macosx)
+    macho)
       reader needed load macho -l "$lib" || return 0
       reader needed dylibs macho -L "$lib" || return 0
       id=$(load_command LC_ID_DYLIB)

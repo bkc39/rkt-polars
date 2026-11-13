@@ -105,6 +105,25 @@ stage --rust-tree t3 --commit c3 || true
 staged "flags over records" t3 c3
 rm "$work/build/rust-tree" "$work/build/commit" "$repo/rust/new.rs"
 
+cp -R "$root/native/polars-aarch64-linux" "$repo/native/"
+out=$work/out-aarch64-linux
+err=$work/err-aarch64-linux
+racket "$repo/scripts/stage-native-package.rkt" --rust-tree t4 --commit c4 \
+  aarch64-linux "$lib" "$out" 2> "$err" || true
+staged "aarch64-linux" t4 c4
+grep -qF '(define collection "polars-aarch64-linux")' "$out/info.rkt" 2> /dev/null \
+  || fail "aarch64-linux: staged no polars-aarch64-linux skeleton: $(cat "$err")"
+[[ -f "$out/native-libs/libcompat.so" ]] || fail "aarch64-linux: no native-libs/libcompat.so"
+printf 'built bytes' > "$work/build/libcompat.dylib"
+out=$work/out-aarch64-linux-dylib
+err=$work/err-aarch64-linux-dylib
+if racket "$repo/scripts/stage-native-package.rkt" --rust-tree t4 --commit c4 \
+  aarch64-linux "$work/build/libcompat.dylib" "$out" 2> "$err"; then
+  fail "aarch64-linux, a dylib: exit 0"
+fi
+refused "aarch64-linux, a dylib" "is not aarch64-linux's library, libcompat.so"
+rm "$work/build/libcompat.dylib"
+
 mkdir "$work/bin"
 ln -s "$(command -v racket)" "$work/bin/racket"
 if PATH=$work/bin stage --head; then fail "--head without git: exit 0"; fi

@@ -4,9 +4,10 @@
 
 `polars` is a Racket binding to the [Polars](https://pola.rs) DataFrame
 library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
-**0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64 and
-macOS arm64 ship as the native packages `polars-x86_64-linux` and
-`polars-aarch64-macosx` (#254), so users need no Rust toolchain. The
+**0.55.2**), through `ffi/unsafe`; prebuilt shared objects for Linux x86-64,
+Linux arm64 and macOS arm64 ship as the native packages `polars-x86_64-linux`,
+`polars-aarch64-linux` (#377) and `polars-aarch64-macosx` (#254), so users
+need no Rust toolchain. The
 `dtype-decimal` feature is on because polars' `sign` does not compile
 without it (#106); Decimal columns are read (from Parquet), not built.
 `dtype-categorical` carries Categorical and Enum. Every IO feature of the
@@ -29,15 +30,18 @@ flake's build and dev shell and `scripts/build-so.sh` set.
 the `release-toolchain` flake check fails when the two differ. The release
 build is rustup's build of the release, whose LLVM can differ from nixpkgs',
 so `nix flake check` does not test the shipped code generation. The Linux
-build's manylinux2014 image is pinned by digest in the script. The released
+builds' manylinux2014 images, x86_64 and aarch64, are pinned by digest in the
+script, which runs the one for Docker's machine. The released
 libraries are built with `[profile.dist]` in `rust/Cargo.toml`: release plus
 thin LTO, one codegen unit and `opt-level = "s"` for the crates only the cloud
-sources reach (#125, #216). The Linux one is built with `[profile.dist-linux]`,
-`dist` with fat LTO, and `scripts/build-so.sh` gives its final link alone
+sources reach (#125, #216). The Linux ones are built with `[profile.dist-linux]`,
+`dist` with fat LTO, and `scripts/build-so.sh` gives their final link alone
 rust-lld's `--icf=all` through `cargo rustc`, since a target's `rustflags`
-would reach the build scripts too. Against the release's size gate, GitHub's
-104,857,600-byte file limit (`scripts/release/gates.sh`), a `dist-linux` build
-is 78,965,360 B, 6.2 MB under a thin-LTO `dist` build without the cloud
+would reach the build scripts too, naming rustc's `gcc-ld` wrapper for
+rust-lld, rustc's default linker on x86_64 Linux alone. Against the
+release's size gate, GitHub's 104,857,600-byte file limit
+(`scripts/release/gates.sh`), an x86_64 `dist-linux` build is 78,965,360 B,
+6.2 MB under a thin-LTO `dist` build without the cloud
 crates' `opt-level` (fat LTO 4.8 MB, ICF 1.0 MB, the cloud crates 0.9 MB, each
 alone). Fat LTO's final step is single-threaded, about 15 minutes and 7 GiB
 against 6 minutes and 4.9 GiB thin, whatever the jobs count, which sets only
@@ -482,8 +486,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   static require, so `polars` compiles anywhere). A native package that
   holds a library outranks a staged copy whose dev marker does not match it,
   so a stale staged copy never shadows it. `polars/info.rkt` depends
-  on the packages by `#:platform` (`x86_64-linux`, pkg-build's
-  `x86_64-linux-natipkg`, `aarch64-macosx`) at `native-version`, which the
+  on the packages by `#:platform` (`x86_64-linux`, `aarch64-linux`,
+  pkg-build's `x86_64-linux-natipkg` and `aarch64-linux-natipkg`,
+  `aarch64-macosx`) at `native-version`, which the
   `#:version` only bounds below; the loader requires the package's version
   to equal it, read when `native-library.rkt` is compiled
   (`register-external-file` recompiles it when `info.rkt` changes), so
@@ -504,7 +509,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   set up: installing or updating the native package alone leaves the
   version check at load.
 - **A native release is a tag** `v<native-version>`: `release.yml` builds,
-  gates (`scripts/release/gates.sh`), packages and tests both native
+  gates (`scripts/release/gates.sh`), packages and tests the three native
   packages and drafts their Release; `gates-test.sh` is the `release-gates`
   gate. The jobs and the checklist are in `polars/native-libs/BUILDING.md`.
 - **An export never changes its signature under the same symbol.** A new
@@ -520,11 +525,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   resolves every symbol at module load, so a polars that binds an export
   its native version lacks breaks `raco setup` for them. Before `polars`'
   catalog source moves to a tag, any `rust/` change since the tag
-  `v<native-version>` needs `native-version` and both `native/*/info.rkt`
-  versions bumped and that `v<native-version>` released;
+  `v<native-version>` needs `native-version` and every
+  `native/*/info.rkt` version bumped and that `v<native-version>` released;
   `scripts/release/draft-tag.sh` refuses a Racket-only tag `v<version>`
   whose `rust/` tree differs from the native tag's. The Release build
-  workflow builds and installs both packages on a PR that touches `rust/`
+  workflow builds and installs the packages on a PR that touches `rust/`
   or the release's inputs. `scripts/test-local.sh LIBCOMPAT` packs a
   built library as the native package and runs
   `scripts/release/catalog-test.sh --full` on it, which installs `polars`
@@ -1429,10 +1434,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   own, and `flake.nix` reads it for the `rkt-polars-compat` derivation, so a
   Racket-side bump does not rebuild the native library. A release is a tag
   of that version, `v<version>`; when `rust/` changed since the published
-  Release `v<native-version>`, bump `native-version` and both
-  `native/*/info.rkt` versions together, and tag and publish
+  Release `v<native-version>`, bump `native-version` and every
+  `native/*/info.rkt` version together, and tag and publish
   `v<native-version>` first (`polars/native-libs/BUILDING.md`).
-- The toolchain (nixpkgs, the release rustc, the manylinux2014 image, the
+- The toolchain (nixpkgs, the release rustc, the manylinux2014 images, the
   crates within the polars minor) moves only in a refresh PR of its own,
   `scripts/refresh-toolchain.sh`, and a native release ships its build
   (`polars/native-libs/BUILDING.md`); a new polars minor is its own leg.

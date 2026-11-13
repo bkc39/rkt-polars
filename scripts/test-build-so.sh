@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Stub test of scripts/build-so.sh's darwin branch (#161): runs a copy of the
-# script against fake rustup, cargo and rustc on a PATH of its own and builds
-# nothing.  With rustup it must install and call the channel
+# Stub test of scripts/build-so.sh (#161, #377).  The darwin branch runs a
+# copy of the script against fake rustup, cargo and rustc on a PATH of its
+# own and builds nothing.  With rustup it must install and call the channel
 # rust/rust-toolchain.toml names, `rustup run <channel> cargo build ...`,
 # though a nix cargo and rustc that reject `+toolchain` come first on PATH.
 # Without rustup it must build with the cargo on PATH when the rustc there is
@@ -14,6 +14,11 @@
 # dylib is still in the target directory, and a missing otool or ld stops it
 # before rustup installs anything.  An earlier build's library and records
 # (CI's rust-tree and commit) are gone after a build, failed or not.
+#
+# Its linux branch runs against a fake docker: on an x86_64 or aarch64 Docker
+# it runs the manylinux2014 image pinned by digest for that machine, whose
+# script links the library with rustc's rust-lld and --icf=all, and records
+# that image; on another machine it runs nothing.
 #
 # The copy runs under $BASH_UNDER_TEST (default: the bash on PATH), so that
 # macOS's bash 3.2 can be tested; the stubs run under the bash on PATH.  Each
@@ -397,6 +402,88 @@ for odd in 'NIX_CFLAGS X=1' 'NIX_CFLAGS*=1'; do
     show "$out"
   fi
 done
+
+# The linux branch against a fake docker on Docker machine $1: it runs the
+# image build-so.sh pins for that machine, whose script links with rustc's
+# rust-lld and --icf=all, and the record names that image.
+linux_case() {
+  local machine="$1" q_log
+  rm -rf "$tmp/case"
+  repo="$tmp/case/repo"
+  bin="$tmp/case/bin"
+  log="$tmp/case/log"
+  out="$tmp/case/out"
+  mkdir -p "$repo/scripts" "$repo/rust" "$bin" "$tmp/case/home"
+  cp "$SCRIPT" "$repo/scripts/build-so.sh"
+  printf '[toolchain]\nchannel = "%s"\n' "$pinned" > "$repo/rust/rust-toolchain.toml"
+  : > "$log"
+  q_log="$(printf '%q' "$log")"
+  for tool in cat dirname head ls mkdir rm sed; do
+    ln -s "$(command -v "$tool")" "$bin/$tool"
+  done
+  cat > "$bin/docker" <<EOF
+#!$BASH_BIN
+case "\$1" in
+  info) echo $(printf '%q' "$machine"); exit 0 ;;
+  run) shift ;;
+  *) exit 2 ;;
+esac
+dest=
+while [[ \$# -gt 0 && "\$1" == -* ]]; do
+  case "\$1" in
+    -v) [[ "\$2" != *:/out ]] || dest="\${2%:/out}"; shift 2 ;;
+    -e) shift 2 ;;
+    *) shift ;;
+  esac
+done
+echo "docker run \$1 \$2 \$3" >> $q_log
+printf '%s\n' "\$4" > $(printf '%q' "$tmp/case/script")
+: > "\$dest/libcompat.so"
+printf 'rustc $pinned\nimage: %s\n' "\$1" > "\$dest/toolchain"
+EOF
+  chmod +x "$bin/docker"
+  env -i PATH="$bin" HOME="$tmp/case/home" \
+    "$SHELL_UNDER_TEST" "$repo/scripts/build-so.sh" linux > "$out" 2>&1
+}
+
+pinned_image() {
+  sed -n "s|^MANYLINUX_IMAGE_$1=\\(.*\\)\$|\\1|p" "$SCRIPT"
+}
+
+for machine in x86_64 aarch64; do
+  what="linux on $machine"
+  case "$machine" in
+    x86_64) image="$(pinned_image X86_64)" repo_name=manylinux2014_x86_64 ;;
+    aarch64) image="$(pinned_image AARCH64)" repo_name=manylinux2014_aarch64 ;;
+  esac
+  [[ "$image" == "quay.io/pypa/$repo_name:"*@sha256:* ]] \
+    || fail "$what: build-so.sh pins [$image], not $repo_name by digest"
+  if linux_case "$machine"; then
+    grep -qxF "docker run $image bash -ec" "$log" \
+      || { fail "$what: docker did not run $image:"; show "$log"; }
+    grep -qxF "image: $image" "$repo/rust/target/libcompat/linux/toolchain" \
+      || fail "$what: the record does not name $image"
+    # shellcheck disable=SC2016
+    for flag in '-C "link-arg=-B$gcc_ld"' '-C link-arg=-fuse-ld=lld' '-C link-arg=-Wl,--icf=all' \
+      '[ ! -x "$gcc_ld/ld.lld" ]' '--profile dist-linux'; do
+      grep -qF -- "$flag" "$tmp/case/script" \
+        || { fail "$what: the container script lacks [$flag]:"; show "$tmp/case/script"; }
+    done
+  else
+    fail "$what: build-so.sh linux exited non-zero"
+    show "$out"
+  fi
+done
+
+what="linux on armv7l"
+if linux_case armv7l; then
+  fail "$what: build-so.sh linux succeeded"
+fi
+grep -qF "Docker runs on 'armv7l'" "$out" || { fail "$what: did not name the machine:"; show "$out"; }
+if grep -q '^docker run' "$log"; then
+  fail "$what: docker ran an image:"
+  show "$log"
+fi
 
 if ((failures > 0)); then
   echo "test-build-so: $failures failure(s)" >&2

@@ -3,8 +3,8 @@
 # The periodic toolchain refresh; see polars/native-libs/BUILDING.md.  On a
 # branch with a clean tree it benches the tree, then moves nixpkgs
 # (flake.lock), the release rustc (rust/rust-toolchain.toml) to the new
-# nixpkgs', the manylinux2014 image (scripts/build-so.sh) to its current
-# digest and the crates to their newest semver-compatible versions
+# nixpkgs', the manylinux2014 images (scripts/build-so.sh) to their current
+# digests and the crates to their newest semver-compatible versions
 # (rust/Cargo.lock, so polars stays on its minor), checks the result as CI
 # does and benches it again.  It commits nothing: it writes the commit message
 # and the PR body under DIR.
@@ -38,7 +38,7 @@ cd "$ROOT"
 out="$dir/$(date -u +%Y-%m-%dT%H%MZ)"
 mkdir -p "$out"
 
-image_repo=quay.io/pypa/manylinux2014_x86_64
+image_repos="quay.io/pypa/manylinux2014_x86_64 quay.io/pypa/manylinux2014_aarch64"
 
 # One tool from the nixpkgs flake.lock pins, which `nix flake update` moves.
 tool() { local pkg="$1"; shift; nix shell --inputs-from . "nixpkgs#$pkg" --command "$@"; }
@@ -49,8 +49,11 @@ versions() {
   printf 'Racket\t%s\n' "$(tool racket racket -e '(display (version))')"
   printf 'polars crate\t%s\n' \
     "$(sed -n '/^name = "polars"$/{n;s/^version = "\(.*\)"$/\1/p;}' rust/Cargo.lock)"
-  printf 'manylinux2014\t%s\n' \
-    "$(sed -n "s|^MANYLINUX_IMAGE=$image_repo:\([^@]*\)@.*|\1|p" scripts/build-so.sh)"
+  local image_repo
+  for image_repo in $image_repos; do
+    printf '%s\t%s\n' "${image_repo##*/}" \
+      "$(sed -n "s|^MANYLINUX_IMAGE_[A-Z0-9_]*=$image_repo:\([^@]*\)@.*|\1|p" scripts/build-so.sh)"
+  done
 }
 
 before="$(versions)"
@@ -68,15 +71,19 @@ echo ">> release toolchain: rustc $release"
 sed -i.orig "s/^channel = \".*\"$/channel = \"$release\"/" rust/rust-toolchain.toml
 rm rust/rust-toolchain.toml.orig
 
-tags="$(curl -fsS "https://quay.io/api/v1/repository/${image_repo#quay.io/}/tag/?onlyActiveTags=true&limit=20")"
-digest="$(tool jq jq -r '.tags[] | select(.name == "latest") | .manifest_digest' <<< "$tags")"
-[[ "$digest" == sha256:* ]] || die "quay.io lists no latest $image_repo"
-dated="$(tool jq jq -r --arg d "$digest" \
-  '[.tags[] | select(.name != "latest" and .manifest_digest == $d) | .name] | max // "latest"' \
-  <<< "$tags")"
-echo ">> manylinux2014 image: $dated ($digest)"
-sed -i.orig "s|^MANYLINUX_IMAGE=.*|MANYLINUX_IMAGE=$image_repo:$dated@$digest|" scripts/build-so.sh
-rm scripts/build-so.sh.orig
+for image_repo in $image_repos; do
+  tags="$(curl -fsS "https://quay.io/api/v1/repository/${image_repo#quay.io/}/tag/?onlyActiveTags=true&limit=20")"
+  digest="$(tool jq jq -r '.tags[] | select(.name == "latest") | .manifest_digest' <<< "$tags")"
+  [[ "$digest" == sha256:* ]] || die "quay.io lists no latest $image_repo"
+  dated="$(tool jq jq -r --arg d "$digest" \
+    '[.tags[] | select(.name != "latest" and .manifest_digest == $d) | .name] | max // "latest"' \
+    <<< "$tags")"
+  echo ">> ${image_repo##*/} image: $dated ($digest)"
+  grep -q "^MANYLINUX_IMAGE_[A-Z0-9_]*=$image_repo:" scripts/build-so.sh \
+    || die "scripts/build-so.sh names no $image_repo image"
+  sed -i.orig "s|^\(MANYLINUX_IMAGE_[A-Z0-9_]*=\)$image_repo:.*|\1$image_repo:$dated@$digest|" scripts/build-so.sh
+  rm scripts/build-so.sh.orig
+done
 
 # cargo update logs to stderr; nix's own stderr (the dirty-tree warning, with
 # this checkout's path) stays out of the log, which goes in the PR body.
@@ -108,7 +115,7 @@ cat > "$out/commit-msg.txt" <<EOF
 $title
 
 scripts/refresh-toolchain.sh moved nixpkgs, the release rustc, the
-manylinux2014 image and the crates within their semver ranges:
+manylinux2014 images and the crates within their semver ranges:
 
 $(awk -F'\t' '{ printf "- %s: %s -> %s\n", $1, $2, $3 }' <<< "$moved")
 - rust/Cargo.lock: $changes entries updated, added or removed
@@ -141,7 +148,7 @@ EOF
     done
   fi
   echo
-  echo "The Release build workflow builds and installs both native packages from"
+  echo "The Release build workflow builds and installs the native packages from"
   echo "this PR; once it merges, a native release ships them"
   echo "(polars/native-libs/BUILDING.md, Release checklist)."
 } > "$out/pr-body.md"

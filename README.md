@@ -27,9 +27,9 @@ To install run:
 raco pkg install polars
 ```
 
-On x86-64 Linux and arm64 macOS this also installs the native package that
-holds `libcompat`, `polars-x86_64-linux` or `polars-aarch64-macosx`, so no
-Rust toolchain is needed. Then
+On x86-64 Linux, arm64 Linux and arm64 macOS this also installs the native
+package that holds `libcompat`, `polars-x86_64-linux`, `polars-aarch64-linux`
+or `polars-aarch64-macosx`, so no Rust toolchain is needed. Then
 
 ```racket
 (require polars)
@@ -173,18 +173,20 @@ raco test -e --timeout 600 -c polars
 ### Native packages
 
 `polars` loads `libcompat` from the native package for the platform,
-`polars-x86_64-linux` or `polars-aarch64-macosx`, which `polars/info.rkt`
+`polars-x86_64-linux`, `polars-aarch64-linux` or `polars-aarch64-macosx`,
+which `polars/info.rkt`
 depends on by `#:platform`; `RKT_POLARS_COMPAT_LIB_PATH` or a dev-built
 staged copy outranks it. `polars/native-libs/BUILDING.md` (Native packages)
 has the load order, the package's layout and manifest, and
 `scripts/stage-native-package.rkt`, which assembles one.
 
-No binary is committed: a tag `v<native-version>` builds both libraries and
-drafts the GitHub Release that holds the two packages, and developers load the
+No binary is committed: a tag `v<native-version>` builds the three libraries
+and drafts the GitHub Release that holds their packages, and developers load the
 dev shell's staged copy or set the variable.
 
-To build the shipped library on the matching platform (Linux needs Docker),
-into `rust/target/libcompat/<platform>/`:
+To build the shipped library on the matching platform (Linux needs Docker,
+and builds for Docker's machine, x86_64 or aarch64), into
+`rust/target/libcompat/<platform>/`:
 
 ```sh
 scripts/build-so.sh            # auto-detects linux/darwin
@@ -199,7 +201,7 @@ scripts/test-local.sh rust/target/libcompat/linux/libcompat.so
 scripts/test-local.sh polars/native-libs/libcompat.so      # the dev shell's copy
 ```
 
-The Release build workflow (`.github/workflows/release.yml`) builds both
+The Release build workflow (`.github/workflows/release.yml`) builds the
 libraries on a PR that touches `rust/` or the release's inputs, gates,
 packages and installs them, and installs them as the package server does.
 They are built by rustup's build of the flake's rustc release, which

@@ -125,8 +125,9 @@
         (check-equal? (native-location-kind location) 'missing)
         (check-equal?
          (native-library-problem location "0.3")
-         (format (string-append "libcompat is not installed: polars ships it for x86_64-linux "
-                                "and aarch64-macosx, not riscv64-linux\n  looked in: ~a\n  to "
+         (format (string-append "libcompat is not installed: polars ships it for x86_64-linux, "
+                                "aarch64-linux and aarch64-macosx, not riscv64-linux\n  looked "
+                                "in: ~a\n  to "
                                 "use a libcompat built by hand, set RKT_POLARS_COMPAT_LIB_PATH "
                                 "to the directory whose lib/ holds it")
                  (simplify-path (build-path collects "staged")))))))
@@ -137,6 +138,25 @@
       (parameterize ([current-native-platform "aarch64-macosx"])
         (check-match (locate (build-path collects "staged"))
                      (native-location 'package (== (libs root)) _ _ _)))))
+
+  (test-case "the aarch64 Linux package is looked up on aarch64-linux and its natipkg build"
+    (with-native-collections collects
+      (define root (make-native-package! collects #:package "polars-aarch64-linux"))
+      (make-native-package! collects)
+      (for ([platform (in-list '("aarch64-linux" "aarch64-linux-natipkg"))])
+        (parameterize ([current-native-platform platform])
+          (check-match (locate (build-path collects "staged"))
+                       (native-location 'package (== (libs root)) _ _ _))))))
+
+  (test-case "on aarch64 Linux a missing package names polars-aarch64-linux"
+    (with-native-collections collects
+      (make-native-package! collects)
+      (for ([platform (in-list '("aarch64-linux" "aarch64-linux-natipkg"))])
+        (parameterize ([current-native-platform platform])
+          (check-true (contains-all? (native-library-problem (locate collects) "0.3")
+                                     '("the package polars-aarch64-linux is missing"
+                                       "`raco pkg install polars-aarch64-linux`"))
+                      platform)))))
 
   (test-case "an override whose lib/ holds no library is reported"
     (with-native-collections collects
@@ -248,7 +268,8 @@
      (for/list ([dep (in-list ((get-info/full polars-dir) 'deps))] #:when (pair? dep)) dep)
      (for/list ([entry (in-list native-packages)])
        (list (cdr entry) '#:platform (car entry) '#:version wanted)))
-    (check-equal? native-package-names '("polars-x86_64-linux" "polars-aarch64-macosx")))
+    (check-equal? native-package-names
+                  '("polars-x86_64-linux" "polars-aarch64-linux" "polars-aarch64-macosx")))
 
   (test-case "in a checkout, each native package's skeleton is at polars' native version"
     (when (directory-exists? skeletons)

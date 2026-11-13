@@ -3,10 +3,11 @@
 `rkt-polars` calls a Rust shared library, `libcompat`, over the FFI. The build
 host at **pkgs.racket-lang.org has no Rust toolchain**, so `polars` loads a
 prebuilt library from the native package for its platform,
-`polars-x86_64-linux` or `polars-aarch64-macosx` (#254), which `polars/info.rkt`
-depends on by `#:platform`. No binary is committed: a tag
-`v<native-version>` builds both libraries and drafts the GitHub Release that
-holds the two packages (see [Releases](#releases)), and a developer loads the
+`polars-x86_64-linux`, `polars-aarch64-linux` (#377) or `polars-aarch64-macosx`
+(#254), which `polars/info.rkt` depends on by `#:platform`. No binary is
+committed: a tag `v<native-version>` builds the three libraries and drafts
+the GitHub Release that holds their packages (see [Releases](#releases)), and
+a developer loads the
 dev shell's staged copy (`nix run .#copy-native-libs`) or the library
 `RKT_POLARS_COMPAT_LIB_PATH` names.
 
@@ -31,9 +32,9 @@ on, but not the same build of it:
   against 21.1.8 for 1.98.1), so `nix flake check` does not cover the shipped
   code generation. The Release build jobs that install the built packages
   and run the tests do.
-- `scripts/build-so.sh` names the manylinux2014 image, which supplies the
-  Linux library's linker and glibc, by digest. The darwin linker is the CI
-  runner's Xcode, which nothing pins.
+- `scripts/build-so.sh` names the manylinux2014 images, x86_64 and aarch64,
+  which supply the Linux libraries' linker and glibc, by digest. The darwin
+  linker is the CI runner's Xcode, which nothing pins.
 - Each build writes `toolchain` beside the library: the `rustc -vV` that built
   it, and the image (Linux) or the linker (darwin). CI uploads it in the
   artifact with `rust-tree` and `commit`.
@@ -58,8 +59,9 @@ It benches the tree (`nix run .#bench`), then:
 
 1. runs `nix flake update` and sets `rust/rust-toolchain.toml` to the new
    nixpkgs' rustc;
-2. moves `scripts/build-so.sh`'s image to the digest quay.io lists for
-   `manylinux2014_x86_64:latest`, with the dated tag that shares it;
+2. moves each of `scripts/build-so.sh`'s images to the digest quay.io lists
+   for `manylinux2014_x86_64:latest` or `manylinux2014_aarch64:latest`, with
+   the dated tag that shares it;
 3. runs `cargo update`, the newest semver-compatible crates: polars stays
    at the fork's rev, which `rust/Cargo.toml` fixes, so a polars patch
    release is a new fork branch (see below);
@@ -70,7 +72,7 @@ It benches the tree (`nix run .#bench`), then:
    `~/rkt-polars-toolchain/<time>/` (`--dir` to change).
 
 Commit, push and open the PR as it prints. Its Release build run builds,
-gates and installs both packages; once it merges, a native release ships them
+gates and installs the packages; once it merges, a native release ships them
 (see [Release checklist](#release-checklist)).
 
 When a step fails, nothing is committed. A new `racket-deps` hash goes in
@@ -79,10 +81,13 @@ rustc (polars' `nightly` feature tracks `std::simd`) becomes an issue, and the
 refresh waits for it. A new polars minor (0.55 → 0.56) breaks API and is a leg
 of its own, not a refresh.
 
-To move only the image, set `MANYLINUX_IMAGE` in `scripts/build-so.sh` to
-`quay.io/pypa/manylinux2014_x86_64:<tag>@<digest>`, a dated tag and its digest
-from [quay.io's tag list](https://quay.io/repository/pypa/manylinux2014_x86_64?tab=tags).
-A new image can change the Linux library's bytes. It lies outside `rust/`,
+To move only an image, set `MANYLINUX_IMAGE_X86_64` or
+`MANYLINUX_IMAGE_AARCH64` in `scripts/build-so.sh` to
+`quay.io/pypa/manylinux2014_<machine>:<tag>@<digest>`, a dated tag and its
+digest from quay.io's tag list
+([x86_64](https://quay.io/repository/pypa/manylinux2014_x86_64?tab=tags),
+[aarch64](https://quay.io/repository/pypa/manylinux2014_aarch64?tab=tags)).
+A new image can change its Linux library's bytes. It lies outside `rust/`,
 so `draft-tag.sh` does not ask for a native release: bump `native-version`
 to ship it.
 
@@ -125,14 +130,19 @@ time; `fetchgit` takes the one commit. A polars bump starts a new branch, as
 record, in `rust/target/libcompat/<platform>/`:
 
 - **linux** needs Docker. It builds inside the pinned manylinux2014 image
-  against glibc 2.17. Do not post-process a `.so` built against a newer glibc
-  with `polyfill-glibc`: that corrupts the ELF and segfaults on newer glibc.
-  It builds `[profile.dist-linux]`, `dist` with fat LTO in place of thin,
-  whose single-threaded final step takes about 15 minutes and 7 GiB at its
-  peak, and links with rust-lld, rustc's default there, passing the final
-  link alone `--icf=all`, which GNU ld lacks: a toolchain whose default
-  linker is not lld fails the link (#216). The darwin build keeps
-  `[profile.dist]`, thin LTO: the macOS runner has 7 GB.
+  for Docker's machine (`docker info`'s architecture, `x86_64` or
+  `aarch64`; any other fails), so a library for `x86_64-linux` or
+  `aarch64-linux`, against glibc 2.17. Do not post-process a `.so` built
+  against a newer glibc with `polyfill-glibc`: that corrupts the ELF and
+  segfaults on newer glibc. It builds `[profile.dist-linux]`, `dist` with
+  fat LTO in place of thin, whose single-threaded final step takes about 15
+  minutes and 7 GiB at its peak, and links with rust-lld, passing the final
+  link alone `--icf=all`, which GNU ld lacks (#216). rust-lld is rustc's
+  default linker on x86_64 Linux alone, so the final link names it through
+  rustc's `gcc-ld` wrapper (`-B<sysroot>/lib/rustlib/<host>/bin/gcc-ld
+  -fuse-ld=lld`), and a rustc that ships no `gcc-ld/ld.lld` for its host
+  fails the build. The darwin build keeps `[profile.dist]`, thin LTO: the
+  macOS runner has 7 GB.
 - **darwin** needs a Mac with rustup, from which the script installs the
   pinned rustc and builds with `rustup run <channel> cargo`, whatever `cargo`
   is first on `PATH` (nix's, in the dev shell). Without rustup, the rustc on
@@ -144,7 +154,8 @@ record, in `rust/target/libcompat/<platform>/`:
   (`minos`), which nothing pins. `scripts/test-build-so.sh` checks all of
   this against fakes (the `build-so-darwin` flake check, under nixpkgs'
   bash); `BASH_UNDER_TEST=/bin/bash` runs it under macOS's bash 3.2,
-  which nixpkgs lacks. The script rewrites the install name to
+  which nixpkgs lacks; it also runs the linux branch against a fake
+  docker. The script rewrites the install name to
   `@rpath/libcompat.dylib` and re-signs ad hoc: `install_name_tool`
   invalidates the linker's signature, and Apple Silicon kills an unsigned
   dylib (`Killed: 9`) the moment Racket `dlopen()`s it.
@@ -179,7 +190,8 @@ and commit the library was built from, and each `libcompat.*`'s sha256.
       [--rust-tree TREE --commit SHA] [--head] \
       [--notices FILE] PLATFORM LIBCOMPAT OUT-DIR
 
-assembles one for `x86_64-linux` or `aarch64-macosx` in `OUT-DIR`, which
+assembles one for `x86_64-linux`, `aarch64-linux` or `aarch64-macosx` in
+`OUT-DIR`, which
 must not exist. The tree and commit are `--rust-tree` and `--commit`, or else
 the `rust-tree` and `commit` files CI's build records beside the library, or
 else, given `--head`, this checkout's `HEAD`, which it refuses while `rust/`
@@ -219,12 +231,15 @@ It is the only workflow that builds the shipped libraries; `ci.yml` runs the
 nix checks. A PR run checks out the PR's head, not the merge with its base,
 so the manifest names a commit that outlives the run. Every script below
 sources `scripts/release/pins.sh`, which holds the pins (the Racket release,
-pkg-build's image, the natipkg installer) and one table per platform: the
-package, the library, its gates and its allowed NEEDED or `LC_LOAD_DYLIB`
-entries.
+the platforms) and one table per platform: the package, the library, its
+format and machine, its gates, its allowed NEEDED or `LC_LOAD_DYLIB`
+entries, and for a Linux platform pkg-build's image and the natipkg
+installer. A Linux job for `aarch64-linux` runs on GitHub's
+`ubuntu-24.04-arm` runner, as each Linux job does on an x86_64 one for
+`x86_64-linux`.
 
 The **plan** job runs `scripts/release/draft-tag.sh`, which fails unless
-both `native/*/info.rkt` versions equal `native-version`, names a draft only
+every `native/*/info.rkt` version equals `native-version`, names a draft only
 for the tag `v<native-version>`, and for the tag `v<version>` fails unless
 the published Release `v<native-version>` (drafts are invisible to the
 job's token) has a `polars-x86_64-linux.manifest.json` whose `rust_tree`
@@ -239,7 +254,7 @@ licences, `about.hbs` the layout) and appends, through
 `/cargo` in panic locations (#32), and records the `rust/` tree and commit
 beside the library; on macOS it first runs `scripts/test-build-so.sh` under
 `/bin/bash`, bash 3.2, which the flake check cannot. The **old-glibc-load**
-job `dlopen`s the Linux library in the image that built it, glibc 2.17,
+job `dlopen`s each Linux library in the image that built it, glibc 2.17,
 which the glibc gate's symbol versions only predict.
 
 The **package** job, per platform, runs four scripts. `gates.sh PLATFORM
@@ -269,13 +284,15 @@ with `--full` renders the docs and runs the suite as the test gate does.
 The **forward-compat** job runs `catalog-test.sh --full` again on Racket
 `stable` and the newest runner images; the draft does not wait for it.
 
-The **pkg-build** job runs `pkg-build-test.sh DIST`, which installs
-`polars` with docs in pkg-build's image (`racket/pkg-build:deps-x86_64`,
-Debian buster, glibc 2.28, by digest) with racket-lang.org's natipkg
-installer, as root, with `PLT_PKG_BUILD_SERVICE=1`, `CI=true` and
+The **pkg-build** job, per Linux platform, runs `pkg-build-test.sh PLATFORM
+DIST`, which installs `polars` with docs in pkg-build's image for the
+platform (`racket/pkg-build:deps-x86_64` or `deps-aarch64`, Debian buster,
+glibc 2.28, by digest) with racket-lang.org's natipkg installer for it, as
+root, with `PLT_PKG_BUILD_SERVICE=1`, `CI=true` and
 `PLT_INFO_ALLOW_VARS=;PLT_PKG_BUILD_SERVICE`, from such a catalog with
-pkgs.racket-lang.org alone behind it, so the `x86_64-linux-natipkg`
-dependency must pull `polars-x86_64-linux`; it then runs `raco test --jobs
+pkgs.racket-lang.org alone behind it, so the `x86_64-linux-natipkg` or
+`aarch64-linux-natipkg` dependency must pull the platform's package; it then
+runs `raco test --jobs
 2 --drdr --package polars` with `--network none`, and `RELEASE_LOGS` names
 a directory for its logs; the natipkg installer is cached by its sha256,
 so a warm run does not download it. The **draft** job, for the tag
@@ -294,7 +311,7 @@ pkg-build builds `master` against a native package the catalog lacks.
 A native release, when `rust/` or a native package changed:
 
 1. On `master`, set `native-version` in `polars/info.rkt` and `version` in
-   both `native/*/info.rkt` to the new version, and usually `polars`'
+   every `native/*/info.rkt` to the new version, and usually `polars`'
    `version` too.
 2. Tag that commit `v<native-version>` and push the tag.
 3. Read the draft the run makes: each manifest's `rust_tree` is the tag's
@@ -302,7 +319,8 @@ A native release, when `rust/` or a native package changed:
    `.SHA256SUMS` checks, and the notices are attached.
 4. Publish the draft.
 5. On pkgs.racket-lang.org, register (the first time) or update
-   `polars-x86_64-linux` and `polars-aarch64-macosx` with the source
+   `polars-x86_64-linux`, `polars-aarch64-linux` and `polars-aarch64-macosx`
+   with the source
    `https://github.com/bkc39/rkt-polars/releases/download/v<native-version>/polars-<platform>.zip`;
    `polars-<platform>.rktd` holds the entry, the checksum included.
 6. Set `polars`' source to
@@ -312,7 +330,7 @@ A native release, when `rust/` or a native package changed:
 
 A Racket-only release bumps `polars`' `version` alone and tags
 `v<version>`: its run fails unless `rust/` is the tree the published
-Release `v<native-version>` was built from, builds, gates and tests both packages but drafts
+Release `v<native-version>` was built from, builds, gates and tests the packages but drafts
 nothing, and the catalog's `polars` source moves to the new tag (step 6).
 
 Every script but `notices.sh` and `build-so.sh` runs locally on a library

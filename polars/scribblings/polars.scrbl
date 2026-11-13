@@ -46,7 +46,8 @@ and @hyperlink["https://docs.racket-lang.org/threading/"]{threading} for
 
 installs @racketmodname[polars] and, as a dependency for the platform, the
 native package that holds @tt{libcompat}: @tt{polars-x86_64-linux} on x86-64
-Linux, @tt{polars-aarch64-macosx} on arm64 macOS. When @racketmodname[polars]
+Linux, @tt{polars-aarch64-linux} on arm64 Linux, @tt{polars-aarch64-macosx} on
+arm64 macOS. When @racketmodname[polars]
 is set up, @exec{raco setup} fails if the native package is not the version
 this @racketmodname[polars] needs or its library is not the one the package
 was built with; @exec{raco pkg update polars polars-x86_64-linux} (with the
