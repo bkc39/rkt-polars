@@ -37,10 +37,8 @@ jobs:
       - name: Configure Nix Cache
         uses: DeterminateSystems/magic-nix-cache-action@v15
 
-      # --max-jobs 0 substitutes the library the flake checks built and
-      # never compiles it.
       - name: Fetch libcompat
-        run: nix build .#rust --max-jobs 0 --out-link libcompat
+        run: nix build .#rust --max-jobs 0 --out-link "$RUNNER_TEMP/libcompat"
 
       - name: Install Racket pre-release
         uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
@@ -49,14 +47,14 @@ jobs:
 
       - name: Install rkt-polars
         env:
-          RKT_POLARS_COMPAT_LIB_PATH: ${{ github.workspace }}/libcompat
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ runner.temp }}/libcompat
         run: |
           racket -e '(displayln (version))'
           raco pkg install --batch --auto --no-docs --name rkt-polars --link "$PWD"
 
       - name: Test
         env:
-          RKT_POLARS_COMPAT_LIB_PATH: ${{ github.workspace }}/libcompat
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ runner.temp }}/libcompat
         run: raco test -e --timeout 600 -c polars
 
   lint:
