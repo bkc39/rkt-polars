@@ -340,6 +340,142 @@ grep -qF 'in the package $package has sha256' "$here/catalog-test.sh" ||
 grep -qxF 'bash "$ROOT/scripts/release/catalog-test.sh" "$platform" "$scratch/dist" --full' "$root/scripts/test-local.sh" ||
   problem "test-local.sh: does not run catalog-test.sh --full"
 
+# shellcheck disable=SC2016
+grep -qxF 'racket "$here/catalog-check.rkt" installed "$package" "$work/native/$package"' "$here/catalog-test.sh" ||
+  problem "catalog-test.sh: does not run catalog-check.rkt installed on the package it installed"
+
+fetched="$work/fetched"
+mkdir -p "$fetched/from"
+printf 'fetched bytes' >"$fetched/from/thing.zip"
+fetched_sha=$(release_sha256 "$fetched/from/thing.zip" | cut -d' ' -f1)
+fetch_case() {
+  local name=$1 want=$2 sha=$3 status=0
+  release_fetch "file://$fetched/from/thing.zip" "$sha" "$fetched/to" >"$work/fetch-$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "release_fetch $name: exited $status, want $want: $(cat "$work/fetch-$name.out")"
+  [ ! -e "$fetched/to/thing.zip.part" ] || problem "release_fetch $name: left thing.zip.part"
+}
+fetch_case checked 0 "$fetched_sha"
+cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" || problem "release_fetch checked: did not fetch thing.zip"
+fetch_case wrong 1 "$(printf '%064d' 0)"
+[ ! -e "$fetched/to/thing.zip" ] || problem "release_fetch wrong: kept a file whose sha256 is not the one given"
+fetch_case empty 1 ""
+[ ! -e "$fetched/to/thing.zip" ] || problem "release_fetch empty: fetched thing.zip given no sha256"
+release_grep -qF "no sha256 given" "$work/fetch-empty.out" ||
+  problem "release_fetch empty: said $(cat "$work/fetch-empty.out"), want ...no sha256 given..."
+printf 'stale bytes' >"$fetched/to/thing.zip"
+fetch_case unchecked 0 unchecked
+cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" || problem "release_fetch unchecked: kept a stale thing.zip"
+release_grep -qxF "$fetched/to/thing.zip" "$work/fetch-unchecked.out" ||
+  problem "release_fetch unchecked: printed $(cat "$work/fetch-unchecked.out"), want $fetched/to/thing.zip"
+mkdir -p "$work/bsd-bin"
+real_sha256=$(command -v sha256sum || command -v shasum)
+case $real_sha256 in */shasum) real_sha256="$real_sha256 -a 256" ;; esac
+cat >"$work/bsd-bin/sha256sum" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do case \$a in --status) echo "usage: sha256sum [-bctwz] [files ...]" >&2; exit 1 ;; esac; done
+exec $real_sha256 "\$@"
+EOF
+chmod +x "$work/bsd-bin/sha256sum"
+rm -rf "$fetched/to"
+PATH="$work/bsd-bin:$PATH" fetch_case bsd 0 "$fetched_sha"
+cmp -s "$fetched/from/thing.zip" "$fetched/to/thing.zip" ||
+  problem "release_fetch bsd: did not fetch thing.zip with a sha256sum that takes no long options"
+
+roots=$(racket -e '(display (string-join (for/list ([r (current-compiled-file-roots)]) (if (eq? r (quote same)) "@" (path->string r))) ":"))')
+compiled_roots="$work/compiled:$roots"
+PLTCOMPILEDROOTS=$compiled_roots raco make -v "$here/catalog-check.rkt" >/dev/null
+[ -f "$work/compiled$here/compiled/catalog-check_rkt.zo" ] ||
+  problem "raco make: did not compile catalog-check.rkt into $work/compiled"
+live="$work/live"
+mkdir -p "$live/pkg/native-libs" "$live/polars/native-libs" "$live/release/native-libs" "$live/catalog/pkg"
+check_case() {
+  local name=$1 want=$2 status=0
+  shift 2
+  PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog-check.rkt" "$@" >"$work/$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "catalog-check.rkt $1: $name exited $status, want $want: $(cat "$work/$name.out")"
+}
+check_said() {
+  grep -qF -- "$2" "$work/$1.out" || problem "catalog-check.rkt: $1 said $(cat "$work/$1.out"), want ...$2..."
+}
+lib="$live/pkg/native-libs/libcompat.so"
+printf 'library bytes' >"$lib"
+printf '%s\n' "7f00-7f01 r-xp 00000000 08:01 12 $lib" "7f01-7f02 r--p 00001000 08:01 12 $lib" \
+  "7f02-7f03 r-xp 00000000 08:01 13 /usr/lib/libc.so.6" >"$live/maps-once"
+check_case mapped-once 0 mapped "$live/maps-once" "$lib"
+cp "$live/maps-once" "$live/maps-staged"
+echo "7f03-7f04 r-xp 00000000 08:01 14 $live/polars/native-libs/libcompat.so" >>"$live/maps-staged"
+check_case mapped-staged 1 mapped "$live/maps-staged" "$lib"
+check_said mapped-staged "polars/native-libs/libcompat.so, not once from"
+grep -vF libcompat "$live/maps-once" >"$live/maps-none"
+check_case mapped-none 1 mapped "$live/maps-none" "$lib"
+check_said mapped-none "libcompat.so is mapped from nowhere"
+
+sha=$(release_sha256 "$lib" | cut -d' ' -f1)
+printf '{"native_version":"0.3","files":{"libcompat.so":"%s"}}\n' "$sha" >"$live/pkg/manifest.json"
+check_case manifest 0 manifest "$live/pkg/manifest.json" "$live/pkg/native-libs"
+sed "s/$sha/$(printf '%064d' 0)/" "$live/pkg/manifest.json" >"$live/manifest-other.json"
+check_case manifest-other 1 manifest "$live/manifest-other.json" "$live/pkg/native-libs"
+check_said manifest-other "holds libcompat.so $sha, but $live/manifest-other.json lists libcompat.so $(printf '%064d' 0)"
+echo '{"native_version":"0.3","files":{}}' >"$live/manifest-empty.json"
+check_case manifest-empty 1 manifest "$live/manifest-empty.json" "$live/pkg/native-libs"
+check_case manifest-nothing 1 manifest "$live/manifest-empty.json" "$live/polars/native-libs"
+check_said manifest-nothing "native-libs holds nothing, but $live/manifest-empty.json lists nothing"
+check_case manifest-unlisted 1 manifest "$live/pkg/manifest.json" "$live/polars/native-libs"
+check_said manifest-unlisted "native-libs holds nothing, but"
+
+cp "$live/pkg/manifest.json" "$live/release/manifest.json"
+cp "$lib" "$live/release/native-libs/"
+check_case release 0 release "$live/pkg/manifest.json" "$live/release"
+check_case release-manifest 1 release "$live/manifest-other.json" "$live/release"
+check_said release-manifest "manifest-other.json differs from the published Release's"
+printf 'other bytes' >"$live/release/native-libs/libcompat.so"
+check_case release-library 1 release "$live/pkg/manifest.json" "$live/release"
+check_said release-library "$live/release/native-libs holds libcompat.so $(release_sha256 "$live/release/native-libs/libcompat.so" | cut -d' ' -f1)"
+
+entry() {
+  printf '#hash((source . "%s") (checksum . "0") (dependencies . %s))\n' "$2" "$3" \
+    >"$live/catalog/pkg/$1"
+}
+released="$RELEASE_DOWNLOADS/v0.3/polars-x86_64-linux.zip"
+catalog_case() {
+  check_case "$1" "$2" catalog polars-x86_64-linux "$RELEASE_DOWNLOADS" "file://$live/catalog"
+}
+entry polars file:///polars.zip '("base" ("polars-x86_64-linux" #:platform "x86_64-linux" #:version "0.3")
+  ("polars-x86_64-linux" #:platform "x86_64-linux-natipkg" #:version "0.3"))'
+catalog_case catalog-absent 1
+check_said catalog-absent "ok   polars is in file://$live/catalog, from file:///polars.zip"
+check_said catalog-absent "polars-x86_64-linux is absent from file://$live/catalog: register it there"
+entry polars-x86_64-linux "$released" '("base")'
+catalog_case catalog-listed 0
+check_said catalog-listed "ok   the catalog's polars-x86_64-linux is the Release v0.3's $released"
+entry polars-x86_64-linux file:///elsewhere/polars-x86_64-linux.zip '("base")'
+catalog_case catalog-elsewhere 1
+check_said catalog-elsewhere "the catalog's polars-x86_64-linux is from file:///elsewhere/polars-x86_64-linux.zip, not the Release v0.3's $released"
+entry polars-x86_64-linux "$released" '("base")'
+entry polars file:///polars.zip '("base" ("polars-x86_64-linux" #:platform "x86_64-linux"))'
+catalog_case catalog-unversioned 1
+check_said catalog-unversioned "the catalog's polars depends on polars-x86_64-linux at (#f), not at one #:version"
+entry polars file:///polars.zip '("base")'
+catalog_case catalog-undepended 1
+check_said catalog-undepended "the catalog's polars, from file:///polars.zip, does not depend on polars-x86_64-linux"
+rm "$live/catalog/pkg/polars"
+catalog_case catalog-no-polars 1
+check_said catalog-no-polars "polars is absent from file://$live/catalog"
+
+catalog_workflow="$root/.github/workflows/catalog.yml"
+for platform in $RELEASE_PLATFORMS; do
+  got=$(release_matches -cxE " +platform: $platform" "$catalog_workflow")
+  [ "$got" = 1 ] || problem "catalog.yml: $got matrix entries for $platform, want 1"
+done
+# shellcheck disable=SC2016
+grep -qF 'scripts/release/catalog-live.sh "$PLATFORM"' "$catalog_workflow" ||
+  problem "catalog.yml: does not run catalog-live.sh on the matrix's platform"
+# shellcheck disable=SC2016
+grep -qxF "    if: github.event_name != 'schedule' || vars.CATALOG_LIVE_SCHEDULED == 'true'" "$catalog_workflow" ||
+  problem "catalog.yml: a scheduled run does not wait for CATALOG_LIVE_SCHEDULED"
+unpinned=$(release_matches -rnE 'uses: Bogdanp/setup-racket@' "$root/.github" | release_matches -vE '@[0-9a-f]{40} # v')
+[ -z "$unpinned" ] || problem "setup-racket is not pinned by sha: $unpinned"
+
 registry="$work/registry/index.crates.io-0000"
 mkdir -p "$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd" "$registry/lz4-sys-1.10.0/liblz4/lib"
 echo "zstd BSD licence" >"$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd/LICENSE"
@@ -434,7 +570,7 @@ mkdir -p "$work/deps-info"
 printf '%s\n' '#lang info' \
   '(define deps (quote ("base" "rkt-polars-absent" ("rkt-polars-versioned" #:version "1.0") ("rkt-polars-native" #:platform "x86_64-linux"))))' \
   >"$work/deps-info/info.rkt"
-missing=$(racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
+missing=$(PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog.rkt" missing-deps "$work/deps-info" 2>&1) || problem "missing-deps: exited non-zero: $missing"
 [ "$missing" = "$(printf 'rkt-polars-absent\nrkt-polars-versioned')" ] ||
   problem "missing-deps: want the two uninstalled platform-free deps, not base (installed in a wider scope): [$missing]"
 
@@ -487,7 +623,7 @@ p=$(host_platform)
 if [ -n "$p" ]; then
   release_platform "$p"
   package=$RELEASE_PACKAGE
-  native=$(racket "$here/catalog.rkt" info "$root/polars" native-version)
+  native=$(PLTCOMPILEDROOTS=$compiled_roots racket "$here/catalog.rkt" info "$root/polars" native-version)
   artifact="$work/artifact"
   mkdir -p "$artifact"
   cp "$exporting" "$artifact/$RELEASE_LIBRARY"

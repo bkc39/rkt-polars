@@ -19,7 +19,7 @@ release_platform "$platform"
 package=$RELEASE_PACKAGE
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-unset RKT_POLARS_COMPAT_LIB_PATH PLTCOLLECTS || true
+unset RKT_POLARS_COMPAT_LIB_PATH PLTCOLLECTS
 export PLTUSERHOME="$work/user"
 
 host=$(racket -e '(display (system-library-subpath #f))')
@@ -77,6 +77,7 @@ install_polars "$PLTUSERHOME" "$work/catalog" "$work/install.log"
 release_check_install_log "$work/install.log"
 
 racket "$root/scripts/check-native-install.rkt" "$package"
+racket "$here/catalog-check.rkt" installed "$package" "$work/native/$package"
 racket "$root/scripts/check-bindings.rkt"
 
 if [ -n "$full" ]; then

@@ -513,7 +513,9 @@ it. Racket side: `define-compat` with `#:c-id`.
 - **A native release is a tag** `v<native-version>`: `release.yml` builds,
   gates (`scripts/release/gates.sh`), packages and tests the three native
   packages and drafts their Release; `gates-test.sh` is the `release-gates`
-  gate. The jobs and the checklist are in `polars/native-libs/BUILDING.md`.
+  gate. The `Catalog` workflow (`catalog.yml`) checks an install from
+  pkgs.racket-lang.org. The jobs and the checklist are in
+  `polars/native-libs/BUILDING.md`.
 - **An export never changes its signature under the same symbol.** A new
   signature gets a new symbol (`dataframe_read_csv` became
   `dataframe_read_csv_with_options`, then `dataframe_read_csv_v2`, then

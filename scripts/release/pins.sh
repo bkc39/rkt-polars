@@ -115,11 +115,19 @@ release_catalogs() {
   esac
 }
 
+# Downloads URL $1 into the directory $3 and prints the file's path, checking
+# its sha256 against $2 unless $2 is the word unchecked; an empty $2 is refused.
+# A file there with sha256 $2 is kept.
 release_fetch() {
   local url=$1 sha=$2 dir=$3
   local file="$dir/${url##*/}"
+  [ -n "$sha" ] || {
+    echo "release_fetch: $url: no sha256 given (pass unchecked to fetch it unchecked)" >&2
+    return 1
+  }
+  [ "$sha" != unchecked ] || sha=
   mkdir -p "$dir" || return 1
-  if [ -f "$file" ] && echo "$sha  $file" | release_sha256 -c --status; then
+  if [ -n "$sha" ] && [ -f "$file" ] && release_sha256_is "$file" "$sha"; then
     printf '%s\n' "$file"
     return 0
   fi
@@ -129,7 +137,7 @@ release_fetch() {
     rm -f "$file.part"
     return 1
   }
-  echo "$sha  $file.part" | release_sha256 -c --status || {
+  [ -z "$sha" ] || release_sha256_is "$file.part" "$sha" || {
     echo "release_fetch: $url: sha256 is not $sha" >&2
     rm -f "$file.part"
     return 1
@@ -150,4 +158,11 @@ release_sha256() {
   else
     shasum -a 256 "$@"
   fi
+}
+
+# Whether file $1's sha256 is $2; macOS's sha256sum has no --status.
+release_sha256_is() {
+  local got
+  got=$(release_sha256 "$1") || return 2
+  [ "${got%% *}" = "$2" ]
 }

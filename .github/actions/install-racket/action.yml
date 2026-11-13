@@ -46,7 +46,7 @@ runs:
 
     - name: Install Racket
       if: steps.restore.outputs.cache-hit != 'true'
-      uses: Bogdanp/setup-racket@v1.15
+      uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
       with:
         version: ${{ inputs.version }}
         architecture: ${{ inputs.architecture }}
