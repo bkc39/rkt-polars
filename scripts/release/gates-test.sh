@@ -340,6 +340,78 @@ grep -qF 'in the package $package has sha256' "$here/catalog-test.sh" ||
 grep -qxF 'bash "$ROOT/scripts/release/catalog-test.sh" "$platform" "$scratch/dist" --full' "$root/scripts/test-local.sh" ||
   problem "test-local.sh: does not run catalog-test.sh --full"
 
+live="$work/live"
+mkdir -p "$live/pkg/native-libs" "$live/polars/native-libs" "$live/release/native-libs" "$live/catalog/pkg"
+check_case() {
+  local name=$1 want=$2 status=0
+  shift 2
+  racket "$here/catalog-check.rkt" "$@" >"$work/$name.out" 2>&1 || status=$?
+  [ "$status" = "$want" ] || problem "catalog-check.rkt $1: $name exited $status, want $want: $(cat "$work/$name.out")"
+}
+check_said() {
+  grep -qF -- "$2" "$work/$1.out" || problem "catalog-check.rkt: $1 said $(cat "$work/$1.out"), want ...$2..."
+}
+lib="$live/pkg/native-libs/libcompat.so"
+printf 'library bytes' >"$lib"
+printf '%s\n' "7f00-7f01 r-xp 00000000 08:01 12 $lib" "7f01-7f02 r--p 00001000 08:01 12 $lib" \
+  "7f02-7f03 r-xp 00000000 08:01 13 /usr/lib/libc.so.6" >"$live/maps-once"
+check_case mapped-once 0 mapped "$live/maps-once" "$lib"
+cp "$live/maps-once" "$live/maps-staged"
+echo "7f03-7f04 r-xp 00000000 08:01 14 $live/polars/native-libs/libcompat.so" >>"$live/maps-staged"
+check_case mapped-staged 1 mapped "$live/maps-staged" "$lib"
+check_said mapped-staged "polars/native-libs/libcompat.so, not once from"
+grep -vF libcompat "$live/maps-once" >"$live/maps-none"
+check_case mapped-none 1 mapped "$live/maps-none" "$lib"
+check_said mapped-none "libcompat.so is mapped from nowhere"
+
+sha=$(release_sha256 "$lib" | cut -d' ' -f1)
+printf '{"native_version":"0.3","files":{"libcompat.so":"%s"}}\n' "$sha" >"$live/pkg/manifest.json"
+check_case manifest 0 manifest "$live/pkg/manifest.json" "$live/pkg/native-libs"
+sed "s/$sha/$(printf '%064d' 0)/" "$live/pkg/manifest.json" >"$live/manifest-other.json"
+check_case manifest-other 1 manifest "$live/manifest-other.json" "$live/pkg/native-libs"
+check_said manifest-other "holds libcompat.so $sha, but $live/manifest-other.json lists libcompat.so $(printf '%064d' 0)"
+echo '{"native_version":"0.3","files":{}}' >"$live/manifest-empty.json"
+check_case manifest-empty 1 manifest "$live/manifest-empty.json" "$live/pkg/native-libs"
+check_case manifest-nothing 1 manifest "$live/manifest-empty.json" "$live/polars/native-libs"
+check_said manifest-nothing "native-libs holds nothing, but $live/manifest-empty.json lists nothing"
+check_case manifest-unlisted 1 manifest "$live/pkg/manifest.json" "$live/polars/native-libs"
+check_said manifest-unlisted "native-libs holds nothing, but"
+
+cp "$live/pkg/manifest.json" "$live/release/manifest.json"
+cp "$lib" "$live/release/native-libs/"
+check_case release 0 release "$live/pkg/manifest.json" "$live/release"
+check_case release-manifest 1 release "$live/manifest-other.json" "$live/release"
+check_said release-manifest "manifest-other.json differs from the published Release's"
+printf 'other bytes' >"$live/release/native-libs/libcompat.so"
+check_case release-library 1 release "$live/pkg/manifest.json" "$live/release"
+check_said release-library "$live/release/native-libs holds libcompat.so $(release_sha256 "$live/release/native-libs/libcompat.so" | cut -d' ' -f1)"
+
+entry() {
+  printf '#hash((source . "file:///%s.zip") (checksum . "0") (dependencies . %s))\n' "$1" "$2" \
+    >"$live/catalog/pkg/$1"
+}
+entry polars '("base" ("polars-x86_64-linux" #:platform "x86_64-linux"))'
+check_case catalog-absent 1 catalog polars-x86_64-linux "file://$live/catalog"
+check_said catalog-absent "ok   polars is in file://$live/catalog, from file:///polars.zip"
+check_said catalog-absent "polars-x86_64-linux is absent from file://$live/catalog: register it there"
+entry polars-x86_64-linux '("base")'
+check_case catalog-listed 0 catalog polars-x86_64-linux "file://$live/catalog"
+entry polars '("base")'
+check_case catalog-undepended 1 catalog polars-x86_64-linux "file://$live/catalog"
+check_said catalog-undepended "the catalog's polars, from file:///polars.zip, does not depend on polars-x86_64-linux"
+rm "$live/catalog/pkg/polars"
+check_case catalog-no-polars 1 catalog polars-x86_64-linux "file://$live/catalog"
+check_said catalog-no-polars "polars is absent from file://$live/catalog"
+
+catalog_workflow="$root/.github/workflows/catalog.yml"
+for platform in $RELEASE_PLATFORMS; do
+  got=$(grep -cxE " +platform: $platform" "$catalog_workflow" || true)
+  [ "$got" = 1 ] || problem "catalog.yml: $got matrix entries for $platform, want 1"
+done
+# shellcheck disable=SC2016
+grep -qF 'scripts/release/catalog-live.sh "$PLATFORM"' "$catalog_workflow" ||
+  problem "catalog.yml: does not run catalog-live.sh on the matrix's platform"
+
 registry="$work/registry/index.crates.io-0000"
 mkdir -p "$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd" "$registry/lz4-sys-1.10.0/liblz4/lib"
 echo "zstd BSD licence" >"$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd/LICENSE"

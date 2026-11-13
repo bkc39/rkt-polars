@@ -1,0 +1,43 @@
+name: Catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      racket-version:
+        description: The Racket to install polars on (stable, pre-release, current or a release).
+        required: false
+        default: stable
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Install polars from pkgs.racket-lang.org on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: x86_64-linux
+            arch: x64
+          - os: ubuntu-24.04-arm
+            platform: aarch64-linux
+            arch: arm64
+          - os: macos-14
+            platform: aarch64-macosx
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
+        with:
+          version: ${{ inputs.racket-version || 'stable' }}
+          architecture: ${{ matrix.arch }}
+      - name: Install polars from the catalog and check what it loads
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: scripts/release/catalog-live.sh "$PLATFORM"

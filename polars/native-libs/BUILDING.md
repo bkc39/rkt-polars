@@ -308,6 +308,23 @@ repository, runs `draft.sh TAG SHA DIST`, which refuses a tag that no
 longer names the run's commit or that already has a release, and drafts
 one with every file the package jobs wrote.
 
+`.github/workflows/catalog.yml` (the `Catalog` workflow, on demand and
+weekly, on Racket `stable` or its `racket-version` input) checks what users
+get. On each platform's runner, `catalog-live.sh PLATFORM [CATALOG...]`
+installs `polars` with `--auto` from pkgs.racket-lang.org alone (or the
+catalogs given), in a fresh home, with nothing staged and
+`RKT_POLARS_COMPAT_LIB_PATH` unset; it first fails, naming each, when
+`polars` or the platform's package is absent from the catalogs or `polars`'
+entry does not depend on the package. `catalog-check.rkt installed` then
+requires `polars` and checks that `libcompat` is mapped once, from the
+package's `native-libs` (`/proc/self/maps` on Linux, dyld's image list on
+macOS), that nothing is staged in `polars/native-libs`, that the package's
+version is `native-version`, that the library's sha256 is its
+`manifest.json`'s, that the manifest and library are those of the Release
+`v<native-version>`'s zip (`CATALOG_LIVE_DOWNLOADS` replaces the download
+URL's base), and that a small frame filters. `gates-test.sh` checks each of
+its parts offline.
+
 ### Release checklist
 
 Before anything that makes `master`'s `polars` need an unpublished
@@ -332,7 +349,9 @@ A native release, when `rust/` or a native package changed:
    `polars-<platform>.rktd` holds the entry, the checksum included.
 6. Set `polars`' source to
    `https://github.com/bkc39/rkt-polars.git?path=polars#v<version>`.
-7. After pkg-build's next cycle, check that polars' docs rendered and its
+7. Once the catalog lists the new checksums, run the Catalog workflow
+   (`gh workflow run catalog.yml`) and wait for green before announcing.
+8. After pkg-build's next cycle, check that polars' docs rendered and its
    tests passed there.
 
 A Racket-only release bumps `polars`' `version` alone and tags
