@@ -1185,9 +1185,13 @@ it. Racket side: `define-compat` with `#:c-id`.
   differs from Racket's; it expands case-insensitive literals and ranges
   itself. `\p{...}` classes follow each side's Unicode tables, and Racket
   misjudges some classes above U+00FF (#85), so the oracle's names stay out of
-  both. Lookaround, backreferences, atomic groups and conditionals, which the
-  crate lacks, are rejected by `col` and `exclude`, naming the construct
-  (#151).
+  both. `\p{C}` is the general categories the running Racket reads it as,
+  probed when the module is instantiated from one character of each
+  category (Cs has none): Cc, Cf, Cn and So on 9.3, Cc, Cf, Cn and Co on
+  9.4's pre-release, where Unicode's C is Cc, Cf, Cs, Co and Cn (#146);
+  every other name reads the same on both. Lookaround, backreferences,
+  atomic groups and conditionals, which the crate lacks, are rejected by
+  `col` and `exclude`, naming the construct (#151).
 
 ## Documentation
 
@@ -1236,6 +1240,23 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars-fork`, every polars crate from the fork at one rev).
   `nix build .#racket` runs only the second and is not enough. It does not
   cover CI's Lint job (`raco test lint` and the Resyntax run).
+- CI's `Racket pre-release tests` job (`nix.yml`) runs `raco test -e
+  --timeout 600 -c polars` on Racket's current pre-release
+  (`Bogdanp/setup-racket`, `version: pre-release`), so a release
+  candidate's regression shows before pkg-build reports it (#146). It runs
+  after the flake checks and takes their Linux leg's library, which that
+  leg copies out of its store (`nix build .#rust --max-jobs 0`, which
+  builds nothing) and uploads as the artifact `libcompat-nix-x86_64-linux`,
+  kept a day; magic-nix-cache is no hand-off, since the Actions cache
+  behind it throttles uploads. Without the artifact (that leg failed before
+  the upload) the job fails at `Check libcompat`. The job downloads it
+  under `$RUNNER_TEMP`, outside the linked package, and has no nix. The
+  library's RUNPATH names nix's glibc and gcc in a store the runner lacks,
+  so its NEEDED entries (`libgcc_s.so.1`, `libm.so.6`, `libc.so.6`,
+  `ld-linux-x86-64.so.2`) resolve from the system's, and it needs
+  `GLIBC_2.39` (`pidfd_spawnp`, `pidfd_getpid`), which ubuntu-24.04 has.
+  That floor is nixpkgs' glibc's, whatever image the flake leg runs on,
+  so a nixpkgs refresh can raise it.
 - nix builds from the **git-tracked tree**: `git add -A` before any nix
   command, or a new file fails with "file not found for module".
 - Each worktree gets its own `PLTUSERHOME`, keyed on its root as

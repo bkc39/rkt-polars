@@ -2,6 +2,7 @@
 
 (require racket/bool
          (only-in racket/contract flat-contract-with-explanation raise-blame-error)
+         (only-in racket/dict in-dict)
          racket/list
          racket/match
          racket/promise
@@ -70,6 +71,26 @@
 (define class-specials "\\[]^-&~")
 (define never-matches "[a&&b]")
 (define any-char "(?s:.)")
+(define category-representatives
+  '((lu . #\A) (ll . #\a) (lt . #\u01C5) (lm . #\u02B0) (lo . #\u05D0)
+    (mn . #\u0300) (mc . #\u0903) (me . #\u0488)
+    (nd . #\0) (nl . #\u2160) (no . #\u00B2)
+    (pc . #\_) (pd . #\-) (ps . #\() (pe . #\)) (pi . #\u00AB) (pf . #\u00BB) (po . #\!)
+    (sm . #\+) (sc . #\$) (sk . #\^) (so . #\u00A9)
+    (zs . #\space) (zl . #\u2028) (zp . #\u2029)
+    (cc . #\nul) (cf . #\u00AD) (co . #\uE000) (cn . #\uFFFF)))
+(define racket-other-categories
+  (for/list ([(category ch) (in-dict category-representatives)]
+             #:when (regexp-match? #px"\\p{C}" (string ch)))
+    category))
+
+(define (category-class negated? categories)
+  (match categories
+    ['() (if negated? any-char never-matches)]
+    [_ (class-of negated?
+                 (string-append*
+                  (for/list ([category (in-list categories)])
+                    (format "\\p{~a}" (~> category symbol->string string-titlecase)))))]))
 
 (define (escape ch specials)
   (define s (string ch))
@@ -148,7 +169,7 @@
   (define negated? (xor (string=? p "P") (string=? caret "^")))
   (match name
     ["L&" (class-of negated? "\\p{Ll}\\p{Lu}\\p{Lt}\\p{Lm}")]
-    ["C" (class-of negated? "\\p{Cc}\\p{Cf}\\p{Cn}\\p{So}")]
+    ["C" (category-class negated? racket-other-categories)]
     [(or "Cs" ".") (if negated? any-char never-matches)]
     [_ (string-append (if negated? "\\P{" "\\p{") name "}")]))
 
@@ -214,3 +235,6 @@
         [(or "m" "-s") (values fold? 'on)]
         [(or "s" "-m") (values fold? 'off)])))
   (values (case multi [(on) "(?m-s:"] [(off) "(?s-m:"] [else "(?:"]) fold?))
+
+(module+ internal
+  (provide any-char category-class category-representatives never-matches regexp->rust))

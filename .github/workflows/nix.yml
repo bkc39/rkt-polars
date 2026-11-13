@@ -23,6 +23,64 @@ jobs:
       - name: Run flake checks
         run: nix flake check --print-build-logs
 
+      - name: Stage libcompat for the pre-release job
+        if: runner.os == 'Linux'
+        run: |
+          nix build .#rust --max-jobs 0 --out-link "$RUNNER_TEMP/libcompat-nix"
+          mkdir -p "$RUNNER_TEMP/libcompat/lib"
+          cp -L "$RUNNER_TEMP/libcompat-nix/lib/libcompat.so" "$RUNNER_TEMP/libcompat/lib/"
+
+      - name: Upload libcompat
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: libcompat-nix-x86_64-linux
+          path: ${{ runner.temp }}/libcompat/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  racket-pre-release:
+    name: Racket pre-release tests
+    needs: flake-check
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download libcompat
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: libcompat-nix-x86_64-linux
+          path: ${{ runner.temp }}/libcompat
+
+      - name: Check libcompat
+        env:
+          FLAKE_CHECK: ${{ needs.flake-check.result }}
+        run: |
+          if [ ! -f "$RUNNER_TEMP/libcompat/lib/libcompat.so" ]; then
+            echo "::error::No libcompat-nix-x86_64-linux artifact: the Linux leg of the flake checks did not upload the library (flake-check: $FLAKE_CHECK). Fix or re-run that leg."
+            exit 1
+          fi
+
+      - name: Install Racket pre-release
+        uses: Bogdanp/setup-racket@2466913449df77df2bad149d1f2fc4e1ea4795dd # v1.15
+        with:
+          version: pre-release
+
+      - name: Install rkt-polars
+        env:
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ runner.temp }}/libcompat
+        run: |
+          racket -e '(displayln (version))'
+          raco pkg install --batch --auto --no-docs --name rkt-polars --link "$PWD"
+
+      - name: Test
+        env:
+          RKT_POLARS_COMPAT_LIB_PATH: ${{ runner.temp }}/libcompat
+        run: raco test -e --timeout 600 -c polars
+
   lint:
     name: Lint (no-syntax-rule, no-inline-tests, rustls-only, no-dynamic-wind, resyntax)
     runs-on: ubuntu-latest
