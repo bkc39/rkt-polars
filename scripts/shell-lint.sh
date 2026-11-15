@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-#
-# The shell-lint gate (#332): fails on a file under scripts/ that starts with
-# a shebang and is not executable, and on a `$?` that a negated condition
-# (`if ! cmd; then`, `elif !`, `while !`) hands its body: there `$?` is the
-# negation's status, so a failure always reports 0.  Capture the command's
-# status first, `cmd || st=$?`.  The status rule reads the first command of
-# the body, on the line that opens it or the next.  A file it cannot read
-# fails with 2.
-#
 # Usage: scripts/shell-lint.sh
 set -euo pipefail
 
@@ -23,10 +14,10 @@ hit() {
   fi
 }
 
-found=0
-files=$(find scripts -type f | LC_ALL=C sort) || found=$?
-if [ "$found" -ne 0 ] || [ -z "$files" ]; then
-  echo "shell-lint: cannot list scripts/ (find exited $found)" >&2
+listed=0
+files=$(find scripts -type f | LC_ALL=C sort) || listed=$?
+if [ "$listed" -ne 0 ] || [ -z "$files" ]; then
+  echo "shell-lint: cannot list scripts/ (find exited $listed)" >&2
   exit 2
 fi
 
@@ -47,49 +38,77 @@ while IFS= read -r file; do
   esac
 done <<< "$files"
 
+scanned=0
 # shellcheck disable=SC2016
 negated=$(awk '
+  BEGIN { OUTSIDE = "outside"; CONTINUED = "continued"; ENDED = "ended"; OPENED = "opened" }
   function strip(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-  function body(s, pos, rest) {
-    rest = strip(substr(s, pos))
+  function scan(s,   i, c, t, quote, previous) {
+    code = ""; bare = ""; quote = ""; previous = " "
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (quote == "\047") {
+        if (c == "\047") quote = ""
+        code = code " "; bare = bare " "
+      } else if (c == "\\") {
+        t = substr(s, i, 2); i++
+        code = code t; bare = bare (length(t) == 2 ? "  " : " ")
+        previous = "\\"
+      } else if (quote == "\"") {
+        if (c == "\"") quote = ""
+        code = code c; bare = bare " "
+      } else if (c == "\047") {
+        quote = c; code = code " "; bare = bare " "
+      } else if (c == "\"") {
+        quote = c; code = code c; bare = bare " "
+      } else if (c == "#" && previous ~ /[ \t;]/) {
+        break
+      } else {
+        code = code c; bare = bare c; previous = c
+      }
+    }
+  }
+  function report() { printf "%s:%d\n", FILENAME, FNR }
+  function body(from,   rest) {
+    rest = strip(substr(code, from))
     sub(/^;/, "", rest)
     rest = strip(rest)
-    if (rest == "") state = 2
-    else if (index(rest, "$?") > 0) printf "%s:%d\n", FILENAME, FNR
+    if (rest == "") state = OPENED
+    else if (index(rest, "$?") > 0) report()
   }
-  function keyword(s, at) { return substr(s, at, 4) == "then" ? 4 : 2 }
-  function condition(s) {
-    if (match(s, /(^|[; \t])(then|do)([ \t;]|$)/)) {
-      if (substr(s, RSTART, 1) ~ /[; \t]/) RSTART++
-      state = 0
-      body(s, RSTART + keyword(s, RSTART))
-    } else if (s ~ /(\\|\|\||&&|\|)$/) state = 1
-    else state = 3
+  function condition(   at) {
+    if (match(bare, /(^|;)[ \t]*(then|do)([ \t;]|$)/)) {
+      at = RSTART + RLENGTH - 1
+      if (substr(bare, at, 1) ~ /[ \t;]/) at--
+      state = OUTSIDE
+      body(at + 1)
+    } else if (strip(code) ~ /(\\|\|\||&&|\|)$/) state = CONTINUED
+    else state = ENDED
   }
-  FNR == 1 { state = 0 }
+  FNR == 1 { state = OUTSIDE }
   {
-    line = strip($0)
-    if (line == "" || substr(line, 1, 1) == "#") next
-    if (state == 2) {
-      state = 0
-      if (index(line, "$?") > 0) printf "%s:%d\n", FILENAME, FNR
+    scan($0)
+    if (strip(code) == "") next
+    if (state == OPENED) {
+      state = OUTSIDE
+      if (index(code, "$?") > 0) report()
       next
     }
-    if (state == 1) { condition(line); next }
-    if (state == 3) {
-      state = 0
-      if (line ~ /^(then|do)([ \t;]|$)/) { condition(line); next }
+    if (state == CONTINUED) { condition(); next }
+    if (state == ENDED) {
+      state = OUTSIDE
+      if (bare ~ /^[ \t]*(then|do)([ \t;]|$)/) { condition(); next }
     }
-    if (line ~ /^(if|elif|while)[ \t]+![ \t]/) condition(line)
+    if (bare ~ /^[ \t]*(if|elif|while|until)[ \t]+![ \t]/) condition()
   }
-' "${shells[@]}") || found=$?
-if [ "$found" -ne 0 ]; then
-  echo "shell-lint: awk failed (exit $found) on scripts/" >&2
+' "${shells[@]}") || scanned=$?
+if [ "$scanned" -ne 0 ]; then
+  echo "shell-lint: awk failed (exit $scanned) on scripts/" >&2
   exit 2
 fi
 if [ -n "$negated" ]; then
   while IFS=: read -r file line; do
-    hit "$file" "$line" "\$? here is the negated condition's status, always 0: capture it first (cmd || st=\$?)"
+    hit "$file" "$line" "\$? here is the negated condition's status, not the command's: capture it first (cmd || st=\$?)"
   done <<< "$negated"
 fi
 

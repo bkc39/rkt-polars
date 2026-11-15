@@ -1385,10 +1385,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/tests/dynamic-wind-sites.rktd` names, and the read audit in
   `polars/tests/resource.rkt` holds each of its `(file definition reason)`
   entries to one site), `scripts/shell-lint.sh` (#332: a push gate, a
-  flake check and a step of CI's Lint job; every file under `scripts/` with
-  a shebang is executable, and no `$?` is read as the first command of a
-  negated condition's body, `if ! cmd; then fail "status $?"`, where it is
-  the negation's status, always 0: `cmd || st=$?` first), and
+  flake check and a step of CI's Lint job; bash and awk; every file under
+  `scripts/` with a shebang is executable, and no `$?` outside a comment or
+  single quotes is on the first line of the body of `if !`, `elif !`,
+  `while !` or `until !`, where it is the negation's status, not the
+  command's: `cmd || st=$?` first), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
@@ -1403,8 +1404,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
   `grep-gates-test` gate, a push gate and a flake check) runs
   `no-syntax-rule`, `no-inline-tests`, `rustls-only`, `no-dynamic-wind`
-  and `shell-lint` on a scratch tree to hold them there, and `dependency-catalogs-test`'s
-  check that `scripts/release/catalog-test.sh` reads its catalogs through
+  and `shell-lint` on a scratch tree to hold them there, and
+  `dependency-catalogs-test`'s check that `scripts/release/catalog-test.sh` reads its catalogs through
   `release_catalogs` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
   1, as for any warning, on a log it cannot read or a grep error over the
   rendered manual, and `docs-check-test` plants both.

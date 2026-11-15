@@ -30,6 +30,11 @@ fail() {
 inode() { stat -c %i "$1"; }
 mtime() { stat -c %Y "$1"; }
 mode() { stat -c %a "$1"; }
+run() {
+  ran=0
+  "$@" || ran=$?
+  return "$ran"
+}
 
 cat > "$work/cp-f.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -88,10 +93,8 @@ printf 'same bytes\n' > "$work/src/libcompat.so"
 printf 'same bytes\n' > "$work/dest/libcompat.so"
 touch -d @1000000000 "$work/dest/libcompat.so"
 before="$(inode "$work/dest/libcompat.so") $(mtime "$work/dest/libcompat.so")"
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "identical library: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "identical library: status $ran"
 elif [ "$(inode "$work/dest/libcompat.so") $(mtime "$work/dest/libcompat.so")" != "$before" ]; then
   fail "identical library: inode and mtime moved from [$before]"
 else
@@ -105,10 +108,8 @@ printf 'new dylib\n' > "$work/src/libcompat.dylib"
 printf 'old dylib\n' > "$work/dest/libcompat.dylib"
 same_inode=$(inode "$work/dest/libcompat.so")
 dylib_inode=$(inode "$work/dest/libcompat.dylib")
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "two libraries: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "two libraries: status $ran"
 elif [ "$(inode "$work/dest/libcompat.so")" != "$same_inode" ] \
   || [ "$(inode "$work/dest/libcompat.dylib")" = "$dylib_inode" ] \
   || [ "$(cat "$work/dest/libcompat.dylib")" != "new dylib" ]; then
@@ -120,20 +121,16 @@ fi
 fresh
 printf 'store bytes\n' > "$work/src/libcompat.so"
 chmod 0555 "$work/src/libcompat.so"
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "read-only source: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "read-only source: status $ran"
 elif [ "$(mode "$work/dest/libcompat.so")" != 755 ]; then
   fail "read-only source: the target is $(mode "$work/dest/libcompat.so"), not 755"
 else
   chmod u+w "$work/src/libcompat.so"
   printf 'next store bytes\n' > "$work/src/libcompat.so"
   chmod 0555 "$work/src/libcompat.so"
-  st=0
-  bash "$script" "$work/src" "$work/dest" || st=$?
-  if [ "$st" -ne 0 ]; then
-    fail "read-only source, second install: status $st"
+  if ! run bash "$script" "$work/src" "$work/dest"; then
+    fail "read-only source, second install: status $ran"
   elif [ "$(cat "$work/dest/libcompat.so")" != "next store bytes" ] \
     || [ "$(mode "$work/dest/libcompat.so")" != 755 ]; then
     fail "read-only source, second install: the target is not the new 0755 copy"
@@ -145,10 +142,8 @@ chmod -R u+w "$work/src"
 
 fresh
 printf 'new\n' > "$work/src/libcompat.so"
-st=0
-bash "$script" "$work/src" "$work/dest/missing" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "missing destination: status $st"
+if ! run bash "$script" "$work/src" "$work/dest/missing"; then
+  fail "missing destination: status $ran"
 elif [ "$(cat "$work/dest/missing/libcompat.so")" != "new" ]; then
   fail "missing destination: no copy"
 else
@@ -166,10 +161,8 @@ fi
 
 fresh
 printf 'dev library bytes\n' > "$work/src/libcompat.so"
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "first marker: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "first marker: status $ran"
 elif ! grep -qxE '[0-9a-f]{64}' "$work/dest/.libcompat.so.dev" \
   || ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
   fail "first marker: [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)] is not the library's sha256 and a newline"
@@ -181,10 +174,8 @@ fresh
 printf 'same bytes\n' > "$work/src/libcompat.so"
 printf 'same bytes\n' > "$work/dest/libcompat.so"
 before=$(inode "$work/dest/libcompat.so")
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "unmarked identical library: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "unmarked identical library: status $ran"
 elif [ "$(inode "$work/dest/libcompat.so")" != "$before" ]; then
   fail "unmarked identical library: the library was replaced"
 elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
@@ -199,10 +190,8 @@ printf 'stale hash\n' > "$work/dest/.libcompat.so.dev"
 printf 'new library bytes, longer\n' > "$work/src/libcompat.so"
 before=$(inode "$work/dest/.libcompat.so.dev")
 exec {marker_fd}< "$work/dest/.libcompat.so.dev"
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "stale marker: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "stale marker: status $ran"
 elif [ "$(cat "$work/dest/.libcompat.so.dev")" != "$(sha "$work/dest/libcompat.so")" ]; then
   fail "stale marker: [$(cat "$work/dest/.libcompat.so.dev")] is not the new library's sha256"
 elif [ "$(inode "$work/dest/.libcompat.so.dev")" = "$before" ] \
@@ -217,10 +206,8 @@ exec {marker_fd}<&-
 
 touch -d @1000000000 "$work/dest/.libcompat.so.dev"
 before="$(inode "$work/dest/.libcompat.so.dev") $(mtime "$work/dest/.libcompat.so.dev")"
-st=0
-bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "current marker: status $st"
+if ! run bash "$script" "$work/src" "$work/dest"; then
+  fail "current marker: status $ran"
 elif [ "$(inode "$work/dest/.libcompat.so.dev") $(mtime "$work/dest/.libcompat.so.dev")" != "$before" ]; then
   fail "current marker: inode and mtime moved from [$before]"
 else
@@ -233,10 +220,8 @@ for shape in 'no newline:%s' 'two newlines:%s\n\n' 'a carriage return:%s\r\n'; d
   cp "$work/src/libcompat.so" "$work/dest/libcompat.so"
   # shellcheck disable=SC2059
   printf "${shape#*:}" "$(sha "$work/src/libcompat.so")" > "$work/dest/.libcompat.so.dev"
-  st=0
-  bash "$script" "$work/src" "$work/dest" || st=$?
-  if [ "$st" -ne 0 ]; then
-    fail "a marker with ${shape%%:*}: status $st"
+  if ! run bash "$script" "$work/src" "$work/dest"; then
+    fail "a marker with ${shape%%:*}: status $ran"
   elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
     fail "a marker with ${shape%%:*} is left as it was"
   else
@@ -258,10 +243,8 @@ stub regular-cp cp '[ -f "$1" ] || { echo "cp: skipping file $1" >&2; exit 1; };
 
 fresh
 printf 'dev library bytes\n' > "$work/src/libcompat.so"
-st=0
-env PATH="$work/regular-cp:$base_path" bash "$script" "$work/src" "$work/dest" || st=$?
-if [ "$st" -ne 0 ]; then
-  fail "a cp that copies only regular files: status $st"
+if ! run env PATH="$work/regular-cp:$base_path" bash "$script" "$work/src" "$work/dest"; then
+  fail "a cp that copies only regular files: status $ran"
 elif ! cmp -s "$work/dest/.libcompat.so.dev" <(printf '%s\n' "$(sha "$work/dest/libcompat.so")"); then
   fail "a cp that copies only regular files: the marker is [$(cat "$work/dest/.libcompat.so.dev" 2> /dev/null)]"
 else

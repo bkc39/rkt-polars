@@ -58,9 +58,7 @@
   ;; its with- forms.  A grep, so no shell; the read audit in
   ;; polars/tests/resource.rkt is the per-site check.
   (no-dynamic-wind ("bash scripts/no-dynamic-wind.sh" #:shell ""))
-  ;; Every file under scripts/ with a shebang is executable, and no `$?`
-  ;; reads a negated condition's status (`if ! cmd; then ... $?`), which is
-  ;; always 0.  Plain bash and awk, so no shell.
+  ;; Scripts are executable and read no negated status (AGENTS.md).  No shell.
   (shell-lint    ("bash scripts/shell-lint.sh" #:shell ""))
   ;; The five lint gates above on a scratch tree: a hit fails with 1, and a
   ;; missing directory or lock file with 2, never a pass.  Plain bash.

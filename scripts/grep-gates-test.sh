@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016
 #
 # The grep-gates-test gate (#298, #302, #332): each grep gate, shell-lint, and
 # dependency-catalogs-test.sh's check of release/catalog-test.sh, run on a scratch
@@ -117,7 +118,6 @@ expect "a missing list of sites" no-dynamic-wind 2 "no-dynamic-wind: cannot read
 tree
 expect "this checkout's catalog-test.sh" dependency-catalogs-test 0 "dependency-catalogs: ok"
 tree
-# shellcheck disable=SC2016
 printf 'raco pkg catalog-copy --from-config "$catalog"\n' >> "$work/tree/scripts/release/catalog-test.sh"
 expect "--from-config" dependency-catalogs-test 1 \
   "scripts/release/catalog-test.sh copies every configured catalog (--from-config)"
@@ -132,13 +132,12 @@ expect "a missing catalog-test.sh" dependency-catalogs-test 2 \
 
 tree
 expect "a clean tree" shell-lint 0 "shell-lint: none in scripts/"
-# shellcheck disable=SC2016
-printf '#!/usr/bin/env bash\na || st=$?\nif ! a; then\n  fail x\nfi\necho "$?"\nif a; then :; else echo "$?"; fi\n' \
+printf '#!/usr/bin/env bash\na || st=$?\nif ! a; then\n  fail x\nfi\necho "$?"\nif a; then :; else echo "$?"; fi\nif ! a; then # $? unread\n  : # nor $? here\n  : \047$?\047\nfi\n' \
   > "$work/tree/scripts/fine.sh"
 chmod +x "$work/tree/scripts/fine.sh"
 printf '# shellcheck shell=bash\nx=1\n' > "$work/tree/scripts/sourced.sh"
 printf 'a fixture, not a script\n' > "$work/tree/scripts/fixture.log"
-expect "a captured status, a sourced script and a fixture" shell-lint 0 "shell-lint: none in scripts/"
+expect "a captured status, a comment, a sourced script and a fixture" shell-lint 0 "shell-lint: none in scripts/"
 printf '#!/usr/bin/env bash\necho hi\n' > "$work/tree/scripts/plain.sh"
 chmod -x "$work/tree/scripts/plain.sh"
 expect "a shebang without the executable bit" shell-lint 1 \
@@ -146,23 +145,21 @@ expect "a shebang without the executable bit" shell-lint 1 \
 tree
 printf '#!/usr/bin/env racket\n#lang racket/base\n' > "$work/tree/scripts/tool.rkt"
 expect "a shebang on a file of another kind" shell-lint 1 "scripts/tool.rkt:1: has a shebang but is not executable"
-negated() {
-  local label=$1 line=$2 body=$3
+while IFS='|' read -r line label body; do
   tree
   # shellcheck disable=SC2059
   printf "$body" > "$work/tree/scripts/negated.sh"
-  expect "$label" shell-lint 1 "scripts/negated.sh:$line: \$? here is the negated condition's status"
-}
-# shellcheck disable=SC2016
-negated "\$? in the body of if !" 3 'set -e\nif ! a "$x"; then\n  fail "a: status $?"\nfi\n'
-# shellcheck disable=SC2016
-negated "\$? in the body of elif !" 4 'if a; then\n  :\nelif ! b; then\n  st=$?\nfi\n'
-# shellcheck disable=SC2016
-negated "\$? on the line of if !" 1 'if ! a; then fail "status $?"; fi\n'
-# shellcheck disable=SC2016
-negated "\$? after a then on its own line" 4 'if ! a \\\n  b\nthen\n  echo $?\nfi\n'
-# shellcheck disable=SC2016
-negated "\$? in the body of while !" 2 'while ! a; do\n  echo "$?"\ndone\n'
+  expect "\$? in $label" shell-lint 1 "scripts/negated.sh:$line: \$? here is the negated condition's status"
+done <<'CASES'
+3|the body of if !|set -e\nif ! a "$x"; then\n  fail "a: status $?"\nfi\n
+4|the body of elif !|if a; then\n  :\nelif ! b; then\n  st=$?\nfi\n
+1|the line of if !|if ! a; then fail "status $?"; fi\n
+4|a body after a then on its own line|if ! a \\\n  b\nthen\n  echo $?\nfi\n
+2|the body of while !|while ! a; do\n  echo "$?"\ndone\n
+2|the body of until !|until ! a; do\n  echo "$?"\ndone\n
+2|a body whose condition holds then and do|if ! grep -q then do; then\n  echo "$?"\nfi\n
+2|a body whose condition quotes ; then|if ! echo "a; then b"; then\n  echo "$?"\nfi\n
+CASES
 tree
 printf '#!/usr/bin/env bash\n' > "$work/tree/scripts/unreadable.sh"
 chmod 0 "$work/tree/scripts/unreadable.sh"
