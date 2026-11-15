@@ -247,7 +247,7 @@
   (define skeletons (build-path repo "native"))
 
   (test-case "polars depends on each native package at its native version"
-    (check-equal? wanted "0.3")
+    (check-equal? wanted "0.3.1")
     (check-equal?
      (for/list ([dep (in-list ((get-info/full polars-dir) 'deps))] #:when (pair? dep)) dep)
      (for/list ([entry (in-list native-packages)])

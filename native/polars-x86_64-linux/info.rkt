@@ -1,7 +1,7 @@
 #lang info
 
 (define collection "polars-x86_64-linux")
-(define version "0.3")
+(define version "0.3.1")
 (define deps '("base"))
 (define pkg-desc "libcompat, the native library of polars, for x86_64 Linux")
 (define pkg-authors '(bkc))
