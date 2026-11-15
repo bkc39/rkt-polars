@@ -76,13 +76,15 @@
 
 ;; Evaluates the forms with the evaluator's current directory a fresh temporary
 ;; one, restored and deleted on any exit; the #:setup forms run there hidden.
-(define-syntax-parser examples-in-temporary-directory
-  [(_ #:eval ev:expr (~optional (~seq #:setup (setup:expr ...))) form:expr ...+)
-   #'(call-in-temporary-directory
-      ev
-      (lambda ()
-        (splice (list (~? (examples #:eval ev #:hidden setup ...) null)
-                      (examples #:eval ev #:label #f form ...)))))])
+(define-syntax-parse-rule (examples-in-temporary-directory
+                           #:eval ev:expr
+                           (~optional (~seq #:setup (setup:expr ...)))
+                           form:expr ...+)
+  (call-in-temporary-directory
+   ev
+   (lambda ()
+     (splice (list (~? (examples #:eval ev #:hidden setup ...) null)
+                   (examples #:eval ev #:label #f form ...))))))
 
 (define (enter-directory! ev dir)
   (begin0 (ev '(current-directory))
