@@ -10,8 +10,8 @@
          syntax/parse/define
          (only-in threading ~>)
          (only-in polars/private/native-location
-                  library-file locate-native-library missing-export-message native-library-problem
-                  native-location-dir unloadable-message))
+                  embedded-module-name? library-file locate-native-library missing-export-message
+                  native-library-problem native-location-dir unloadable-message))
 
 (provide compat-library
          missing-export
@@ -28,10 +28,7 @@
 (define location (locate-native-library staged-dir))
 
 (define embedded?
-  (~> (#%variable-reference)
-      variable-reference->resolved-module-path
-      resolved-module-path-name
-      symbol?))
+  (~> (#%variable-reference) variable-reference->resolved-module-path embedded-module-name?))
 
 (define native-library-file (build-path (native-location-dir location) library-file))
 
