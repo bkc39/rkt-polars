@@ -58,9 +58,9 @@ negated=$(awk '
         if (c == "\"") quote = ""
         code = code c; bare = bare " "
       } else if (c == "\047") {
-        quote = c; code = code " "; bare = bare " "
+        quote = c; opened = FNR; code = code " "; bare = bare " "
       } else if (c == "\"") {
-        quote = c; code = code c; bare = bare " "
+        quote = c; opened = FNR; code = code c; bare = bare " "
       } else if (c == "#" && previous ~ /[ \t;]/) {
         break
       } else {
@@ -68,24 +68,37 @@ negated=$(awk '
       }
     }
   }
-  function opens(s,   b, word) {
+  function depth(s,   opening, closing) {
+    opening = gsub(/\(\(/, "", s); closing = gsub(/\)\)/, "", s)
+    return opening - closing
+  }
+  function opens(s,   b, at, tabs, word, delimiter) {
     b = bare
     gsub(/<<</, "   ", b)
-    if (!match(b, /<<-?/)) return
-    tabs = RLENGTH == 3
-    word = substr(s, RSTART + RLENGTH)
-    sub(/^[ \t]+/, "", word)
-    if (!match(word, /^(\047[^\047]*\047|"[^"]*"|[^ \t;&|<>()\047"]+)+/)) return
-    heredoc = substr(word, 1, RLENGTH)
-    gsub(/[\047"\\]/, "", heredoc)
+    at = 0
+    while (match(substr(b, at + 1), /<<-?/)) {
+      at += RSTART + RLENGTH - 1
+      tabs = RLENGTH == 3
+      if (depth(substr(b, 1, at)) > 0) continue
+      word = substr(s, at + 1)
+      sub(/^[ \t]+/, "", word)
+      if (!match(word, /^(\047[^\047]*\047|"[^"]*"|[^ \t;&|<>()\047"]+)+/)) continue
+      delimiter = substr(word, 1, RLENGTH)
+      gsub(/[\047"\\]/, "", delimiter)
+      last++; words[last] = delimiter; stripped[last] = tabs; started[last] = FNR
+    }
   }
-  function report() { printf "%s:%d\n", FILENAME, FNR }
+  function report(line, kind) { printf "%s:%d:%s\n", FILENAME, line, kind }
+  function finish(file) {
+    if (first <= last) printf "%s:%d:heredoc\n", file, started[first]
+    else if (quote != "") printf "%s:%d:quote\n", file, opened
+  }
   function body(from,   rest) {
     rest = strip(substr(code, from))
     sub(/^;/, "", rest)
     rest = strip(rest)
     if (rest == "") state = OPENED
-    else if (index(rest, "$?") > 0) report()
+    else if (index(rest, "$?") > 0) report(FNR, "negated")
   }
   function condition(   at) {
     if (match(bare, /(^|;)[ \t]*(then|do)([ \t;]|$)/)) {
@@ -96,11 +109,14 @@ negated=$(awk '
     } else if (strip(code) ~ /(\\|\|\||&&|\|)$/) state = CONTINUED
     else state = ENDED
   }
-  FNR == 1 { state = OUTSIDE; quote = ""; heredoc = "" }
-  heredoc != "" {
+  FNR == 1 {
+    if (NR > 1) finish(file)
+    file = FILENAME; state = OUTSIDE; quote = ""; first = 1; last = 0
+  }
+  first <= last {
     line = $0
-    if (tabs) sub(/^\t+/, "", line)
-    if (line == heredoc) heredoc = ""
+    if (stripped[first]) sub(/^\t+/, "", line)
+    if (line == words[first]) first++
     next
   }
   {
@@ -109,7 +125,7 @@ negated=$(awk '
     if (strip(code) == "") next
     if (state == OPENED) {
       state = OUTSIDE
-      if (index(code, "$?") > 0) report()
+      if (index(code, "$?") > 0) report(FNR, "negated")
       next
     }
     if (state == CONTINUED) { condition(); next }
@@ -119,14 +135,19 @@ negated=$(awk '
     }
     if (bare ~ /^[ \t]*(if|elif|while|until)[ \t]+![ \t]/) condition()
   }
+  END { if (NR > 0) finish(file) }
 ' "${shells[@]}") || scanned=$?
 if [ "$scanned" -ne 0 ]; then
   echo "shell-lint: awk failed (exit $scanned) on scripts/" >&2
   exit 2
 fi
 if [ -n "$negated" ]; then
-  while IFS=: read -r file line; do
-    hit "$file" "$line" "\$? here is the negated condition's status, not the command's: capture it first (cmd || st=\$?)"
+  while IFS=: read -r file line kind; do
+    case $kind in
+      negated) hit "$file" "$line" "\$? here is the negated condition's status, not the command's: capture it first (cmd || st=\$?)" ;;
+      heredoc) hit "$file" "$line" "a heredoc opened here never ends, so shell-lint cannot read past it" ;;
+      quote) hit "$file" "$line" "a quote opened here never closes, so shell-lint cannot read past it" ;;
+    esac
   done <<< "$negated"
 fi
 
