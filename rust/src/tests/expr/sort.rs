@@ -65,51 +65,21 @@ fn expr_sort_prints_as_the_crate_sort() {
     }
 }
 
-/// How `expr_sort_with_options` sorts `e`: returned as is, the crate's
-/// sort, or a sort by itself.
-#[derive(Debug, PartialEq)]
-enum Sorted {
-    Input,
-    Sort,
-    SortBy,
-}
-
-fn sorted_as(e: *const Expr, descending: u8, nulls_last: u8) -> Sorted {
-    let sorted = expr_sort_with_options(e, descending, nulls_last);
-    assert!(!sorted.is_null());
-    let (input, out) = unsafe { (&*e, &*sorted) };
-    let flags = (descending != 0, nulls_last != 0);
-    let how = match out {
-        Expr::Sort { expr, options } if **expr == *input => {
-            assert_eq!((options.descending, options.nulls_last), flags);
-            Sorted::Sort
-        }
-        Expr::SortBy {
-            expr,
-            by,
-            sort_options,
-        } if **expr == *input && by[..] == [input.clone()] => {
-            assert_eq!(sort_options.descending, [flags.0]);
-            assert_eq!(sort_options.nulls_last, [flags.1]);
-            Sorted::SortBy
-        }
-        out if out == input => Sorted::Input,
-        out => panic!("unexpected sort of {input}: {out}"),
-    };
-    expr_drop(sorted);
-    how
-}
-
-fn assert_sorted_as(cases: &[*mut Expr], expected: Sorted) {
-    for &e in cases {
-        for (descending, nulls_last) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-            assert_eq!(
-                sorted_as(e, descending, nulls_last),
-                expected,
-                "{}",
-                unsafe { &*e }
-            );
-        }
+/// `expr_sort_with_options` is the crate's sort of `e` under every flag.
+fn assert_crate_sort(e: *const Expr) {
+    for (descending, nulls_last) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+        let sorted = expr_sort_with_options(e, descending, nulls_last);
+        assert!(!sorted.is_null());
+        let (input, out) = unsafe { (&*e, &*sorted) };
+        let Expr::Sort { expr, options } = out else {
+            panic!("unexpected sort of {input}: {out}");
+        };
+        assert_eq!(**expr, *input);
+        assert_eq!(
+            (options.descending, options.nulls_last),
+            (descending != 0, nulls_last != 0)
+        );
+        expr_drop(sorted);
     }
 }
 
@@ -138,12 +108,16 @@ fn when(
 }
 
 #[test]
-fn expr_sort_of_one_value_is_the_input() {
-    let v = column("v");
+fn expr_sort_is_the_crate_sort_of_any_input() {
+    let (v, s, g) = (column("v"), column("s"), column("g"));
     let total = expr_sum(v);
+    let first = expr_first(s);
     let one = expr_lit_i32(1);
     let word = str_block("x");
+    let magnitude = expr_abs(total);
     let above = expr_gt(total, one);
+    let row_above = expr_gt(v, one);
+    let parts: [*const Expr; 1] = [g];
     let cases = [
         aliased(total, "s"),
         expr_lit_str_v2(word.as_ptr()),
@@ -153,69 +127,35 @@ fn expr_sort_of_one_value_is_the_input() {
         expr_cast(total, float64()),
         when(above, total, one),
         boxed(col("v").sum().name().keep()),
-    ];
-    assert_sorted_as(&cases, Sorted::Input);
-    assert_sorted_as(&[total, one], Sorted::Input);
-    for e in cases.into_iter().chain([above, one, total, v]) {
-        expr_drop(e);
-    }
-}
-
-#[test]
-fn expr_sort_of_a_per_row_input_is_the_crate_sort() {
-    let v = column("v");
-    let total = expr_sum(v);
-    let one = expr_lit_i32(1);
-    let above = expr_gt(total, one);
-    let row_above = expr_gt(v, one);
-    let cases = [
         column("^v.*$"),
         expr_all(),
         aliased(v, "w"),
         expr_cast(v, float64()),
         expr_sort_with_options(v, 1, 0),
         expr_add(v, total),
-        expr_add(total, v),
         expr_div(v, total),
-        expr_div(total, v),
         when(row_above, total, one),
         when(above, v, one),
-        when(above, total, v),
         boxed(col("v").name().keep()),
-    ];
-    assert_sorted_as(&cases, Sorted::Sort);
-    assert_sorted_as(&[v], Sorted::Sort);
-    for e in cases.into_iter().chain([row_above, above, one, total, v]) {
-        expr_drop(e);
-    }
-}
-
-#[test]
-fn expr_sort_of_any_other_input_sorts_by_itself() {
-    let (v, s, g) = (column("v"), column("s"), column("g"));
-    let total = expr_sum(v);
-    let first = expr_first(s);
-    let one = expr_lit_i32(1);
-    let magnitude = expr_abs(total);
-    let row_above = expr_gt(v, one);
-    let parts: [*const Expr; 1] = [g];
-    let cases = [
-        magnitude,
         expr_neg(total),
         expr_str_to_uppercase(first),
         expr_reverse(total),
         expr_cum_sum(total, 0),
-        expr_add(magnitude, one),
         expr_div(magnitude, one),
-        expr_abs(v),
         expr_head(v, 1, 2),
         expr_filter(v, row_above),
         expr_over(total, parts.as_ptr(), 1),
     ];
-    assert_sorted_as(&cases, Sorted::SortBy);
+    for e in cases
+        .iter()
+        .copied()
+        .chain([magnitude, total, one, first, v])
+    {
+        assert_crate_sort(e);
+    }
     for e in cases
         .into_iter()
-        .chain([row_above, one, first, total, g, s, v])
+        .chain([row_above, above, magnitude, one, first, total, g, s, v])
     {
         expr_drop(e);
     }
@@ -296,6 +236,10 @@ fn expr_sort_of_one_value_per_group_stays_in_bounds() {
         || boxed(col("s").first().str().to_uppercase());
     let first: fn() -> *mut Expr = || boxed(col("s").first());
     let magnitude: fn() -> *mut Expr = || boxed(col("v").sum().abs());
+    let count: fn() -> *mut Expr = || boxed(len());
+    let seven: fn() -> *mut Expr = || boxed(lit(7i64));
+    let filtered: fn() -> *mut Expr =
+        || boxed(col("v").filter(col("v").lt(lit(-500i64))).sum());
     for flags in [(0, 0), (0, 1), (1, 0), (1, 1)] {
         for (build, expected) in [
             (upper, ["WORD NUMBER 0000", "WORD NUMBER 0002"]),
@@ -318,11 +262,24 @@ fn expr_sort_of_one_value_per_group_stays_in_bounds() {
         let x = read_i64_col(out, "x");
         assert_eq!(x[..3], [1, 1, 499499]);
         dataframe_drop(out);
+        for build in [count, seven, filtered] {
+            let out = agg_by_g(df, sort_of(build, flags));
+            assert_same_frame(out, agg_by_g(df, build()));
+            let out = over_g(df, sort_of(build, flags));
+            assert_same_frame(out, over_g(df, build()));
+        }
     }
     dataframe_drop(df);
     for c in cols {
         series_drop(c);
     }
+}
+
+fn assert_same_frame(out: *mut DataFrame, expected: *mut DataFrame) {
+    let (a, b) = unsafe { (&*out, &*expected) };
+    assert!(a.equals_missing(b), "{a} against {b}");
+    dataframe_drop(out);
+    dataframe_drop(expected);
 }
 
 #[test]

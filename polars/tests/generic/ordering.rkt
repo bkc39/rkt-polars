@@ -305,17 +305,13 @@
   (for* ([d '(#f #t)] [l '(#f #t)])
     (check-equal? (expr->string (sort "v" #:descending d #:nulls-last l))
                   (if d "col(\"v\").sort(desc)" "col(\"v\").sort(asc)"))
-    (check-equal? (expr->string (sort (sum "v") #:descending d #:nulls-last l))
-                  "col(\"v\").sum()")
-    (check-equal? (expr->string (sort (p+ (col "v") (sum "v")) #:descending d #:nulls-last l))
-                  (format "[(col(\"v\")) + (col(\"v\").sum())].sort(~a)" (if d "desc" "asc")))
-    (check-regexp-match #rx"^col[(]\"v\"[)][.]sum[(][)][.]abs[(][)][.]sort_by[(]by=[[]col"
-                        (expr->string (sort (p-abs (sum "v")) #:descending d #:nulls-last l))))
+    (for ([e (list (sum "v") (lit "x") (p+ (col "v") (sum "v")) (p-abs (sum "v"))
+                   (p-round (mean "v")))])
+      (check-equal? (expr->string (sort e #:descending d #:nulls-last l))
+                    (format "~a.sort(~a)" (expr->string e) (if d "desc" "asc")))))
   (let ([flights (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
                                   (series (list 12 polars-null 340 -3 polars-null) #:name "delay")))]
         [rounded (sort (p-round (mean "delay")) #:descending #t)])
-    (check-regexp-match #rx"^col[(]\"delay\"[)][.]mean[(][)][.]round[(].*[)][.]sort_by[(]by=[[]col"
-                        (expr->string rounded))
     (check-equal? (~> flights (group-by "carrier") (agg rounded) (sort "carrier") frame-rows)
                   (vector (vector "AA" -3.0) (vector "B6" polars-null) (vector "UA" 176.0))))
   (let ([g (dataframe (list (series '("a" "a" "b" "b" "c") #:name "g")
