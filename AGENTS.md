@@ -495,10 +495,18 @@ it. Racket side: `define-compat` with `#:c-id`.
   `aarch64-macosx`) at `native-version`, which the
   `#:version` only bounds below; the loader requires the package's version
   to equal it, read when `native-library.rkt` is compiled
-  (`register-external-file` recompiles it when `info.rkt` changes), so
-  `raco exe` and `raco distribute` are unsupported. Each failure is an
-  `exn:fail` naming the remedy (the platforms, `raco pkg install`, `raco pkg
-  update polars polars-<platform>`, the dlopen reason). A package's skeleton
+  (`register-external-file` recompiles it when `info.rkt` changes).
+  `raco exe` and `raco distribute` do not carry the native package (#375):
+  an executable sees no collections, so `collection-file-path` finds none.
+  A staged copy is carried, since `staged-dir` is a `define-runtime-path`
+  of `polars/native-libs/`, and `RKT_POLARS_COMPAT_LIB_PATH` is read as
+  anywhere; with neither, the loader knows it runs embedded (its module's
+  name is a symbol, `#%embedded:...`, not a path) and its failure names the
+  variable. Carrying the package would need its `info.rkt` and `main.rkt`
+  in the executable, so the version check could run there. Each failure is
+  an `exn:fail` naming the remedy (the platforms, `raco pkg install`, `raco
+  pkg update polars polars-<platform>`, the variable in an executable, the
+  dlopen reason). A package's skeleton
   is `native/polars-<platform>/`, under `native/` so the repo root's `'multi`
   package does not make it a collection (the dev shell's hook removes a
   root `polars-<platform>/` that git tracks nothing under and that holds

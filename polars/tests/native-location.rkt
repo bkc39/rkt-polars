@@ -112,6 +112,23 @@
                               "RKT_POLARS_COMPAT_LIB_PATH to the directory whose lib/ holds it")
                (simplify-path staged)))))
 
+  (test-case "in an executable, a missing native package names the override"
+    (with-native-collections collects
+      (define staged (build-path collects "staged"))
+      (define location (locate staged))
+      (check-equal? (native-location-kind location) 'missing)
+      (check-equal?
+       (native-library-problem location "0.3" #:embedded? #t)
+       (format (string-append "libcompat is not in this executable: raco exe and raco distribute "
+                              "do not carry the package polars-x86_64-linux\n  looked in: ~a\n  "
+                              "copy ~a from the package's native-libs/ into a directory's lib/, "
+                              "and set RKT_POLARS_COMPAT_LIB_PATH to that directory")
+               (simplify-path staged)
+               library-file))
+      (parameterize ([current-native-platform "riscv64-linux"])
+        (check-equal? (native-library-problem location "0.3" #:embedded? #t)
+                      (native-library-problem location "0.3")))))
+
   (test-case "an unsupported platform names the supported ones and the override"
     (with-native-collections collects
       (make-native-package! collects)

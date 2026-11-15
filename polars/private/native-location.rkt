@@ -29,7 +29,8 @@
           [manifest-problem (-> native-location? (or/c string? #f) (or/c string? #f))]
           [missing-export-message (-> loaded-location/c symbol? string?)]
           [missing-message (-> path-string? string?)]
-          [native-library-problem (-> native-location? (or/c string? #f) (or/c string? #f))]
+          [native-library-problem
+           (->* (native-location? (or/c string? #f)) (#:embedded? boolean?) (or/c string? #f))]
           [native-package (->* () (string?) (or/c string? #f))]
           [native-packages (listof (cons/c string? string?))]
           [override-dir (-> (or/c path? #f))]
@@ -172,9 +173,24 @@
              package
              override-advice)]))
 
-(define (native-library-problem location wanted)
+(define (embedded-message package dir)
+  (format (string-append "libcompat is not in this executable: raco exe and raco distribute do "
+                         "not carry the package ~a
+  looked in: ~a
+  copy ~a from the "
+                         "package's native-libs/ into a directory's lib/, and set ~a to that "
+                         "directory")
+          package
+          dir
+          library-file
+          compat-lib-env-var))
+
+(define (native-library-problem location wanted #:embedded? [embedded? #f])
   (define package (native-package))
   (match location
+    [(native-location 'missing dir _ _ _)
+     #:when (and embedded? package)
+     (embedded-message package dir)]
     [(native-location 'missing dir _ _ _) (missing-message dir)]
     [(native-location 'broken _ root _ cause)
      (format "the package ~a is installed but would not load\n  found in: ~a\n  it said: ~a\n  ~a"

@@ -67,8 +67,13 @@ When @envvar{RKT_POLARS_COMPAT_LIB_PATH} is set and not empty,
 @racketmodname[polars] loads the @tt{libcompat} in the @filepath{lib}
 directory it names instead, unchecked.
 
-@exec{raco exe} and @exec{raco distribute} are not supported yet: an
-executable does not find the native package.
+An executable made by @exec{raco exe}, and a @exec{raco distribute} of it,
+does not carry the native package, so @racket[(require polars)] in it raises
+@racket[exn:fail] naming the remedy: copy @filepath{libcompat.so}
+(@filepath{libcompat.dylib} on macOS) from the package's
+@filepath{native-libs} directory into a directory's @filepath{lib}, and run
+the executable with @envvar{RKT_POLARS_COMPAT_LIB_PATH} set to that
+directory.
 
 @include-section["guide.scrbl"]
 @include-section["reference.scrbl"]

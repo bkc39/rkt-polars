@@ -8,6 +8,7 @@
          (only-in racket/match match)
          racket/runtime-path
          syntax/parse/define
+         (only-in threading ~>)
          (only-in polars/private/native-location
                   library-file locate-native-library missing-export-message native-library-problem
                   native-location-dir unloadable-message))
@@ -26,10 +27,16 @@
 
 (define location (locate-native-library staged-dir))
 
+(define embedded?
+  (~> (#%variable-reference)
+      variable-reference->resolved-module-path
+      resolved-module-path-name
+      symbol?))
+
 (define native-library-file (build-path (native-location-dir location) library-file))
 
 (define compat-library
-  (match (native-library-problem location (compiled-native-version))
+  (match (native-library-problem location (compiled-native-version) #:embedded? embedded?)
     [#f
      (with-handlers ([exn:fail?
                       (lambda (e)
@@ -39,3 +46,6 @@
 
 (define ((missing-export id))
   (error 'polars "~a" (missing-export-message location id)))
+
+(module+ internal
+  (provide embedded?))
