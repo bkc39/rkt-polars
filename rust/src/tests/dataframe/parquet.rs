@@ -363,7 +363,7 @@ fn page_indexes_and_null_counts_follow_the_statistics_set() {
         let read = |offset: Option<i64>, length: Option<i32>| {
             let start = offset? as usize;
             let bytes = &file[start..start + length? as usize];
-            Some(TCompactInputProtocol::new(bytes, bytes.len()))
+            Some(TCompactInputProtocol::new(bytes, usize::MAX))
         };
         let md = metadata(&path);
         let mut group_start = 0;
