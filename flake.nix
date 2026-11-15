@@ -382,6 +382,7 @@
           no-inline-tests = grepGate "no-inline-tests" "no-inline-tests.sh";
           rustls-only = grepGate "rustls-only" "rustls-only.sh";
           no-dynamic-wind = grepGate "no-dynamic-wind" "no-dynamic-wind.sh";
+          shell-lint = grepGate "shell-lint" "shell-lint.sh";
           grep-gates-test = grepGate "grep-gates-test" "grep-gates-test.sh";
           docs-check-test = pkgs.runCommand "rkt-polars-docs-check-test" {
             src = pkgs.lib.cleanSource ./.;
@@ -471,7 +472,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind shell-lint grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
           inherit (self.packages.${system}) rust racket;
         });
 

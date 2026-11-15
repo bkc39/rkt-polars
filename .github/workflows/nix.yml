@@ -103,6 +103,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/no-dynamic-wind.sh
 
+      - name: Scripts are executable and report their status
+        if: ${{ !cancelled() }}
+        run: scripts/shell-lint.sh
+
       - name: The catalog install copies only the dependencies' catalogs
         if: ${{ !cancelled() }}
         run: scripts/dependency-catalogs-test.sh

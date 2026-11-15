@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The grep-gates-test gate (#298, #302): each grep gate, and
+# The grep-gates-test gate (#298, #302, #332): each grep gate, shell-lint, and
 # dependency-catalogs-test.sh's check of release/catalog-test.sh, run on a scratch
 # tree, which it reads because it works from its own script's parent.  A clean tree
 # passes, a planted hit fails with 1, and a tree missing a directory or file
@@ -32,7 +32,7 @@ tree() {
   printf '(("tests/allowed.rkt" f "a reason"))\n' > "$work/tree/polars/tests/dynamic-wind-sites.rktd"
   cp "$here"/no-syntax-rule.sh "$here"/no-inline-tests.sh "$here"/rustls-only.sh \
     "$here"/no-dynamic-wind.sh "$here"/dependency-catalogs.sh \
-    "$here"/dependency-catalogs-test.sh "$work/tree/scripts/"
+    "$here"/dependency-catalogs-test.sh "$here"/shell-lint.sh "$work/tree/scripts/"
   cp "$here"/release/catalog-test.sh "$work/tree/scripts/release/"
   chmod -R u+w "$work/tree/scripts"
 }
@@ -129,5 +129,48 @@ tree
 rm "$work/tree/scripts/release/catalog-test.sh"
 expect "a missing catalog-test.sh" dependency-catalogs-test 2 \
   "cannot read $work/tree/scripts/release/catalog-test.sh"
+
+tree
+expect "a clean tree" shell-lint 0 "shell-lint: none in scripts/"
+# shellcheck disable=SC2016
+printf '#!/usr/bin/env bash\na || st=$?\nif ! a; then\n  fail x\nfi\necho "$?"\nif a; then :; else echo "$?"; fi\n' \
+  > "$work/tree/scripts/fine.sh"
+chmod +x "$work/tree/scripts/fine.sh"
+printf '# shellcheck shell=bash\nx=1\n' > "$work/tree/scripts/sourced.sh"
+printf 'a fixture, not a script\n' > "$work/tree/scripts/fixture.log"
+expect "a captured status, a sourced script and a fixture" shell-lint 0 "shell-lint: none in scripts/"
+printf '#!/usr/bin/env bash\necho hi\n' > "$work/tree/scripts/plain.sh"
+chmod -x "$work/tree/scripts/plain.sh"
+expect "a shebang without the executable bit" shell-lint 1 \
+  "scripts/plain.sh:1: has a shebang but is not executable"
+tree
+printf '#!/usr/bin/env racket\n#lang racket/base\n' > "$work/tree/scripts/tool.rkt"
+expect "a shebang on a file of another kind" shell-lint 1 "scripts/tool.rkt:1: has a shebang but is not executable"
+negated() {
+  local label=$1 line=$2 body=$3
+  tree
+  # shellcheck disable=SC2059
+  printf "$body" > "$work/tree/scripts/negated.sh"
+  expect "$label" shell-lint 1 "scripts/negated.sh:$line: \$? here is the negated condition's status"
+}
+# shellcheck disable=SC2016
+negated "\$? in the body of if !" 3 'set -e\nif ! a "$x"; then\n  fail "a: status $?"\nfi\n'
+# shellcheck disable=SC2016
+negated "\$? in the body of elif !" 4 'if a; then\n  :\nelif ! b; then\n  st=$?\nfi\n'
+# shellcheck disable=SC2016
+negated "\$? on the line of if !" 1 'if ! a; then fail "status $?"; fi\n'
+# shellcheck disable=SC2016
+negated "\$? after a then on its own line" 4 'if ! a \\\n  b\nthen\n  echo $?\nfi\n'
+# shellcheck disable=SC2016
+negated "\$? in the body of while !" 2 'while ! a; do\n  echo "$?"\ndone\n'
+tree
+printf '#!/usr/bin/env bash\n' > "$work/tree/scripts/unreadable.sh"
+chmod 0 "$work/tree/scripts/unreadable.sh"
+if [ -r "$work/tree/scripts/unreadable.sh" ]; then
+  echo "ok: shell-lint, an unreadable file: skipped, since this user reads a mode-0 file"
+else
+  expect "an unreadable file" shell-lint 2 "shell-lint: cannot read scripts/unreadable.sh"
+fi
+chmod u+rw "$work/tree/scripts/unreadable.sh"
 
 exit $status

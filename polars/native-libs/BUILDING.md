@@ -273,7 +273,8 @@ type, RPATH, store and home paths, glibc, NEEDED, size, exports) and exits
 `libcompat.so` or `libcompat.dylib` from it) plants a library for
 each refusal, stubs `raco` and `gh` to check the other scripts, and runs
 `bash3.sh`, which refuses a bash 4 construct in what the macOS jobs run
-under `/bin/bash` 3.2.
+under `/bin/bash` 3.2, and in `scripts/test-local.sh`, which a macOS
+developer runs by hand (#376).
 `package.sh PLATFORM ARTIFACT NOTICES DIST` stages the native package with
 the notices, refuses a library built from a `rust/` tree other than
 `HEAD:rust`, and writes the zip, its catalog entry

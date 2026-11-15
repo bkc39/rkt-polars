@@ -561,6 +561,18 @@ done
 printf 'x=${#list[@]} y=${x%%%%,*} z=${x//,/ }\nlocal -a list\necho 2>&1; a || b\n' >"$work/bash3-ok.sh"
 bash3_case "bash3 constructs" 0 "$work/bash3-ok.sh"
 bash3_case unreadable 2 "$work/absent.sh"
+mkdir -p "$work/bash3-root/scripts/release"
+cp "$here"/*.sh "$work/bash3-root/scripts/release/"
+cp -R "$root/.github" "$work/bash3-root/"
+for script in dependency-catalogs docs-check build-so test-build-so test-local; do
+  cp "$root/scripts/$script.sh" "$work/bash3-root/scripts/"
+done
+printf 'declare -''A seen\n' >>"$work/bash3-root/scripts/test-local.sh"
+local_status=0
+bash "$work/bash3-root/scripts/release/bash3.sh" >"$work/test-local.out" 2>&1 || local_status=$?
+if [ "$local_status" != 1 ] || ! grep -qF "scripts/test-local.sh:" "$work/test-local.out"; then
+  problem "bash3: a bash 4 construct in scripts/test-local.sh exited $local_status: $(cat "$work/test-local.out")"
+fi
 
 workflow="$root/.github/workflows/release.yml"
 grep -qF "needs.plan.outputs.tag != ''" "$workflow" ||

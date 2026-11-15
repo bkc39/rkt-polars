@@ -58,7 +58,11 @@
   ;; its with- forms.  A grep, so no shell; the read audit in
   ;; polars/tests/resource.rkt is the per-site check.
   (no-dynamic-wind ("bash scripts/no-dynamic-wind.sh" #:shell ""))
-  ;; The four grep gates above on a scratch tree: a hit fails with 1, and a
+  ;; Every file under scripts/ with a shebang is executable, and no `$?`
+  ;; reads a negated condition's status (`if ! cmd; then ... $?`), which is
+  ;; always 0.  Plain bash and awk, so no shell.
+  (shell-lint    ("bash scripts/shell-lint.sh" #:shell ""))
+  ;; The five lint gates above on a scratch tree: a hit fails with 1, and a
   ;; missing directory or lock file with 2, never a pass.  Plain bash.
   (grep-gates-test ("bash scripts/grep-gates-test.sh" #:shell ""))
   ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
@@ -97,4 +101,4 @@
   ;; line or any op over its allowance (bench/allowances.rkt).  Its ratios
   ;; mean something only on a quiet host.
   (bench-strict  "nix run .#bench -- --strict"))
- (push-gates (no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test devshell-home install-native-libs stage-native-package release-gates dependency-catalogs compile test examples fmt)))
+ (push-gates (no-syntax-rule no-inline-tests rustls-only no-dynamic-wind shell-lint grep-gates-test docs-check-test devshell-home install-native-libs stage-native-package release-gates dependency-catalogs compile test examples fmt)))
