@@ -374,6 +374,8 @@
           '';
           grepGate = name: script: pkgs.runCommand "rkt-polars-${name}" {
             src = pkgs.lib.cleanSource ./.;
+            # shell-lint, and grep-gates-test, which runs it.
+            nativeBuildInputs = [ pkgs.shfmt pkgs.jq ];
           } ''
             ${pkgs.bash}/bin/bash $src/scripts/${script}
             touch $out
@@ -496,6 +498,9 @@
               pkgs.stdenv.cc
               # `nix fmt` / the flake's formatter output.
               pkgs.nixfmt-rfc-style
+              # scripts/shell-lint.sh.
+              pkgs.shfmt
+              pkgs.jq
               (python pkgs)
             ];
 
