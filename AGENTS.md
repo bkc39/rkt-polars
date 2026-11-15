@@ -1392,7 +1392,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   `scripts/` with a shebang is executable, and no unescaped `$?` outside a
   comment, single quotes (across lines) or a heredoc's body is on the first
   line of the body of `if !`, `elif !`, `while !` or `until !`, where it is
-  the negation's status, not the command's: `cmd || st=$?` first), and
+  the negation's status, not the command's: `cmd || st=$?` first; a heredoc
+  or a quote still open at a file's end fails it, since the scan would
+  otherwise skip what follows a delimiter it misread), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
