@@ -839,14 +839,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   the sink's about 122,880. The frames read back are the same. As in
   Python, `#:row-group-size 0` is the default and a codec without levels
   ignores `#:compression-level`. As in Python, `#:statistics` takes any
-  list of `'min`, `'max`, `'null-count` and `'distinct-count`. The fork
-  carries upstream's fix (pola-rs/polars#29868, #203): a column index is
-  written only with both min and max, the null count is optional, and NaN
-  is left out of min and max. 0.55.2 wrote an index that marked pages
-  holding values as null pages when min or max was off, and failed at the
-  footer without the null count on a column it did not dictionary-encode.
-  Polars ignores the page index when it reads, so a test of the fix reads
-  the column chunks' metadata (`rust/src/tests/dataframe/parquet.rs`).
+  list of `'min`, `'max`, `'null-count` and `'distinct-count`; the page
+  index needs min and max, and null counts are written only with
+  `'null-count`. The fork carries upstream's Parquet statistics fixes
+  (pola-rs/polars#29868, #29140, #29364; #203).
 - The Parquet verbs report under the verb's own name (`read-parquet:`),
   the low-level bindings under theirs (#153). The C surface is the three
   `_with_options` entries (the read and the scan `_v2`); Rust tests reach

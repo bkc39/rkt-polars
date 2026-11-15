@@ -1227,10 +1227,9 @@ stations
   and null count by default; @racket[#f] writes none, @racket['full] also
   writes the distinct count (for boolean columns), and a list names the ones
   to write, any of @racket['min], @racket['max], @racket['null-count] and
-  @racket['distinct-count]. A page index is written only with both
-  @racket['min] and @racket['max]. @racket[row-group-size] puts that many
-  rows in each row group, the last taking the rest; by default, or with
-  @racket[0], Polars picks it. @racket[data-page-size] sets the bytes a data
+  @racket['distinct-count]. @racket[row-group-size] puts that many rows in
+  each row group, the last taking the rest; by default, or with @racket[0],
+  Polars picks it. @racket[data-page-size] sets the bytes a data
   page aims for (default 1 MiB). A datetime's time zone is kept in the
   column's type. It replaces a file as @racket[write-csv] does. API gaps: @tt{partition_by}, @tt{metadata}, @tt{mkdir}.
 

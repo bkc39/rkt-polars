@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 [dev-dependencies]
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 polars-core = { git = "https://github.com/bkc39/polars", rev = "6d4b1756fcf807c4c151325b58fac2faffa389f7", default-features = false }
+polars-parquet-format = "0.1.0"
 proc-macro2 = "1"
 syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"

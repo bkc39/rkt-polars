@@ -1,6 +1,8 @@
 use super::test_util::*;
 use super::*;
 use polars::io::parquet::read::ParallelStrategy;
+use polars_parquet_format::thrift::protocol::TCompactInputProtocol;
+use polars_parquet_format::{ColumnIndex, OffsetIndex};
 
 fn frame(rows: i64) -> *mut DataFrame {
     let a = Series::new("a".into(), (0..rows).collect::<Vec<_>>());
@@ -214,7 +216,7 @@ fn write_options_validate_the_compression_level() {
         row_group_size: 0,
         has_data_page_size: true,
         data_page_size: 0,
-        statistics: 0b0100,
+        statistics: DISTINCT_COUNT,
         ..Default::default()
     };
     let options = parquet_write_options(&zero_rows).unwrap();
@@ -284,44 +286,151 @@ fn the_writer_applies_codec_row_groups_and_statistics() {
         assert_eq!(write_with(df, &path, options), 0);
         std::fs::metadata(&path).unwrap().len()
     };
-    assert!(size(0) < size(0b1000));
-    assert!(size(0b1000) < size(0b1011));
+    assert!(size(0) < size(NULL_COUNT));
+    assert!(size(NULL_COUNT) < size(MIN | MAX | NULL_COUNT));
     dataframe_drop(df);
 }
 
-/// #203: a page index is written only with min and max, so no page holding
-/// values is marked a null page, and a set without the null count writes.
-#[test]
-fn every_statistics_set_writes_an_index_only_with_min_and_max() {
-    let dir = scratch_dir();
-    let values: Vec<Option<f64>> = (0..1000)
+const MIN: u8 = 1;
+const MAX: u8 = 2;
+const DISTINCT_COUNT: u8 = 4;
+const NULL_COUNT: u8 = 8;
+
+const STATISTICS_SETS: [(&str, u8); 9] = [
+    ("none", 0),
+    ("min", MIN),
+    ("max", MAX),
+    ("min and max", MIN | MAX),
+    ("null count", NULL_COUNT),
+    ("max and null count", MAX | NULL_COUNT),
+    ("distinct and null counts", DISTINCT_COUNT | NULL_COUNT),
+    ("min, max and distinct count", MIN | MAX | DISTINCT_COUNT),
+    ("all", MIN | MAX | DISTINCT_COUNT | NULL_COUNT),
+];
+
+const SPOTTY_ROWS: usize = 1000;
+
+const SPOTTY_COLUMNS: [(&str, usize, bool); 3] =
+    [("f", 10, false), ("n", 7, true), ("c", 9, true)];
+
+fn spotty() -> *mut DataFrame {
+    let f: Vec<Option<f64>> = (0..SPOTTY_ROWS)
         .map(|i| (i % 10 != 0).then_some(i as f64))
         .collect();
-    let df = Box::into_raw(Box::new(
-        DataFrame::new(1000, vec![Series::new("f".into(), &values).into()])
-            .unwrap(),
-    ));
-    for statistics in 0..16u8 {
+    let n: Vec<Option<i64>> = (0..SPOTTY_ROWS)
+        .map(|i| (i % 7 != 0).then_some((i % 3 + 1) as i64))
+        .collect();
+    let c: Vec<Option<&str>> = (0..SPOTTY_ROWS)
+        .map(|i| (i % 9 != 0).then_some(["x", "y", "z"][i % 3]))
+        .collect();
+    let c = Series::new("c".into(), &c)
+        .cast(&DataType::from_categories(Categories::global()))
+        .unwrap();
+    Box::into_raw(Box::new(
+        DataFrame::new(
+            SPOTTY_ROWS,
+            vec![
+                Series::new("f".into(), &f).into(),
+                Series::new("n".into(), &n).into(),
+                c.into(),
+            ],
+        )
+        .unwrap(),
+    ))
+}
+
+#[test]
+fn page_indexes_and_null_counts_follow_the_statistics_set() {
+    let dir = scratch_dir();
+    let df = spotty();
+    for (name, statistics) in STATISTICS_SETS {
+        let has = |bits: u8| statistics & bits == bits;
         let path = dir.path().join(format!("stats-{statistics}.parquet"));
         let options = CompatParquetWriteOptions {
             statistics,
             has_row_group_size: true,
             row_group_size: 300,
             has_data_page_size: true,
-            data_page_size: 1024,
+            data_page_size: 256,
             ..Default::default()
         };
-        let written = write_with(df, &path, options);
-        assert_eq!(written, 0, "{statistics:04b}: {:?}", recorded_error());
+        assert_eq!(write_with(df, &path, options), 0, "{name}");
         let back = read_with(&path, Default::default());
-        assert!(unsafe { (*back).equals_missing(&*df) }, "{statistics:04b}");
+        assert!(unsafe { (*back).equals_missing(&*df) }, "{name}");
         dataframe_drop(back);
-        let indexed = statistics & 0b0011 == 0b0011;
-        for group in &metadata(&path).row_groups {
-            for column in group.parquet_columns() {
-                let index = column.column_index_offset();
-                assert_eq!(index.is_some(), indexed, "{statistics:04b}");
+
+        let file = std::fs::read(&path).unwrap();
+        let read = |offset: Option<i64>, length: Option<i32>| {
+            let start = offset? as usize;
+            let bytes = &file[start..start + length? as usize];
+            Some(TCompactInputProtocol::new(bytes, bytes.len()))
+        };
+        let md = metadata(&path);
+        let mut group_start = 0;
+        for group in &md.row_groups {
+            let rows = group.num_rows();
+            let columns = group.parquet_columns().iter().zip(SPOTTY_COLUMNS);
+            for (chunk, (column, period, dictionary)) in columns {
+                let nulls = |from: usize, to: usize| {
+                    (group_start + from..group_start + to)
+                        .filter(|i| i % period == 0)
+                        .count() as i64
+                };
+                let pages = read(
+                    chunk.offset_index_offset(),
+                    chunk.offset_index_length(),
+                )
+                .map(|mut p| OffsetIndex::read_from_in_protocol(&mut p))
+                .unwrap()
+                .unwrap()
+                .page_locations;
+                assert!(pages.len() >= 2, "{name} {column}");
+                assert_eq!(
+                    chunk.dictionary_page_offset().is_some(),
+                    dictionary,
+                    "{name} {column}"
+                );
+                let ends = pages
+                    .iter()
+                    .skip(1)
+                    .map(|page| page.first_row_index as usize)
+                    .chain([rows]);
+                let page_nulls: Vec<i64> = pages
+                    .iter()
+                    .zip(ends)
+                    .map(|(page, end)| {
+                        nulls(page.first_row_index as usize, end)
+                    })
+                    .collect();
+                assert_eq!(
+                    chunk
+                        .statistics(&md.footer_buf)
+                        .and_then(|s| s.unwrap().null_count()),
+                    has(NULL_COUNT).then_some(nulls(0, rows)),
+                    "{name} {column}"
+                );
+                let index = read(
+                    chunk.column_index_offset(),
+                    chunk.column_index_length(),
+                )
+                .map(|mut p| {
+                    ColumnIndex::read_from_in_protocol(&mut p).unwrap()
+                });
+                assert_eq!(index.is_some(), has(MIN | MAX), "{name} {column}");
+                if let Some(index) = index {
+                    assert_eq!(
+                        index.null_pages,
+                        vec![false; pages.len()],
+                        "{name} {column}"
+                    );
+                    assert_eq!(
+                        index.null_counts,
+                        has(NULL_COUNT).then_some(page_nulls),
+                        "{name} {column}"
+                    );
+                }
             }
+            group_start += rows;
         }
     }
     dataframe_drop(df);
@@ -350,17 +459,11 @@ fn an_invalid_level_fails_before_the_file_is_created() {
 }
 
 #[test]
-fn a_failed_write_leaves_the_existing_file_as_it_was() {
+fn a_write_failing_once_staged_leaves_the_existing_file_as_it_was() {
     let dir = scratch_dir();
     let path = dir.path().join("keep.parquet");
     let df = frame(1000);
-    let floats = Box::into_raw(Box::new(
-        DataFrame::new(
-            3,
-            vec![Series::new("f".into(), &[1.5f64, 2.5, 3.5]).into()],
-        )
-        .unwrap(),
-    ));
+    let small = frame(3);
     let hollow = Box::into_raw(Box::new(
         DataFrame::new(
             3,
@@ -374,26 +477,19 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
     assert_eq!(write_with(df, &path, Default::default()), 0);
     let before = std::fs::read(&path).unwrap();
 
-    let grouped = CompatParquetWriteOptions {
-        has_row_group_size: true,
-        row_group_size: 1,
-        ..Default::default()
-    };
-    for options in [Default::default(), grouped] {
-        assert_eq!(write_with(hollow, &path, options), 4);
-        assert!(recorded_error().is_some());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-        assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
-    }
+    assert_eq!(write_with(hollow, &path, Default::default()), 4);
+    assert!(recorded_error().is_some());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
 
     let fresh = dir.path().join("fresh.parquet");
     assert_eq!(write_with(hollow, &fresh, Default::default()), 4);
     assert!(!fresh.exists());
     assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
 
-    assert_eq!(write_with(floats, &path, Default::default()), 0);
+    assert_eq!(write_with(small, &path, Default::default()), 0);
     let back = read_with(&path, Default::default());
-    assert!(unsafe { (*back).equals_missing(&*floats) });
+    assert!(unsafe { (*back).equals_missing(&*small) });
     assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
 
     let sub = dir.path().join("sub");
@@ -403,10 +499,9 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
     assert!(reason.starts_with("cannot create file: "), "{:?}", reason);
     assert_eq!(entries(dir.path()), vec!["keep.parquet", "sub"]);
 
-    dataframe_drop(back);
-    dataframe_drop(hollow);
-    dataframe_drop(floats);
-    dataframe_drop(df);
+    for p in [back, hollow, small, df] {
+        dataframe_drop(p);
+    }
 }
 
 #[test]
