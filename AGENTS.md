@@ -1388,13 +1388,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/tests/dynamic-wind-sites.rktd` names, and the read audit in
   `polars/tests/resource.rkt` holds each of its `(file definition reason)`
   entries to one site), `scripts/shell-lint.sh` (#332: a push gate, a
-  flake check and a step of CI's Lint job; bash and awk; every file under
-  `scripts/` with a shebang is executable, and no unescaped `$?` outside a
-  comment, single quotes (across lines) or a heredoc's body is on the first
-  line of the body of `if !`, `elif !`, `while !` or `until !`, where it is
-  the negation's status, not the command's: `cmd || st=$?` first; a heredoc
-  or a quote still open at a file's end fails it, since the scan would
-  otherwise skip what follows a delimiter it misread), and
+  flake check and a step of CI's Lint job, run under `nix shell
+  --inputs-from . nixpkgs#shfmt nixpkgs#jq`: every file under `scripts/`
+  with a shebang is executable, and in shfmt's syntax tree (`--to-json`) no
+  `if`, `elif`, `while` or `until` whose condition list ends in a negated
+  statement reads `$?` in the first statement of its body, where it is the
+  negation's status, not the command's: `cmd || st=$?` first; a script
+  shfmt cannot parse is a hit too; it exits 1 on a hit, 2 without `shfmt`
+  or `jq` or on a file it cannot list or read), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,

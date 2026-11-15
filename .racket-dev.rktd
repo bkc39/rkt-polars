@@ -58,11 +58,13 @@
   ;; its with- forms.  A grep, so no shell; the read audit in
   ;; polars/tests/resource.rkt is the per-site check.
   (no-dynamic-wind ("bash scripts/no-dynamic-wind.sh" #:shell ""))
-  ;; Scripts are executable and read no negated status (AGENTS.md).  No shell.
-  (shell-lint    ("bash scripts/shell-lint.sh" #:shell ""))
+  ;; Scripts are executable and read no negated status (AGENTS.md).  shfmt
+  ;; and jq at the flake's nixpkgs, without the dev shell.
+  (shell-lint    "nix shell --inputs-from . nixpkgs#shfmt nixpkgs#jq --command bash scripts/shell-lint.sh")
   ;; The five lint gates above on a scratch tree: a hit fails with 1, and a
-  ;; missing directory or lock file with 2, never a pass.  Plain bash.
-  (grep-gates-test ("bash scripts/grep-gates-test.sh" #:shell ""))
+  ;; missing directory or lock file with 2, never a pass.  shell-lint's
+  ;; shfmt and jq, without the dev shell.
+  (grep-gates-test "nix shell --inputs-from . nixpkgs#shfmt nixpkgs#jq --command bash scripts/grep-gates-test.sh")
   ;; build-so.sh's darwin branch against a fake rustup (#161).  No shell.
   (build-so      ("bash scripts/test-build-so.sh" #:shell ""))
   ;; Every way into one checkout (a trailing slash, a symlink, a
