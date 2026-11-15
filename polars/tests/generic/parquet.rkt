@@ -211,10 +211,25 @@
   (check-regexp-match
    #rx"^write-parquet: contract violation\n  #:compression-level 30 is outside zstd's levels, 1 to 22\n"
    (message-of (lambda () (contracted:write-parquet produce out #:compression-level 30))))
-  (check-regexp-match
-   #rx"^write-parquet: contract violation\n  expected: parquet-statistics/c\n  given: '[(]null-count[)]"
-   (message-of (lambda () (contracted:write-parquet produce out #:statistics '(null-count)))))
+  (write-parquet produce out #:statistics '(null-count))
   (check-true (frame=? (read-parquet out) produce))
+  (check-regexp-match
+   #rx"^write-parquet: contract violation\n  expected: parquet-statistics/c\n  given: '[(]min median[)]"
+   (message-of (lambda () (contracted:write-parquet produce out #:statistics '(min median)))))
+  (check-true (frame=? (read-parquet out) produce))
+  (define spotty
+    (dataframe (list (series (for/list ([i (in-range 1000)])
+                               (if (zero? (modulo i 10)) polars-null (exact->inexact i)))
+                             #:name "f"))))
+  (define spotty-path (build-path scratch "spotty.parquet"))
+  (define (above-500 frame) (frame-filter frame (p> (col "f") 500.0)))
+  (for ([statistics '(() (null-count) (min) (max) (min max) (max null-count)
+                      (distinct-count null-count) (min max distinct-count))])
+    (define why (format "~s" statistics))
+    (write-parquet spotty spotty-path #:statistics statistics
+                   #:row-group-size 300 #:data-page-size 1024)
+    (check-true (frame=? (read-parquet spotty-path) spotty) why)
+    (check-true (frame=? (~> spotty-path scan-parquet above-500 collect) (above-500 spotty)) why))
   (check-equal? (message-of (lambda () (write-parquet produce "/no/such/dir/out.parquet")))
                 (string-append "write-parquet: failed to write parquet to /no/such/dir/out.parquet: "
                                "cannot create file: No such file or directory (os error 2)"))

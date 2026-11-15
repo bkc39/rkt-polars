@@ -75,8 +75,10 @@ in a field a parse error (#347), and its line counter skips the comment
 lines after its last counted newline before it judges a last line without
 a newline (#335; see the `read-csv` facts for all three). In polars-expr,
 it carries upstream's fix for a sort of one value per group in `agg` or
-`over` (pola-rs/polars#30327, #167; see the `SortExpr` fact). The
-`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
+`over` (pola-rs/polars#30327, #167; see the `SortExpr` fact). In
+polars-parquet, it carries upstream's fix for Parquet statistics and the
+column index (pola-rs/polars#29868, #203; see the `write-parquet` fact).
+The `polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
 rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
@@ -839,11 +841,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   the frame into equal parts); by default its groups are about 512² rows,
   the sink's about 122,880. The frames read back are the same. As in
   Python, `#:row-group-size 0` is the default and a codec without levels
-  ignores `#:compression-level`. Stricter than Python, a non-empty
-  `#:statistics` list must name `'min`, `'max` and `'null-count`: without
-  min and max polars writes a page index that marks pages holding values as
-  null pages (#203), and without the null count it fails at the footer on a
-  column it does not dictionary-encode.
+  ignores `#:compression-level`. As in Python, `#:statistics` takes any
+  list of `'min`, `'max`, `'null-count` and `'distinct-count`. The fork
+  carries upstream's fix (pola-rs/polars#29868, #203): a column index is
+  written only with both min and max, the null count is optional, and NaN
+  is left out of min and max. 0.55.2 wrote an index that marked pages
+  holding values as null pages when min or max was off, and failed at the
+  footer without the null count on a column it did not dictionary-encode.
+  Polars ignores the page index when it reads, so a test of the fix reads
+  the column chunks' metadata (`rust/src/tests/dataframe/parquet.rs`).
 - The Parquet verbs report under the verb's own name (`read-parquet:`),
   the low-level bindings under theirs (#153). The C surface is the three
   `_with_options` entries (the read and the scan `_v2`); Rust tests reach
@@ -1452,5 +1458,5 @@ it. Racket side: `define-compat` with `#:c-id`.
   difference between the crates.io release and that commit, and rebases
   the old branch's change commits onto it, dropping each one upstream has
   made (slicing a commented CSV; refusing an unclosed quote and counting an
-  unterminated last line; the backport of upstream's per-group sort
-  fix); `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.
+  unterminated last line; the backports of upstream's per-group sort
+  fix and its Parquet statistics fix); `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.

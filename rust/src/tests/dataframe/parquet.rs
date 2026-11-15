@@ -289,6 +289,44 @@ fn the_writer_applies_codec_row_groups_and_statistics() {
     dataframe_drop(df);
 }
 
+/// #203: a page index is written only with min and max, so no page holding
+/// values is marked a null page, and a set without the null count writes.
+#[test]
+fn every_statistics_set_writes_an_index_only_with_min_and_max() {
+    let dir = scratch_dir();
+    let values: Vec<Option<f64>> = (0..1000)
+        .map(|i| (i % 10 != 0).then_some(i as f64))
+        .collect();
+    let df = Box::into_raw(Box::new(
+        DataFrame::new(1000, vec![Series::new("f".into(), &values).into()])
+            .unwrap(),
+    ));
+    for statistics in 0..16u8 {
+        let path = dir.path().join(format!("stats-{statistics}.parquet"));
+        let options = CompatParquetWriteOptions {
+            statistics,
+            has_row_group_size: true,
+            row_group_size: 300,
+            has_data_page_size: true,
+            data_page_size: 1024,
+            ..Default::default()
+        };
+        let written = write_with(df, &path, options);
+        assert_eq!(written, 0, "{statistics:04b}: {:?}", recorded_error());
+        let back = read_with(&path, Default::default());
+        assert!(unsafe { (*back).equals_missing(&*df) }, "{statistics:04b}");
+        dataframe_drop(back);
+        let indexed = statistics & 0b0011 == 0b0011;
+        for group in &metadata(&path).row_groups {
+            for column in group.parquet_columns() {
+                let index = column.column_index_offset();
+                assert_eq!(index.is_some(), indexed, "{statistics:04b}");
+            }
+        }
+    }
+    dataframe_drop(df);
+}
+
 #[test]
 fn an_invalid_level_fails_before_the_file_is_created() {
     let dir = scratch_dir();
@@ -323,29 +361,33 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
         )
         .unwrap(),
     ));
+    let hollow = Box::into_raw(Box::new(
+        DataFrame::new(
+            3,
+            vec![DataFrame::empty_with_height(3)
+                .into_struct("s".into())
+                .into_series()
+                .into()],
+        )
+        .unwrap(),
+    ));
     assert_eq!(write_with(df, &path, Default::default()), 0);
     let before = std::fs::read(&path).unwrap();
 
-    let min_max = CompatParquetWriteOptions {
-        statistics: 0b0011,
+    let grouped = CompatParquetWriteOptions {
+        has_row_group_size: true,
+        row_group_size: 1,
         ..Default::default()
     };
-    for options in [
-        min_max,
-        CompatParquetWriteOptions {
-            has_row_group_size: true,
-            row_group_size: 1,
-            ..min_max
-        },
-    ] {
-        assert_eq!(write_with(floats, &path, options), 4);
+    for options in [Default::default(), grouped] {
+        assert_eq!(write_with(hollow, &path, options), 4);
         assert!(recorded_error().is_some());
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
     }
 
     let fresh = dir.path().join("fresh.parquet");
-    assert_eq!(write_with(floats, &fresh, min_max), 4);
+    assert_eq!(write_with(hollow, &fresh, Default::default()), 4);
     assert!(!fresh.exists());
     assert_eq!(entries(dir.path()), vec!["keep.parquet"]);
 
@@ -362,6 +404,7 @@ fn a_failed_write_leaves_the_existing_file_as_it_was() {
     assert_eq!(entries(dir.path()), vec!["keep.parquet", "sub"]);
 
     dataframe_drop(back);
+    dataframe_drop(hollow);
     dataframe_drop(floats);
     dataframe_drop(df);
 }
