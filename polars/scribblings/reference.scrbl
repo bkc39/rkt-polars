@@ -1358,21 +1358,12 @@ stations
     (select "station" "reading"))
 (eval:error (scan-ndjson "stations.ndjson" #:schema-overrides '(("dya" . date))))]
 
-  Here the current directory is a temporary one holding three parts of a
-  frame, @filepath{part-1.ndjson} to @filepath{part-3.ndjson}:
-
-  @examples[#:eval ev #:hidden
-(define doc-temp-dir (make-temporary-directory "polars-doc-~a"))
-(for ([i '(1 2 3)])
-  (write-ndjson (read-csv (format "parts/part-~a.csv" i))
-                (build-path doc-temp-dir (format "part-~a.ndjson" i))))
-(current-directory doc-temp-dir)]
-  @examples[#:eval ev #:label #f
+  @examples-in-temporary-directory[#:eval ev
+    #:setup [(for ([i '(1 2 3)])
+               (write-ndjson (read-csv (build-path doc-data-dir "parts" (format "part-~a.csv" i)))
+                             (format "part-~a.ndjson" i)))]
 (read-ndjson "part-*.ndjson" #:n-rows 4 #:row-index-name "row")
-(eval:error (read-ndjson "*.json"))]
-  @examples[#:eval ev #:hidden
-(current-directory doc-data-dir)
-(delete-directory/files doc-temp-dir)]}
+(eval:error (read-ndjson "*.json"))]}
 
 @defproc/arguments[ndjson-writer-arguments (write-ndjson [d dataframe?] [path path-string?] void?)]{
   Write @racket[d] as newline-delimited JSON, one object a line
@@ -1385,12 +1376,7 @@ stations
   @filepath{.gz} for gzip and @filepath{.zst} for zstd, and in neither for
   an uncompressed file. It replaces a file as @racket[write-csv] does.
 
-  Here the current directory is a temporary one:
-
-  @examples[#:eval ev #:hidden
-(define doc-temp-dir (make-temporary-directory "polars-doc-~a"))
-(current-directory doc-temp-dir)]
-  @examples[#:eval ev #:label #f
+  @examples-in-temporary-directory[#:eval ev
 (define small (dataframe (list (series '(1 2) #:name "a"))))
 (write-ndjson small "small.ndjson")
 (file->string "small.ndjson")
@@ -1398,10 +1384,7 @@ stations
 (read-ndjson "small.ndjson.gz")
 (eval:error (write-ndjson small "small.ndjson.zst"))
 (eval:error (write-ndjson small "small.ndjson.zst"
-                          #:compression 'zstd #:compression-level 30))]
-  @examples[#:eval ev #:hidden
-(current-directory doc-data-dir)
-(delete-directory/files doc-temp-dir)]}
+                          #:compression 'zstd #:compression-level 30))]}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{
