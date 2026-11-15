@@ -8,8 +8,9 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 Linux arm64 and macOS arm64 ship as the native packages `polars-x86_64-linux`,
 `polars-aarch64-linux` (#377) and `polars-aarch64-macosx` (#254), so users
 need no Rust toolchain. The
-`dtype-decimal` feature is on because polars' `sign` does not compile
-without it (#106); Decimal columns are read (from Parquet), not built.
+`dtype-decimal` feature is on for Decimal columns, which are read (from
+Parquet), not built, and because 0.55.2's `sign` does not compile without
+it (#106; upstream's main gates that arm on the feature).
 `dtype-categorical` carries Categorical and Enum. Every IO feature of the
 crate is on (#176): `csv`, `parquet`, `json`, `ipc`, `ipc_streaming`, `avro`,
 `scan_lines`, `decompress` (gzip, zlib and zstd input) and the cloud sources
