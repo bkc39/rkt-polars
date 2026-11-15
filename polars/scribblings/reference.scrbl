@@ -431,9 +431,10 @@ total
   Sorts a @tech{dataframe} or @tech{lazyframe} by the column or columns
   @racket[by] (@tt{df.sort}), or a series by its values (@tt{Series.sort}).
   Given an @tech{expression}, or a column name lifted with @racket[col], it
-  builds the expression that sorts that one column (@tt{Expr.sort}). Inside
-  @racket[agg] or @racket[over], sorting one value per group, such as
-  @racket[(sum "v")] or a literal, leaves each group's value as it is.
+  builds the expression that sorts that one column (@tt{Expr.sort}), which
+  prints as a @tt{sort}. Inside @racket[agg] or @racket[over] it sorts each
+  group's values; a sort of one value per group, such as @racket[(sum "v")]
+  or a literal, leaves that value as it is.
 
   Nulls come first, whatever the direction, unless @racket[nulls-last] is
   true; NaN sorts above every other float. For a frame, @racket[descending]
@@ -482,8 +483,9 @@ total
   @racket[by] (@tt{Expr.sort_by}); a column name is lifted with @racket[col]
   in either place. The keywords mean what they mean for a frame
   @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
-  length and name. Inside @racket[agg] or @racket[over] it sorts each group,
-  including when @racket[x] is itself group-aware, such as a @racketidfont{shift}.
+  length and name. Inside @racket[agg] or @racket[over] it sorts each
+  group's values, including when @racket[x] is itself computed per group,
+  such as a @racketidfont{shift}.
 
   @examples[#:eval ev
 (define scores
