@@ -52,7 +52,7 @@ negated=$(awk '
         code = code " "; bare = bare " "
       } else if (c == "\\") {
         t = substr(s, i, 2); i++
-        code = code t; bare = bare (length(t) == 2 ? "  " : " ")
+        code = code (t == "\\$" ? "  " : t); bare = bare (length(t) == 2 ? "  " : " ")
         previous = "\\"
       } else if (quote == "\"") {
         if (c == "\"") quote = ""
@@ -75,7 +75,7 @@ negated=$(awk '
     tabs = RLENGTH == 3
     word = substr(s, RSTART + RLENGTH)
     sub(/^[ \t]+/, "", word)
-    if (!match(word, /^(\047[^\047]*\047|"[^"]*"|\\?[A-Za-z0-9_]+)/)) return
+    if (!match(word, /^(\047[^\047]*\047|"[^"]*"|[^ \t;&|<>()\047"]+)+/)) return
     heredoc = substr(word, 1, RLENGTH)
     gsub(/[\047"\\]/, "", heredoc)
   }
