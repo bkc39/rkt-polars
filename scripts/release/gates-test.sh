@@ -475,6 +475,8 @@ grep -qxF "    if: github.event_name != 'schedule' || vars.CATALOG_LIVE_SCHEDULE
   problem "catalog.yml: a scheduled run does not wait for CATALOG_LIVE_SCHEDULED"
 unpinned=$(release_matches -rnE 'uses: Bogdanp/setup-racket@' "$root/.github" | release_matches -vE '@[0-9a-f]{40} # v')
 [ -z "$unpinned" ] || problem "setup-racket is not pinned by sha: $unpinned"
+pinned_macos=$(release_matches -rnE 'macos-[0-9]' "$root/.github")
+[ -z "$pinned_macos" ] || problem "a macOS job names a numbered runner, which GitHub retires; use macos-latest: $pinned_macos"
 
 registry="$work/registry/index.crates.io-0000"
 mkdir -p "$registry/zstd-sys-2.0.13+zstd.1.5.6/zstd" "$registry/lz4-sys-1.10.0/liblz4/lib"
