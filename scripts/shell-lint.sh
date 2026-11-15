@@ -43,8 +43,8 @@ scanned=0
 negated=$(awk '
   BEGIN { OUTSIDE = "outside"; CONTINUED = "continued"; ENDED = "ended"; OPENED = "opened" }
   function strip(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
-  function scan(s,   i, c, t, quote, previous) {
-    code = ""; bare = ""; quote = ""; previous = " "
+  function scan(s,   i, c, t, previous) {
+    code = ""; bare = ""; previous = " "
     for (i = 1; i <= length(s); i++) {
       c = substr(s, i, 1)
       if (quote == "\047") {
@@ -68,6 +68,17 @@ negated=$(awk '
       }
     }
   }
+  function opens(s,   b, word) {
+    b = bare
+    gsub(/<<</, "   ", b)
+    if (!match(b, /<<-?/)) return
+    tabs = RLENGTH == 3
+    word = substr(s, RSTART + RLENGTH)
+    sub(/^[ \t]+/, "", word)
+    if (!match(word, /^(\047[^\047]*\047|"[^"]*"|\\?[A-Za-z0-9_]+)/)) return
+    heredoc = substr(word, 1, RLENGTH)
+    gsub(/[\047"\\]/, "", heredoc)
+  }
   function report() { printf "%s:%d\n", FILENAME, FNR }
   function body(from,   rest) {
     rest = strip(substr(code, from))
@@ -85,9 +96,16 @@ negated=$(awk '
     } else if (strip(code) ~ /(\\|\|\||&&|\|)$/) state = CONTINUED
     else state = ENDED
   }
-  FNR == 1 { state = OUTSIDE }
+  FNR == 1 { state = OUTSIDE; quote = ""; heredoc = "" }
+  heredoc != "" {
+    line = $0
+    if (tabs) sub(/^\t+/, "", line)
+    if (line == heredoc) heredoc = ""
+    next
+  }
   {
     scan($0)
+    opens($0)
     if (strip(code) == "") next
     if (state == OPENED) {
       state = OUTSIDE
