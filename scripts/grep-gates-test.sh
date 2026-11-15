@@ -138,10 +138,10 @@ chmod +x "$work/tree/scripts/fine.sh"
 printf '# shellcheck shell=bash\nx=1\n' > "$work/tree/scripts/sourced.sh"
 printf 'a fixture, not a script\n' > "$work/tree/scripts/fixture.log"
 expect "a captured status, a comment, a sourced script and a fixture" shell-lint 0 "shell-lint: none in scripts/"
-printf '#!/usr/bin/env bash\nprintf \047%%s\\n\047 \047\nif ! false; then\n  echo "$?"\nfi\n\047\ncat <<EOF\nif ! a; then\n  echo $?\nEOF\ncat <<-\047END\047\n\tif ! a; then\n\t  echo $?\n\tEND\ncat << "Q"\nwhile ! a; do\n  echo $?\nQ\ncat <<\\EOF\nuntil ! a; do\n  echo $?\nEOF\n' \
+printf '#!/usr/bin/env bash\nprintf \047%%s\\n\047 \047\nif ! false; then\n  echo "$?"\nfi\n\047\ncat <<EOF\nif ! a; then\n  echo $?\nEOF\ncat <<-\047END\047\n\tif ! a; then\n\t  echo $?\n\tEND\ncat << "Q"\nwhile ! a; do\n  echo $?\nQ\ncat <<\\EOF\nuntil ! a; do\n  echo $?\nEOF\nif ! a; then\n  echo "literal \\$?"\nfi\ncat <<END-TEXT\nif ! a; then\n  echo $?\nEND-TEXT\ncat <<E"O"F\nwhile ! a; do\n  echo $?\nEOF\n' \
   > "$work/tree/scripts/text.sh"
 chmod +x "$work/tree/scripts/text.sh"
-expect "text in a multi-line quote and in heredocs" shell-lint 0 "shell-lint: none in scripts/"
+expect "text in a multi-line quote and in heredocs, and an escaped \$?" shell-lint 0 "shell-lint: none in scripts/"
 printf '#!/usr/bin/env bash\necho hi\n' > "$work/tree/scripts/plain.sh"
 chmod -x "$work/tree/scripts/plain.sh"
 expect "a shebang without the executable bit" shell-lint 1 \
@@ -168,6 +168,9 @@ done <<'CASES'
 5|a body after a heredoc of <<-|cat <<-EOF\n\tx\n\tEOF\nif ! a; then\n  echo $?\nfi\n
 5|a body after a heredoc of a backslashed word|cat <<\\EOF\nx\nEOF\nif ! a; then\n  echo $?\nfi\n
 5|a body after a heredoc of a quoted word|cat << \047EOF\047\nx\nEOF\nif ! a; then\n  echo $?\nfi\n
+5|a body after a heredoc of a word with a dash|cat <<END-TEXT\nx\nEND-TEXT\nif ! a; then\n  echo $?\nfi\n
+5|a body after a heredoc of a partly quoted word|cat <<E"O"F\nx\nEOF\nif ! a; then\n  echo $?\nfi\n
+2|a body that escapes one $ and not another|if ! a; then\n  echo "\\$? $?"\nfi\n
 3|a body after a here-string|cat <<<x\nif ! a; then\n  echo $?\nfi\n
 CASES
 tree

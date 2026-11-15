@@ -1392,11 +1392,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `polars/tests/resource.rkt` holds each of its `(file definition reason)`
   entries to one site), `scripts/shell-lint.sh` (#332: a push gate, a
   flake check and a step of CI's Lint job; bash and awk; every file under
-  `scripts/` with a shebang is executable, and no `$?` outside a comment,
-  single quotes (across lines) or a heredoc's body is on the first line of
-  the body of `if !`, `elif !`,
-  `while !` or `until !`, where it is the negation's status, not the
-  command's: `cmd || st=$?` first), and
+  `scripts/` with a shebang is executable, and no unescaped `$?` outside a
+  comment, single quotes (across lines) or a heredoc's body is on the first
+  line of the body of `if !`, `elif !`, `while !` or `until !`, where it is
+  the negation's status, not the command's: `cmd || st=$?` first), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
