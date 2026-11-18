@@ -13,6 +13,7 @@
            (only-in polars/private/generic/core
                     column-names dataframe dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
+           (only-in polars/private/generic/csv read-csv)
            (only-in polars/private/generic/reshape cast collect filter select)
            (only-in polars/tests/generic/test-fixtures
                     apply-keywords col column contract-violation-of dtypes-of frame frame=?
@@ -301,6 +302,31 @@
              (lambda () (read-ndjson nothing)))
   (check-pred lazyframe? (scan-ndjson nothing))
   (check-exn #rx": no files match the pattern$" (lambda () (collect (scan-ndjson nothing))))
+  (define relative-parts (build-path scratch "relative-parts"))
+  (make-directory relative-parts)
+  (for ([i '(1 2 3)])
+    (write-ndjson (read-csv (build-path data-dir "parts" (format "part-~a.csv" i)))
+                  (build-path relative-parts (format "part-~a.ndjson" i))))
+  (parameterize ([current-directory relative-parts])
+    (define first-rows (read-ndjson "part-*.ndjson" #:n-rows 4 #:row-index-name "row"))
+    (check-equal? (column-names first-rows) '("row" "origin" "dest" "dep_delay"))
+    (check-equal? (for/list ([name (in-list (column-names first-rows))]) (column first-rows name))
+                  '((0 1 2 3) ("EWR" "LGA" "JFK" "JFK") ("IAH" "IAH" "MIA" "BQN") (2 4 2 -1)))
+    (check-equal? (message-of (lambda () (read-ndjson "*.json")))
+                  "read-ndjson: failed to read ndjson from *.json: no files match the pattern"))
+  (define relative-writes (build-path scratch "relative-writes"))
+  (make-directory relative-writes)
+  (parameterize ([current-directory relative-writes])
+    (define small (dataframe (list (series '(1 2) #:name "a"))))
+    (write-ndjson small "small.ndjson")
+    (check-equal? (file->string "small.ndjson") "{\"a\":1}\n{\"a\":2}\n")
+    (write-ndjson small "small.ndjson.gz" #:compression 'gzip)
+    (check-equal? (column (read-ndjson "small.ndjson.gz") "a") '(1 2))
+    (check-equal? (message-of (lambda () (write-ndjson small "small.ndjson.zst")))
+                  (string-append "write-ndjson: failed to write ndjson to small.ndjson.zst: "
+                                 "pass #:check-extension #f to give an uncompressed file a "
+                                 "compressed file's suffix"))
+    (check-false (file-exists? "small.ndjson.zst")))
   (define gone (build-path parts "gone.ndjson"))
   (check-exn #rx"^read-ndjson: failed to read ndjson from [^:]*gone.ndjson: cannot open file: [Nn]o such file"
              (lambda () (read-ndjson gone)))

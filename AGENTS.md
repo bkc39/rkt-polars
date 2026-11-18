@@ -8,8 +8,10 @@ library. Racket calls a Rust `cdylib`, `libcompat` (`rust/`, polars crate
 Linux arm64 and macOS arm64 ship as the native packages `polars-x86_64-linux`,
 `polars-aarch64-linux` (#377) and `polars-aarch64-macosx` (#254), so users
 need no Rust toolchain. The
-`dtype-decimal` feature is on because polars' `sign` does not compile
-without it (#106); Decimal columns are read (from Parquet), not built.
+`dtype-decimal` feature is on for Decimal columns, which are read (from
+Parquet), not built, and because 0.55.2's `sign` does not compile without
+it (#106; upstream gates that arm on the feature since
+pola-rs/polars#29539, commit c24f464).
 `dtype-categorical` carries Categorical and Enum. Every IO feature of the
 crate is on (#176): `csv`, `parquet`, `json`, `ipc`, `ipc_streaming`, `avro`,
 `scan_lines`, `decompress` (gzip, zlib and zstd input) and the cloud sources
@@ -1318,7 +1320,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
   `private/generic/csv.rkt`). Three have no library counterpart:
   `generic/csv-options.rkt`, `generic/verb-errors.rkt` and
-  `generic/operand-audit.rkt`. No module under `polars/private/` has a `test`
+  `generic/operand-audit.rkt`; `scribblings/utils.rkt` tests the manual's
+  helpers in `polars/scribblings/utils.rkt`. No module under `polars/private/` has a `test`
   submodule: the `no-inline-tests` gate (`scripts/no-inline-tests.sh`, a flake
   check and CI's Lint job) fails on one; it is a grep, which a form split
   across lines escapes, and the exact check is a test in

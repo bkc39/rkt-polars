@@ -2,12 +2,10 @@
 
 (module+ test
   (require rackunit
-           (only-in compiler/find-exe find-exe)
            (only-in gregor ->datetime/local ->posix date datetime moment now)
            (only-in gregor/period days hours microseconds milliseconds months nanoseconds weeks)
            (only-in gregor/time time)
            (only-in racket/match match match-define)
-           (only-in racket/port port->string)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains?)
            (only-in threading ~>)
@@ -25,6 +23,7 @@
            (only-in polars/private/generic/printing series->string)
            (only-in polars/tests/generic/test-fixtures
                     check-cells col named-frame nul-frame nul-names series-cells)
+           (only-in (submod polars/tests/generic/test-fixtures test) call-each-in-child)
            (only-in polars/tests/test-helpers settle! with-environment-variable))
   (define ints (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
@@ -377,35 +376,24 @@
        "^write-ndjson: .*polars panicked: "]
       [(series-new-ymdhms "a" (list (make-YMDHMS 2021 2 30 0 0 0)))
        "^series-new-ymdhms: invalid date and time: 2021-02-30 00:00:00$"]))
-  (define past-chrono-program
-    `(write (for/list ([probe (list ,@(for/list ([p (in-list past-chrono-probes)])
-                                        (match-define (list probe _) p)
-                                        `(lambda () ,probe)))])
-              (with-handlers ([exn:fail? exn-message]) (format "~a" (probe))))))
-  (define-values (past-chrono-child child-out child-in child-err)
-    (subprocess #f #f #f (find-exe) "-l" "racket/base" "-l" "racket/file" "-l" "polars"
-                "-l" "polars/private/resource"
-                "-l" "polars/tests/generic/test-fixtures"
-                "-e" (format "~s" past-chrono-program)))
-  (close-output-port child-in)
-  (define (drained port)
-    (define text (make-channel))
-    (thread (lambda () (channel-put text (port->string port #:close? #t))))
-    text)
-  (define child-stdout (drained child-out))
-  (define child-stderr (drained child-err))
-  (define past-chrono-finished (sync/timeout 300 past-chrono-child))
-  (unless past-chrono-finished
-    (subprocess-kill past-chrono-child #t))
-  (check-not-false past-chrono-finished "the child finished within 300 s")
-  (check-equal? (subprocess-status past-chrono-child) 0)
-  (check-equal? (channel-get child-stderr) "")
-  (define past-chrono-results (read (open-input-string (channel-get child-stdout))))
-  (check-equal? (length past-chrono-results) (length past-chrono-probes))
+  (define-values (past-chrono-status past-chrono-runs past-chrono-completed past-chrono-stderr)
+    (call-each-in-child
+     '()
+     (for/list ([probe (in-list past-chrono-probes)])
+       (match-define (list form _) probe)
+       `(with-handlers ([exn:fail? exn-message]) (format "~a" ,form)))
+     #:timeout 300
+     #:libraries '("racket/file" "polars" "polars/private/resource"
+                   "polars/tests/generic/test-fixtures")))
+  (check-equal? past-chrono-status 0 past-chrono-stderr)
+  (check-equal? past-chrono-completed (length past-chrono-probes) past-chrono-stderr)
+  (check-not-false past-chrono-runs past-chrono-stderr)
   (for ([probe (in-list past-chrono-probes)]
-        [result (in-list past-chrono-results)])
+        [run (in-list (or past-chrono-runs '()))])
     (match-define (list form expected) probe)
-    (check-regexp-match expected result (format "~s gave ~s" form result)))
+    (match-define (list result stderr) run)
+    (check-regexp-match expected result (format "~s gave ~s" form result))
+    (check-equal? stderr "" (format "~s wrote to stderr" form)))
 
   (define (shown-unwrapped nul n)
     (with-environment-variable #"POLARS_TABLE_WIDTH" #"200"

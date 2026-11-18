@@ -1336,29 +1336,26 @@ stations
   A gzip, zlib or zstd file is decompressed as it is read, recognised by
   its first bytes rather than its name.
 
-  @examples[#:eval ev #:hidden
-(require racket/file)
-(define nd-dir (make-temporary-directory "polars-doc-~a"))
-(for ([i '(1 2 3)])
-  (write-ndjson (read-csv (format "parts/part-~a.csv" i))
-                (build-path nd-dir (format "part-~a.ndjson" i))))]
   @examples[#:eval ev
 (read-ndjson "stations.ndjson")
 (~> (scan-ndjson "stations.ndjson")
     (filter (> (col "reading") 3))
     (select "station" "reading")
     collect)
-(read-ndjson (build-path nd-dir "part-*.ndjson") #:n-rows 4 #:row-index-name "row")
 (column-names (read-ndjson "stations.ndjson" #:include-file-paths "file"))
 (read-ndjson "stations.ndjson" #:schema '(("station" . str) ("extra" . null)))
 (eval:error (read-ndjson "stations.ndjson" #:schema '(("station" . str) ("note" . null))))
 (eval:error (read-ndjson "stations.ndjson" #:infer-schema-length 1))
 (~> (read-ndjson "stations.ndjson" #:infer-schema-length 1 #:ignore-errors #t)
     (select "station" "reading"))
-(eval:error (scan-ndjson "stations.ndjson" #:schema-overrides '(("dya" . date))))
-(eval:error (read-ndjson (build-path nd-dir "*.json")))]
-  @examples[#:eval ev #:hidden
-(delete-directory/files nd-dir)]}
+(eval:error (scan-ndjson "stations.ndjson" #:schema-overrides '(("dya" . date))))]
+
+  @examples-in-temporary-directory[#:eval ev
+    #:setup [(for ([i '(1 2 3)])
+               (write-ndjson (read-csv (build-path doc-data-dir "parts" (format "part-~a.csv" i)))
+                             (format "part-~a.ndjson" i)))]
+(read-ndjson "part-*.ndjson" #:n-rows 4 #:row-index-name "row")
+(eval:error (read-ndjson "*.json"))]}
 
 @defproc/arguments[ndjson-writer-arguments (write-ndjson [d dataframe?] [path path-string?] void?)]{
   Write @racket[d] as newline-delimited JSON, one object a line
@@ -1371,19 +1368,15 @@ stations
   @filepath{.gz} for gzip and @filepath{.zst} for zstd, and in neither for
   an uncompressed file. It replaces a file as @racket[write-csv] does.
 
-  @examples[#:eval ev #:hidden
-(define nd-dir (make-temporary-directory "polars-doc-~a"))]
-  @examples[#:eval ev
+  @examples-in-temporary-directory[#:eval ev
 (define small (dataframe (list (series '(1 2) #:name "a"))))
-(write-ndjson small (build-path nd-dir "small.ndjson"))
-(file->string (build-path nd-dir "small.ndjson"))
-(write-ndjson small (build-path nd-dir "small.ndjson.gz") #:compression 'gzip)
-(read-ndjson (build-path nd-dir "small.ndjson.gz"))
-(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")))
-(eval:error (write-ndjson small (build-path nd-dir "small.ndjson.zst")
-                          #:compression 'zstd #:compression-level 30))]
-  @examples[#:eval ev #:hidden
-(delete-directory/files nd-dir)]}
+(write-ndjson small "small.ndjson")
+(file->string "small.ndjson")
+(write-ndjson small "small.ndjson.gz" #:compression 'gzip)
+(read-ndjson "small.ndjson.gz")
+(eval:error (write-ndjson small "small.ndjson.zst"))
+(eval:error (write-ndjson small "small.ndjson.zst"
+                          #:compression 'zstd #:compression-level 30))]}
 
 @deftogether[(@defproc[(lazy [d dataframe?]) lazyframe?]
               @defproc[(collect [lf lazyframe?]) dataframe?])]{

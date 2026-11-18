@@ -27,9 +27,9 @@
 
 (require scribble/manual
          scribble/example
-         (for-syntax racket/base (only-in syntax/parse id))
+         (for-syntax racket/base)
          (only-in racket/contract/base -> contract-out list/c or/c)
-         (only-in racket/file file->lines)
+         (only-in racket/file delete-directory/files file->lines make-temporary-directory)
          (only-in racket/list append-map take take-right)
          (only-in racket/match match)
          (only-in racket/sandbox
@@ -37,9 +37,10 @@
                   sandbox-path-permissions sandbox-security-guard)
          (only-in scribble/core
                   block? make-element make-nested-flow make-paragraph make-style make-table)
-         (only-in scribble/decode decode-content)
+         (only-in scribble/decode decode-content splice)
          (only-in scribble/html-properties attributes)
-         (only-in syntax/parse/define define-syntax-parse-rule))
+         syntax/parse/define
+         (only-in polars/private/resource with-release))
 
 (require (for-label polars
                     ffi/vector
@@ -55,6 +56,7 @@
          (all-from-out scribble/example)
          (for-label (all-from-out polars ffi/vector racket/contract/base threading racket/base))
          make-polars-eval
+         examples-in-temporary-directory
          see-reference
          exnraise
          (contract-out
@@ -71,6 +73,27 @@
     (make-base-eval '(require gregor
                               polars
                               (only-in threading ~> ~>>)))))
+
+;; Evaluates the forms with the evaluator's current directory a fresh temporary
+;; one, restored and deleted on any exit; the #:setup forms run there hidden.
+(define-syntax-parse-rule (examples-in-temporary-directory
+                           #:eval ev:expr
+                           (~optional (~seq #:setup (setup:expr ...)))
+                           form:expr ...+)
+  (call-in-temporary-directory
+   ev
+   (lambda ()
+     (splice (list (~? (examples #:eval ev #:hidden setup ...) null)
+                   (examples #:eval ev #:label #f form ...))))))
+
+(define (enter-directory! ev dir)
+  (begin0 (ev '(current-directory))
+          (ev `(current-directory ,(path->string dir)))))
+
+(define (call-in-temporary-directory ev thunk)
+  (with-release ([dir (make-temporary-directory "polars-doc-~a") delete-directory/files]
+                 [previous (enter-directory! ev dir) (lambda (previous) (enter-directory! ev previous))])
+    (thunk)))
 
 ;; "the @exnraise[exn:fail:contract]" => "the `exn:fail:contract` exception is
 ;; raised", after mz.rkt.
@@ -121,3 +144,6 @@
   (cond
     [(string=? line "") " "]
     [else line]))
+
+(module+ internal
+  (provide call-in-temporary-directory))
