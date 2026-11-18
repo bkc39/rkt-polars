@@ -5,10 +5,11 @@
          (only-in racket/contract/base
                   -> ->* cons/c contract-out flat-named-contract listof or/c parameter/c)
          (only-in racket/dict dict-ref)
+         (only-in racket/format ~a)
          (only-in racket/list filter-not remove-duplicates)
          (only-in racket/match match match-define)
          (only-in racket/path path-only)
-         (only-in racket/string string-join)
+         (only-in racket/string string-join string-prefix?)
          (only-in setup/getinfo get-info/full)
          (only-in threading ~>))
 
@@ -22,6 +23,7 @@
           [current-native-platform (parameter/c string?)]
           [dev-built-library? (-> path-string? boolean?)]
           [dev-marker (-> path-string? path?)]
+          [embedded-module-name? (-> resolved-module-path? boolean?)]
           [installed-native-package (-> (or/c native-location? #f))]
           [library-file string?]
           [locate-native-library (-> path-string? native-location?)]
@@ -29,7 +31,8 @@
           [manifest-problem (-> native-location? (or/c string? #f) (or/c string? #f))]
           [missing-export-message (-> loaded-location/c symbol? string?)]
           [missing-message (-> path-string? string?)]
-          [native-library-problem (-> native-location? (or/c string? #f) (or/c string? #f))]
+          [native-library-problem
+           (->* (native-location? (or/c string? #f)) (#:embedded? boolean?) (or/c string? #f))]
           [native-package (->* () (string?) (or/c string? #f))]
           [native-packages (listof (cons/c string? string?))]
           [override-dir (-> (or/c path? #f))]
@@ -172,10 +175,26 @@
              package
              override-advice)]))
 
-(define (native-library-problem location wanted)
+(define (embedded-module-name? module)
+  (define name (resolved-module-path-name module))
+  (and (symbol? name) (string-prefix? (symbol->string name) "#%embedded:")))
+
+(define (embedded-message package dir)
+  (string-join
+   (list (~a "libcompat is not in this executable: raco exe and raco distribute do not carry "
+             "the package " package)
+         (~a "  looked in: " dir)
+         (~a "  copy " library-file " from the package's native-libs/ into a directory's lib/, "
+             "and set " compat-lib-env-var " to that directory"))
+   "\n"))
+
+(define (native-library-problem location wanted #:embedded? [embedded? #f])
   (define package (native-package))
   (match location
-    [(native-location 'missing dir _ _ _) (missing-message dir)]
+    [(native-location 'missing dir _ _ _)
+     (cond
+       [(and embedded? package) (embedded-message package dir)]
+       [else (missing-message dir)])]
     [(native-location 'broken _ root _ cause)
      (format "the package ~a is installed but would not load\n  found in: ~a\n  it said: ~a\n  ~a"
              package

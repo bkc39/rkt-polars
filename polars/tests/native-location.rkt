@@ -8,10 +8,10 @@
            (only-in racket/match ==)
            (only-in setup/getinfo get-info/full)
            (only-in polars/private/native-location
-                    current-native-platform dev-marker library-file locate-native-library
-                    manifest-problem missing-export-message native-library-problem native-location
-                    native-location-dir native-location-kind native-packages
-                    required-native-version sha256-hex unloadable-message)
+                    current-native-platform dev-marker embedded-module-name? library-file
+                    locate-native-library manifest-problem missing-export-message
+                    native-library-problem native-location native-location-dir native-location-kind
+                    native-packages required-native-version sha256-hex unloadable-message)
            (only-in polars/tests/test-helpers
                     contains-all? make-native-package! module-text polars-dir scratch-file
                     with-environment-variable with-native-collections))
@@ -111,6 +111,31 @@
                               "polars-x86_64-linux`; to use a libcompat built by hand, set "
                               "RKT_POLARS_COMPAT_LIB_PATH to the directory whose lib/ holds it")
                (simplify-path staged)))))
+
+  (test-case "in an executable, a missing native package names the override"
+    (with-native-collections collects
+      (define staged (build-path collects "staged"))
+      (define location (locate staged))
+      (check-equal? (native-location-kind location) 'missing)
+      (check-equal?
+       (native-library-problem location "0.3" #:embedded? #t)
+       (format (string-append "libcompat is not in this executable: raco exe and raco distribute "
+                              "do not carry the package polars-x86_64-linux\n  looked in: ~a\n  "
+                              "copy ~a from the package's native-libs/ into a directory's lib/, "
+                              "and set RKT_POLARS_COMPAT_LIB_PATH to that directory")
+               (simplify-path staged)
+               library-file))
+      (parameterize ([current-native-platform "riscv64-linux"])
+        (check-equal? (native-library-problem location "0.3" #:embedded? #t)
+                      (native-library-problem location "0.3")))))
+
+  (test-case "a module raco exe embeds is named by a #%embedded: symbol"
+    (check-true (embedded-module-name? (make-resolved-module-path '|#%embedded:polars/x:|)))
+    (check-false (embedded-module-name? (make-resolved-module-path '|#%mzc:main|)))
+    (check-false (embedded-module-name? (make-resolved-module-path 'polars)))
+    (check-false (embedded-module-name? (make-resolved-module-path (build-path polars-dir "x.rkt"))))
+    (check-false (embedded-module-name?
+                  (make-resolved-module-path (list (build-path polars-dir "x.rkt") 'internal)))))
 
   (test-case "an unsupported platform names the supported ones and the override"
     (with-native-collections collects

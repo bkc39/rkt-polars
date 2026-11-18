@@ -8,6 +8,7 @@
            (only-in threading ~>)
            (only-in polars/private/native-library
                     compat-library missing-export native-library-file)
+           (only-in (submod polars/private/native-library internal) embedded?)
            (only-in polars/private/native-location library-file)
            (only-in polars/tests/test-helpers contains-all? message-of))
 
@@ -22,6 +23,9 @@
                                (list "polars: libcompat lacks the export for "
                                      "polars-probe-no-such-export, so it is older than this polars"
                                      "\n  found in: "))))
+
+  (test-case "a polars loaded from its files is not an embedded executable"
+    (check-false embedded?))
 
   (test-case "the library loaded is libcompat"
     (check-equal? (~> native-library-file file-name-from-path path->string) library-file)
