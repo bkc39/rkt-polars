@@ -65,159 +65,47 @@ fn expr_sort_prints_as_the_crate_sort() {
     }
 }
 
-/// How `expr_sort_with_options` sorts `e`: returned as is, the crate's
-/// sort, or a sort by itself.
-#[derive(Debug, PartialEq)]
-enum Sorted {
-    Input,
-    Sort,
-    SortBy,
-}
-
-fn sorted_as(e: *const Expr, descending: u8, nulls_last: u8) -> Sorted {
-    let sorted = expr_sort_with_options(e, descending, nulls_last);
-    assert!(!sorted.is_null());
-    let (input, out) = unsafe { (&*e, &*sorted) };
-    let flags = (descending != 0, nulls_last != 0);
-    let how = match out {
-        Expr::Sort { expr, options } if **expr == *input => {
-            assert_eq!((options.descending, options.nulls_last), flags);
-            Sorted::Sort
-        }
-        Expr::SortBy {
-            expr,
-            by,
-            sort_options,
-        } if **expr == *input && by[..] == [input.clone()] => {
-            assert_eq!(sort_options.descending, [flags.0]);
-            assert_eq!(sort_options.nulls_last, [flags.1]);
-            Sorted::SortBy
-        }
-        out if out == input => Sorted::Input,
-        out => panic!("unexpected sort of {input}: {out}"),
-    };
-    expr_drop(sorted);
-    how
-}
-
-fn assert_sorted_as(cases: &[*mut Expr], expected: Sorted) {
-    for &e in cases {
-        for (descending, nulls_last) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-            assert_eq!(
-                sorted_as(e, descending, nulls_last),
-                expected,
-                "{}",
-                unsafe { &*e }
-            );
-        }
-    }
-}
+const FLAGS: [(u8, u8); 4] = [(0, 0), (0, 1), (1, 0), (1, 1)];
 
 fn boxed(e: Expr) -> *mut Expr {
     Box::into_raw(Box::new(e))
 }
 
-fn float64() -> CompatDType {
-    CompatDType {
-        tag: CompatDTypeTag::Float64 as i32,
-        time_unit: CompatTimeUnit::None as i32,
-        flags: 0,
-        array_width: 0,
-    }
-}
-
-fn when(
-    predicate: *const Expr,
-    then: *const Expr,
-    otherwise: *const Expr,
-) -> *mut Expr {
-    let out =
-        expr_when_then([predicate].as_ptr(), [then].as_ptr(), 1, otherwise);
-    assert!(!out.is_null());
+fn unboxed(e: *mut Expr) -> Expr {
+    assert!(!e.is_null());
+    let out = unsafe { (*e).clone() };
+    expr_drop(e);
     out
 }
 
-#[test]
-fn expr_sort_of_one_value_is_the_input() {
-    let v = column("v");
-    let total = expr_sum(v);
-    let one = expr_lit_i32(1);
-    let word = str_block("x");
-    let above = expr_gt(total, one);
-    let cases = [
-        aliased(total, "s"),
-        expr_lit_str_v2(word.as_ptr()),
-        expr_add(total, one),
-        expr_div(total, one),
-        boxed(len()),
-        expr_cast(total, float64()),
-        when(above, total, one),
-        boxed(col("v").sum().name().keep()),
-    ];
-    assert_sorted_as(&cases, Sorted::Input);
-    assert_sorted_as(&[total, one], Sorted::Input);
-    for e in cases.into_iter().chain([above, one, total, v]) {
-        expr_drop(e);
-    }
+fn quotient(a: Expr, b: Expr) -> Expr {
+    let (a, b) = (boxed(a), boxed(b));
+    let out = unboxed(expr_div(a, b));
+    expr_drop(a);
+    expr_drop(b);
+    out
 }
 
-#[test]
-fn expr_sort_of_a_per_row_input_is_the_crate_sort() {
-    let v = column("v");
-    let total = expr_sum(v);
-    let one = expr_lit_i32(1);
-    let above = expr_gt(total, one);
-    let row_above = expr_gt(v, one);
-    let cases = [
-        column("^v.*$"),
-        expr_all(),
-        aliased(v, "w"),
-        expr_cast(v, float64()),
-        expr_sort_with_options(v, 1, 0),
-        expr_add(v, total),
-        expr_add(total, v),
-        expr_div(v, total),
-        expr_div(total, v),
-        when(row_above, total, one),
-        when(above, v, one),
-        when(above, total, v),
-        boxed(col("v").name().keep()),
-    ];
-    assert_sorted_as(&cases, Sorted::Sort);
-    assert_sorted_as(&[v], Sorted::Sort);
-    for e in cases.into_iter().chain([row_above, above, one, total, v]) {
-        expr_drop(e);
-    }
+fn sort_of(build: fn() -> Expr, descending: u8, nulls_last: u8) -> *mut Expr {
+    let e = boxed(build());
+    let sorted = expr_sort_with_options(e, descending, nulls_last);
+    expr_drop(e);
+    sorted
 }
 
-#[test]
-fn expr_sort_of_any_other_input_sorts_by_itself() {
-    let (v, s, g) = (column("v"), column("s"), column("g"));
-    let total = expr_sum(v);
-    let first = expr_first(s);
-    let one = expr_lit_i32(1);
-    let magnitude = expr_abs(total);
-    let row_above = expr_gt(v, one);
-    let parts: [*const Expr; 1] = [g];
-    let cases = [
-        magnitude,
-        expr_neg(total),
-        expr_str_to_uppercase(first),
-        expr_reverse(total),
-        expr_cum_sum(total, 0),
-        expr_add(magnitude, one),
-        expr_div(magnitude, one),
-        expr_abs(v),
-        expr_head(v, 1, 2),
-        expr_filter(v, row_above),
-        expr_over(total, parts.as_ptr(), 1),
-    ];
-    assert_sorted_as(&cases, Sorted::SortBy);
-    for e in cases
-        .into_iter()
-        .chain([row_above, one, first, total, g, s, v])
-    {
-        expr_drop(e);
+fn assert_crate_sort(name: &str, build: fn() -> Expr) {
+    let input = build();
+    for (descending, nulls_last) in FLAGS {
+        let out = unboxed(sort_of(build, descending, nulls_last));
+        let Expr::Sort { expr, options } = &out else {
+            panic!("{name}: unexpected sort of {input}: {out}");
+        };
+        assert_eq!(**expr, input, "{name}");
+        assert_eq!(
+            (options.descending, options.nulls_last),
+            (descending != 0, nulls_last != 0),
+            "{name}"
+        );
     }
 }
 
@@ -238,6 +126,15 @@ fn words() -> (*mut DataFrame, [*mut Series; 3]) {
     ];
     (make_df(&cols), cols)
 }
+
+fn release_words(df: *mut DataFrame, cols: [*mut Series; 3]) {
+    dataframe_drop(df);
+    for c in cols {
+        series_drop(c);
+    }
+}
+
+type Query = fn(*mut DataFrame, *mut Expr) -> *mut DataFrame;
 
 fn agg_by_g(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
     let key = column("g");
@@ -264,6 +161,13 @@ fn agg_by_g(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
     out
 }
 
+fn agg_by_g_when_v_is_low(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
+    let low = when(col("v").lt(lit(-500i64)))
+        .then(unboxed(e))
+        .otherwise(lit(Null {}));
+    agg_by_g(df, boxed(low))
+}
+
 fn over_g(df: *mut DataFrame, e: *mut Expr) -> *mut DataFrame {
     let key = column("g");
     let parts: [*const Expr; 1] = [key];
@@ -282,54 +186,121 @@ fn i64_lists(df: *mut DataFrame) -> Vec<Vec<Option<i64>>> {
         .collect()
 }
 
-fn sort_of(build: fn() -> *mut Expr, flags: (u8, u8)) -> *mut Expr {
-    let e = build();
-    let sorted = expr_sort_with_options(e, flags.0, flags.1);
-    expr_drop(e);
-    sorted
+fn assert_same_frame(
+    name: &str,
+    out: *mut DataFrame,
+    expected: *mut DataFrame,
+) {
+    let (a, b) = unsafe { (&*out, &*expected) };
+    assert!(a.equals_missing(b), "{name}: {a} against {b}");
+    dataframe_drop(out);
+    dataframe_drop(expected);
 }
 
 #[test]
-fn expr_sort_of_one_value_per_group_stays_in_bounds() {
+fn expr_sort_is_the_crate_sort_of_any_input() {
+    let cases: [(&str, fn() -> Expr); 31] = [
+        ("a column", || col("v")),
+        ("a sum", || col("v").sum()),
+        ("a first", || col("s").first()),
+        ("an integer literal", || lit(1i32)),
+        ("a string literal", || lit("x")),
+        ("len", len),
+        ("abs of a sum", || col("v").sum().abs()),
+        ("an aliased sum", || col("v").sum().alias("s")),
+        ("a sum plus a literal", || col("v").sum() + lit(1i32)),
+        ("a quotient of a sum", || {
+            quotient(col("v").sum(), lit(1i32))
+        }),
+        ("a cast sum", || col("v").sum().cast(DataType::Float64)),
+        ("a when over a sum", || {
+            when(col("v").sum().gt(lit(1i32)))
+                .then(col("v").sum())
+                .otherwise(lit(1i32))
+        }),
+        ("a sum keeping its name", || col("v").sum().name().keep()),
+        ("a regex selector", || unboxed(column("^v.*$"))),
+        ("every column", || unboxed(expr_all())),
+        ("an aliased column", || col("v").alias("w")),
+        ("a cast column", || col("v").cast(DataType::Float64)),
+        ("a sorted column", || {
+            col("v").sort(SortOptions::default().with_order_descending(true))
+        }),
+        ("a column plus a sum", || col("v") + col("v").sum()),
+        ("a column over a sum", || quotient(col("v"), col("v").sum())),
+        ("a when on a row predicate", || {
+            when(col("v").gt(lit(1i32)))
+                .then(col("v").sum())
+                .otherwise(lit(1i32))
+        }),
+        ("a when choosing a column", || {
+            when(col("v").sum().gt(lit(1i32)))
+                .then(col("v"))
+                .otherwise(lit(1i32))
+        }),
+        ("a column keeping its name", || col("v").name().keep()),
+        ("a negated sum", || -col("v").sum()),
+        ("an uppercased first", || {
+            col("s").first().str().to_uppercase()
+        }),
+        ("a reversed sum", || col("v").sum().reverse()),
+        ("a cumulative sum of a sum", || {
+            col("v").sum().cum_sum(false)
+        }),
+        ("a quotient of abs of a sum", || {
+            quotient(col("v").sum().abs(), lit(1i32))
+        }),
+        ("a head", || col("v").head(Some(2))),
+        ("a filter", || col("v").filter(col("v").gt(lit(1i32)))),
+        ("a sum over groups", || {
+            col("v").sum().over([col("g")]).unwrap()
+        }),
+    ];
+    for (name, build) in cases {
+        assert_crate_sort(name, build);
+    }
+}
+
+#[test]
+fn expr_sort_of_one_value_per_group_is_a_no_op() {
     let (df, cols) = words();
-    let upper: fn() -> *mut Expr =
-        || boxed(col("s").first().str().to_uppercase());
-    let first: fn() -> *mut Expr = || boxed(col("s").first());
-    let magnitude: fn() -> *mut Expr = || boxed(col("v").sum().abs());
-    for flags in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-        for (build, expected) in [
-            (upper, ["WORD NUMBER 0000", "WORD NUMBER 0002"]),
-            (first, ["word number 0000", "word number 0002"]),
-        ] {
-            let out = agg_by_g(df, sort_of(build, flags));
-            assert_eq!(read_str_col(out, "x"), expected);
-            dataframe_drop(out);
-            let out = over_g(df, sort_of(build, flags));
-            let x = read_str_col(out, "x");
-            assert_eq!(x.len(), 1000);
-            assert_eq!(x[..2], [expected[0], expected[0]]);
-            assert!(x[2..].iter().all(|w| w == expected[1]));
-            dataframe_drop(out);
+    let cases: [(&str, fn() -> Expr); 10] = [
+        ("an uppercased first", || {
+            col("s").first().str().to_uppercase()
+        }),
+        ("a first", || col("s").first()),
+        ("abs of a sum", || col("v").sum().abs()),
+        ("a negated sum", || -col("v").sum()),
+        ("a reversed sum", || col("v").sum().reverse()),
+        ("a cumulative sum of a sum", || {
+            col("v").sum().cum_sum(false)
+        }),
+        ("a quotient of abs of a sum", || {
+            quotient(col("v").sum().abs(), lit(1i64))
+        }),
+        ("a filtered sum", || {
+            col("v").filter(col("v").lt(lit(-500i64))).sum()
+        }),
+        ("len", len),
+        ("a literal", || lit(7i64)),
+    ];
+    let queries: [Query; 3] = [agg_by_g, agg_by_g_when_v_is_low, over_g];
+    for (name, build) in cases {
+        for query in queries {
+            for (descending, nulls_last) in FLAGS {
+                let out = query(df, sort_of(build, descending, nulls_last));
+                assert_same_frame(name, out, query(df, boxed(build())));
+            }
         }
-        let out = agg_by_g(df, sort_of(magnitude, flags));
-        assert_eq!(read_i64_col(out, "x"), [1, 499499]);
-        dataframe_drop(out);
-        let out = over_g(df, sort_of(magnitude, flags));
-        let x = read_i64_col(out, "x");
-        assert_eq!(x[..3], [1, 1, 499499]);
-        dataframe_drop(out);
     }
-    dataframe_drop(df);
-    for c in cols {
-        series_drop(c);
-    }
+    release_words(df, cols);
 }
 
 #[test]
 fn expr_sort_of_a_per_row_input_sorts_each_group() {
     let (df, cols) = words();
-    let shifted: fn() -> *mut Expr = || boxed(col("v") + col("v").sum());
-    let out = agg_by_g(df, sort_of(shifted, (1, 1)));
+    let shifted: fn() -> Expr = || col("v") + col("v").sum();
+    let out = agg_by_g(df, sort_of(shifted, 1, 1));
     let [a, b] = &i64_lists(out)[..] else {
         panic!("expected two groups");
     };
@@ -337,25 +308,36 @@ fn expr_sort_of_a_per_row_input_sorts_each_group() {
     assert_eq!(b.len(), 998);
     assert_eq!((b[0], b[997]), (Some(-499501), Some(-500498)));
     dataframe_drop(out);
-    let shares = || {
-        let v = boxed(col("v"));
-        let total = boxed(col("v").sum());
-        let out = expr_div(v, total);
-        expr_drop(total);
-        expr_drop(v);
-        out
-    };
-    let out = agg_by_g(df, sort_of(shares, (1, 1)));
+    let shares: fn() -> Expr = || quotient(col("v"), col("v").sum());
+    let out = agg_by_g(df, sort_of(shares, 1, 1));
     let [a, b] = &i64_lists(out)[..] else {
         panic!("expected two groups");
     };
     assert_eq!(a, &[Some(1), Some(0)]);
     assert_eq!(b.len(), 998);
     dataframe_drop(out);
-    dataframe_drop(df);
-    for c in cols {
-        series_drop(c);
+    release_words(df, cols);
+}
+
+#[test]
+fn expr_sort_of_a_head_or_filter_sorts_each_group() {
+    let (df, cols) = words();
+    let cases: [(&str, fn() -> Expr); 2] = [
+        ("a head", || col("v").head(Some(1000))),
+        ("a filter", || col("v").filter(col("v").gt(lit(-1000i64)))),
+    ];
+    let group_b: Vec<Option<i64>> = (-999..=-2).map(Some).collect();
+    let rows: Vec<i64> = [-1, 0].into_iter().chain(-999..=-2).collect();
+    for (name, build) in cases {
+        let out = agg_by_g(df, sort_of(build, 0, 0));
+        let expected = [vec![Some(-1), Some(0)], group_b.clone()];
+        assert_eq!(i64_lists(out), expected, "{name}");
+        dataframe_drop(out);
+        let out = over_g(df, sort_of(build, 0, 0));
+        assert_eq!(read_i64_col(out, "x"), rows, "{name}");
+        dataframe_drop(out);
     }
+    release_words(df, cols);
 }
 
 #[test]

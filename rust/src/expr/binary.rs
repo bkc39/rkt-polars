@@ -111,7 +111,7 @@ fn floor_if_integer_inputs(e: &Expr) -> Option<&[Expr; 3]> {
     inputs_of(&FLOOR_IF_INTEGER, e)?.try_into().ok()
 }
 
-pub(crate) fn floor_div_quotient(e: &Expr) -> Option<&Expr> {
+fn floor_div_quotient(e: &Expr) -> Option<&Expr> {
     floor_if_integer_inputs(e).map(|[quotient, _, _]| quotient)
 }
 

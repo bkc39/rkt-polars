@@ -8,6 +8,7 @@
            (only-in gregor datetime datetime<?)
            (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/contract/base contract-name or/c)
+           (only-in racket/dict in-dict)
            (only-in racket/list cartesian-product make-list range remove-duplicates take)
            (only-in racket/math nan?)
            (only-in syntax/parse/define define-syntax-parse-rule)
@@ -302,21 +303,24 @@
       (check-equal? (~> nulls sorted (column "v")) '(3 1 2) why)
       (check-equal? (~> nulls lazy sorted collect (column "v")) '(3 1 2) why)))
 
-  (for* ([d '(#f #t)] [l '(#f #t)])
-    (check-equal? (expr->string (sort "v" #:descending d #:nulls-last l))
-                  (if d "col(\"v\").sort(desc)" "col(\"v\").sort(asc)"))
-    (check-equal? (expr->string (sort (sum "v") #:descending d #:nulls-last l))
-                  "col(\"v\").sum()")
-    (check-equal? (expr->string (sort (p+ (col "v") (sum "v")) #:descending d #:nulls-last l))
-                  (format "[(col(\"v\")) + (col(\"v\").sum())].sort(~a)" (if d "desc" "asc")))
-    (check-regexp-match #rx"^col[(]\"v\"[)][.]sum[(][)][.]abs[(][)][.]sort_by[(]by=[[]col"
-                        (expr->string (sort (p-abs (sum "v")) #:descending d #:nulls-last l))))
+  (for* ([d '(#f #t)]
+         [l '(#f #t)]
+         [(e printed) (in-dict (list (cons "v" "col(\"v\")")
+                                     (cons (sum "v") "col(\"v\").sum()")
+                                     (cons (lit "x") "\"x\"")
+                                     (cons (p+ (col "v") (sum "v"))
+                                           "[(col(\"v\")) + (col(\"v\").sum())]")
+                                     (cons (p-abs (sum "v")) "col(\"v\").sum().abs()")
+                                     (cons (p-round (mean "v")) "col(\"v\").mean().round()")))])
+    (check-equal? (expr->string (sort e #:descending d #:nulls-last l))
+                  (string-append printed (if d ".sort(desc)" ".sort(asc)"))))
   (let ([flights (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
-                                  (series (list 12 polars-null 340 -3 polars-null) #:name "delay")))]
-        [rounded (sort (p-round (mean "delay")) #:descending #t)])
-    (check-regexp-match #rx"^col[(]\"delay\"[)][.]mean[(][)][.]round[(].*[)][.]sort_by[(]by=[[]col"
-                        (expr->string rounded))
-    (check-equal? (~> flights (group-by "carrier") (agg rounded) (sort "carrier") frame-rows)
+                                  (series (list 12 polars-null 340 -3 polars-null) #:name "delay")))])
+    (check-equal? (~> flights
+                      (group-by "carrier")
+                      (agg (sort (p-round (mean "delay")) #:descending #t))
+                      (sort "carrier")
+                      frame-rows)
                   (vector (vector "AA" -3.0) (vector "B6" polars-null) (vector "UA" 176.0))))
   (let ([g (dataframe (list (series '("a" "a" "b" "b" "c") #:name "g")
                             (series (list 1 polars-null 3 4 polars-null) #:name "v")))])

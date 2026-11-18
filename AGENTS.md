@@ -73,7 +73,8 @@ reaches the node; Python 1.42.1's `engine="streaming"` sends it there and
 returns too many rows. In polars-io, the CSV reader makes an unclosed quote
 in a field a parse error (#347), and its line counter skips the comment
 lines after its last counted newline before it judges a last line without
-a newline (#335; see the `read-csv` facts for all three). The
+a newline (#335; see the `read-csv` facts for all three). Its polars-expr
+carries an upstream fix (the `SortExpr` fact). The
 `polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
 rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 
@@ -570,14 +571,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   would apply it group by group). A dtype expression materialises a dynamic
   dtype, as Int32 or Float64, which keeps it integer-like or not. Every
   division shares one function value, so two equal divisions are `meta-eq?`
-  and CSE merges them; `meta-root-names` and `expr_sort_with_options` read
-  the quotient alone. Polars asks the function's output dtype once while it
-  converts the plan, before any coercion, and asserts a known one
-  (`expr_to_ir.rs`), so a dynamic quotient comes out materialised. A
-  quotient whose operands read no column and each type as a dynamic integer,
-  or one as a dynamic integer and the other as Null, is therefore polars'
-  `floor_div`, Python's `//`, with no function, and keeps that typing beside
-  a column (`(+ (/ (lit 7) (lit 2)) u8)` is UInt8). The Null operand is cast
+  and CSE merges them; `meta-root-names` reads the quotient alone. Polars
+  asks the function's output dtype once while it converts the plan, before
+  any coercion, and asserts a known one (`expr_to_ir.rs`), so a dynamic
+  quotient comes out materialised. A quotient whose operands read no column
+  and each type as a dynamic integer, or one as a dynamic integer and the
+  other as Null, is therefore polars' `floor_div`, Python's `//`, with no
+  function, and keeps that typing beside a column (`(+ (/ (lit 7) (lit 2))
+  u8)` is UInt8). The Null operand is cast
   to the other's dynamic dtype first, as Python's coercion does, since
   0.55's `floor_div` refuses a Null operand that its `/` would coerce, so
   `(+ (/ (lit 7) polars-null) u8)` is UInt8 nulls. One beside a Null column
@@ -859,23 +860,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   `maintain_order='none'`; sort the result when order matters.
 - `pivot` sorts the new columns by value, as Python's `sort_columns=True`; its
   aggregates are Python's (`'sum` of a missing cell is 0, `'count` is `len`).
-- Inside `agg` or `over`, the crate's `SortExpr` reads out of bounds when its
-  input holds one value per group: it gathers each group's row indices from
-  that one value (#167). The read segfaults on a string or a large frame, and
-  Python 1.42.1 segfaults on the same query. `cargo test` builds with debug
-  assertions, where the read is a `check_bounds` panic instead, so a Rust
-  test catches it without needing a crash. So an expression `sort` is
-  decided by the input's structure. An input that is one value per group (an
-  aggregation, `len`, a scalar literal, or an alias, cast, operator or `when`
-  over those alone) comes back unsorted. An input that keeps a value per row
-  (a column or selector, or an alias, cast, sort, operator or `when` with one
-  among its operands) gets `Expr::sort`, because polars evaluates it per group
-  as a column or a list. Anything else, a function of one value per group
-  such as `(abs (sum "v"))` among them, becomes `e.sort_by([e])`.
-  `SortByExpr` repoints such groups at the values before it gathers. This
-  path evaluates the input twice and prints as `sort_by`. A new form goes
-  into the per-row set only after its evaluation in `polars-expr` has been
-  checked.
+- An expression `sort` is `Expr::sort` on every input and prints as
+  `sort`. Inside `agg` or `over`, a sort of one value per group (an
+  aggregation, `len`, a literal) leaves it as it is: the fork carries
+  upstream's fix for 0.55.2's `SortExpr`, which read out of bounds there,
+  as Python 1.42.1's does (pola-rs/polars#30327, #167).
 - `unpivot #:on '()` melts every non-index column, as Python's `on=None`.
 - A column name, a frame's, an expression's or a plan's text and a failure
   reason come back from Rust with any NUL they hold, and print it raw, as
@@ -1455,7 +1444,5 @@ it. Racket side: `define-compat` with `#:c-id`.
   A polars bump, a patch release included, starts a fork branch
   `rkt-polars/<version>` at upstream's release commit, reproduces any
   difference between the crates.io release and that commit, and rebases
-  the old branch's change commits onto it, dropping each one upstream has
-  made (slicing a commented CSV; refusing an unclosed quote and counting an
-  unterminated last line); `rust/Cargo.toml` and the flake's
-  `outputHashes` move to its tip.
+  onto it each of the old branch's change commits upstream has not made;
+  `rust/Cargo.toml` and the flake's `outputHashes` move to its tip.

@@ -431,21 +431,10 @@ total
   Sorts a @tech{dataframe} or @tech{lazyframe} by the column or columns
   @racket[by] (@tt{df.sort}), or a series by its values (@tt{Series.sort}).
   Given an @tech{expression}, or a column name lifted with @racket[col], it
-  builds the expression that sorts that one column (@tt{Expr.sort}). An
-  expression whose form makes it one value, or one per group, comes back
-  unchanged, because sorting it changes nothing. Such a form is an
-  aggregation such as @racket[(sum "v")], a literal, or an operator or
-  @racketidfont{when} over those alone.
-
-  Inside @racket[agg] or @racket[over], Polars' own sort reads out of
-  bounds when its input holds one value per group, and Python crashes on
-  the same query. So @tt{Expr.sort} gets only an input whose form keeps a
-  value per row: a column, or an alias, cast, sort, operator or
-  @racketidfont{when} with one among its operands. Any other expression, a
-  function such as @racket[round] of @racket[(mean "delay")] among them, is
-  sorted by itself with @racket[sort-by] (@tt{Expr.sort_by}), which handles
-  one value per group. It evaluates the expression twice and prints as a
-  @tt{sort_by}.
+  builds the expression that sorts that one column (@tt{Expr.sort}), which
+  prints as a @tt{sort}. Inside @racket[agg] or @racket[over] it sorts each
+  group's values; a sort of one value per group, such as @racket[(sum "v")]
+  or a literal, leaves that value as it is.
 
   Nulls come first, whatever the direction, unless @racket[nulls-last] is
   true; NaN sorts above every other float. For a frame, @racket[descending]
@@ -494,8 +483,9 @@ total
   @racket[by] (@tt{Expr.sort_by}); a column name is lifted with @racket[col]
   in either place. The keywords mean what they mean for a frame
   @racket[sort]: one boolean, or one per key. The result keeps @racket[x]'s
-  length and name. Inside @racket[agg] or @racket[over] it sorts each group,
-  including when @racket[x] is itself group-aware, such as a @racketidfont{shift}.
+  length and name. Inside @racket[agg] or @racket[over] it sorts each
+  group's values, including when @racket[x] is itself computed per group,
+  such as a @racketidfont{shift}.
 
   @examples[#:eval ev
 (define scores
