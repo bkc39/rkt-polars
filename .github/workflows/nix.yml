@@ -115,6 +115,10 @@ jobs:
         if: ${{ !cancelled() }}
         uses: DeterminateSystems/magic-nix-cache-action@v15
 
+      - name: Scripts are executable and report their status
+        if: ${{ !cancelled() }}
+        run: nix shell --inputs-from . nixpkgs#shfmt nixpkgs#jq --command scripts/shell-lint.sh
+
       - name: Staging a native package
         if: ${{ !cancelled() }}
         run: nix develop --command bash scripts/stage-native-package-test.sh

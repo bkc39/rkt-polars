@@ -561,6 +561,25 @@ done
 printf 'x=${#list[@]} y=${x%%%%,*} z=${x//,/ }\nlocal -a list\necho 2>&1; a || b\n' >"$work/bash3-ok.sh"
 bash3_case "bash3 constructs" 0 "$work/bash3-ok.sh"
 bash3_case unreadable 2 "$work/absent.sh"
+test_local_case() {
+  local planted=$1 want=$2 status=0
+  rm -rf "$work/bash3-root"
+  mkdir -p "$work/bash3-root/scripts/release"
+  cp "$here"/*.sh "$work/bash3-root/scripts/release/"
+  cp -R "$root/.github" "$work/bash3-root/"
+  for script in dependency-catalogs docs-check build-so test-build-so test-local; do
+    cp "$root/scripts/$script.sh" "$work/bash3-root/scripts/"
+  done
+  printf '%s\n' "$planted" >>"$work/bash3-root/scripts/test-local.sh"
+  bash "$work/bash3-root/scripts/release/bash3.sh" >"$work/test-local.out" 2>&1 || status=$?
+  if [ "$status" != "$want" ]; then
+    problem "bash3: scripts/test-local.sh with [$planted] exited $status, want $want: $(cat "$work/test-local.out")"
+  elif [ "$want" = 1 ] && ! grep -qF "scripts/test-local.sh:" "$work/test-local.out"; then
+    problem "bash3: [$planted] in scripts/test-local.sh was not named: $(cat "$work/test-local.out")"
+  fi
+}
+test_local_case 'echo ok' 0
+test_local_case "$(printf 'declare -%s seen' A)" 1
 
 workflow="$root/.github/workflows/release.yml"
 grep -qF "needs.plan.outputs.tag != ''" "$workflow" ||

@@ -1228,11 +1228,11 @@ it. Racket side: `define-compat` with `#:c-id`.
 
 ## Verification
 
-- **`nix flake check` is the CI-equivalent** (fifteen checks: cargo tests, the
+- **`nix flake check` is the CI-equivalent** (sixteen checks: cargo tests, the
   Racket build with docs, tests, guide scripts, examples and bench tests,
   `cargo fmt --check`, the Racket version floor, `no-syntax-rule`,
-  `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `grep-gates-test`,
-  `docs-check-test`, `install-native-libs`, `devshell-home`,
+  `no-inline-tests`, `rustls-only`, `no-dynamic-wind`, `shell-lint`,
+  `grep-gates-test`, `docs-check-test`, `install-native-libs`, `devshell-home`,
   `release-toolchain`, the rustc pin, `build-so-darwin`,
   `scripts/test-build-so.sh`'s stub test of `build-so.sh darwin`, and
   `polars-fork`, every polars crate from the fork at one rev).
@@ -1373,7 +1373,15 @@ it. Racket side: `define-compat` with `#:c-id`.
   shell needed; the last exempts the files
   `polars/tests/dynamic-wind-sites.rktd` names, and the read audit in
   `polars/tests/resource.rkt` holds each of its `(file definition reason)`
-  entries to one site), and
+  entries to one site), `scripts/shell-lint.sh` (#332: a push gate, a
+  flake check and a step of CI's Lint job, run under `nix shell
+  --inputs-from . nixpkgs#shfmt nixpkgs#jq`: every file under `scripts/`
+  with a shebang is executable, and in shfmt's syntax tree (`--to-json`) no
+  `if`, `elif`, `while` or `until` whose condition list ends in a negated
+  statement reads `$?` in the first statement of its body, where it is the
+  negation's status, not the command's: `cmd || st=$?` first; a script
+  shfmt cannot parse is a hit too; it exits 1 on a hit, 2 without `shfmt`
+  or `jq` or on a file it cannot list or read), and
   `scripts/resyntax-lint.sh` (dev shell; `fix` applies what it reports).
   The last runs the project's Resyntax suite, `lint/`: the default
   recommendations minus the rules it disables, plus the project's own rules,
@@ -1387,9 +1395,9 @@ it. Racket side: `define-compat` with `#:c-id`.
   no match, and above 1 (a missing directory or file, an unreadable one)
   fails the gate with 2 and says so. `scripts/grep-gates-test.sh` (the
   `grep-gates-test` gate, a push gate and a flake check) runs
-  `no-syntax-rule`, `no-inline-tests`, `rustls-only` and `no-dynamic-wind`
-  on a scratch tree to hold them there, and `dependency-catalogs-test`'s
-  check that `scripts/release/catalog-test.sh` reads its catalogs through
+  `no-syntax-rule`, `no-inline-tests`, `rustls-only`, `no-dynamic-wind`
+  and `shell-lint` on a scratch tree to hold them there, and
+  `dependency-catalogs-test`'s check that `scripts/release/catalog-test.sh` reads its catalogs through
   `release_catalogs` and passes no `--from-config`. `docs-check.sh`'s `scan` fails with
   1, as for any warning, on a log it cannot read or a grep error over the
   rendered manual, and `docs-check-test` plants both.

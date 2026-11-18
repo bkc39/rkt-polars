@@ -374,6 +374,8 @@
           '';
           grepGate = name: script: pkgs.runCommand "rkt-polars-${name}" {
             src = pkgs.lib.cleanSource ./.;
+            # shell-lint, and grep-gates-test, which runs it.
+            nativeBuildInputs = [ pkgs.shfmt pkgs.jq ];
           } ''
             ${pkgs.bash}/bin/bash $src/scripts/${script}
             touch $out
@@ -382,6 +384,7 @@
           no-inline-tests = grepGate "no-inline-tests" "no-inline-tests.sh";
           rustls-only = grepGate "rustls-only" "rustls-only.sh";
           no-dynamic-wind = grepGate "no-dynamic-wind" "no-dynamic-wind.sh";
+          shell-lint = grepGate "shell-lint" "shell-lint.sh";
           grep-gates-test = grepGate "grep-gates-test" "grep-gates-test.sh";
           docs-check-test = pkgs.runCommand "rkt-polars-docs-check-test" {
             src = pkgs.lib.cleanSource ./.;
@@ -471,7 +474,7 @@
             '';
         in
         {
-          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
+          inherit rustfmt racket-version no-syntax-rule no-inline-tests rustls-only no-dynamic-wind shell-lint grep-gates-test docs-check-test install-native-libs devshell-home release-toolchain build-so-darwin polars-fork;
           inherit (self.packages.${system}) rust racket;
         });
 
@@ -495,6 +498,9 @@
               pkgs.stdenv.cc
               # `nix fmt` / the flake's formatter output.
               pkgs.nixfmt-rfc-style
+              # scripts/shell-lint.sh.
+              pkgs.shfmt
+              pkgs.jq
               (python pkgs)
             ];
 

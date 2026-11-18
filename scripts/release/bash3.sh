@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fails on a bash 4 construct in what the macOS release jobs run, whose
-# /bin/bash is 3.2.
+# Fails on a bash 4 construct in what the macOS release jobs run, and in
+# scripts/test-local.sh, which a macOS developer runs: its /bin/bash is 3.2.
 set -uo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -13,6 +13,7 @@ else
   done
   files+=("$root/scripts/dependency-catalogs.sh" "$root/scripts/docs-check.sh"
     "$root/scripts/build-so.sh" "$root/scripts/test-build-so.sh"
+    "$root/scripts/test-local.sh"
     "$root/.github/workflows/release.yml" "$root/.github/workflows/catalog.yml"
     "$root/.github/actions/install-racket/action.yml")
 fi
