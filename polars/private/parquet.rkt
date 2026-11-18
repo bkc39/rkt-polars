@@ -42,14 +42,10 @@
 (define parquet-compression/c (symbols/c 'parquet-compression/c compression-codes))
 (define parquet-statistic/c (symbols/c 'parquet-statistic/c statistic-bits))
 
-(define (complete-statistics? names)
-  (or (null? names)
-      (and (memq 'min names) (memq 'max names) (memq 'null-count names) #t)))
-
 (define parquet-statistics/c
   (flat-named-contract
    'parquet-statistics/c
-   (or/c boolean? 'full (and/c (listof parquet-statistic/c) complete-statistics?))))
+   (or/c boolean? 'full (listof parquet-statistic/c))))
 
 (define (code table v) (cdr (assq v table)))
 

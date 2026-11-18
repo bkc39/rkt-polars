@@ -17,6 +17,7 @@
                     dataframe-read-parquet dataframe-write-parquet dataframe-write-parquet/raw
                     lazyframe-scan-parquet make-CompatParquetWriteOptions)
            (only-in polars/private/io-contracts size-max)
+           (only-in polars/private/json dataframe-read-json)
            (only-in polars/tests/test-helpers
                     apply-keywords contract-violation-of drops-once explain-failure
                     keyword-rejected? message-of scratch-file))
@@ -133,9 +134,11 @@
   (define kept (build-path kept-dir "kept.parquet"))
   (dataframe-write-parquet cities kept)
   (define kept-bytes (file->bytes kept))
-  (define floats (dataframe-new (list (series-new-f64 "f" '(1.5 2.5 3.5)))))
-  (define min-max-only (make-CompatParquetWriteOptions 5 #f 3 #f #f 0 0 0))
-  (check-equal? (dataframe-write-parquet/raw floats (path->string kept) min-max-only) 4)
+  (define hollow
+    (dataframe-read-json (scratch-file scratch "hollow.json" "[{\"s\": {}}, {\"s\": {}}]")))
+  (check-equal? (dataframe-write-parquet/raw hollow (path->string kept)
+                                             (make-CompatParquetWriteOptions 5 #f 15 #f #f 0 0 0))
+                4)
   (check-equal? (file->bytes kept) kept-bytes)
   (check-equal? (directory-list kept-dir) (list (string->path "kept.parquet")))
   (define junk (scratch-file scratch "junk.bin" "this is not parquet"))
@@ -226,10 +229,7 @@
                    '((#:compression-level . 3.0)) '((#:compression-level . "3"))
                    '((#:compression . 5) (#:compression-level . 3))
                    '((#:statistics . partial)) '((#:statistics . (min bogus)))
-                   '((#:statistics . (min))) '((#:statistics . (min null-count)))
-                   '((#:statistics . (null-count))) '((#:statistics . (max null-count)))
-                   '((#:statistics . (distinct-count null-count)))
-                   '((#:statistics . (min max))) '((#:statistics . (min max distinct-count)))
+                   '((#:statistics . min)) '((#:statistics . ("min" "max")))
                    '((#:row-group-size . -1)) '((#:data-page-size . 1.5))
                    `((#:row-group-size . ,(add1 size-max)))
                    `((#:data-page-size . ,(add1 size-max))))])
@@ -237,6 +237,9 @@
                (lambda () (apply-keywords contracted:dataframe-write-parquet kvs
                                           numbers (in-scratch "never.parquet")))
                (format "~s" kvs)))
+  (contracted:dataframe-write-parquet numbers (in-scratch "min-max.parquet") #:statistics '(min max))
+  (check-equal? (frame-values (dataframe-read-parquet (in-scratch "min-max.parquet")))
+                (frame-values numbers))
   (check-regexp-match
    #rx"^dataframe-write-parquet: contract violation\n  #:compression-level 0 is outside zstd's levels, 1 to 22\n"
    (message-of (lambda () (contracted:dataframe-write-parquet numbers (in-scratch "never.parquet")

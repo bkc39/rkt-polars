@@ -74,9 +74,9 @@ returns too many rows. In polars-io, the CSV reader makes an unclosed quote
 in a field a parse error (#347), and its line counter skips the comment
 lines after its last counted newline before it judges a last line without
 a newline (#335; see the `read-csv` facts for all three). Its polars-expr
-carries an upstream fix (the `SortExpr` fact). The
-`polars-fork` flake check holds `Cargo.toml` and `Cargo.lock` to the one
-rev, and `polars/native-libs/BUILDING.md` has the mechanics.
+and polars-parquet carry upstream fixes (the `SortExpr` and `write-parquet`
+facts). The `polars-fork` flake check holds `Cargo.toml` and `Cargo.lock`
+to the one rev, and `polars/native-libs/BUILDING.md` has the mechanics.
 
 The published package is the **`polars/` subdirectory** (the catalog source is
 this repo with `?path=polars`). Package metadata lives in `polars/info.rkt`,
@@ -838,11 +838,11 @@ it. Racket side: `define-compat` with `#:c-id`.
   the frame into equal parts); by default its groups are about 512² rows,
   the sink's about 122,880. The frames read back are the same. As in
   Python, `#:row-group-size 0` is the default and a codec without levels
-  ignores `#:compression-level`. Stricter than Python, a non-empty
-  `#:statistics` list must name `'min`, `'max` and `'null-count`: without
-  min and max polars writes a page index that marks pages holding values as
-  null pages (#203), and without the null count it fails at the footer on a
-  column it does not dictionary-encode.
+  ignores `#:compression-level`. As in Python, `#:statistics` takes any
+  list of `'min`, `'max`, `'null-count` and `'distinct-count`; the page
+  index needs min and max, and null counts are written only with
+  `'null-count`. The fork carries upstream's Parquet statistics fixes
+  (pola-rs/polars#29868, #29140, #29364; #203).
 - The Parquet verbs report under the verb's own name (`read-parquet:`),
   the low-level bindings under theirs (#153). The C surface is the three
   `_with_options` entries (the read and the scan `_v2`); Rust tests reach

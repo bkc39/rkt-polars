@@ -1226,10 +1226,10 @@ stations
   @racket[parquet-statistics/c], writes each column chunk's minimum, maximum
   and null count by default; @racket[#f] writes none, @racket['full] also
   writes the distinct count (for boolean columns), and a list names the ones
-  to write: @racket['min], @racket['max] and @racket['null-count], plus
-  @racket['distinct-count] if wanted. @racket[row-group-size] puts that many
-  rows in each row group, the last taking the rest; by default, or with
-  @racket[0], Polars picks it. @racket[data-page-size] sets the bytes a data
+  to write, any of @racket['min], @racket['max], @racket['null-count] and
+  @racket['distinct-count]. @racket[row-group-size] puts that many rows in
+  each row group, the last taking the rest; by default, or with @racket[0],
+  Polars picks it. @racket[data-page-size] sets the bytes a data
   page aims for (default 1 MiB). A datetime's time zone is kept in the
   column's type. It replaces a file as @racket[write-csv] does. API gaps: @tt{partition_by}, @tt{metadata}, @tt{mkdir}.
 
@@ -1240,8 +1240,10 @@ stations
 (write-parquet produce out #:compression 'lz4 #:row-group-size 2
                #:statistics '(min max null-count distinct-count) #:data-page-size 4096)
 (read-parquet out)
+(write-parquet produce out #:statistics '(null-count))
+(read-parquet out)
 (eval:error (write-parquet produce out #:compression-level 30))
-(eval:error (write-parquet produce out #:statistics '(null-count)))
+(eval:error (write-parquet produce out #:statistics '(min median)))
 (eval:error (write-parquet produce "/no/such/dir/out.parquet"))]}
 
 @deftogether[(@defproc/arguments[json-arguments (read-json [path path-string?] dataframe?)]

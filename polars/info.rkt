@@ -6,7 +6,7 @@
 
 (define name "polars")
 
-(define native-version "0.3")
+(define native-version "0.3.1")
 (define deps
   `("base" "gregor-lib" "threading-lib"
     ("polars-x86_64-linux" #:platform "x86_64-linux" #:version ,native-version)
@@ -20,7 +20,7 @@
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
-(define version "0.3")
+(define version "0.3.1")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 
