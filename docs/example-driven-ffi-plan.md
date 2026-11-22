@@ -9,6 +9,10 @@ APIs are filled out, and the Expr / LazyFrame DSL has been built up
 through Phase A10 (see "Continuing in a new session" below for what's
 shipped vs. queued).
 
+The two lists below are the surface of the private modules
+(`polars/private/foreign.rkt` and its siblings), not `polars/ffi`'s,
+which exports the smaller set the reference documents.
+
 Series surface (Racket-side names):
 - Lifecycle: `series-empty`, `series-drop`
 - Metadata: `series-name`, `series-rename`, `series-len`, `series-null-count`, `series-dtype`

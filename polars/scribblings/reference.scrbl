@@ -3141,7 +3141,7 @@ temps
       (ref "v")))
 (eval:error (series-quantile nested 0.5))]}
 
-@defproc[(series-cast [s Series-ptr?] [dtype dtype-spec?]) Series-ptr?]{
+@defproc[(series-cast [s Series-ptr?] [dtype (or/c dtype-spec? 'binary 'duration)]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical
   dtype symbol (@racket['int8] through @racket['int64], @racket['uint8] through
   @racket['uint64], @racket['float32], @racket['float64], @racket['boolean],

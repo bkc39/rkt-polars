@@ -14,6 +14,7 @@
   (define-runtime-path collection-dir "..")
   (define-runtime-path package-dir "../..")
   (define-runtime-path manual-path "../scribblings/polars.scrbl")
+  (define-runtime-path reference-path "../scribblings/reference.scrbl")
 
   (test-case "the collection's version is valid and the repository root's matches it"
     (define polars-version ((get-info/full collection-dir) 'version))
@@ -198,4 +199,40 @@
                                                (list->seteq foreign-re-exports)))))
 
   (test-case "every export of polars/ffi has its entry and every entry its export"
-    (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports)))
+    (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports))
+
+  (define (documented-contract forms name arg)
+    (let find ([form forms])
+      (match form
+        [(list 'defproc (list (== name) formals ...) _ ...)
+         (for/or ([formal (in-list formals)])
+           (match formal
+             [(list (== arg) contract _ ...) contract]
+             [_ #f]))]
+        [(cons first rest) (or (find first) (find rest))]
+        [_ #f])))
+
+  (define cast-namespace
+    (parameterize ([current-namespace (make-base-empty-namespace)])
+      (namespace-require '(only racket/base #%app #%datum quote))
+      (namespace-require 'racket/contract/base)
+      (namespace-require 'polars)
+      (namespace-require '(only polars/ffi series-cast series-new-null))
+      (current-namespace)))
+
+  (test-case "series-cast's and cast's entries take the dtypes series-cast takes"
+    (define reference (read-manual reference-path))
+    (define (series-cast-takes? dtype)
+      (parameterize ([current-namespace cast-namespace])
+        (with-handlers ([exn:fail? (lambda (_) #f)])
+          (eval `(series-cast (series-new-null "s" 1) ',dtype))
+          #t)))
+    (for* ([verb (in-list '(series-cast cast))]
+           [dtype (in-list '(binary duration datetime f64 float64 categorical null
+                             (datetime milliseconds) (duration nanoseconds)
+                             (datetime microseconds "UTC") (enum a b) nope
+                             (datetime seconds)))])
+      (define documented
+        (parameterize ([current-namespace cast-namespace])
+          (eval `(flat-contract-predicate ,(documented-contract reference verb 'dtype)))))
+      (check-equal? (documented dtype) (series-cast-takes? dtype) (format "~a ~s" verb dtype)))))
