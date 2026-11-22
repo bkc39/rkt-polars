@@ -106,10 +106,9 @@ roughly daily, not on each merge.
    `series-ref-<type>/raw` readers, which carry an index contract and which
    `series-ref` reads through unchecked.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
-   `expr-str->date`: one binding per operation and dtype. Not the surface
-   users write. The public module `polars/ffi` (`polars/ffi.rkt`) exports
-   those the reference's `Low-level API` section documents, under
-   `@defmodule[polars/ffi]`; no `/raw`, `/c` or `polars:` name is exported.
+   `expr-str->date`: one binding per operation and dtype. Those the
+   reference's `Low-level API` section documents are exported, by the public
+   module `polars/ffi` (`polars/ffi.rkt`), but not the surface users write.
 3. **Generic / fluent** — `polars/private/generic/*.rkt`, aggregated by
    `generic.rkt`, re-exported by `main.rkt`. This is the surface: `series` and
    `dataframe` wrapper structs with `prop:custom-write`, and verbs that

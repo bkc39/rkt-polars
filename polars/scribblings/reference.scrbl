@@ -74,7 +74,9 @@ argument, so it chains with thread-first @racket[~>] (re-provided from
 A @racket[utf-8-name/c] in a signature below is a column name, or for a
 @racket[#:format] a format: a string, or a
 byte string or path whose bytes are UTF-8. Any other byte string or path is a
-contract error. A @racket[utf-8-names/c] is a list of them.
+contract error. A @racket[utf-8-names/c] is a list of them. A
+@racket[col-expr/c] is @racket[(or/c Expr-ptr? string?)]: an expression, or
+a column name, which the verb lifts with @racket[col].
 
 @defproc[(Expr-ptr? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is an @tech{expression}.}
@@ -248,9 +250,9 @@ threshold
 (eval:error (filter (dataframe (list (series '(1 3) #:name "v"))) threshold))
 (eval:error (expr-drop threshold))]}
 
-@deftogether[(@defproc[(meta-output-name [e (or/c Expr-ptr? string?)]) string?]
-              @defproc[(meta-root-names [e (or/c Expr-ptr? string?)]) (listof string?)]
-              @defproc[(meta-eq? [a (or/c Expr-ptr? string?)] [b (or/c Expr-ptr? string?)]) boolean?])]{
+@deftogether[(@defproc[(meta-output-name [e col-expr/c]) string?]
+              @defproc[(meta-root-names [e col-expr/c]) (listof string?)]
+              @defproc[(meta-eq? [a col-expr/c] [b col-expr/c]) boolean?])]{
   Polars' @tt{.meta} namespace: what an expression will do, read off the plan
   without running it. @racket[meta-output-name] is the column the expression
   produces --- the alias if it has one, else its first column, else
@@ -339,14 +341,13 @@ total
               @defproc[(then [pending any/c] [value any/c]) any/c]
               @defproc[(else-when [chain any/c] [condition any/c]) any/c]
               @defproc[(otherwise [chain any/c] [default any/c]) Expr-ptr?])]{
-  A conditional expression (Python's @tt{pl.when(...).then(...).otherwise(...)}),
-  built by threading: @racket[(when condition)] starts a branch,
-  @racket[then] gives its value, @racket[else-when] starts another, and
-  @racket[otherwise] gives the value where no condition holds and returns the
-  expression. A condition and a value are lifted with @racket[lit], so a
-  string is a literal, not a column. Given a body, @racket[when] is
-  @racketmodname[racket/base]'s. Each step names itself when it is given
-  something other than the step before it.
+  A conditional expression built by threading: @racket[(when condition)]
+  starts a branch, @racket[then] gives its value, @racket[else-when] starts
+  another, and @racket[otherwise] gives the value where no condition holds
+  and returns the expression. A condition and a value are lifted with
+  @racket[lit], so a string is a literal, not a column. Given a body,
+  @racket[when] is @racketmodname[racket/base]'s. Out of order, a step raises
+  under its own name.
 
   @examples[#:eval ev
 (define climate (dataframe (list (series '(-5 12 31) #:name "c"))))
@@ -442,7 +443,7 @@ total
                   [#:descending descending boolean? #f]
                   [#:nulls-last nulls-last boolean? #f])
             series?]
-           [(sort [e (or/c Expr-ptr? string?)]
+           [(sort [e col-expr/c]
                   [#:descending descending boolean? #f]
                   [#:nulls-last nulls-last boolean? #f])
             Expr-ptr?]
@@ -496,8 +497,8 @@ total
 (sort '((a . 1) (b . 2) (c . 1)) < #:key cdr #:descending #t)
 (eval:error (sort '(3 1 2) < #:nulls-last #t))]}
 
-@defproc[(sort-by [x (or/c Expr-ptr? string?)]
-                  [#:by by (or/c Expr-ptr? string? (non-empty-listof (or/c Expr-ptr? string?)))]
+@defproc[(sort-by [x col-expr/c]
+                  [#:by by (or/c col-expr/c (non-empty-listof col-expr/c))]
                   [#:descending descending (or/c boolean? (listof boolean?)) #f]
                   [#:nulls-last nulls-last (or/c boolean? (listof boolean?)) #f]
                   [#:maintain-order maintain-order boolean? #f])
@@ -684,8 +685,8 @@ far-zoned
 (eval:error (unique '(1 1 2)))]}
 
 @defproc[(reverse [x (or/c series? Expr-ptr? list?)]) (or/c series? Expr-ptr? list?)]{
-  The values of a series or an expression in reverse order (@tt{.reverse}),
-  or, on a list, @racketmodname[racket/base]'s @racket[reverse]. A column
+  The values of a series or an expression in reverse order, or,
+  on a list, @racketmodname[racket/base]'s @racket[reverse]. A column
   name is not lifted: write @racket[(col name)].
 
   @examples[#:eval ev
@@ -1466,7 +1467,7 @@ stations
     (group-by "k")
     (agg (alias (sum "v") "total")))]}
 
-@defproc[(over [e (or/c Expr-ptr? string?)] [key (or/c Expr-ptr? string?)] ...+) Expr-ptr?]{
+@defproc[(over [e col-expr/c] [key col-expr/c] ...+) Expr-ptr?]{
   A window function (@tt{Expr.over}): @racket[e] is computed within each
   group of the @racket[key]s — column names or expressions, as
   @racket[group-by] takes them — and broadcast back onto the group's rows
@@ -1491,12 +1492,12 @@ stations
                       (~> (col "v") max (over (> (col "v") 1)) (alias "band_max"))))
 (eval:error (over (col "v")))]}
 
-@deftogether[(@defproc[(rank [x (or/c Expr-ptr? string?)]
+@deftogether[(@defproc[(rank [x col-expr/c]
                              [#:method method (or/c 'average 'min 'max 'dense 'ordinal) 'average]
                              [#:descending descending boolean? #f]
                              [#:seed seed (or/c uint64/c #f) #f])
                        Expr-ptr?]
-              @defproc[(gather [x (or/c Expr-ptr? string?)]
+              @defproc[(gather [x col-expr/c]
                                [indices (or/c Expr-ptr? series?
                                               (listof (or/c int64/c polars-null?)))])
                        Expr-ptr?])]{
@@ -1519,11 +1520,11 @@ stations
 (~> scores (select (gather "score" (list 0 polars-null))))
 (eval:error (rank "score" #:method 'first))]}
 
-@deftogether[(@defproc[(shift [x (or/c Expr-ptr? string?)]
+@deftogether[(@defproc[(shift [x col-expr/c]
                               [#:n n int64/c 1]
                               [#:fill-value fill-value any/c #f])
                        Expr-ptr?]
-              @defproc[(diff [x (or/c Expr-ptr? string?)]
+              @defproc[(diff [x col-expr/c]
                              [#:n n int64/c 1]
                              [#:null-behavior null-behavior (or/c 'ignore 'drop) 'ignore])
                        Expr-ptr?])]{
@@ -1542,15 +1543,14 @@ stations
 (select steps (diff "v" #:null-behavior 'drop))
 (eval:error (shift "v" #:n (expt 2 63)))]}
 
-@deftogether[(@defproc[(cum-sum [x (or/c Expr-ptr? string?)] [#:reverse reverse any/c #f]) Expr-ptr?]
-              @defproc[(cum-prod [x (or/c Expr-ptr? string?)] [#:reverse reverse any/c #f]) Expr-ptr?]
-              @defproc[(cum-min [x (or/c Expr-ptr? string?)] [#:reverse reverse any/c #f]) Expr-ptr?]
-              @defproc[(cum-max [x (or/c Expr-ptr? string?)] [#:reverse reverse any/c #f]) Expr-ptr?]
-              @defproc[(cum-count [x (or/c Expr-ptr? string?)] [#:reverse reverse any/c #f])
+@deftogether[(@defproc[(cum-sum [x col-expr/c] [#:reverse reverse any/c #f]) Expr-ptr?]
+              @defproc[(cum-prod [x col-expr/c] [#:reverse reverse any/c #f]) Expr-ptr?]
+              @defproc[(cum-min [x col-expr/c] [#:reverse reverse any/c #f]) Expr-ptr?]
+              @defproc[(cum-max [x col-expr/c] [#:reverse reverse any/c #f]) Expr-ptr?]
+              @defproc[(cum-count [x col-expr/c] [#:reverse reverse any/c #f])
                        Expr-ptr?])]{
-  Running sums, products, minima, maxima and counts of the non-null values
-  (@tt{.cum_sum} and its kin), from the last row back when @racket[reverse]
-  is true. A null row stays null, except in @racket[cum-count], which gives
+  Running sums, products, minima, maxima and counts of the non-null values,
+  from the last row back when @racket[reverse] is true. A null row stays null, except in @racket[cum-count], which gives
   the count so far.
 
   @examples[#:eval ev
@@ -1562,10 +1562,10 @@ stations
 (select tally (cum-sum "n" #:reverse #t))
 (eval:error (cum-sum 'n))]}
 
-@deftogether[(@defproc[(forward-fill [x (or/c Expr-ptr? string?)]
+@deftogether[(@defproc[(forward-fill [x col-expr/c]
                                      [#:limit limit (or/c uint32/c #f) #f])
                        Expr-ptr?]
-              @defproc[(backward-fill [x (or/c Expr-ptr? string?)]
+              @defproc[(backward-fill [x col-expr/c]
                                       [#:limit limit (or/c uint32/c #f) #f])
                        Expr-ptr?])]{
   Each null takes the nearest non-null value before it (@tt{.forward_fill})
@@ -1580,19 +1580,17 @@ stations
         (alias (backward-fill "v") "backward"))
 (eval:error (forward-fill "v" #:limit -1))]}
 
-@deftogether[(@defproc[(is-null [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-not-null [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-nan [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-not-nan [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-finite [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-infinite [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(fill-null [x (or/c Expr-ptr? string?)] [value any/c]) Expr-ptr?]
-              @defproc[(fill-nan [x (or/c Expr-ptr? string?)] [value any/c]) Expr-ptr?]
-              @defproc[(drop-nans [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
-  Null and NaN tests (@tt{.is_null}, @tt{.is_nan}, @tt{.is_finite} and
-  their kin), replacement of each null or NaN with @racket[value], lifted by
-  @racket[lit] (@tt{.fill_null}, @tt{.fill_nan}), and removal of the NaNs
-  (@tt{.drop_nans}). A NaN is not a null: the NaN tests give null on a null,
+@deftogether[(@defproc[(is-null [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-not-null [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-nan [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-not-nan [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-finite [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-infinite [x col-expr/c]) Expr-ptr?]
+              @defproc[(fill-null [x col-expr/c] [value any/c]) Expr-ptr?]
+              @defproc[(fill-nan [x col-expr/c] [value any/c]) Expr-ptr?]
+              @defproc[(drop-nans [x col-expr/c]) Expr-ptr?])]{
+  Null and NaN tests, replacement of each null or NaN with @racket[value],
+  lifted by @racket[lit], and removal of the NaNs. A NaN is not a null: the NaN tests give null on a null,
   @racket[fill-nan] keeps it and @racket[drop-nans] keeps its row.
 
   @examples[#:eval ev
@@ -1650,7 +1648,7 @@ stations
                             [#:ddof ddof uint8/c 1]) any/c]
               @defproc[(var [x (or/c series? string? Expr-ptr?)]
                             [#:ddof ddof uint8/c 1]) any/c]
-              @defproc[(alias [e (or/c Expr-ptr? string?)] [name string?]) Expr-ptr?])]{
+              @defproc[(alias [e col-expr/c] [name string?]) Expr-ptr?])]{
   Aggregation-expression builders for use inside @racket[agg], alongside the
   expression arms of @racket[sum], @racket[mean], @racket[min] and @racket[max].
   Each accepts an expression or a bare column-name string (lifted with
@@ -1690,7 +1688,7 @@ stations
   program is unaffected, because @racketmodname[racket/base] does not export
   these names. See @secref["fluent-shadowing"] for how to take control.}
 
-@deftogether[(@defproc[(pow [x (or/c Expr-ptr? string?)] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
+@deftogether[(@defproc[(pow [x col-expr/c] [exponent (or/c Expr-ptr? real?)]) Expr-ptr?]
               @defproc[(round [x (or/c Expr-ptr? string? number?)]
                               [#:decimals decimals uint32/c 0]) any/c])]{
   Element-wise power (@tt{**}) and rounding to @racket[#:decimals] places
@@ -1707,7 +1705,7 @@ stations
 (round 1234 #:decimals -2)
 (eval:error (round "x" #:decimals -1))]}
 
-@defproc[(sign [x (or/c Expr-ptr? string?)]) Expr-ptr?]{
+@defproc[(sign [x col-expr/c]) Expr-ptr?]{
   The sign of each element (@tt{.sign}): @racket[-1], @racket[0] or
   @racket[1] in the column's own dtype, so a float column gives
   @racket[-1.0], @racket[0.0] and @racket[1.0].
@@ -1723,17 +1721,16 @@ stations
               @defproc[(log [x (or/c Expr-ptr? string? number?)]
                             [#:base base (or/c #f (and/c real? positive?)) #f])
                        any/c]
-              @defproc[(ceil [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(log1p [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(clip [x (or/c Expr-ptr? string?)]
+              @defproc[(ceil [x col-expr/c]) Expr-ptr?]
+              @defproc[(log1p [x col-expr/c]) Expr-ptr?]
+              @defproc[(clip [x col-expr/c]
                              [#:lower lower any/c #f]
                              [#:upper upper any/c #f])
                        Expr-ptr?])]{
   Element-wise absolute value, square root, exponential, floor, logarithm
   (natural, or to @racket[base]), ceiling, @tt{log(1 + x)} and clamping to
-  @racket[lower] and @racket[upper], either of which may be left out
-  (@tt{.abs}, @tt{.sqrt}, @tt{.exp}, @tt{.floor}, @tt{.log}, @tt{.ceil},
-  @tt{.log1p}, @tt{.clip}). On a plain number @racket[abs], @racket[sqrt],
+  @racket[lower] and @racket[upper], either of which may be left out. On a
+  plain number @racket[abs], @racket[sqrt],
   @racket[exp], @racket[floor] and @racket[log] are
   @racketmodname[racket/base]'s; see @secref["fluent-shadowing"].
 
@@ -1748,10 +1745,10 @@ stations
 (list (abs -3) (sqrt 16) (floor 2.5) (log 8 #:base 2))
 (eval:error (ceil 2.5))]}
 
-@deftogether[(@defproc[(is-between [x (or/c Expr-ptr? string?)] [lower any/c] [upper any/c]
+@deftogether[(@defproc[(is-between [x col-expr/c] [lower any/c] [upper any/c]
                                    [#:closed closed (or/c 'both 'left 'right 'none) 'both])
                        Expr-ptr?]
-              @defproc[(is-in [x (or/c Expr-ptr? string?)] [rhs (or/c list? series? Expr-ptr?)])
+              @defproc[(is-in [x col-expr/c] [rhs (or/c list? series? Expr-ptr?)])
                        Expr-ptr?])]{
   Range and membership predicates (@tt{.is_between}, @tt{.is_in}). Bounds are
   lifted with @racket[lit], so gregor dates and datetimes bound a temporal
@@ -1784,13 +1781,12 @@ stations
 (eval:error (~> gappy (select (is-in "x" (list 1 2.5)))))
 (~> gappy (select (is-between "x" 2 5)))]}
 
-@deftogether[(@defproc[(is-unique [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-duplicated [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-first-distinct [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(is-last-distinct [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
+@deftogether[(@defproc[(is-unique [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-duplicated [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-first-distinct [x col-expr/c]) Expr-ptr?]
+              @defproc[(is-last-distinct [x col-expr/c]) Expr-ptr?])]{
   Whether each value occurs once, more than once, for the first time or for
-  the last time (@tt{.is_unique}, @tt{.is_duplicated},
-  @tt{.is_first_distinct}, @tt{.is_last_distinct}).
+  the last time.
 
   @examples[#:eval ev
 (define visits (dataframe (list (series '("a" "b" "a" "c") #:name "who"))))
@@ -1799,23 +1795,23 @@ stations
         (alias (is-first-distinct "who") "first") (alias (is-last-distinct "who") "last"))
 (eval:error (is-unique 3))]}
 
-@deftogether[(@defproc[(dt-year   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-month  [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-day    [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-hour   [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-minute [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-second [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-millisecond [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-microsecond [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-nanosecond [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-iso-year [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-quarter [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-week [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-weekday [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-ordinal-day [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-is-leap-year [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-date [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(dt-time [x (or/c Expr-ptr? string?)]) Expr-ptr?])]{
+@deftogether[(@defproc[(dt-year   [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-month  [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-day    [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-hour   [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-minute [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-second [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-millisecond [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-microsecond [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-nanosecond [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-iso-year [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-quarter [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-week [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-weekday [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-ordinal-day [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-is-leap-year [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-date [x col-expr/c]) Expr-ptr?]
+              @defproc[(dt-time [x col-expr/c]) Expr-ptr?])]{
   Temporal component accessors on a date or datetime column (@tt{.dt.year()}
   and friends): the calendar and clock fields, the fraction of the second in
   milli-, micro- or nanoseconds, the ISO year and week, the quarter, the ISO
@@ -1839,18 +1835,17 @@ stations
         (alias (dt-ordinal-day "t") "ordinal-day") (alias (dt-is-leap-year "t") "leap"))
 (eval:error (dt-year 2024))]}
 
-@deftogether[(@defproc[(dt-timestamp [x (or/c Expr-ptr? string?)]
+@deftogether[(@defproc[(dt-timestamp [x col-expr/c]
                                      [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds)
                                       'microseconds])
                        Expr-ptr?]
-              @defproc[(dt-strftime [x (or/c Expr-ptr? string?)] [format utf-8-name/c]) Expr-ptr?]
-              @defproc[(dt-truncate [x (or/c Expr-ptr? string?)] [every (or/c Expr-ptr? string?)])
+              @defproc[(dt-strftime [x col-expr/c] [format utf-8-name/c]) Expr-ptr?]
+              @defproc[(dt-truncate [x col-expr/c] [every (or/c Expr-ptr? string?)])
                        Expr-ptr?])]{
-  The instant as an integer count of @racket[unit]s since the Unix epoch
-  (@tt{.dt.timestamp}), the value formatted by a chrono @tt{strftime}
-  @racket[format] (@tt{.dt.strftime}), and the value truncated to a multiple
-  of the duration @racket[every], such as @racket["1h"] or @racket["15m"]
-  (@tt{.dt.truncate}).
+  The instant as an integer count of @racket[unit]s since the Unix epoch,
+  the value formatted by a chrono @tt{strftime} @racket[format], and the
+  value truncated to a multiple of the duration @racket[every], such as
+  @racket["1h"] or @racket["15m"].
 
   @examples[#:eval ev
 (select stamps
@@ -1859,7 +1854,7 @@ stations
         (alias (dt-truncate "t" "1h") "hour"))
 (eval:error (dt-timestamp "t" #:unit 'seconds))]}
 
-@defproc[(str-slice [x (or/c Expr-ptr? string?)]
+@defproc[(str-slice [x col-expr/c]
                     [offset (or/c Expr-ptr? int64/c)]
                     [length (or/c #f polars-null? Expr-ptr? nonnegative-int64/c) #f])
          Expr-ptr?]{
@@ -1877,16 +1872,14 @@ stations
         (alias (str-slice "s" 0 (col "n")) "by_col"))
 (eval:error (str-slice "s" 0 -1))]}
 
-@deftogether[(@defproc[(str-to-lowercase [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(str-to-uppercase [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(str-len-bytes [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(str-len-chars [x (or/c Expr-ptr? string?)]) Expr-ptr?]
-              @defproc[(str-head [x (or/c Expr-ptr? string?)] [n any/c]) Expr-ptr?]
-              @defproc[(str-tail [x (or/c Expr-ptr? string?)] [n any/c]) Expr-ptr?])]{
-  Case conversion (@tt{.str.to_lowercase}, @tt{.str.to_uppercase}), the
-  length in UTF-8 bytes or in characters (@tt{.str.len_bytes},
-  @tt{.str.len_chars}), and the first or last @racket[n] characters
-  (@tt{.str.head}, @tt{.str.tail}), @racket[n] lifted by @racket[lit].
+@deftogether[(@defproc[(str-to-lowercase [x col-expr/c]) Expr-ptr?]
+              @defproc[(str-to-uppercase [x col-expr/c]) Expr-ptr?]
+              @defproc[(str-len-bytes [x col-expr/c]) Expr-ptr?]
+              @defproc[(str-len-chars [x col-expr/c]) Expr-ptr?]
+              @defproc[(str-head [x col-expr/c] [n any/c]) Expr-ptr?]
+              @defproc[(str-tail [x col-expr/c] [n any/c]) Expr-ptr?])]{
+  Case conversion, the length in UTF-8 bytes or in characters, and the
+  first or last @racket[n] characters, @racket[n] lifted by @racket[lit].
 
   @examples[#:eval ev
 (define people
@@ -1897,22 +1890,21 @@ stations
 (select people (alias (str-head "who" 3) "head") (alias (str-tail "who" 3) "tail"))
 (eval:error (str-to-lowercase 'who))]}
 
-@deftogether[(@defproc[(str-contains [x (or/c Expr-ptr? string?)] [pattern any/c]) Expr-ptr?]
-              @defproc[(str-starts-with [x (or/c Expr-ptr? string?)] [prefix any/c]) Expr-ptr?]
-              @defproc[(str-ends-with [x (or/c Expr-ptr? string?)] [suffix any/c]) Expr-ptr?]
-              @defproc[(str-find [x (or/c Expr-ptr? string?)] [pattern any/c]
+@deftogether[(@defproc[(str-contains [x col-expr/c] [pattern any/c]) Expr-ptr?]
+              @defproc[(str-starts-with [x col-expr/c] [prefix any/c]) Expr-ptr?]
+              @defproc[(str-ends-with [x col-expr/c] [suffix any/c]) Expr-ptr?]
+              @defproc[(str-find [x col-expr/c] [pattern any/c]
                                  [#:strict strict any/c #t])
                        Expr-ptr?]
-              @defproc[(str-find-literal [x (or/c Expr-ptr? string?)] [substring any/c])
+              @defproc[(str-find-literal [x col-expr/c] [substring any/c])
                        Expr-ptr?]
-              @defproc[(str-count-matches [x (or/c Expr-ptr? string?)] [pattern any/c]
+              @defproc[(str-count-matches [x col-expr/c] [pattern any/c]
                                           [#:literal literal any/c #f])
                        Expr-ptr?])]{
-  Whether each value matches the regular expression @racket[pattern]
-  (@tt{.str.contains}), starts with @racket[prefix] or ends with
-  @racket[suffix]; the byte offset of the first match of @racket[pattern] or
-  of @racket[substring], or null where there is none (@tt{.str.find}); and
-  the number of matches (@tt{.str.count_matches}), of @racket[pattern] read
+  Whether each value matches the regular expression @racket[pattern],
+  starts with @racket[prefix] or ends with @racket[suffix]; the byte offset
+  of the first match of @racket[pattern] or of @racket[substring], or null
+  where there is none; and the number of matches, of @racket[pattern] read
   literally when @racket[literal] is true. Each argument is lifted by
   @racket[lit]. A @racket[pattern] that is not a valid regular expression
   raises when the plan runs, or, under @racket[#:strict #f], gives null.
@@ -1926,21 +1918,19 @@ stations
 (select people (str-find "who" "(" #:strict #f))
 (eval:error (select people (str-find "who" "(")))]}
 
-@deftogether[(@defproc[(str-strip-chars [x (or/c Expr-ptr? string?)] [chars any/c #f]) Expr-ptr?]
-              @defproc[(str-strip-prefix [x (or/c Expr-ptr? string?)] [prefix any/c]) Expr-ptr?]
-              @defproc[(str-strip-suffix [x (or/c Expr-ptr? string?)] [suffix any/c]) Expr-ptr?]
-              @defproc[(str-replace [x (or/c Expr-ptr? string?)] [pattern any/c] [value any/c]
+@deftogether[(@defproc[(str-strip-chars [x col-expr/c] [chars any/c #f]) Expr-ptr?]
+              @defproc[(str-strip-prefix [x col-expr/c] [prefix any/c]) Expr-ptr?]
+              @defproc[(str-strip-suffix [x col-expr/c] [suffix any/c]) Expr-ptr?]
+              @defproc[(str-replace [x col-expr/c] [pattern any/c] [value any/c]
                                     [#:literal literal any/c #f])
                        Expr-ptr?]
-              @defproc[(str-replace-all [x (or/c Expr-ptr? string?)] [pattern any/c] [value any/c]
+              @defproc[(str-replace-all [x col-expr/c] [pattern any/c] [value any/c]
                                         [#:literal literal any/c #f])
                        Expr-ptr?])]{
   Removal of whitespace, or of the characters of @racket[chars], from both
-  ends (@tt{.str.strip_chars}), and of a @racket[prefix] or @racket[suffix]
-  (@tt{.str.strip_prefix}, @tt{.str.strip_suffix}); replacement of the first
-  or of every match of the regular expression @racket[pattern] by
-  @racket[value] (@tt{.str.replace}, @tt{.str.replace_all}), of
-  @racket[pattern] read literally when @racket[literal] is true. Each
+  ends, and of a @racket[prefix] or @racket[suffix]; replacement of the
+  first or of every match of the regular expression @racket[pattern] by
+  @racket[value], of @racket[pattern] read literally when @racket[literal] is true. Each
   argument is lifted by @racket[lit].
 
   @examples[#:eval ev
@@ -1954,22 +1944,22 @@ stations
 (select tags (str-replace-all "s" "." "-" #:literal #t))
 (eval:error (str-strip-prefix 5 "v"))]}
 
-@deftogether[(@defproc[(str-extract [x (or/c Expr-ptr? string?)] [pattern string?]
+@deftogether[(@defproc[(str-extract [x col-expr/c] [pattern string?]
                                     [#:group-index group-index size/c 1])
                        Expr-ptr?]
-              @defproc[(str->date [x (or/c Expr-ptr? string?)]
+              @defproc[(str->date [x col-expr/c]
                                   [#:format format (or/c utf-8-name/c #f) #f]
                                   [#:strict strict boolean? #t]
                                   [#:exact exact boolean? #t]
                                   [#:cache cache boolean? #t])
                        Expr-ptr?]
-              @defproc[(str->time [x (or/c Expr-ptr? string?)]
+              @defproc[(str->time [x col-expr/c]
                                   [#:format format (or/c utf-8-name/c #f) #f]
                                   [#:strict strict boolean? #t]
                                   [#:exact exact boolean? #t]
                                   [#:cache cache boolean? #t])
                        Expr-ptr?]
-              @defproc[(str->datetime [x (or/c Expr-ptr? string?)]
+              @defproc[(str->datetime [x col-expr/c]
                                       [#:format format (or/c utf-8-name/c #f) #f]
                                       [#:unit unit (or/c 'milliseconds 'microseconds 'nanoseconds) 'microseconds]
                                       [#:time-zone time-zone (or/c time-zone-name/c #f) #f]
@@ -2616,10 +2606,11 @@ renders it with no separate display call.
 @defproc[(dataframe? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is a dataframe.}
 
-@defproc[(dataframe [columns (listof series?)]) dataframe?]{
-  Builds a dataframe from a list of equal-length series. The columns may be
-  series wrappers built with @racket[series]; their names become the column
-  names, and must differ.
+@defproc[(dataframe [columns (listof Series-ptr?)]) dataframe?]{
+  Builds a dataframe from a list of equal-length series, each a
+  @racket[series] wrapper or a raw series pointer from
+  @racketmodname[polars/ffi] (see @secref["ref-ffi"]); their names become the
+  column names, and must differ.
 
   @examples[#:eval ev
 (dataframe (list (series '("a" "b") #:name "k")
@@ -2953,6 +2944,18 @@ exported these bindings too.
 
 @examples[#:eval ev #:hidden (require polars/ffi)]
 
+The fluent verbs refuse a raw pointer, but @racket[dataframe] takes raw
+series and returns a wrapper, so it is the way back. No binding wraps a raw
+@racket[DataFrame-ptr?]: rebuild the frame from its columns, which shares
+their data.
+
+@examples[#:eval ev #:label #f
+(ref (dataframe (list (series-new-i32 "n" '(1 2)))) "n")
+(eval:error (len (series-new-i32 "n" '(1 2))))
+(define raw-frame (dataframe-new (list (series-new-i32 "n" '(1 2)))))
+(dataframe (for/list ([name (in-list (dataframe-column-names raw-frame))])
+             (dataframe-column raw-frame name)))]
+
 @subsection[#:tag "ref-series-lowlevel"]{Series}
 
 The generic layer is built on monomorphic, dtype-suffixed bindings that operate
@@ -3138,7 +3141,7 @@ temps
       (ref "v")))
 (eval:error (series-quantile nested 0.5))]}
 
-@defproc[(series-cast [s Series-ptr?] [dtype (or/c symbol? pair?)]) Series-ptr?]{
+@defproc[(series-cast [s Series-ptr?] [dtype dtype-spec?]) Series-ptr?]{
   Returns a copy of @racket[s] converted to @racket[dtype], given as a canonical
   dtype symbol (@racket['int8] through @racket['int64], @racket['uint8] through
   @racket['uint64], @racket['float32], @racket['float64], @racket['boolean],
@@ -3171,32 +3174,35 @@ bindings that operate directly on the foreign dataframe. They accept the
 @racket[dataframe] wrapper (it marshals transparently); the generic
 operations are the preferred surface.
 
-@deftogether[(@defproc[(dataframe-new [columns (listof series?)]) dataframe?]
-              @defproc[(dataframe-shape [d dataframe?])
+@deftogether[(@defproc[(dataframe-new [columns (listof Series-ptr?)]) DataFrame-ptr?]
+              @defproc[(dataframe-shape [d DataFrame-ptr?])
                        (values exact-nonnegative-integer? exact-nonnegative-integer?)]
-              @defproc[(dataframe-height [d dataframe?]) exact-nonnegative-integer?]
-              @defproc[(dataframe-width [d dataframe?]) exact-nonnegative-integer?]
-              @defproc[(dataframe-column [d dataframe?] [name string?]) series?]
-              @defproc[(dataframe-column-name [d dataframe?]
-                                              [i exact-nonnegative-integer?]) string?]
-              @defproc[(dataframe-column-names [d dataframe?]) (listof string?)]
-              @defproc[(dataframe-select [d dataframe?] [names (listof string?)]) dataframe?]
-              @defproc[(display-dataframe [d dataframe?]
+              @defproc[(dataframe-height [d DataFrame-ptr?]) exact-nonnegative-integer?]
+              @defproc[(dataframe-width [d DataFrame-ptr?]) exact-nonnegative-integer?]
+              @defproc[(dataframe-column [d DataFrame-ptr?] [name utf-8-name/c]) Series-ptr?]
+              @defproc[(dataframe-column-name [d DataFrame-ptr?] [i size/c])
+                       (or/c string? #f)]
+              @defproc[(dataframe-column-names [d DataFrame-ptr?]) (listof string?)]
+              @defproc[(dataframe-select [d DataFrame-ptr?] [names (listof utf-8-name/c)])
+                       DataFrame-ptr?]
+              @defproc[(display-dataframe [d DataFrame-ptr?]
                                           [out output-port? (current-output-port)]) void?]
-              @defproc[(dataframe->string [d dataframe?]) string?])]{
+              @defproc[(dataframe->string [d DataFrame-ptr?]) string?])]{
   The low-level dataframe operations underlying @racket[dataframe], @racket[shape],
   @racket[height], @racket[width], @racket[ref], @racket[column-name], and
   @racket[column-names]. @racket[display-dataframe] prints the Polars table to
   @racket[out] and @racket[dataframe->string] returns it; since a
   @racket[dataframe] now prints itself, prefer plain @racket[display].
   @racket[dataframe-column] raises an error naming the column when @racket[d]
-  has none. @racket[display-dataframe] and @racket[dataframe->string] raise
-  with Polars' reason when Polars cannot print the table, where the dataframe
-  itself prints as a placeholder.
+  has none, and @racket[dataframe-column-name] returns @racket[#f] for an
+  index past the last column. @racket[display-dataframe] and
+  @racket[dataframe->string] raise with Polars' reason when Polars cannot
+  print the table, where the dataframe itself prints as a placeholder.
 
   @examples[#:eval ev
 (define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
 (series-sum-i32 (dataframe-column scores "score"))
+(list (dataframe-column-name scores 0) (dataframe-column-name scores 1))
 (eval:error (dataframe-column scores "points"))
 (dataframe (list far-date))
 (eval:error (display-dataframe (dataframe (list far-date))))
@@ -3402,12 +3408,12 @@ Reach for them when a generic name is shadowed in your module, or when you
 want to be explicit that an expression --- rather than a number --- is being
 built.
 
-@defproc[(expr-alias [e Expr-ptr?] [name string?]) Expr-ptr?]{
+@defproc[(expr-alias [e Expr-ptr?] [name utf-8-name/c]) Expr-ptr?]{
   Names the column an expression produces, matching @tt{.alias}. The generic
   spelling is @racket[alias], which is the one to reach for:
   @racket[(alias (sum (col "value")) "total")].}
 
-@defproc[(expr-col [name string?]) Expr-ptr?]{
+@defproc[(expr-col [name utf-8-name/c]) Expr-ptr?]{
   The column reference @racket[col] is built on: @racket[name] is taken
   literally, except that a name of the form @tt{^...$} is a regex
   projection, which is how the regexp arm of @racket[col] is spelled.

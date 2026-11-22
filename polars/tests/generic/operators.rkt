@@ -28,8 +28,8 @@
                     != < <= = > >= else-when mod otherwise p* p+ p- p-when p/ then when-pending)
            (only-in (submod polars/private/generic/operands internal) on-side)
            (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col column datetime drops-during floats ints ops-df polars-null polars-null?
-                    prices settle! v64 withnull)
+                    Expr-ptr? col column datetime drops-during floats ints ops-df polars-null
+                    polars-null? prices settle! v64 withnull)
            (only-in threading ~>))
 
   (define operand-ints (series '(1 2) #:name "x"))

@@ -10,7 +10,7 @@
            (prefix-in contracted: polars/private/generic/cumulative)
            (only-in polars/private/generic/cumulative cum-count cum-max cum-min cum-prod cum-sum)
            (only-in (submod polars/private/generic/cumulative internal) diff shift)
-           (only-in polars/tests/generic/test-fixtures column)
+           (only-in polars/tests/generic/test-fixtures check-selected)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df (dataframe (list (series '(1 2 3 4 5) #:name "x" #:dtype 'i64))))
   (define out
@@ -52,16 +52,14 @@
   (check-exn (contract-violation-of 'shift) (lambda () (contracted:shift "v" #:n (expt 2 63))))
 
   (test-case "the reference's running-aggregate example"
-    (define tally (dataframe (list (series (list 1 2 polars-null 4) #:name "n"))))
-    (define running
-      (select tally
-              (alias (cum-sum "n") "sum") (alias (cum-prod "n") "prod")
-              (alias (cum-min "n") "min") (alias (cum-max "n") "max")
-              (alias (cum-count "n") "count")))
-    (check-equal? (column running "sum") (list 1 3 polars-null 7))
-    (check-equal? (column running "prod") (list 1 2 polars-null 8))
-    (check-equal? (column running "min") (list 1 1 polars-null 1))
-    (check-equal? (column running "max") (list 1 2 polars-null 4))
-    (check-equal? (column running "count") '(1 2 2 3))
-    (check-equal? (column (select tally (cum-sum "n" #:reverse #t)) "n") (list 7 6 polars-null 4))
+    (define none polars-null)
+    (define tally (dataframe (list (series (list 1 2 none 4) #:name "n"))))
+    (check-selected
+     tally
+     (list (list "sum" (cum-sum "n") (list 1 3 none 7))
+           (list "prod" (cum-prod "n") (list 1 2 none 8))
+           (list "min" (cum-min "n") (list 1 1 none 1))
+           (list "max" (cum-max "n") (list 1 2 none 4))
+           (list "count" (cum-count "n") '(1 2 2 3))
+           (list "sum-from-end" (cum-sum "n" #:reverse #t) (list 7 6 none 4))))
     (check-exn #rx"^cum-sum: expected an Expr or column name, got 'n" (lambda () (cum-sum 'n)))))

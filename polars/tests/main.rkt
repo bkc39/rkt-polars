@@ -15,23 +15,29 @@
   (define-runtime-path package-dir "../..")
   (define-runtime-path manual-path "../scribblings/polars.scrbl")
 
-  (define polars-version ((get-info/full collection-dir) 'version))
-  (check-pred valid-version? polars-version)
-  (match (get-info/full package-dir)
-    [#f (void)]
-    [root-info (check-equal? (root-info 'version) polars-version)])
+  (test-case "the collection's version is valid and the repository root's matches it"
+    (define polars-version ((get-info/full collection-dir) 'version))
+    (check-pred valid-version? polars-version)
+    (match (get-info/full package-dir)
+      [#f (void)]
+      [root-info (check-equal? (root-info 'version) polars-version)]))
+
+  (define polars-namespace
+    (parameterize ([current-namespace (make-base-empty-namespace)])
+      (namespace-require 'polars)
+      (current-namespace)))
 
   (define (phase-0-exports mod)
-    (check-true (module-declared? mod #t))
-    (define-values (variables syntaxes) (module->exports mod))
-    (for*/list ([phase+names (in-list (append variables syntaxes))]
-                #:when (eqv? (car phase+names) 0)
-                [name (in-list (cdr phase+names))])
-      (car name)))
+    (parameterize ([current-namespace polars-namespace])
+      (dynamic-require mod (void))
+      (define-values (variables syntaxes) (module->exports mod))
+      (for*/list ([phase+names (in-list (append variables syntaxes))]
+                  #:when (eqv? (car phase+names) 0)
+                  [name (in-list (cdr phase+names))])
+        (car name))))
 
-  (define (binding-source mod name)
-    (parameterize ([current-namespace (make-base-empty-namespace)])
-      (namespace-require mod)
+  (define (binding-source name)
+    (parameterize ([current-namespace polars-namespace])
       (match (identifier-binding (namespace-symbol->identifier name))
         [(list source _ ...) (resolved-module-path-name (module-path-index-resolve source))])))
 
@@ -74,31 +80,39 @@
 
   (define (documented-entries forms include [parent (list #f)])
     (define base (add1 (length parent)))
-    (define stack (cons (car parent) parent))
-    (define (enter! level)
+    (define (enter stack level)
       (define enclosing (list-tail stack (max 0 (- (length stack) (+ base level -1)))))
-      (set! stack (cons (car enclosing) enclosing)))
-    (define (walk form)
+      (cons (car enclosing) enclosing))
+    (define (walk form stack)
       (match form
         [(list (? symbol? head) _ ...)
          #:when (regexp-match? #rx"^(define|require)" (symbol->string head))
-         '()]
+         (values '() stack)]
         [(list (? (lambda (head) (assq head section-levels)) head) _ ...)
-         (enter! (cdr (assq head section-levels)))
-         '()]
+         (values '() (enter stack (cdr (assq head section-levels))))]
+        [(list 'defmodule args ...)
+         #:when (memq '#:no-declare args)
+         (values '() stack)]
         [(list (or 'defmodule 'declare-exporting) args ...)
          (match (drop-options args)
-           [(list mod _ ...) (set! stack (cons mod (cdr stack)))])
-         '()]
+           [(list mod _ ...) (values '() (cons mod (cdr stack)))])]
         [(list 'include-section (? string? included))
-         (set! stack (list-tail stack (- (length stack) base)))
-         (include included stack)]
+         (define document-level (list-tail stack (- (length stack) base)))
+         (values (include included document-level) document-level)]
         [(list (? (lambda (head) (memq head def-heads)) head) args ...)
-         (for/list ([name (in-list (form-names head args))])
-           (cons (car stack) name))]
-        [(? pair?) (append (walk (car form)) (walk (cdr form)))]
-        [_ '()]))
-    (append-map walk forms))
+         (values (for/list ([name (in-list (form-names head args))])
+                   (cons (car stack) name))
+                 stack)]
+        [(cons first rest)
+         (define-values (first-entries after-first) (walk first stack))
+         (define-values (rest-entries after-rest) (walk rest after-first))
+         (values (append first-entries rest-entries) after-rest)]
+        [_ (values '() stack)]))
+    (define-values (entries _stack)
+      (for/fold ([entries '()] [stack (cons (car parent) parent)]) ([form (in-list forms)])
+        (define-values (found next) (walk form stack))
+        (values (append entries found) next)))
+    entries)
 
   (define (manual-entries path [parent (list #f)])
     (define-values (dir _name _dir?) (split-path path))
@@ -139,6 +153,7 @@
         (defidform d)
         (defproc* (((e) any/c) ((e (x any/c)) any/c)))
         (subsubsection "C")
+        (defmodule low)
         (defform (f x))
         (defform* ((j) (j x)))
         (defform #:id g g)
@@ -154,27 +169,33 @@
       (check-equal? file "chapter.scrbl")
       (documented-entries chapter include parent))
     (check-equal? (documented-entries document include)
-                  '((top . a) (top . b) (top . c) (low . d) (low . e) (low . f) (low . j)
+                  '((top . a) (top . b) (top . c) (top . d) (top . e) (low . f) (low . j)
                     (low . g) (top . h) (top . i) (top . in-chapter) (low . in-low) (top . back)
                     (top . after))))
 
   (define entries (manual-entries manual-path))
-  (check-equal? (remove-duplicates (map car entries)) '(polars polars/ffi))
-  (check-false (check-duplicates (map cdr entries)) "a name with two entries")
+
+  (test-case "the manual documents polars and polars/ffi, each name once"
+    (check-equal? (remove-duplicates (map car entries)) '(polars polars/ffi))
+    (check-false (check-duplicates (map cdr entries)) "a name with two entries"))
 
   (define polars-exports (phase-0-exports 'polars))
   (define ffi-exports (phase-0-exports 'polars/ffi))
   (define foreign-re-exports
     (for/list ([name (in-list polars-exports)]
-               #:unless (in-collection? (binding-source 'polars name)))
+               #:unless (in-collection? (binding-source name)))
       name))
-  (check-equal? (sort foreign-re-exports symbol<?) '(lambda~> lambda~>> ~> ~>>)
-                "polars re-exports only threading's forms, which threading documents")
-  (check-true (subset? (list->seteq foreign-re-exports)
-                       (list->seteq (phase-0-exports 'threading))))
 
-  (check-same-names 'polars
-                    (names-of entries 'polars)
-                    (set->list (set-subtract (list->seteq polars-exports)
-                                             (list->seteq foreign-re-exports))))
-  (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports))
+  (test-case "polars re-exports only threading's forms, which threading documents"
+    (check-equal? (sort foreign-re-exports symbol<?) '(lambda~> lambda~>> ~> ~>>))
+    (check-true (subset? (list->seteq foreign-re-exports)
+                         (list->seteq (phase-0-exports 'threading)))))
+
+  (test-case "every export of polars has its entry and every entry its export"
+    (check-same-names 'polars
+                      (names-of entries 'polars)
+                      (set->list (set-subtract (list->seteq polars-exports)
+                                               (list->seteq foreign-re-exports)))))
+
+  (test-case "every export of polars/ffi has its entry and every entry its export"
+    (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports)))

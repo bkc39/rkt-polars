@@ -859,6 +859,8 @@
   (check-equal? (dataframe-column-name example-df 0) "user")
   (check-equal? (dataframe-column-name example-df 1) "score")
   (check-equal? (dataframe-column-name example-df 2) "cost")
+  (check-false (dataframe-column-name example-df 3))
+  (check-equal? (series-name (dataframe-column example-df #"score")) "score")
 
   (define score-col (dataframe-column example-df "score"))
   (check-pred Series-ptr? score-col)

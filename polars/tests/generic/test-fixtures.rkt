@@ -16,11 +16,12 @@
                   dataframe-column polars-null polars-null? series-cast series-new-i32
                   series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
-         (only-in polars/private/generic/reshape pivot)
+         (only-in polars/private/generic/reductions alias)
+         (only-in polars/private/generic/reshape pivot select)
          (only-in gregor date datetime)
          (only-in gregor/period microseconds)
          (only-in gregor/time time)
-         (only-in racket/match match))
+         (only-in racket/match match match-define))
 
 (provide (all-defined-out)
          (all-from-out polars/tests/test-helpers)
@@ -99,6 +100,25 @@
 
 (define (column d name)
   (series-cells (ref d #:columns name)))
+
+(define (cells-match? got expected tolerance)
+  (match tolerance
+    ['() (equal? got expected)]
+    [(list within) (and (= (length got) (length expected))
+                        (for/and ([g (in-list got)] [e (in-list expected)])
+                          (<= (abs (- g e)) within)))]))
+
+(define-check (check-selected d rows)
+  (define selected
+    (apply select d (for/list ([row (in-list rows)])
+                      (match-define (list name expr _ _ ...) row)
+                      (alias expr name))))
+  (for ([row (in-list rows)])
+    (match-define (list name _ expected tolerance ...) row)
+    (define got (column selected name))
+    (unless (cells-match? got expected tolerance)
+      (with-check-info (['column name] ['actual got] ['expected expected])
+        (fail-check)))))
 
 (define (frame=? a b)
   (and (equal? (column-names a) (column-names b))
