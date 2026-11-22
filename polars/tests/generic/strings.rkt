@@ -11,7 +11,8 @@
            (only-in polars/private/expr col lit)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operators [= p=] [!= p!=])
-           (only-in polars/tests/generic/test-fixtures check-selected nul-expected)
+           (only-in polars/tests/generic/test-fixtures
+                    check-selected check-selected-as-is nul-expected)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
@@ -235,21 +236,23 @@
            (list "starts" (str-starts-with "who" "Ada") (list #t #f #f none))
            (list "ends" (str-ends-with "who" "ie") (list #f #f #t none))
            (list "find" (str-find "who" "e") (list 7 4 6 none))
-           (list "find-lax" (str-find "who" "(" #:strict #f) (list none none none none))
            (list "find-literal" (str-find-literal "who" "a") (list 2 2 none none))
            (list "vowels" (str-count-matches "who" "[aeiou]") (list 5 4 3 none))
            (list "replace" (str-replace "who" "[aeiou]" "_")
                  (list "Ad_ Lovelace" "gr_ce hopper" "Ém_lie" none))
            (list "replace-all" (str-replace-all "who" "[aeiou]" "_")
                  (list "Ad_ L_v_l_c_" "gr_c_ h_pp_r" "Ém_l__" none))))
+    (check-selected-as-is
+     people (list (list "who" (str-find "who" "(" #:strict #f) (list none none none none))))
     (check-selected
      tags
      (list (list "strip" (str-strip-chars "s") '("ok" "xxtagxx" "v1.2.0"))
            (list "strip-x" (str-strip-chars "s" "x") '("  ok  " "tag" "v1.2.0"))
            (list "no-v" (str-strip-prefix "s" "v") '("  ok  " "xxtagxx" "1.2.0"))
-           (list "no-.0" (str-strip-suffix "s" ".0") '("  ok  " "xxtagxx" "v1.2"))
-           (list "dashes" (str-replace-all "s" "." "-" #:literal #t)
-                 '("  ok  " "xxtagxx" "v1-2-0"))))
+           (list "no-.0" (str-strip-suffix "s" ".0") '("  ok  " "xxtagxx" "v1.2"))))
+    (check-selected-as-is
+     tags
+     (list (list "s" (str-replace-all "s" "." "-" #:literal #t) '("  ok  " "xxtagxx" "v1-2-0"))))
     (check-exn #rx"^str-to-lowercase: expected an Expr or column name, got 'who"
                (lambda () (str-to-lowercase 'who)))
     (check-exn #rx"^select: Invalid regular expression"

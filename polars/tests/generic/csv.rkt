@@ -26,7 +26,8 @@
                     polars-null scratch-file)
            (only-in (submod polars/tests/generic/test-fixtures test)
                     call-each-in-child check-nul-names-round-trip check-readers-agree eager-reader
-                    glob-reader outcome-difference scan-reader [eager-and-scan eager-and-scan*]))
+                    failure-infos glob-reader outcome-difference scan-reader
+                    [eager-and-scan eager-and-scan*]))
 
   (define-runtime-path data-dir "../../scribblings/data")
   (define eager-and-scan (eager-and-scan* read-csv scan-csv))
@@ -665,9 +666,6 @@
     (check-readers-agree every-reader path '((#:comment-prefix . "#"))))
   (check-true (frame=? (read-csv stray-quote-resynchronised #:comment-prefix "#") stray-full))
 
-  (define (failure-infos thunk)
-    (parameterize ([current-check-around (lambda (check) (check))])
-      (with-handlers ([exn:test:check? exn:test:check-stack]) (thunk) '())))
   (define (info-text infos name)
     (for/first ([info (in-list infos)] #:when (eq? (check-info-name info) name))
       (match (check-info-value info)
