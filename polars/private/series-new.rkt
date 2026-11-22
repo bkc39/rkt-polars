@@ -6,7 +6,7 @@
          (only-in racket/provide matching-identifiers-out)
          syntax/parse/define
          (only-in polars/private/c-integer size/c)
-         (only-in polars/private/compat-dtype polars-null?)
+         (only-in polars/private/compat-opt polars-null?)
          (only-in polars/private/compat-ffi _c-string define-compat)
          (only-in polars/private/owned Series-ptr? _Series-ptr/null)
          (only-in polars/private/reason call/foreign-error call/polars-reason)
@@ -118,7 +118,6 @@
 
 (define-series-constructors u64 _uint64 0)
 
-;; Bools cross the boundary as u8 (0/1).
 (define-compat series-new-bool/raw
   (_fun (v : (_list i _uint8))
         (_size = (length v))
@@ -170,7 +169,6 @@
 (define (series-new-null name length)
   (new-series 'series-new-null name (lambda () (series-new-null/raw length))))
 
-;; The buffer and validity are GC memory the collector may move: never #:blocking?.
 (define-compat series-new-str/raw
   (_fun (_c-string = "") _bytes _size _pointer _size _bytes _size -> _Series-ptr/null)
   #:c-id series_new_str_packed
@@ -209,7 +207,6 @@
 (define (series-new-str/vec name strings)
   (strings->series 'series-new-str/vec name (vector->list strings)))
 
-;; Year, Month, Day, Hour, Minute, Second
 (define-cstruct _YMDHMS
   ([year _int]
    [month _uint32]

@@ -92,28 +92,37 @@ roughly daily, not on each merge.
 
 ## The three layers
 
-1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO), a
-   facade over `compat-ffi.rkt` (`define-compat`, the string blocks),
-   `compat-dtype.rkt` (the dtype table and spellings, `polars-null`),
-   `owned.rkt` (the owned pointer types), `reason.rkt` (failure reasons,
-   `define-reasoned`), `series-core.rkt` / `series-new.rkt` /
-   `series-ref.rkt` / `series-ops.rkt` and `dataframe-core.rkt` /
-   `dataframe-ops.rkt`; `expr.rkt`, a facade over `expr-ops.rkt` /
-   `expr-select.rkt` / `lazyframe.rkt` and `expr-core.rkt` / `expr-str.rkt` /
-   `expr-dt.rkt` (expressions, lazyframes); `bulk.rkt` (column copies into
-   Racket-allocated buffers, whole or a block of rows at a time, behind
-   `series->list`, `in-dataframe-rows` and their siblings; it binds the
-   numeric, boolean and categorical copies, and takes the String and Decimal
-   ones, `series-copy-str` / `series-str-byte-len` (`series-core.rkt`) and
-   `series-copy-decimal` (`series-ref.rkt`, where `series-ref` reads through
-   them)). A facade only re-exports its parts. No module directly under
-   `polars/private/` but `generic.rkt` requires a `polars/private/generic/`
-   one: a test in `polars/tests/resource.rkt` reads each `require` as data.
-   `define-compat` binds a C symbol; the Racket name is the symbol with `_` →
-   `-`, or an explicit `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
-   wrapped by a checking function of the plain name, except the
-   `series-ref-<type>/raw` readers, which carry an index contract and which
-   `series-ref` reads through unchecked.
+1. **Raw FFI**, under `polars/private/`:
+   - `foreign.rkt` (series, dataframe, IO), a facade over `compat-ffi.rkt`
+     (`define-compat`, string blocks, C strings), `compat-dtype.rkt` (the C
+     dtype struct and its tags), `compat-opt.rkt` (`polars-null`, the
+     optional-value structs), `owned.rkt` (the owned pointer types),
+     `reason.rkt` (failure reasons, `define-reasoned`), `series-core.rkt`
+     (names, dtypes, casts), `series-new.rkt` (constructors),
+     `series-ref.rkt` (reads, copies), `series-ops.rkt` (operators,
+     reductions, reshapes), `dataframe-core.rkt` (shape, columns, printing)
+     and `dataframe-ops.rkt` (sorts, group-bys, joins, pivots);
+   - `expr.rkt`, a facade over `expr-core.rkt` (columns, literals),
+     `expr-ops.rkt` (operators, null and math functions), `expr-select.rkt`
+     (membership, gathers, sorts, slices), `expr-str.rkt`, `expr-dt.rkt`
+     and `lazyframe.rkt` (plans);
+   - `dtype-spelling.rkt`, the dtype spellings `series #:dtype` and `cast`
+     take (`dtype-spec?`, `normalize-dtype`); `expr.rkt` re-exports
+     `dtype-spec?` through `expr-core.rkt`, `foreign.rkt` neither;
+   - `bulk.rkt`, the column copies behind `series->list`,
+     `in-dataframe-rows` and their siblings.
+
+   A facade is one `define-facade` (`facade.rkt`) and defines nothing: it
+   re-exports its parts, and its `internal` submodule its parts' `internal`
+   submodules, less an `except-in` of a part and the names it lists under
+   `#:hide` and `#:hide-internal`. A test in `polars/tests/resource.rkt`
+   holds each facade's exports to its parts'.
+
+   `define-compat` binds a C symbol; the Racket name is the symbol with `_`
+   → `-`, or an explicit `#:c-id`. Bindings whose Racket name carries a
+   `/raw` or `/c` suffix are wrapped by a checking function of the plain
+   name, except the `series-ref-<type>/raw` readers, which carry an index
+   contract and which `series-ref` reads through unchecked.
 2. **Monomorphic** — `series-sum-i32`, `dataframe-select-exprs`, `expr-gt`,
    `expr-str->date`: one binding per operation and dtype, documented in the
    reference's low-level sections. Not the surface users write.
@@ -129,6 +138,13 @@ roughly daily, not on each merge.
    provides: `(require polars json)` fails with "identifier already
    required", and `(prefix-in js: json)` or `(except-in json read-json
    write-json)` is the fix the docs give.
+
+- **Layer 1 never requires layer 3.** No module directly under
+  `polars/private/` but `generic.rkt` requires `generic.rkt`, a module under
+  `polars/private/generic/` or `polars` (`main.rkt`, which re-exports them),
+  by `require`, `local-require`, `lazy-require` or a `dynamic-require` of a
+  literal path: a test in `polars/tests/resource.rkt` reads each module as
+  data and resolves each path it names.
 
 A pipeline reads as `(~> df (filter (> (col "v") 15)) (group-by "g") (agg (sum "v")))`.
 Every fluent verb takes the frame — or the expression — as its **first**
@@ -428,9 +444,9 @@ it. Racket side: `define-compat` with `#:c-id`.
     `_gcpointer`, `_racket`, their `/` and `*` variants, or a name `define`d
     as one, directly or through `make-ctype`) as the element of a `_list` /
     `_vector` / `_ptr` in mode `i` or `io`, of an `_array`, `_array/list`,
-    `_array/vector`, `_box` or `_list-struct`, as a `define-cstruct` field,
-    or in `define-series-constructors`. It also fails on a `define-compat` in
-    `polars/private` whose result is `_string`, `_string/utf-8` or
+    `_array/vector`, `_box` or `_list-struct`, as a `define-cstruct` field
+    or a `define-compat-opt` value, or in `define-series-constructors`. It
+    also fails on a `define-compat` in `polars/private` whose result is `_string`, `_string/utf-8` or
     `_string*/utf-8`, and on a `_fun` or a `define-series-constructors` there
     naming `_rsstring` or `_c-string-result`, the C-string result type #165
     retired, `_string-list`, the `const char **` table #165 retired, or any
@@ -734,8 +750,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:arguments` table the reference's `defproc/arguments` renders. A `_fun`
   type shared by two entry points is a macro used as
   `(define-compat name (_csv-fun -> _DataFrame-ptr/null) ...)`, so the
-  ownership audit in `polars/tests/foreign.rkt` still reads the result type and the
-  `#:wrap`.
+  ownership audit in `polars/tests/foreign.rkt` still reads the result type
+  and the `#:wrap`.
 - A `scan-csv` / `scan-parquet` / `scan-ndjson` only builds a plan; a
   missing or malformed file, an invalid glob pattern, or one that matches
   no file is reported at
@@ -776,8 +792,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   branch never awaits, and a `Pending` poll counts as no bound (`block_on`
   could hang under `POLARS_FORCE_ASYNC` inside `call-as-atomic`).
 - IO paths resolve against Racket's `current-directory`, not the process's
-  (`path->complete-string` in `dataframe-core.rkt`). For a globbing reader it
-  escapes `[`, `*` and `?` in the directory part, so only the part the
+  (`path->complete-string` in `dataframe-core.rkt`). For a globbing reader
+  it escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
 - `read-json` / `write-json` are Python's `read_json` / `write_json`: one
   JSON array of objects (a lone object reads as one row), eager only, since
@@ -825,7 +841,8 @@ it. Racket side: `define-compat` with `#:c-id`.
   error (`without_plan`). A fluent verb that builds a plan and collects it
   (`select`, `with-columns`, `filter`, `agg`) reports the cause under its own
   name, through `lazyframe-collect/who` (the `internal` submodule of
-  `lazyframe.rkt`, re-exported by `expr.rkt`'s), and `collect` under `collect`.
+  `lazyframe.rkt`, re-exported by `expr.rkt`'s), and `collect` under
+  `collect`.
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, through `write_frame` like the
   other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
@@ -1097,13 +1114,14 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`series_time_zone_v2`, the `_datetime_tz` cast / selector / literal entry
   points, `series_dt_*` / `expr_dt_*` convert and replace,
   `expr_str_to_datetime_tz_v2`) as a `_c-string`. A zone's name is
-  `time-zone-name/c` (`compat-dtype.rkt`, public): a non-empty string without a
-  NUL. `dt-convert-time-zone`, `dt-replace-time-zone` and `str->datetime
-  #:time-zone` take it in their contracts. `datetime-zone/c`, in the dtype
-  contracts of `cast`, `series #:dtype`, `col`, `series-cast`, `expr-cast`
-  and `expr-dtype-col`, refuses a zoned dtype datum whose zone is not one,
-  naming the verb. Python raises a `ComputeError` there; the `zones` section
-  of `scripts/nul-expected.py`'s record holds it. Each export that takes a
+  `time-zone-name/c` (`compat-dtype.rkt`, public): a non-empty string
+  without a NUL. `dt-convert-time-zone`, `dt-replace-time-zone` and
+  `str->datetime #:time-zone` take it in their contracts. `datetime-zone/c`
+  (`compat-dtype.rkt`), in the dtype contracts of `cast`, `series #:dtype`,
+  `col`, `series-cast`, `expr-cast` and `expr-dtype-col`, refuses a zoned
+  dtype datum whose zone is not one, naming the verb. Python raises a
+  `ComputeError` there; the `zones` section of `scripts/nul-expected.py`'s
+  record holds it. Each export that takes a
   zone canonicalises it with polars' `TimeZone::opt_try_new` (`+01:00`
   becomes `Etc/GMT-1`), validates
   it with `TimeZone::validate_time_zone` (which, unlike `opt_try_new`, ignores
@@ -1330,7 +1348,10 @@ it. Racket side: `define-compat` with `#:c-id`.
   `nix run .#copy-native-libs` stages; the nix build does.
 - The library's module tests live in `polars/tests/`, in the file at the
   module's path under `polars/private/` (`tests/generic/csv.rkt` tests
-  `private/generic/csv.rkt`). Three have no library counterpart:
+  `private/generic/csv.rkt`). A facade's parts are tested through the
+  facade's file (`tests/foreign.rkt`, `tests/expr.rkt`), but
+  `compat-dtype.rkt` and `reason.rkt`, which have their own. Three have no
+  library counterpart:
   `generic/csv-options.rkt`, `generic/verb-errors.rkt` and
   `generic/operand-audit.rkt`; `scribblings/utils.rkt` tests the manual's
   helpers in `polars/scribblings/utils.rkt`. No module under `polars/private/` has a `test`

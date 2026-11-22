@@ -8,7 +8,7 @@
          (only-in racket/string string-replace)
          syntax/parse/define
          (only-in polars/private/c-integer int32/c int64/c uint32/c uint64/c uint8/c)
-         polars/private/compat-dtype
+         polars/private/compat-opt
          (only-in polars/private/compat-ffi define-compat)
          (only-in polars/private/owned Series-ptr? _Series-ptr _Series-ptr/null provide-row-windows)
          (only-in polars/private/reason call/foreign-error)

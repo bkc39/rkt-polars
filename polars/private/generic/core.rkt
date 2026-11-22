@@ -13,6 +13,7 @@
          (only-in (submod polars/private/foreign internal) dataframe-column/who dataframe-select/who)
          (only-in polars/private/resource utf-8-name/c)
          polars/private/generic/dtype
+         (only-in polars/private/dtype-spelling normalize-dtype)
          polars/private/generic/printing)
 
 (provide (except-out (all-defined-out) dataframe series)
@@ -152,7 +153,7 @@
 ;; series: keyword constructor with dtype inference (see dtype.rkt)
 
 (define (series elements #:name [name ""] #:dtype [dtype #f])
-  (define canonical (if dtype (normalize-dtype dtype) (infer-dtype elements)))
+  (define canonical (if dtype (normalize-dtype dtype 'series) (infer-dtype elements)))
   (define ctor (dtype->constructor canonical (vector? elements)))
   (wrap-series (ctor name (coerce-elements canonical elements))))
 

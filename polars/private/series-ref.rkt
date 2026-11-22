@@ -7,13 +7,15 @@
          racket/match
          syntax/parse/define
          (only-in polars/private/c-integer size/c)
-         (only-in polars/private/compat-dtype CompatOptBool-valid _CompatOptBool _CompatOptF32
-                  _CompatOptF64 _CompatOptI16 _CompatOptI32 _CompatOptI64 _CompatOptI8
-                  _CompatOptU16 _CompatOptU32 _CompatOptU64 _CompatOptU8 _CompatOptYMD
-                  compat-dtype->datum compat-opt-bool->datum compat-opt-f32->datum
-                  compat-opt-f64->datum compat-opt-i16->datum compat-opt-i32->datum
-                  compat-opt-i64->datum compat-opt-i8->datum compat-opt-u16->datum
-                  compat-opt-u32->datum compat-opt-u64->datum compat-opt-u8->datum polars-null)
+         (only-in polars/private/compat-dtype compat-dtype->datum)
+         (only-in polars/private/compat-opt
+                  CompatOptBool-valid _CompatOptBool _CompatOptF32 _CompatOptF64 _CompatOptI16
+                  _CompatOptI32 _CompatOptI64 _CompatOptI8 _CompatOptU16 _CompatOptU32
+                  _CompatOptU64 _CompatOptU8 _CompatOptYMD compat-opt-bool->datum
+                  compat-opt-f32->datum compat-opt-f64->datum compat-opt-i16->datum
+                  compat-opt-i32->datum compat-opt-i64->datum compat-opt-i8->datum
+                  compat-opt-u16->datum compat-opt-u32->datum compat-opt-u64->datum
+                  compat-opt-u8->datum polars-null)
          (only-in polars/private/compat-ffi _rsstr define-compat)
          (only-in polars/private/owned Series-ptr? _Series-ptr)
          (only-in polars/private/reason respell)
@@ -112,7 +114,6 @@
 (define-compat series-binary-byte-len
   (_fun _Series-ptr _size _size _size -> _int64))
 
-;; The buffers are GC memory the collector may move: never #:blocking?.
 (define-compat series-copy-binary
   (_fun _Series-ptr _size _size _size _bytes _size _pointer _size _pointer _size _bytes _size
         -> _int64))
@@ -131,7 +132,6 @@
     [(zero? (bytes-ref valid 0)) polars-null]
     [else buf]))
 
-;; The validity buffers are GC memory the collector may move: never #:blocking?.
 (define-syntax-parse-rule (define-copies name:id ...)
   (begin
     (define-compat name
@@ -146,8 +146,7 @@
 (define ((unreadable-datetime who zone) reason)
   (error who "cannot read a datetime in ~s: ~a" zone (respell reason)))
 
-;; `count` rows of a zoned column from `start`: each UTC instant into
-;; `instants`, and into `walls` its wall clock in (offset-unit unit).
+;; `walls` gets each instant's wall clock in (offset-unit unit).
 (define (copy-zoned-datetimes who s dtype start count instants walls valid
                               #:unreadable [unreadable (unreadable-datetime who (caddr dtype))])
   (match-define (list _ unit zone) dtype)
@@ -247,4 +246,4 @@
     [else (error who "could not read null state at index ~a" index)]))
 
 (module+ internal
-  (provide series-ref-bytes series-ref-cat))
+  (provide series-ref-bytes series-ref-cat series-ref-datetime))

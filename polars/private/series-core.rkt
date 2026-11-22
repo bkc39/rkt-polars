@@ -73,12 +73,10 @@
 (define-compat series-str-byte-len
   (_fun _Series-ptr _size _size -> _int64))
 
-;; The buffers are GC memory the collector may move: never #:blocking?.
 (define-compat series-copy-str
   (_fun _Series-ptr _size _size _bytes _size _pointer _size _bytes _size -> _int64))
 
-;; By length, not as a C string, which would end at a NUL a value holds. A
-;; null row reads as ""; a series that is not a String one as #f.
+;; By length, not as a C string, which would end at a NUL a value holds.
 (define (series-strings s start count)
   (define size (series-str-byte-len s start count))
   (cond
@@ -157,4 +155,4 @@
       "cannot unset the time zone"))
 
 (module+ internal
-  (provide named series-rename/who series-strings))
+  (provide named series-cast-to series-rename/who series-strings))

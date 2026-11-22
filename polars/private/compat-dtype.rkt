@@ -1,7 +1,6 @@
 #lang racket/base
 
 (require ffi/unsafe
-         (only-in gregor date)
          (only-in racket/contract/base and/c flat-contract-predicate flat-named-contract not/c)
          (only-in racket/contract flat-contract-with-explanation raise-blame-error)
          racket/match
@@ -9,16 +8,6 @@
          (only-in racket/string non-empty-string?))
 
 (provide (all-defined-out))
-
-(struct polars-null-sentinel ()
-  #:property prop:custom-write
-  (lambda (_ out mode)
-    (write-string "polars-null" out)))
-
-(define polars-null (polars-null-sentinel))
-
-(define (polars-null? v)
-  (eq? v polars-null))
 
 (define compat-dtype-tag/unknown 0)
 (define compat-dtype-tag/boolean 1)
@@ -135,112 +124,6 @@
      (positive? (string-length zone))]
     [_ #f]))
 
-(define-cstruct _CompatOptI32
-  ([valid _int32]
-   [value _int32]))
-
-(define-cstruct _CompatOptI8
-  ([valid _int32]
-   [value _int8]))
-
-(define-cstruct _CompatOptI16
-  ([valid _int32]
-   [value _int16]))
-
-(define-cstruct _CompatOptF64
-  ([valid _int32]
-   [value _double]))
-
-(define-cstruct _CompatOptF32
-  ([valid _int32]
-   [value _float]))
-
-(define-cstruct _CompatOptI64
-  ([valid _int32]
-   [value _int64]))
-
-(define-cstruct _CompatOptU8
-  ([valid _int32]
-   [value _uint8]))
-
-(define-cstruct _CompatOptU16
-  ([valid _int32]
-   [value _uint16]))
-
-(define-cstruct _CompatOptU32
-  ([valid _int32]
-   [value _uint32]))
-
-(define-cstruct _CompatOptU64
-  ([valid _int32]
-   [value _uint64]))
-
-(define-cstruct _CompatOptBool
-  ([valid _int32]
-   [value _int32]))
-
-(define-cstruct _YMD
-  ([ymd-year _int32]
-   [ymd-month _uint32]
-   [ymd-day _uint32]))
-
-(define-cstruct _CompatOptYMD
-  ([valid _int32]
-   [value _YMD]))
-
-(define (compat-opt-i32->datum o)
-  (and (not (zero? (CompatOptI32-valid o)))
-       (CompatOptI32-value o)))
-
-(define (compat-opt-i8->datum o)
-  (and (not (zero? (CompatOptI8-valid o)))
-       (CompatOptI8-value o)))
-
-(define (compat-opt-i16->datum o)
-  (and (not (zero? (CompatOptI16-valid o)))
-       (CompatOptI16-value o)))
-
-(define (compat-opt-f64->datum o)
-  (and (not (zero? (CompatOptF64-valid o)))
-       (CompatOptF64-value o)))
-
-(define (compat-opt-f32->datum o)
-  (and (not (zero? (CompatOptF32-valid o)))
-       (CompatOptF32-value o)))
-
-(define (compat-opt-i64->datum o)
-  (and (not (zero? (CompatOptI64-valid o)))
-       (CompatOptI64-value o)))
-
-(define (compat-opt-u8->datum o)
-  (and (not (zero? (CompatOptU8-valid o)))
-       (CompatOptU8-value o)))
-
-(define (compat-opt-u16->datum o)
-  (and (not (zero? (CompatOptU16-valid o)))
-       (CompatOptU16-value o)))
-
-(define (compat-opt-u32->datum o)
-  (and (not (zero? (CompatOptU32-valid o)))
-       (CompatOptU32-value o)))
-
-(define (compat-opt-u64->datum o)
-  (and (not (zero? (CompatOptU64-valid o)))
-       (CompatOptU64-value o)))
-
-(define (compat-opt-bool->datum o)
-  (and (not (zero? (CompatOptBool-valid o)))
-       (not (zero? (CompatOptBool-value o)))))
-
-(define (ymd->date value)
-  (date (YMD-ymd-year value)
-        (YMD-ymd-month value)
-        (YMD-ymd-day value)))
-
-(define (compat-opt-ymd->datum o)
-  (and (not (zero? (CompatOptYMD-valid o)))
-       (ymd->date (CompatOptYMD-value o))))
-
 (define (time-unit-symbol->code tu)
   (case tu
     [(#f none) compat-time-unit/none]
@@ -298,25 +181,3 @@
     [(cons 'duration (cons unit _))
      (make-CompatDType compat-dtype-tag/duration (time-unit-symbol->code unit) 0 0)]
     [_ (error '->compat-dtype "unsupported cast target ~v" dtype)]))
-
-(define dtype-aliases
-  (for/fold ([aliases dtype-short-names])
-            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
-                                   float32 float64 boolean string
-                                   date time datetime categorical null))])
-    (hash-set aliases canonical canonical)))
-
-(define (dtype-spec? v)
-  (match v
-    [(? symbol?) (hash-has-key? dtype-aliases v)]
-    [(list* (or 'datetime 'duration)
-            (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
-            (or '() (list #f)))
-     #t]
-    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
-
-(define (normalize-dtype dt)
-  (cond
-    [(not (dtype-spec? dt)) (error 'series "unsupported dtype ~v" dt)]
-    [(symbol? dt) (hash-ref dtype-aliases dt)]
-    [else dt]))

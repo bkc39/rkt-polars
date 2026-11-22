@@ -23,7 +23,7 @@
          (only-in polars/private/expr-core explain/c lazyframe-explain/who)
          polars/private/generic/core
          (only-in polars/private/c-integer int64/c size/c)
-         (only-in polars/private/generic/dtype dtype-spec?)
+         (only-in polars/private/dtype-spelling dtype-spec?)
          (only-in polars/private/generic/expr-util col-expr/c))
 
 (provide (except-out (all-defined-out) cast clone-series define-frame-verb explain head tail slice

@@ -12,6 +12,8 @@
 (provide (except-out (all-defined-out)
                      block-reader c-string-argument c-string/null-argument result-only))
 
+;; A binding passed GC memory (a byte string, an f64vector) is never #:blocking?:
+;; the collector may move it during the call.
 (define-ffi-definer define-compat
   compat-library
   #:make-c-id convention:hyphen->underscore

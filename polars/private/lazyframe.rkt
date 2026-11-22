@@ -84,10 +84,7 @@
 (define (dataframe-filter-expr df predicate)
   (collect-plan/who 'dataframe-filter-expr df (lambda (lf) (lazyframe-filter lf predicate))))
 
-;; LazyGroupBy::agg consumes self on the Rust side, which doesn't fit
-;; Racket's allocator/deallocator round-tripping; fold group_by + agg
-;; into one FFI call so the intermediate state never crosses the boundary.
-
+;; LazyGroupBy::agg consumes self, so group_by and agg cross as one call.
 (define-compat lazyframe-group-by-agg/c
   (_fun _LazyFrame-ptr
         (keys : (_list i _Expr-ptr))

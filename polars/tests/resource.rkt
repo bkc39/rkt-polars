@@ -5,10 +5,12 @@
            (for-syntax racket/base)
            racket/match
            (only-in racket/file file->string file->value find-files)
+           (only-in racket/format ~s)
            (only-in racket/list append-map filter-not flatten remove-duplicates take)
-           (only-in racket/path file-name-from-path find-relative-path simple-form-path)
+           (only-in racket/path file-name-from-path find-relative-path path-only simple-form-path)
            (only-in racket/string non-empty-string?)
            (only-in setup/getinfo get-info/full)
+           (only-in threading ~>)
            (only-in ffi/unsafe _fun _int64 _pointer _void cast function-ptr ptr-ref ptr-set!)
            (only-in polars/private/resource
                     _str _str-list _str/null with-raw-buffer with-release with-release-pool
@@ -280,7 +282,8 @@
                            (match field
                              [(list* _ type _) (pointer? type)]
                              [_ #f]))]
-                        [(list* 'define-series-constructors _ type _) (pointer? type)]
+                        [(list* (or 'define-series-constructors 'define-compat-opt) _ type _)
+                         (pointer? type)]
                         [_ #f]))
       form))
 
@@ -293,13 +296,16 @@
                    (_box _symbol) (_list-struct _int _gcpointer)
                    (define-cstruct _S ((n _int) (s _string)))
                    (define-cstruct _T ([r _racket]))
-                   (define-series-constructors str _string* "")))
+                   (define-series-constructors str _string* "")
+                   (define-compat-opt Name _held #:datum values)))
                 '((_list i _held) (_vector io _bytes) (_ptr i _path) (_array _file 2) (_box _symbol)
                   (_list-struct _int _gcpointer) (define-cstruct _S ((n _int) (s _string)))
-                  (define-cstruct _T ((r _racket))) (define-series-constructors str _string* "")))
+                  (define-cstruct _T ((r _racket))) (define-series-constructors str _string* "")
+                  (define-compat-opt Name _held #:datum values)))
   (check-equal? (offending-forms
                  '((_fun _string _bytes -> _void) (_list i _Expr-ptr) (_list o _string 3)
                    (_list i _string-list) (define-cstruct _P ((p _pointer)))
+                   (define-compat-opt YMD _YMD #:datum ymd->date)
                    (define (f _string) (_list i _int)) '(_list i _string)))
                 '())
 
@@ -426,57 +432,144 @@
                              path<?))
                   '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
 
-  (define (generic-module-path? v)
-    (match v
-      [(? symbol?) (regexp-match? #rx"^polars/private/generic/" (symbol->string v))]
-      [(? string?) (regexp-match? #rx"^(?:\\./)?generic/|polars/private/generic/" v)]
-      [(? pair?) (or (generic-module-path? (car v)) (generic-module-path? (cdr v)))]
+  (define (spec-inner spec)
+    (match spec
+      [(list 'prefix-in _ inner) (list inner)]
+      [(list (or 'rename-in 'only-in 'except-in) inner _ ...) (list inner)]
+      [(list (or 'for-syntax 'for-template 'for-label 'combine-in) specs ...) specs]
+      [(list (or 'for-meta 'for-space 'only-meta-in 'only-space-in 'relative-in) _ specs ...) specs]
       [_ #f]))
-  (define (layer-3-requires forms)
-    (for/list ([form (in-list forms)]
-               #:when (match form
-                        [(cons (or 'require 'local-require) specs) (generic-module-path? specs)]
-                        [_ #f]))
-      form))
+  (define (spec-modules spec)
+    (match (spec-inner spec)
+      [#f (list spec)]
+      [inners (append-map spec-modules inners)]))
+  (define (required-modules form)
+    (match form
+      [(list (or 'require 'local-require) specs ...) (append-map spec-modules specs)]
+      [(list (or 'lazy-require 'lazy-require-syntax) (list mods _) ...) mods]
+      [(list 'dynamic-require (or (list 'quote mod) (? string? mod)) _ ...) (list mod)]
+      [_ '()]))
+  (define (collection-file name)
+    (match name
+      ["polars" "main.rkt"]
+      [(regexp #rx"^polars/(.+?)(?:\\.rkt)?$" (list _ file)) (string-append file ".rkt")]
+      [_ #f]))
+  (define (package-file mod dir root)
+    (match mod
+      [(? symbol?) (collection-file (symbol->string mod))]
+      [(list 'lib (? string? name)) (collection-file name)]
+      [(or (? string? file) (list 'file (? string? file)))
+       (~> (build-path dir file) simplify-path (find-relative-path root _) path->string)]
+      [(list* 'submod inner _) (package-file inner dir root)]
+      [_ #f]))
+  (define (layer-3-file? file)
+    (and file (regexp-match? #rx"^(?:private/generic(?:/|\\.rkt$)|main\\.rkt$)" file)))
   (define (layer-1-sources root)
-    (define private (path->directory-path (simple-form-path (build-path root "private"))))
+    (define private (~> root (build-path "private") simple-form-path path->directory-path))
     (for/list ([f (in-list (polars-sources root #:dirs '("private")))]
-               #:when (let-values ([(dir _name _must-be-dir?) (split-path (simple-form-path f))])
-                        (equal? dir private))
+               #:when (~> f simple-form-path path-only (equal? private))
                #:unless (equal? (file-name-from-path f) (string->path "generic.rkt")))
       f))
+  (define (layer-3-requires file root)
+    (define dir (~> file simple-form-path path-only))
+    (for*/list ([form (in-list (forms-in (read-source file)))]
+                [mod (in-list (required-modules form))]
+                #:when (layer-3-file? (package-file mod dir (simple-form-path root))))
+      mod))
   (define (layering-offenders root)
     (for/list ([f (in-list (layer-1-sources root))]
-               #:unless (null? (layer-3-requires (forms-in (read-source f)))))
+               #:unless (null? (layer-3-requires f root)))
       (path->string (file-name-from-path f))))
   (check-not-false (member "foreign.rkt" (map (lambda (f) (path->string (file-name-from-path f)))
                                               (layer-1-sources polars-dir))))
   (check-equal? (layering-offenders polars-dir)
                 '()
                 "a module directly under polars/private requires polars/private/generic")
-  (with-planted-sources (root ["private/generic.rkt"
-                               "#lang racket/base\n(require polars/private/generic/core)"]
-                              ["private/plain.rkt"
-                               "#lang racket/base\n(require polars/private/generic/dtype)"]
-                              ["private/only.rkt"
-                               (string-append "#lang racket/base\n(require (only-in\n"
-                                              "  polars/private/generic/dtype dtype-spec?))")]
-                              ["private/relative.rkt"
-                               "#lang racket/base\n(require (prefix-in g: \"generic/dtype.rkt\"))"]
-                              ["private/submodule.rkt"
-                               (string-append "#lang racket/base\n(module+ internal\n"
-                                              "  (require (only-in (submod polars/private/generic/"
-                                              "dtype internal) x)))")]
-                              ["private/local.rkt"
-                               (string-append "#lang racket/base\n(define (f)\n"
-                                              "  (local-require (for-syntax \"./generic/x.rkt\")) 1)")]
-                              ["private/mentions.rkt"
-                               (string-append "#lang racket/base\n;; polars/private/generic/dtype\n"
-                                              "(require polars/private/foreign)\n"
-                                              "(define m 'polars/private/generic/dtype)\n"
-                                              "(define s \"generic/dtype.rkt\")")])
+  (with-planted-sources
+      (root ["private/generic.rkt" (module-text '(require polars/private/generic/core))]
+            ["private/plain.rkt" (module-text '(require polars/private/generic/dtype))]
+            ["private/only.rkt"
+             (module-text '(require (only-in polars/private/generic/dtype dtype-spec?)))]
+            ["private/relative.rkt" (module-text '(require (prefix-in g: "generic/dtype.rkt")))]
+            ["private/up.rkt" (module-text '(require "../private/generic/dtype.rkt"))]
+            ["private/submodule.rkt"
+             (module-text '(module+ internal
+                             (require (only-in (submod polars/private/generic/dtype internal) x))))]
+            ["private/local.rkt"
+             (module-text '(define (f) (local-require (for-syntax "./generic/x.rkt")) 1))]
+            ["private/aggregator.rkt" (module-text '(require polars/private/generic))]
+            ["private/aggregator-file.rkt" (module-text '(require "generic.rkt"))]
+            ["private/lib.rkt" (module-text '(require (lib "polars/private/generic.rkt")))]
+            ["private/main.rkt" (module-text '(require polars))]
+            ["private/main-path.rkt" (module-text '(require polars/main))]
+            ["private/main-file.rkt" (module-text '(require (file "../main.rkt")))]
+            ["private/lazy.rkt"
+             (module-text '(require racket/lazy-require)
+                          '(lazy-require [polars/private/generic/core (series)]))]
+            ["private/dynamic.rkt"
+             (module-text '(define (f) (dynamic-require 'polars/private/generic/core 'series)))]
+            ["private/dynamic-file.rkt"
+             (module-text '(define (f) (dynamic-require "generic/core.rkt" 'series)))]
+            ["private/comment.rkt"
+             "#lang racket/base\n;; polars/private/generic/dtype\n(require polars/private/foreign)"]
+            ["private/mentions.rkt"
+             (module-text '(require polars/private/foreign polars/private/generics
+                                    (submod "." internal) "generic-util.rkt")
+                          '(define m 'polars/private/generic/dtype)
+                          '(define s "generic/dtype.rkt")
+                          '(define (f name) (dynamic-require name 'series)))])
     (check-equal? (sort (layering-offenders root) string<?)
-                  '("local.rkt" "only.rkt" "plain.rkt" "relative.rkt" "submodule.rkt")))
+                  '("aggregator-file.rkt" "aggregator.rkt" "dynamic-file.rkt" "dynamic.rkt"
+                    "lazy.rkt" "lib.rkt" "local.rkt" "main-file.rkt" "main-path.rkt" "main.rkt"
+                    "only.rkt" "plain.rkt" "relative.rkt" "submodule.rkt" "up.rkt")))
+
+  (define (facade-option form key)
+    (match (member key form)
+      [(list _ value _ ...) value]
+      [#f '()]))
+  (define (part-module part)
+    (match part
+      [(list 'except-in mod _ ...) mod]
+      [mod mod]))
+  (define (part-hidden part)
+    (match part
+      [(list 'except-in _ names ...) names]
+      [_ '()]))
+  (define (export-names mod [hidden '()])
+    (module-declared? mod #t)
+    (define-values (variables syntaxes) (module->exports mod))
+    (for*/list ([phase (in-list (append variables syntaxes))]
+                [export (in-list (cdr phase))]
+                #:unless (and (eqv? (car phase) 0) (memq (car export) hidden)))
+      (cons (car phase) (car export))))
+  (define (sorted-exports exports)
+    (sort (remove-duplicates exports) string<? #:key ~s))
+  (for ([facade (in-list '(foreign expr))])
+    (define mod (string->symbol (format "polars/private/~a" facade)))
+    (define form
+      (for/first ([form (in-list (forms-in (read-source
+                                            (build-path polars-dir "private"
+                                                        (format "~a.rkt" facade)))))]
+                  #:when (match form
+                           [(cons 'define-facade _) #t]
+                           [_ #f]))
+        form))
+    (define hidden (facade-option form '#:hide))
+    (check-equal? (sorted-exports (export-names mod))
+                  (sorted-exports
+                   (for*/list ([part (in-list (facade-option form '#:parts))]
+                               [export (in-list (export-names (part-module part)
+                                                              (append (part-hidden part) hidden)))])
+                     export))
+                  (format "~a.rkt does not export its parts' names" facade))
+    (define hidden-internal (facade-option form '#:hide-internal))
+    (check-equal? (sorted-exports (export-names `(submod ,mod internal)))
+                  (sorted-exports
+                   (for*/list ([part (in-list (facade-option form '#:internal-parts))]
+                               [export (in-list (export-names `(submod ,part internal)
+                                                              hidden-internal))])
+                     export))
+                  (format "~a.rkt's internal does not export its parts' internal names" facade)))
 
   (define package-dir (simple-form-path polars-dir))
   (define (package-relative path)
@@ -539,11 +632,7 @@
          (match pick
            [(list _ new) new]
            [_ name]))]
-      [(list 'except-in inner _ ...) (import-names inner)]
-      [(list (or 'for-syntax 'for-template 'for-label 'combine-in) specs ...)
-       (append-map import-names specs)]
-      [(list (or 'for-meta 'for-space 'only-meta-in 'only-space-in 'relative-in) _ specs ...)
-       (append-map import-names specs)]
+      [(app spec-inner (? list? inners)) (append-map import-names inners)]
       [_ (list dynamic-wind-name)]))
   (define (dynamic-wind-names datum)
     (define (requires datum)

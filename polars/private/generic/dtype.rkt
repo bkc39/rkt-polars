@@ -13,7 +13,7 @@
          (only-in polars/private/c-integer
                   int16/c int32/c int64-min int64/c int8/c uint16/c uint32/c uint64-max uint64/c
                   uint8/c)
-         (only-in polars/private/compat-dtype dtype-aliases dtype-spec? normalize-dtype)
+         (only-in polars/private/dtype-spelling dtype-aliases)
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -21,9 +21,9 @@
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
-(provide normalize-dtype dtype->constructor infer-dtype coerce-elements
+(provide dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec? define-enum series-elements/c)
+         define-enum series-elements/c)
 
 (begin-for-syntax
   (define-syntax-class enum-category

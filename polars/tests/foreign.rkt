@@ -3,7 +3,8 @@
 (module+ test
   (require rackunit
            (only-in ffi/unsafe
-                    _fun _int64 _pointer _string/utf-8 _void cast function-ptr make-ctype ptr-add)
+                    _fun _int64 _pointer _string/utf-8 _void cast ctype-sizeof function-ptr
+                    make-ctype ptr-add)
            (only-in gregor
                     ->datetime/local ->posix ->tzid ->utc-offset date datetime iso8601->time
                     moment posix->datetime)
@@ -49,6 +50,12 @@
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
                     series-xor str-block-drop-count last-error-message
                     _c-string _c-string/null)
+           (only-in polars/private/foreign
+                    _CompatOptBool _CompatOptF32 _CompatOptF64 _CompatOptI16 _CompatOptI32
+                    _CompatOptI64 _CompatOptI8 _CompatOptU16 _CompatOptU32 _CompatOptU64
+                    _CompatOptU8 _CompatOptYMD compat-opt-bool->datum compat-opt-f64->datum
+                    compat-opt-ymd->datum make-CompatOptBool make-CompatOptF64 make-CompatOptYMD
+                    make-YMD)
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in polars/private/enum-misses enum-misses-shown)
            (only-in (submod polars/private/foreign internal)
@@ -80,6 +87,17 @@
 
   (define empty-series-ptr
     (series-empty))
+  (check-equal? (map ctype-sizeof (list _CompatOptI8 _CompatOptI16 _CompatOptI32 _CompatOptI64
+                                        _CompatOptU8 _CompatOptU16 _CompatOptU32 _CompatOptU64
+                                        _CompatOptF32 _CompatOptF64 _CompatOptBool _CompatOptYMD))
+                '(8 8 8 16 8 8 8 16 8 16 8 16))
+  (check-equal? (compat-opt-f64->datum (make-CompatOptF64 1 2.5)) 2.5)
+  (check-false (compat-opt-f64->datum (make-CompatOptF64 0 2.5)))
+  (check-equal? (map compat-opt-bool->datum (list (make-CompatOptBool 1 2) (make-CompatOptBool 1 0)
+                                                  (make-CompatOptBool 0 1)))
+                '(#t #f #f))
+  (check-equal? (compat-opt-ymd->datum (make-CompatOptYMD 1 (make-YMD 2024 2 29))) (date 2024 2 29))
+  (check-false (compat-opt-ymd->datum (make-CompatOptYMD 0 (make-YMD 2024 2 29))))
   (check-pred Series-ptr? empty-series-ptr)
   (check-pred void? (series-drop empty-series-ptr))
 
