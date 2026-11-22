@@ -650,4 +650,6 @@
                  (list (datetime 2024 2 29 13) (datetime 2025 1 1)))))
     (check-exn #rx"^dt-year: expected an Expr or column name, got 2024" (lambda () (dt-year 2024)))
     (check-exn exn:fail:contract:blame?
+               (lambda () (contracted:dt-timestamp "t" #:unit 'seconds)))
+    (check-exn #rx"^dt-timestamp: contract violation"
                (lambda () (contracted:dt-timestamp "t" #:unit 'seconds)))))
