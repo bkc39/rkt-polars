@@ -370,4 +370,16 @@
                          "unable to add a column of length 2 to a DataFrame of height 0")))])
     (match-define (list d cells expected) row)
     (check-equal? (column-height-problem d (series cells #:name "w")) expected
-                  (format "~s beside height ~a" cells (height d)))))
+                  (format "~s beside height ~a" cells (height d))))
+
+  (test-case "the reference's reverse example"
+    (define reversed (reverse (series '(1 2 3) #:name "r")))
+    (check-equal? (series->list reversed) '(3 2 1))
+    (check-equal? (series-name reversed) "r")
+    (check-equal? (column (select (dataframe (list (series '(-5 12 31) #:name "c")))
+                                  (reverse (col "c")))
+                          "c")
+                  '(31 12 -5))
+    (check-equal? (reverse '(1 2 3)) '(3 2 1))
+    (check-exn #rx"^reverse: expected a series, Expr, or list, got \"c\""
+               (lambda () (reverse "c")))))

@@ -31,7 +31,7 @@
                     dt-year)
            (only-in (submod polars/private/generic/datetime internal)
                     dt-convert-time-zone dt-replace-time-zone)
-           (only-in polars/tests/generic/test-fixtures nul-expected)
+           (only-in polars/tests/generic/test-fixtures column nul-expected)
            (only-in polars/tests/test-helpers drops-during make-moment with-environment-variable))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
@@ -619,4 +619,42 @@
         ['to-datetime (lambda (c) (str->datetime c #:format pattern #:strict #t))]
         ['to-time (lambda (c) (str->time c #:format pattern #:strict #t))]
         ['strftime-date (lambda (c) (dt-strftime c pattern))]))
-    (check-equal? (formatted xs make) expected (format "~s" row))))
+    (check-equal? (formatted xs make) expected (format "~s" row)))
+
+  (test-case "the reference's component and formatting examples"
+    (define stamps
+      (dataframe (list (series (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))
+                               #:name "t"))))
+    (define (columns frame names) (for/list ([name (in-list names)]) (column frame name)))
+    (check-equal? (columns (select stamps
+                                   (alias (dt-year "t") "year") (alias (dt-month "t") "month")
+                                   (alias (dt-day "t") "day") (alias (dt-hour "t") "hour")
+                                   (alias (dt-minute "t") "minute") (alias (dt-second "t") "second"))
+                           '("year" "month" "day" "hour" "minute" "second"))
+                  '((2024 2025) (2 1) (29 1) (13 0) (45 0) (30 0)))
+    (check-equal? (columns (select stamps
+                                   (alias (dt-millisecond "t") "ms") (alias (dt-microsecond "t") "us")
+                                   (alias (dt-nanosecond "t") "ns") (alias (dt-date "t") "date")
+                                   (alias (dt-time "t") "time"))
+                           '("ms" "us" "ns" "date" "time"))
+                  (list '(123 0) '(123456 0) '(123456789 0)
+                        (list (date 2024 2 29) (date 2025 1 1))
+                        (list (time 13 45 30 123456789) (time 0 0 0))))
+    (check-equal? (columns (select stamps
+                                   (alias (dt-iso-year "t") "iso-year") (alias (dt-quarter "t") "quarter")
+                                   (alias (dt-week "t") "week") (alias (dt-weekday "t") "weekday")
+                                   (alias (dt-ordinal-day "t") "ordinal-day")
+                                   (alias (dt-is-leap-year "t") "leap"))
+                           '("iso-year" "quarter" "week" "weekday" "ordinal-day" "leap"))
+                  '((2024 2025) (1 1) (9 1) (4 3) (60 1) (#t #f)))
+    (check-exn #rx"^dt-year: expected an Expr or column name, got 2024" (lambda () (dt-year 2024)))
+    (check-equal? (columns (select stamps
+                                   (alias (dt-timestamp "t" #:unit 'milliseconds) "epoch-ms")
+                                   (alias (dt-strftime "t" "%Y/%m/%d %H:%M") "text")
+                                   (alias (dt-truncate "t" "1h") "hour"))
+                           '("epoch-ms" "text" "hour"))
+                  (list '(1709214330123 1735689600000)
+                        '("2024/02/29 13:45" "2025/01/01 00:00")
+                        (list (datetime 2024 2 29 13) (datetime 2025 1 1))))
+    (check-exn exn:fail:contract:blame?
+               (lambda () (contracted:dt-timestamp "t" #:unit 'seconds)))))

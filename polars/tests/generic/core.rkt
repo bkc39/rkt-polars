@@ -378,7 +378,8 @@
        "^series-new-ymdhms: invalid date and time: 2021-02-30 00:00:00$"]))
   (define-values (past-chrono-status past-chrono-runs past-chrono-completed past-chrono-stderr)
     (call-each-in-child
-     '()
+     '((only-in polars/ffi dataframe->string display-dataframe)
+       (only-in polars/private/foreign make-YMDHMS series-new-ymdhms))
      (for/list ([probe (in-list past-chrono-probes)])
        (match-define (list form _) probe)
        `(with-handlers ([exn:fail? exn-message]) (format "~a" ,form)))

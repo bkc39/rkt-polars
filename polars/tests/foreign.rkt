@@ -1651,4 +1651,11 @@
   (check-equal? (dataframe-column-names (dataframe-select empty-and-nul '("" "a\u0000b")))
                 '("" "a\u0000b"))
   (check-equal? (dataframe-column-names (dataframe-drop-columns empty-and-nul '("a\u0000b" "")))
-                '("a")))
+                '("a"))
+
+  (test-case "the reference's /vec constructor and typed reduction examples"
+    (check-equal? (series-sum-i32 (series-new-i32/vec "n" (vector 1 polars-null 3))) 4)
+    (check-exn #rx"^series-new-i32/vec: contract violation\n  expected: vector[?]"
+               (lambda () (contracted:series-new-i32/vec "n" '(1 3))))
+    (check-equal? (series-max-u16 (series-new-u16 "s" '(3 9 4))) 9)
+    (check-equal? (series-mean-f32 (series-new-f32 "s" '(1.0 2.0))) 1.5)))

@@ -11,7 +11,7 @@
            (only-in polars/private/expr col lit)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operators [= p=] [!= p!=])
-           (only-in polars/tests/generic/test-fixtures nul-expected)
+           (only-in polars/tests/generic/test-fixtures column nul-expected)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
@@ -214,4 +214,60 @@
   (for ([row (in-list (nul-expected 'values))] #:when (memq (car row) '(eq ne)))
     (match row
       [(list 'eq xs v expected) (check-equal? (series->list (p= (series xs) v)) expected)]
-      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)])))
+      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)]))
+
+  (test-case "the reference's string examples"
+    (define people
+      (dataframe (list (series (list "Ada Lovelace" "grace hopper" "Émilie" polars-null)
+                               #:name "who"))))
+    (define (columns frame names) (for/list ([name (in-list names)]) (column frame name)))
+    (check-equal? (columns (select people
+                                   (alias (str-to-lowercase "who") "lower")
+                                   (alias (str-to-uppercase "who") "upper")
+                                   (alias (str-len-bytes "who") "bytes")
+                                   (alias (str-len-chars "who") "chars"))
+                           '("lower" "upper" "bytes" "chars"))
+                  (list (list "ada lovelace" "grace hopper" "émilie" polars-null)
+                        (list "ADA LOVELACE" "GRACE HOPPER" "ÉMILIE" polars-null)
+                        (list 12 12 7 polars-null)
+                        (list 12 12 6 polars-null)))
+    (check-equal? (columns (select people (alias (str-head "who" 3) "head")
+                                   (alias (str-tail "who" 3) "tail"))
+                           '("head" "tail"))
+                  (list (list "Ada" "gra" "Émi" polars-null) (list "ace" "per" "lie" polars-null)))
+    (check-exn #rx"^str-to-lowercase: expected an Expr or column name, got 'who"
+               (lambda () (str-to-lowercase 'who)))
+    (check-equal? (columns (select people
+                                   (alias (str-contains "who" "[Hh]op") "contains")
+                                   (alias (str-starts-with "who" "Ada") "starts")
+                                   (alias (str-ends-with "who" "ie") "ends")
+                                   (alias (str-find "who" "e") "find")
+                                   (alias (str-find-literal "who" "a") "find-literal")
+                                   (alias (str-count-matches "who" "[aeiou]") "vowels"))
+                           '("contains" "starts" "ends" "find" "find-literal" "vowels"))
+                  (list (list #f #t #f polars-null) (list #t #f #f polars-null)
+                        (list #f #f #t polars-null) (list 7 4 6 polars-null)
+                        (list 2 2 polars-null polars-null) (list 5 4 3 polars-null)))
+    (check-equal? (column (select people (str-find "who" "(" #:strict #f)) "who")
+                  (list polars-null polars-null polars-null polars-null))
+    (check-exn #rx"^select: Invalid regular expression"
+               (lambda () (select people (str-find "who" "("))))
+    (define tags (dataframe (list (series (list "  ok  " "xxtagxx" "v1.2.0") #:name "s"))))
+    (check-equal? (columns (select tags
+                                   (alias (str-strip-chars "s") "strip")
+                                   (alias (str-strip-chars "s" "x") "strip-x")
+                                   (alias (str-strip-prefix "s" "v") "no-v")
+                                   (alias (str-strip-suffix "s" ".0") "no-.0"))
+                           '("strip" "strip-x" "no-v" "no-.0"))
+                  '(("ok" "xxtagxx" "v1.2.0") ("  ok  " "tag" "v1.2.0")
+                    ("  ok  " "xxtagxx" "1.2.0") ("  ok  " "xxtagxx" "v1.2")))
+    (check-equal? (columns (select people
+                                   (alias (str-replace "who" "[aeiou]" "_") "replace")
+                                   (alias (str-replace-all "who" "[aeiou]" "_") "replace-all"))
+                           '("replace" "replace-all"))
+                  (list (list "Ad_ Lovelace" "gr_ce hopper" "Ém_lie" polars-null)
+                        (list "Ad_ L_v_l_c_" "gr_c_ h_pp_r" "Ém_l__" polars-null)))
+    (check-equal? (column (select tags (str-replace-all "s" "." "-" #:literal #t)) "s")
+                  '("  ok  " "xxtagxx" "v1-2-0"))
+    (check-exn #rx"^str-strip-prefix: expected an Expr or column name, got 5"
+               (lambda () (str-strip-prefix 5 "v")))))

@@ -14,11 +14,12 @@
                     agg cast drop-nulls group-by select unique with-columns)
            (prefix-in contracted: polars/private/generic/nullable)
            (only-in polars/private/generic/nullable
-                    drop-nans fill-nan fill-null is-finite is-infinite is-nan is-null)
+                    drop-nans fill-nan fill-null is-finite is-infinite is-nan is-not-nan is-not-null
+                    is-null)
            (only-in (submod polars/private/generic/nullable internal) backward-fill forward-fill)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/operators [= p=] p+)
-           (only-in polars/tests/generic/test-fixtures series-shape)
+           (only-in polars/tests/generic/test-fixtures column series-shape)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
@@ -115,4 +116,24 @@
   (check-exn (contract-violation-of 'forward-fill)
              (lambda () (contracted:forward-fill "v" #:limit -1)))
   (check-exn #rx"^fill-null: value out of range for this dtype\n"
-             (lambda () (fill-null "t" (moment 262143 1 1 1 #:tz "Asia/Kathmandu")))))
+             (lambda () (fill-null "t" (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))))
+
+  (test-case "the reference's null and NaN example"
+    (define sensor (dataframe (list (series (list 1.0 polars-null +nan.0 +inf.0) #:name "v"))))
+    (define tests
+      (select sensor
+              (alias (is-null "v") "null") (alias (is-not-null "v") "present")
+              (alias (is-nan "v") "nan") (alias (is-not-nan "v") "number")
+              (alias (is-finite "v") "finite") (alias (is-infinite "v") "infinite")))
+    (check-equal? (column tests "null") '(#f #t #f #f))
+    (check-equal? (column tests "present") '(#t #f #t #t))
+    (check-equal? (column tests "nan") (list #f polars-null #t #f))
+    (check-equal? (column tests "number") (list #t polars-null #f #t))
+    (check-equal? (column tests "finite") (list #t polars-null #f #f))
+    (check-equal? (column tests "infinite") (list #f polars-null #f #t))
+    (define filled
+      (select sensor (alias (fill-null "v" 0.0) "fill-null") (alias (fill-nan "v" 0.0) "fill-nan")))
+    (check-equal? (column filled "fill-null") '(1.0 0.0 +nan.0 +inf.0))
+    (check-equal? (column filled "fill-nan") (list 1.0 polars-null 0.0 +inf.0))
+    (check-equal? (column (select sensor (drop-nans "v")) "v") (list 1.0 polars-null +inf.0))
+    (check-exn #rx"^fill-null: expected an Expr or column name, got 5" (lambda () (fill-null 5 0)))))

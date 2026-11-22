@@ -10,7 +10,8 @@
            (only-in polars/private/generic/reshape select with-columns)
            (only-in polars/private/generic/predicates
                     is-duplicated is-first-distinct is-in is-last-distinct is-unique)
-           (only-in (submod polars/private/generic/predicates internal) is-between))
+           (only-in (submod polars/private/generic/predicates internal) is-between)
+           (only-in polars/tests/generic/test-fixtures column))
   (define df (dataframe (list (series '(1 2 2 3 5 5 8) #:name "x" #:dtype 'i64))))
   (define out
     (~> df (with-columns
@@ -115,4 +116,16 @@
   (check-exn #rx"^is-in: value out of range for this dtype\n"
              (lambda () (is-in "t" (list past-local-range))))
   (check-exn #rx"^is-between: value out of range for this dtype\n"
-             (lambda () (is-between "t" past-local-range past-local-range))))
+             (lambda () (is-between "t" past-local-range past-local-range)))
+
+  (test-case "the reference's distinctness example"
+    (define visits (dataframe (list (series '("a" "b" "a" "c") #:name "who"))))
+    (define flags
+      (select visits
+              (alias (is-unique "who") "unique") (alias (is-duplicated "who") "duplicated")
+              (alias (is-first-distinct "who") "first") (alias (is-last-distinct "who") "last")))
+    (check-equal? (column flags "unique") '(#f #t #f #t))
+    (check-equal? (column flags "duplicated") '(#t #f #t #f))
+    (check-equal? (column flags "first") '(#t #t #f #t))
+    (check-equal? (column flags "last") '(#f #t #t #t))
+    (check-exn #rx"^is-unique: expected an Expr or column name, got 3" (lambda () (is-unique 3)))))
