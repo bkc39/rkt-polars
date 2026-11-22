@@ -11,8 +11,10 @@
            (only-in threading ~>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign
-                    dataframe->string polars-null series-cast series-drop-count series-dtype
-                    series-len series-name series-new-i64 series-new-str)
+                    dataframe->string dataframe-column dataframe-column-names dataframe-new
+                    polars-null series-cast series-drop-count series-dtype series-len series-name
+                    series-new-i32 series-new-i64 series-new-str)
+           (prefix-in contracted: polars/private/generic/core)
            (only-in polars/private/generic/core
                     column-name column-names dataframe? dtype height len null-count ref series
                     series? shape shape/values width wrap-series)
@@ -378,7 +380,8 @@
        "^series-new-ymdhms: invalid date and time: 2021-02-30 00:00:00$"]))
   (define-values (past-chrono-status past-chrono-runs past-chrono-completed past-chrono-stderr)
     (call-each-in-child
-     '()
+     '((only-in polars/ffi dataframe->string display-dataframe)
+       (only-in polars/private/foreign make-YMDHMS series-new-ymdhms))
      (for/list ([probe (in-list past-chrono-probes)])
        (match-define (list form _) probe)
        `(with-handlers ([exn:fail? exn-message]) (format "~a" ,form)))
@@ -437,4 +440,18 @@
                 '("a" "a\u0000b"))
   (check-equal? (width (dataframe (list (series '(1) #:name "a\u0000x")
                                         (series '(1) #:name "a\u0000y"))))
-                2))
+                2)
+
+  (test-case "the reference's bridge from polars/ffi: dataframe takes raw series"
+    (define raw (series-new-i32 "n" '(1 2)))
+    (check-equal? (series->list (ref (contracted:dataframe (list raw)) "n")) '(1 2))
+    (check-exn #rx"^len: contract violation:\n  expected: sized[?]" (lambda () (len raw)))
+    (check-exn #rx"^dataframe: contract violation\n  expected: Series-ptr[?]"
+               (lambda () (contracted:dataframe (list 1))))
+    (define raw-frame (dataframe-new (list raw (series-new-str "s" '("a" "b")))))
+    (define rebuilt
+      (contracted:dataframe (for/list ([name (in-list (dataframe-column-names raw-frame))])
+                              (dataframe-column raw-frame name))))
+    (check-pred dataframe? rebuilt)
+    (check-equal? (shape rebuilt) '(2 2))
+    (check-equal? (series->list (ref rebuilt "s")) '("a" "b"))))

@@ -22,13 +22,14 @@
            (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
            (only-in polars/private/generic/math p-abs pow)
-           (only-in polars/private/generic/reshape agg group-by select)
+           (only-in polars/private/generic/reductions alias)
+           (only-in polars/private/generic/reshape agg group-by select with-columns)
            (only-in polars/private/generic/operators
                     != < <= = > >= else-when mod otherwise p* p+ p- p-when p/ then when-pending)
            (only-in (submod polars/private/generic/operands internal) on-side)
            (only-in polars/tests/generic/test-fixtures
-                    Expr-ptr? col datetime drops-during floats ints ops-df polars-null polars-null?
-                    prices settle! v64 withnull)
+                    Expr-ptr? col column datetime drops-during floats ints ops-df polars-null
+                    polars-null? prices settle! v64 withnull)
            (only-in threading ~>))
 
   (define operand-ints (series '(1 2) #:name "x"))
@@ -575,4 +576,17 @@
     (check-exn #rx"^=: value out of range for this dtype\n"
                (lambda () (= kathmandu past-local-range)))
     (check-exn #rx"^<: value out of range for this dtype\n"
-               (lambda () (< (col "t") past-local-range)))))
+               (lambda () (< (col "t") past-local-range))))
+
+  (test-case "the reference's when / then / otherwise example"
+    (define climate (dataframe (list (series '(-5 12 31) #:name "c"))))
+    (define felt
+      (~> climate
+          (with-columns (alias (~> (p-when (< (col "c") 0)) (then "freezing")
+                                   (else-when (> (col "c") 25)) (then "hot")
+                                   (otherwise "mild"))
+                               "feel"))))
+    (check-equal? (column felt "feel") '("freezing" "mild" "hot"))
+    (check-equal? (p-when #t 'racket) 'racket)
+    (check-exn #rx"^otherwise: `otherwise` must follow `then`"
+               (lambda () (otherwise (p-when (< (col "c") 0)) "mild")))))

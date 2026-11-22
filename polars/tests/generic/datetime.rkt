@@ -31,7 +31,7 @@
                     dt-year)
            (only-in (submod polars/private/generic/datetime internal)
                     dt-convert-time-zone dt-replace-time-zone)
-           (only-in polars/tests/generic/test-fixtures nul-expected)
+           (only-in polars/tests/generic/test-fixtures check-selected nul-expected)
            (only-in polars/tests/test-helpers drops-during make-moment with-environment-variable))
   (define df
     (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
@@ -619,4 +619,35 @@
         ['to-datetime (lambda (c) (str->datetime c #:format pattern #:strict #t))]
         ['to-time (lambda (c) (str->time c #:format pattern #:strict #t))]
         ['strftime-date (lambda (c) (dt-strftime c pattern))]))
-    (check-equal? (formatted xs make) expected (format "~s" row))))
+    (check-equal? (formatted xs make) expected (format "~s" row)))
+
+  (test-case "the reference's component and formatting examples"
+    (define stamps
+      (dataframe (list (series (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))
+                               #:name "t"))))
+    (check-selected
+     stamps
+     (list (list "year" (dt-year "t") '(2024 2025))
+           (list "month" (dt-month "t") '(2 1))
+           (list "day" (dt-day "t") '(29 1))
+           (list "hour" (dt-hour "t") '(13 0))
+           (list "minute" (dt-minute "t") '(45 0))
+           (list "second" (dt-second "t") '(30 0))
+           (list "ms" (dt-millisecond "t") '(123 0))
+           (list "us" (dt-microsecond "t") '(123456 0))
+           (list "ns" (dt-nanosecond "t") '(123456789 0))
+           (list "date" (dt-date "t") (list (date 2024 2 29) (date 2025 1 1)))
+           (list "time" (dt-time "t") (list (time 13 45 30 123456789) (time 0 0 0)))
+           (list "iso-year" (dt-iso-year "t") '(2024 2025))
+           (list "quarter" (dt-quarter "t") '(1 1))
+           (list "week" (dt-week "t") '(9 1))
+           (list "weekday" (dt-weekday "t") '(4 3))
+           (list "ordinal-day" (dt-ordinal-day "t") '(60 1))
+           (list "leap" (dt-is-leap-year "t") '(#t #f))
+           (list "epoch-ms" (dt-timestamp "t" #:unit 'milliseconds) '(1709214330123 1735689600000))
+           (list "text" (dt-strftime "t" "%Y/%m/%d %H:%M") '("2024/02/29 13:45" "2025/01/01 00:00"))
+           (list "truncated" (dt-truncate "t" "1h")
+                 (list (datetime 2024 2 29 13) (datetime 2025 1 1)))))
+    (check-exn #rx"^dt-year: expected an Expr or column name, got 2024" (lambda () (dt-year 2024)))
+    (check-exn exn:fail:contract:blame?
+               (lambda () (contracted:dt-timestamp "t" #:unit 'seconds)))))

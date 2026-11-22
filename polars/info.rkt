@@ -14,13 +14,13 @@
     ("polars-aarch64-linux" #:platform "aarch64-linux" #:version ,native-version)
     ("polars-aarch64-linux" #:platform "aarch64-linux-natipkg" #:version ,native-version)
     ("polars-aarch64-macosx" #:platform "aarch64-macosx" #:version ,native-version)))
-(define build-deps '("scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"
+(define build-deps '("at-exp-lib" "scribble-lib" "racket-doc" "rackunit-lib" "threading-doc"
                       "sandbox-lib" "plot-lib" "plot-gui-lib" "plot-doc"))
 
 (define scribblings '(("scribblings/polars.scrbl" (multi-page))))
 
 (define pkg-desc "Racket bindings to the Polars DataFrame library")
-(define version "0.3.1")
+(define version "0.4")
 (define pkg-authors '(bkc))
 (define license '(Apache-2.0 OR MIT))
 

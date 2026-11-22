@@ -14,11 +14,12 @@
                     agg cast drop-nulls group-by select unique with-columns)
            (prefix-in contracted: polars/private/generic/nullable)
            (only-in polars/private/generic/nullable
-                    drop-nans fill-nan fill-null is-finite is-infinite is-nan is-null)
+                    drop-nans fill-nan fill-null is-finite is-infinite is-nan is-not-nan is-not-null
+                    is-null)
            (only-in (submod polars/private/generic/nullable internal) backward-fill forward-fill)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/operators [= p=] p+)
-           (only-in polars/tests/generic/test-fixtures series-shape)
+           (only-in polars/tests/generic/test-fixtures check-selected series-shape)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
@@ -115,4 +116,21 @@
   (check-exn (contract-violation-of 'forward-fill)
              (lambda () (contracted:forward-fill "v" #:limit -1)))
   (check-exn #rx"^fill-null: value out of range for this dtype\n"
-             (lambda () (fill-null "t" (moment 262143 1 1 1 #:tz "Asia/Kathmandu")))))
+             (lambda () (fill-null "t" (moment 262143 1 1 1 #:tz "Asia/Kathmandu"))))
+
+  (test-case "the reference's null and NaN example"
+    (define none polars-null)
+    (define sensor (dataframe (list (series (list 1.0 none +nan.0 +inf.0) #:name "v"))))
+    (check-selected
+     sensor
+     (list (list "null" (is-null "v") '(#f #t #f #f))
+           (list "present" (is-not-null "v") '(#t #f #t #t))
+           (list "nan" (is-nan "v") (list #f none #t #f))
+           (list "number" (is-not-nan "v") (list #t none #f #t))
+           (list "finite" (is-finite "v") (list #t none #f #f))
+           (list "infinite" (is-infinite "v") (list #f none #f #t))
+           (list "fill-null" (fill-null "v" 0.0) '(1.0 0.0 +nan.0 +inf.0))
+           (list "fill-nan" (fill-nan "v" 0.0) (list 1.0 none 0.0 +inf.0))))
+    (check-selected sensor (list (list "v" (drop-nans "v") (list 1.0 none +inf.0))))
+    (check-exn #rx"^fill-null: expected an Expr or column name, got 5"
+               (lambda () (fill-null 5 0)))))

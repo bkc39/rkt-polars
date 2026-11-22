@@ -11,7 +11,7 @@
            (only-in polars/private/expr col lit)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operators [= p=] [!= p!=])
-           (only-in polars/tests/generic/test-fixtures nul-expected)
+           (only-in polars/tests/generic/test-fixtures check-selected nul-expected)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/generic/core column-names dataframe dtype ref series)
            (only-in polars/private/generic/reductions alias)
@@ -214,4 +214,45 @@
   (for ([row (in-list (nul-expected 'values))] #:when (memq (car row) '(eq ne)))
     (match row
       [(list 'eq xs v expected) (check-equal? (series->list (p= (series xs) v)) expected)]
-      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)])))
+      [(list 'ne xs v expected) (check-equal? (series->list (p!= (series xs) v)) expected)]))
+
+  (test-case "the reference's string examples"
+    (define none polars-null)
+    (define people
+      (dataframe (list (series (list "Ada Lovelace" "grace hopper" "Émilie" none) #:name "who"))))
+    (define tags (dataframe (list (series (list "  ok  " "xxtagxx" "v1.2.0") #:name "s"))))
+    (check-selected
+     people
+     (list (list "lower" (str-to-lowercase "who")
+                 (list "ada lovelace" "grace hopper" "émilie" none))
+           (list "upper" (str-to-uppercase "who")
+                 (list "ADA LOVELACE" "GRACE HOPPER" "ÉMILIE" none))
+           (list "bytes" (str-len-bytes "who") (list 12 12 7 none))
+           (list "chars" (str-len-chars "who") (list 12 12 6 none))
+           (list "head" (str-head "who" 3) (list "Ada" "gra" "Émi" none))
+           (list "tail" (str-tail "who" 3) (list "ace" "per" "lie" none))
+           (list "contains" (str-contains "who" "[Hh]op") (list #f #t #f none))
+           (list "starts" (str-starts-with "who" "Ada") (list #t #f #f none))
+           (list "ends" (str-ends-with "who" "ie") (list #f #f #t none))
+           (list "find" (str-find "who" "e") (list 7 4 6 none))
+           (list "find-lax" (str-find "who" "(" #:strict #f) (list none none none none))
+           (list "find-literal" (str-find-literal "who" "a") (list 2 2 none none))
+           (list "vowels" (str-count-matches "who" "[aeiou]") (list 5 4 3 none))
+           (list "replace" (str-replace "who" "[aeiou]" "_")
+                 (list "Ad_ Lovelace" "gr_ce hopper" "Ém_lie" none))
+           (list "replace-all" (str-replace-all "who" "[aeiou]" "_")
+                 (list "Ad_ L_v_l_c_" "gr_c_ h_pp_r" "Ém_l__" none))))
+    (check-selected
+     tags
+     (list (list "strip" (str-strip-chars "s") '("ok" "xxtagxx" "v1.2.0"))
+           (list "strip-x" (str-strip-chars "s" "x") '("  ok  " "tag" "v1.2.0"))
+           (list "no-v" (str-strip-prefix "s" "v") '("  ok  " "xxtagxx" "1.2.0"))
+           (list "no-.0" (str-strip-suffix "s" ".0") '("  ok  " "xxtagxx" "v1.2"))
+           (list "dashes" (str-replace-all "s" "." "-" #:literal #t)
+                 '("  ok  " "xxtagxx" "v1-2-0"))))
+    (check-exn #rx"^str-to-lowercase: expected an Expr or column name, got 'who"
+               (lambda () (str-to-lowercase 'who)))
+    (check-exn #rx"^select: Invalid regular expression"
+               (lambda () (select people (str-find "who" "("))))
+    (check-exn #rx"^str-strip-prefix: expected an Expr or column name, got 5"
+               (lambda () (str-strip-prefix 5 "v")))))

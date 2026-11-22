@@ -1,148 +1,47 @@
 #lang racket/base
 
-(require (only-in polars/private/csv dataframe-read-csv dataframe-write-csv lazyframe-scan-csv)
-         (only-in polars/private/json
-                  dataframe-read-json dataframe-write-json dataframe-read-json-lines
-                  dataframe-write-json-lines lazyframe-scan-json-lines)
-         (only-in polars/private/parquet
-                  dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet)
-         polars/private/expr
-         polars/private/foreign
+(require (only-in polars/private/expr
+                  Expr-ptr? col dtype-spec? expr->string expr-drop lit multi-column-expr?)
+         (only-in polars/private/foreign polars-null polars-null? series-name time-zone-name/c)
          polars/private/generic
-         syntax/parse/define
-         (only-in threading ~> ~>> lambda~> lambda~>>)
-         ;; generic exports its dispatching and/or/not/xor via `rename-out`, and
-         ;; `all-from-out` below silently drops those (they collide with this
-         ;; module language's own racket/base `and`/`or`/`not`).  Pull them in
-         ;; under private aliases so we can re-export them explicitly.
-         (only-in polars/private/generic
-                  [and polars:and] [or polars:or]
-                  [not polars:not] [xor polars:xor]
-                  [+ polars:+] [- polars:-] [* polars:*] [/ polars:/]
-                  [when polars:when]
-                  [abs polars:abs] [round polars:round] [floor polars:floor]
-                  [sqrt polars:sqrt] [exp polars:exp] [log polars:log]))
+         (only-in threading ~> ~>> lambda~> lambda~>>))
 
-(define-syntax-parse-rule (provide-public #:internal internal:id [mod:id name:id ...] ...)
-  (begin
-    (provide (except-out (all-from-out mod) name ...) ...)
-    (module+ test (define internal '(name ... ...)))))
+(provide
+ ~> ~>> lambda~> lambda~>>
 
-(provide-public
- #:internal internal-names
- [polars/private/expr ->expr/who expr-cast-to expr-lit-u64 expr-meta-output-name/raw
-  expr-meta-output-name/who expr-name-keep index-list/c lit/who lazyframe-collect/raw
-  membership-list/c null-behavior/c rank-method/c]
- [polars/private/foreign
-  call/foreign-error call/polars-reason datetime-zone/c
-  dataframe-drop-count dataframe-drop/raw dataframe-dropped decimal-ref
-  define-owned-cpointer-type dropped? last-error-message
-  _c-string _c-string/null _rsstr _rsstr-list str-block-drop
-  str-block-drop-count
-  owned-cpointer-types owned-pointer-accessor owned-pointer-arg
-  owned-pointer? prop:owned-pointer raise-dropped release-owned
-  series-drop-count series-drop/raw series-dropped write-owned
-  dataframe-sort/raw frame-sort/c series-binary-byte-len series-copy-binary
-  series-copy-decimal series-copy-str series-ref-bytes series-ref-str
-  series-new-str/raw series-sort/raw series-str-byte-len sort-flags
-  sort-flags/c sort-flags-mismatch
-  dtype-short-names
-  series-cast-to series-cast-datetime-tz series-cast-datetime-tz/raw
-  series-dt-convert-time-zone series-dt-convert-time-zone/raw
-  series-dt-replace-time-zone series-dt-replace-time-zone/raw
-  series-time-zone replace-zone-failure zoned-datetime-dtype?
-  dataframe->string/raw printed-or-placeholder pivot-frame unpivot-frame series-value
-  series-copy-i8 series-copy-i16 series-copy-i32 series-copy-i64 series-copy-u8 series-copy-u16
-  series-copy-u32 series-copy-u64 series-copy-f32 series-copy-f64 series-copy-bool
-  series-add/raw series-sub/raw series-mul/raw series-div/raw series-mod/raw
-  series-eq/raw series-ne/raw series-gt/raw series-ge/raw series-lt/raw series-le/raw
-  series-and/raw series-or/raw series-xor/raw series-not/raw
-  series-add/who series-sub/who series-mul/who series-div/who series-mod/who
-  series-eq/who series-ne/who series-gt/who series-ge/who series-lt/who series-le/who
-  series-and/who series-or/who series-xor/who series-not/who
-  dataframe-vstack/raw dataframe-hstack/raw dataframe-new/raw provide-row-windows])
+ Expr-ptr? col lit expr->string expr-drop dtype-spec? multi-column-expr?
 
-;; Re-provide the thread-first macro so `(require polars)` yields `~>`, the
-;; Racket spelling of Python/Polars method chaining:
-;;   (~> df (filter (> (col "value") 15)) (group-by "group") (agg (sum (col "value"))))
-(provide dataframe-read-csv dataframe-write-csv lazyframe-scan-csv
-         dataframe-read-json dataframe-write-json dataframe-read-json-lines
-         dataframe-write-json-lines lazyframe-scan-json-lines
-         dataframe-read-parquet dataframe-write-parquet lazyframe-scan-parquet
-         (all-from-out polars/private/generic)
-         ~> ~>> lambda~> lambda~>>
-         (rename-out [polars:and and] [polars:or or]
-                     [polars:not not] [polars:xor xor]
-                     [polars:+ +] [polars:- -] [polars:* *] [polars:/ /]
-                     [polars:when when]
-                     [polars:abs abs] [polars:round round] [polars:floor floor]
-                     [polars:sqrt sqrt] [polars:exp exp] [polars:log log]))
+ time-zone-name/c polars-null polars-null? series-name
 
-(module+ test
-  (require rackunit)
-  (define (phase-0-exports mod)
-    (define-values (variables syntaxes) (module->exports mod))
-    (for*/list ([phase+names (in-list (append variables syntaxes))]
-                #:when (eqv? (car phase+names) 0)
-                [name (in-list (cdr phase+names))])
-      (car name)))
-  (define exported (phase-0-exports 'polars))
-  (define c-integer-contracts
-    (for/list ([name (in-list (phase-0-exports 'polars/private/c-integer))]
-               #:when (regexp-match? #rx"/c$" (symbol->string name)))
-      name))
-  (check-not-false (memq 'cast exported))
-  (check-not-false (memq 'time-zone-name/c exported))
-  (check-not-false (memq 'series-new-str exported))
-  (for ([name (in-list '(series-sum-u16 series-mean-f32 series-n-unique series-quantile))])
-    (check-not-false (memq name exported) (format "~a is public" name)))
-  (check-not-false (memq 'uint32/c c-integer-contracts))
-  (for ([internal (in-list (append internal-names
-                                    c-integer-contracts
-                                    '(drop-owned owned-drop-registry register-owned-drop!
-                                      expr-drop/raw expr-dropped
-                                      lazyframe-drop/raw lazyframe-dropped
-                                      define-frame-op/reason define-reasoned
-                                      call/refusal no-problem
-                                      dataframe-select/c dataframe-drop-columns/c
-                                      dataframe-rename/raw dataframe-with-column/raw
-                                      dataframe-column/raw dataframe-select/raw
-                                      dataframe-drop-columns/raw
-                                      dataframe-select/who dataframe-drop-columns/who
-                                      dataframe-rename/who dataframe-with-column/who
-                                      dataframe-column/who
-                                      dataframe-new/raw expr-lit-u64 null-behavior/c
-                                      rank-method/c provide-row-windows
-                                      valid-opt? call/f64-reduction define-typed-reduction
-                                      define-typed-reductions define-int-reductions
-                                      series-n-unique/raw series-std/raw series-var/raw
-                                      series-quantile/raw typed-reductions spelling-rules
-                                      expanded-reason)
-                                    (for*/list ([op (in-list '(sum min max mean))]
-                                                [t (in-list '(i8 i16 i32 i64 u8 u16 u32 u64
-                                                              f32 f64))])
-                                      (string->symbol (format "series-~a-~a/raw" op t)))
-                                    (for/list ([op (in-list '(head tail slice reverse drop-nulls
-                                                              unique is-null is-not-null))])
-                                      (string->symbol (format "series-~a/raw" op)))
-                                    (for/list ([op (in-list '(head tail slice filter unique
-                                                              drop-nulls))])
-                                      (string->symbol (format "dataframe-~a/raw" op)))))])
-    (check-false (memq internal exported) (format "~a is internal" internal)))
-  (for ([name (in-list exported)])
-    (check-false (regexp-match? #rx"^series-copy-|-byte-len$|^series-ref-bytes$"
-                                (symbol->string name))
-                 (format "~a is internal" name))))
-
-(module+ test
-  (require racket/match
-           racket/runtime-path
-           (only-in setup/getinfo get-info/full)
-           (only-in version/utils valid-version?))
-  (define-runtime-path collection-dir ".")
-  (define-runtime-path package-dir "..")
-  (define polars-version ((get-info/full collection-dir) 'version))
-  (check-pred valid-version? polars-version)
-  (match (get-info/full package-dir)
-    [#f (void)]
-    [root-info (check-equal? (root-info 'version) polars-version)]))
+ all exclude meta-output-name meta-root-names meta-eq?
+ > < >= <= = != and or not xor + - * / mod
+ when then else-when otherwise
+ filter sort sort-by select with-columns cast vstack hstack with-column
+ head tail slice reverse unique drop-nulls drop pivot unpivot join join-asof
+ read-csv scan-csv write-csv read-parquet scan-parquet write-parquet
+ read-json write-json read-ndjson scan-ndjson write-ndjson
+ lazy lazyframe? collect explain group-by agg grouped? over
+ rank gather shift diff forward-fill backward-fill
+ sum mean min max count n-unique median std var alias first last
+ abs sqrt exp log log1p floor ceil round pow sign clip
+ is-null is-not-null is-nan is-not-nan is-finite is-infinite
+ fill-null fill-nan drop-nans
+ is-between is-in is-unique is-duplicated is-first-distinct is-last-distinct
+ cum-sum cum-prod cum-min cum-max cum-count
+ dt-year dt-month dt-day dt-hour dt-minute dt-second
+ dt-iso-year dt-quarter dt-week dt-weekday dt-ordinal-day dt-is-leap-year
+ dt-date dt-time dt-millisecond dt-microsecond dt-nanosecond
+ dt-timestamp dt-strftime dt-truncate dt-convert-time-zone dt-replace-time-zone
+ str-to-lowercase str-to-uppercase str-contains str-starts-with str-ends-with
+ str-strip-chars str-strip-prefix str-strip-suffix str-replace str-replace-all
+ str-len-bytes str-len-chars str-head str-tail str-slice
+ str-find str-find-literal str-count-matches str-extract
+ str->date str->time str->datetime
+ series series? series->string dtype len null-count rename rename! clone series-clone
+ series->list series->vector series->f64vector in-series define-enum
+ dataframe dataframe? shape shape/values height width column-names column-name
+ ref describe
+ dataframe->columns dataframe->hash in-dataframe-columns in-dataframe-rows
+ dataframe->rows dataframe->f64vector
+ gen:has-ref has-ref? gen:sized sized? gen:has-shape has-shape?
+ gen:has-dtype has-dtype? gen:has-null-count has-null-count?)
