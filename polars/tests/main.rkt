@@ -47,8 +47,8 @@
 
   (define (binding-source name)
     (parameterize ([current-namespace polars-namespace])
-      (match (identifier-binding (namespace-symbol->identifier name))
-        [(list source _ ...) (resolved-module-path-name (module-path-index-resolve source))])))
+      (match-define (list source _ ...) (identifier-binding (namespace-symbol->identifier name)))
+      (resolved-module-path-name (module-path-index-resolve source))))
 
   (define (in-collection? source)
     (and (path? source)
@@ -59,7 +59,7 @@
   (define (read-manual path)
     (call-with-input-file path
       (lambda (in)
-        (read-line in)
+        (read-line in 'any)
         (read-inside in))))
 
   (define section-levels '((section . 1) (subsection . 2) (subsubsection . 3)))
@@ -97,7 +97,8 @@
         [(list (? symbol? head) _ ...)
          #:when (regexp-match? #rx"^(define|require)" (symbol->string head))
          (values '() stack)]
-        [(list (? (lambda (head) (assq head section-levels)) head) _ ...)
+        [(list head _ ...)
+         #:when (assq head section-levels)
          (values '() (enter stack (cdr (assq head section-levels))))]
         [(list 'defmodule args ...)
          #:when (memq '#:no-declare args)
@@ -108,7 +109,8 @@
         [(list 'include-section (? string? included))
          (define document-level (list-tail stack (- (length stack) base)))
          (values (include included document-level) document-level)]
-        [(list (? (lambda (head) (memq head def-heads)) head) args ...)
+        [(list head args ...)
+         #:when (memq head def-heads)
          (values (for/list ([name (in-list (form-names head args))])
                    (cons (car stack) name))
                  stack)]
@@ -117,11 +119,12 @@
          (define-values (rest-entries after-rest) (walk rest after-first))
          (values (append first-entries rest-entries) after-rest)]
         [_ (values '() stack)]))
-    (define-values (entries _stack)
-      (for/fold ([entries '()] [stack (cons (car parent) parent)]) ([form (in-list forms)])
-        (define-values (found next) (walk form stack))
-        (values (append entries found) next)))
-    entries)
+    (for/fold ([entries '()]
+               [stack (cons (car parent) parent)]
+               #:result entries)
+              ([form (in-list forms)])
+      (define-values (found next) (walk form stack))
+      (values (append entries found) next)))
 
   (define (manual-entries path [parent (list #f)])
     (define-values (dir _name _dir?) (split-path path))
