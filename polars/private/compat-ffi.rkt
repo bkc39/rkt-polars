@@ -5,19 +5,32 @@
          ffi/unsafe/define
          ffi/unsafe/define/conventions
          racket/match
+         syntax/parse/define
          (only-in polars/private/native-library compat-library missing-export)
          (only-in polars/private/resource with-release)
-         (only-in (submod polars/private/resource internal) str-block->string str-block->strings))
+         (only-in (submod polars/private/resource internal) str-block->string str-block->strings)
+         (for-syntax racket/base))
 
 (provide (except-out (all-defined-out)
-                     block-reader c-string-argument c-string/null-argument result-only))
+                     block-reader c-string-argument c-string/null-argument define-compat/ffi
+                     named-binding result-only))
 
-;; A binding passed GC memory (a byte string, an f64vector) is never #:blocking?:
-;; the collector may move it during the call.
-(define-ffi-definer define-compat
+(define-ffi-definer define-compat/ffi
   compat-library
   #:make-c-id convention:hyphen->underscore
   #:default-make-fail missing-export)
+
+(define ((named-binding name wrap) callout)
+  (define value (wrap callout))
+  (if (procedure? value) (procedure-rename value name) value))
+
+;; A binding passed GC memory (a byte string, an f64vector) is never #:blocking?:
+;; the collector may move it during the call.
+(define-syntax-parse-rule (define-compat name:id type:expr
+                            (~alt (~optional (~seq #:c-id c-id:id))
+                                  (~optional (~seq #:wrap wrap:expr)))
+                            ...)
+  (define-compat/ffi name type (~? (~@ #:c-id c-id)) #:wrap (named-binding 'name (~? wrap values))))
 
 (define-compat str-block-drop
   (_fun _pointer -> _void))

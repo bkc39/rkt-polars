@@ -198,4 +198,29 @@
                                                (list->seteq foreign-re-exports)))))
 
   (test-case "every export of polars/ffi has its entry and every entry its export"
-    (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports)))
+    (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports))
+
+  (test-case "neither module exports a polars: alias of a shadowing operator"
+    (check-equal? (for/list ([name (in-list (append polars-exports ffi-exports))]
+                             #:when (string-prefix? (symbol->string name) "polars:"))
+                    name)
+                  '()))
+
+  (define (exported-procedures mod names)
+    (parameterize ([current-namespace polars-namespace])
+      (for*/list ([name (in-list names)]
+                  [value (in-value (with-handlers ([exn:fail:syntax? (lambda (_) #f)])
+                                     (dynamic-require mod name)))]
+                  #:when (procedure? value))
+        (cons name value))))
+
+  (define procedure-exports
+    (append (exported-procedures 'polars polars-exports)
+            (exported-procedures 'polars/ffi ffi-exports)))
+
+  (test-case "every exported procedure's object-name is its exported name"
+    (check-true (> (length procedure-exports) 300))
+    (check-equal? (for/list ([export (in-list procedure-exports)]
+                             #:unless (eq? (object-name (cdr export)) (car export)))
+                    (list (car export) (object-name (cdr export))))
+                  '())))

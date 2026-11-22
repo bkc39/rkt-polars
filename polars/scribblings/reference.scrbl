@@ -2940,7 +2940,10 @@ columns with @racket[in-dataframe-columns], or convert them with
 The monomorphic layer the fluent operations are built on: one binding per
 operation and dtype, taking a wrapper wherever it takes a pointer and
 returning the raw foreign pointer. Before 0.4 @racket[(require polars)]
-exported these bindings too.
+exported these bindings too, and a @racketidfont{polars:} alias of each
+operator that shadows @racketmodname[racket/base]
+(@racketidfont{polars:+}, @racketidfont{polars:abs}, ...); 0.4 removes the
+aliases, and the shadowing operators are the spelling.
 
 @examples[#:eval ev #:hidden (require polars/ffi)]
 
