@@ -20,7 +20,7 @@
                   write-owned zoned-datetime-dtype?)
          (only-in polars/private/native-library compat-library missing-export)
          (only-in (submod polars/private/foreign internal) define-reasoned)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/compat-dtype dtype-spec? normalize-dtype)
          (only-in polars/private/resource _str _str-list)
          (only-in polars/private/series zoned-temporal-encoder)
          (only-in polars/private/temporal temporal-value-dtype))

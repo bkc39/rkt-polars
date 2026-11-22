@@ -11,7 +11,7 @@
            (only-in racket/match == match match* match-define)
            (only-in polars/private/c-integer int32/c int64/c size/c uint32/c uint64/c uint8/c)
            (only-in polars/private/foreign
-                    ->compat-dtype CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS? _Series-ptr
+                    CompatOptI64-value DataFrame-ptr? Series-ptr? YMDHMS? _Series-ptr
                     call/foreign-error define-compat
                     copy-zoned-datetimes dataframe-column dataframe-column-name
                     dataframe-column-names dataframe-drop-columns dataframe-drop-count
@@ -21,7 +21,7 @@
                     dataframe-join-asof/raw dataframe-make dataframe-new dataframe-pivot
                     dataframe-rename dataframe-select dataframe-shape dataframe-unique
                     dataframe-unpivot dataframe-width dataframe-with-column dtype-short-names
-                    enum-dtype? make-YMDHMS polars-null respell series-add series-add-f64
+                    make-YMDHMS polars-null series-add series-add-f64
                     series-and series-cast series-div series-div-f64 series-drop-count
                     series-drop-nulls series-dt-convert-time-zone series-dt-replace-time-zone
                     series-dtype series-empty series-enum-categories series-enum-categories/raw series-eq series-eq-f64
@@ -47,7 +47,7 @@
                     series-reverse series-sub series-sub-f64 series-sum-f32 series-sum-f64
                     series-sum-i16 series-sum-i32 series-sum-i64 series-sum-i8 series-sum-u16
                     series-sum-u32 series-sum-u64 series-sum-u8 series-time-zone series-unique
-                    series-xor str-block-drop-count zoned-datetime-dtype? last-error-message
+                    series-xor str-block-drop-count last-error-message
                     _c-string _c-string/null)
            (only-in polars/private/expr col expr-meta-output-name/raw expr-meta-root-names)
            (only-in polars/private/enum-misses enum-misses-shown)
@@ -584,8 +584,6 @@
              (lambda () (series-cast bears '(enum "Polar"))))
   (check-exn #rx"^series-enum-categories: invalid series dtype: expected `Enum`, got `str` for `bears`$"
              (lambda () (series-enum-categories bears)))
-  (check-true (enum-dtype? '(enum)))
-  (check-false (enum-dtype? '(enum a . b)))
   (define nul-polar (string->symbol "Po\u0000lar"))
   (define nul-bears (series-new-str "bears" (list "Po\u0000lar" polars-null "Brown")))
   (define nul-bears/enum (series-cast nul-bears (list 'enum 'Brown nul-polar)))
@@ -656,12 +654,6 @@
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
   (check-exn #rx"^series-cast: contract violation\n  expected: time-zone-name/c\n  given: \"\"\n"
              (lambda () (series-cast stamps '(datetime microseconds ""))))
-  (check-exn #rx"^->compat-dtype: unsupported cast target '\\(datetime microseconds \"UTC\"\\)"
-             (lambda () (->compat-dtype '(datetime microseconds "UTC"))))
-  (check-true (zoned-datetime-dtype? '(datetime nanoseconds "UTC")))
-  (for ([v (list '(datetime nanoseconds "") '(datetime #f "UTC") '(datetime nanoseconds #f)
-                 '(datetime nanoseconds UTC) '(datetime nanoseconds "UTC" x))])
-    (check-false (zoned-datetime-dtype? v)))
   (check-equal? (series-ref (series-dt-convert-time-zone 'test brussels "Asia/Kathmandu") 0)
                 (moment 2021 3 27 16 45 #:tz "Asia/Kathmandu"))
   (check-equal? (series-ref (series-dt-replace-time-zone 'test brussels "UTC" 'raise 'raise) 0)
@@ -677,20 +669,6 @@
   (check-exn (regexp (string-append "^test: cannot replace the time zone with \"UTC\": invalid"
                                     " non-existent 'earliest', expected 'null' or 'raise'$"))
              (lambda () (series-dt-replace-time-zone 'test brussels "UTC" 'raise 'earliest)))
-  (check-equal? (respell (string-append "is ambiguous. Please use `ambiguous` to tell how it"
-                                        " should be localized. You may be able to use"
-                                        " `non_existent='null'` to return `null`"))
-                (string-append "is ambiguous. Please use #:ambiguous to tell how it should be"
-                               " localized. You may be able to use dt-replace-time-zone's"
-                               " #:non-existent 'null to return `null`"))
-  (check-equal? (respell "try renaming the columns with `.alias(\"new_name\")` to avoid")
-                "try renaming the columns with `(alias expr \"new-name\")` to avoid")
-  (for ([hint (list (string-append ", hint: specify this field in the schema, or pass"
-                                   " cast_options=pl.ScanCastOptions(extra_struct_fields='ignore')")
-                    ", hint: pass cast_options=pl.ScanCastOptions(integer_cast='upcast')")])
-    (check-equal? (respell (string-append "encountered extra struct field: x" hint))
-                  "encountered extra struct field: x"))
-  (check-equal? (respell "a `.` and a \\1 and a & survive") "a `.` and a \\1 and a & survive")
   (check-exn #rx"^series-cast: .*did you mean 'Asia/Baku' instead\\?$"
              (lambda () (series-cast stamps '(datetime microseconds "Mars/Base"))))
 

@@ -92,16 +92,25 @@ roughly daily, not on each merge.
 
 ## The three layers
 
-1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO),
-   `expr-core.rkt` / `expr.rkt` / `expr-str.rkt` / `expr-dt.rkt` (expressions,
-   lazyframes), `bulk.rkt` (column copies into Racket-allocated buffers,
-   whole or a block of rows at a time, behind `series->list`,
-   `in-dataframe-rows` and their siblings; it binds the numeric, boolean and
-   categorical copies, and takes the String and Decimal ones,
-   `series-copy-str` / `series-str-byte-len` and `series-copy-decimal`, from
-   `foreign.rkt`, where `series-ref` reads through them). `define-compat`
-   binds a C symbol; the Racket name is the symbol with `_` → `-`, or an explicit
-   `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
+1. **Raw FFI** — `polars/private/foreign.rkt` (series, dataframe, IO), a
+   facade over `compat-ffi.rkt` (`define-compat`, the string blocks),
+   `compat-dtype.rkt` (the dtype table and spellings, `polars-null`),
+   `owned.rkt` (the owned pointer types), `reason.rkt` (failure reasons,
+   `define-reasoned`), `series-core.rkt` / `series-new.rkt` /
+   `series-ref.rkt` / `series-ops.rkt` and `dataframe-core.rkt` /
+   `dataframe-ops.rkt`; `expr.rkt`, a facade over `expr-ops.rkt` /
+   `expr-select.rkt` / `lazyframe.rkt` and `expr-core.rkt` / `expr-str.rkt` /
+   `expr-dt.rkt` (expressions, lazyframes); `bulk.rkt` (column copies into
+   Racket-allocated buffers, whole or a block of rows at a time, behind
+   `series->list`, `in-dataframe-rows` and their siblings; it binds the
+   numeric, boolean and categorical copies, and takes the String and Decimal
+   ones, `series-copy-str` / `series-str-byte-len` (`series-core.rkt`) and
+   `series-copy-decimal` (`series-ref.rkt`, where `series-ref` reads through
+   them)). A facade only re-exports its parts. No module directly under
+   `polars/private/` but `generic.rkt` requires a `polars/private/generic/`
+   one: a test in `polars/tests/resource.rkt` reads each `require` as data.
+   `define-compat` binds a C symbol; the Racket name is the symbol with `_` →
+   `-`, or an explicit `#:c-id`. Bindings whose Racket name carries a `/raw` or `/c` suffix are
    wrapped by a checking function of the plain name, except the
    `series-ref-<type>/raw` readers, which carry an index contract and which
    `series-ref` reads through unchecked.
@@ -209,7 +218,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   word 0 is its size in words. A single string has its UTF-8 length in word
   1 and its bytes from word 2. A list has its count in word 1, `count + 1`
   offsets from word 2, and then the bytes. `_rsstr` and `_rsstr-list`
-  (`foreign.rkt`) read a block by length, so a NUL in a name, a reason or
+  (`compat-ffi.rkt`) read a block by length, so a NUL in a name, a reason or
   printed text survives. They free it at once through `str_block_drop`, in
   atomic mode, so a thread killed during the read is killed after the free.
   NULL reads as `#f`. `str_block_drop_count` counts the releases. No export
@@ -410,7 +419,7 @@ it. Racket side: `define-compat` with `#:c-id`.
     `#:datetime-format` and `#:time-format`. A zone's name with a NUL is a
     contract error (see the zoned datetime fact).
   - A C string still crossing is `_c-string` / `_c-string/null`
-    (`foreign.rkt`), which refuse a NUL: a path, a zone's name, the
+    (`compat-ffi.rkt`), which refuse a NUL: a path, a zone's name, the
     `#:ambiguous` / `#:non-existent` names and the String constructor's
     empty name.
   - A test in `polars/tests/resource.rkt` reads every module under
@@ -483,7 +492,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   through `eval`, `dynamic-require` or `namespace-variable-value` with a
   computed name, a name `filtered-in` computes, or a re-export under another
   name from another module (`prefix-out`).
-- **One loader** finds `libcompat` for `foreign.rkt` and `expr-core.rkt`
+- **One loader** finds `libcompat` for `compat-ffi.rkt` and `expr-core.rkt`
   (`polars/private/native-library.rkt`, over `native-location.rkt`, which
   the pre-installer shares), in this order: `$RKT_POLARS_COMPAT_LIB_PATH/lib`;
   a staged `polars/native-libs/libcompat.*`; the native package for the
@@ -725,7 +734,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   `#:arguments` table the reference's `defproc/arguments` renders. A `_fun`
   type shared by two entry points is a macro used as
   `(define-compat name (_csv-fun -> _DataFrame-ptr/null) ...)`, so the
-  ownership audit in `foreign.rkt` still reads the result type and the
+  ownership audit in `polars/tests/foreign.rkt` still reads the result type and the
   `#:wrap`.
 - A `scan-csv` / `scan-parquet` / `scan-ndjson` only builds a plan; a
   missing or malformed file, an invalid glob pattern, or one that matches
@@ -767,7 +776,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   branch never awaits, and a `Pending` poll counts as no bound (`block_on`
   could hang under `POLARS_FORCE_ASYNC` inside `call-as-atomic`).
 - IO paths resolve against Racket's `current-directory`, not the process's
-  (`path->complete-string` in `foreign.rkt`). For a globbing reader it
+  (`path->complete-string` in `dataframe-core.rkt`). For a globbing reader it
   escapes `[`, `*` and `?` in the directory part, so only the part the
   caller wrote is a pattern.
 - `read-json` / `write-json` are Python's `read_json` / `write_json`: one
@@ -816,7 +825,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   error (`without_plan`). A fluent verb that builds a plan and collects it
   (`select`, `with-columns`, `filter`, `agg`) reports the cause under its own
   name, through `lazyframe-collect/who` (the `internal` submodule of
-  `expr.rkt`), and `collect` under `collect`.
+  `lazyframe.rkt`, re-exported by `expr.rkt`'s), and `collect` under `collect`.
 - `write-ndjson` is Python's `lazy().sink_ndjson()`, through
   `dataframe_write_ndjson_with_options`, through `write_frame` like the
   other writers: the sink writes to the staged file (`SinkTarget::Dyn`), and
@@ -1088,7 +1097,7 @@ it. Racket side: `define-compat` with `#:c-id`.
   (`series_time_zone_v2`, the `_datetime_tz` cast / selector / literal entry
   points, `series_dt_*` / `expr_dt_*` convert and replace,
   `expr_str_to_datetime_tz_v2`) as a `_c-string`. A zone's name is
-  `time-zone-name/c` (`foreign.rkt`, public): a non-empty string without a
+  `time-zone-name/c` (`compat-dtype.rkt`, public): a non-empty string without a
   NUL. `dt-convert-time-zone`, `dt-replace-time-zone` and `str->datetime
   #:time-zone` take it in their contracts. `datetime-zone/c`, in the dtype
   contracts of `cast`, `series #:dtype`, `col`, `series-cast`, `expr-cast`

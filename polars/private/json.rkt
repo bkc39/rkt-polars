@@ -13,7 +13,7 @@
                   ->compat-dtype _c-string _CompatDType _DataFrame-ptr _DataFrame-ptr/null
                   DataFrame-ptr? call/foreign-error dataframe-drop define-compat
                   enum-dtype? path->complete-string)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/compat-dtype dtype-spec? normalize-dtype)
          (only-in polars/private/io-contracts
                   column-name/c distinct-names? given positive-size/c row-index/c size/c)
          (only-in polars/private/io-options define-io-options keyword-forwarder)

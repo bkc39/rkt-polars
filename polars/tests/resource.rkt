@@ -426,6 +426,58 @@
                              path<?))
                   '("bracket.rkt" "nested.rkt" "spaced.rkt" "split.rkt" "star.rkt")))
 
+  (define (generic-module-path? v)
+    (match v
+      [(? symbol?) (regexp-match? #rx"^polars/private/generic/" (symbol->string v))]
+      [(? string?) (regexp-match? #rx"^(?:\\./)?generic/|polars/private/generic/" v)]
+      [(? pair?) (or (generic-module-path? (car v)) (generic-module-path? (cdr v)))]
+      [_ #f]))
+  (define (layer-3-requires forms)
+    (for/list ([form (in-list forms)]
+               #:when (match form
+                        [(cons (or 'require 'local-require) specs) (generic-module-path? specs)]
+                        [_ #f]))
+      form))
+  (define (layer-1-sources root)
+    (define private (path->directory-path (simple-form-path (build-path root "private"))))
+    (for/list ([f (in-list (polars-sources root #:dirs '("private")))]
+               #:when (let-values ([(dir _name _must-be-dir?) (split-path (simple-form-path f))])
+                        (equal? dir private))
+               #:unless (equal? (file-name-from-path f) (string->path "generic.rkt")))
+      f))
+  (define (layering-offenders root)
+    (for/list ([f (in-list (layer-1-sources root))]
+               #:unless (null? (layer-3-requires (forms-in (read-source f)))))
+      (path->string (file-name-from-path f))))
+  (check-not-false (member "foreign.rkt" (map (lambda (f) (path->string (file-name-from-path f)))
+                                              (layer-1-sources polars-dir))))
+  (check-equal? (layering-offenders polars-dir)
+                '()
+                "a module directly under polars/private requires polars/private/generic")
+  (with-planted-sources (root ["private/generic.rkt"
+                               "#lang racket/base\n(require polars/private/generic/core)"]
+                              ["private/plain.rkt"
+                               "#lang racket/base\n(require polars/private/generic/dtype)"]
+                              ["private/only.rkt"
+                               (string-append "#lang racket/base\n(require (only-in\n"
+                                              "  polars/private/generic/dtype dtype-spec?))")]
+                              ["private/relative.rkt"
+                               "#lang racket/base\n(require (prefix-in g: \"generic/dtype.rkt\"))"]
+                              ["private/submodule.rkt"
+                               (string-append "#lang racket/base\n(module+ internal\n"
+                                              "  (require (only-in (submod polars/private/generic/"
+                                              "dtype internal) x)))")]
+                              ["private/local.rkt"
+                               (string-append "#lang racket/base\n(define (f)\n"
+                                              "  (local-require (for-syntax \"./generic/x.rkt\")) 1)")]
+                              ["private/mentions.rkt"
+                               (string-append "#lang racket/base\n;; polars/private/generic/dtype\n"
+                                              "(require polars/private/foreign)\n"
+                                              "(define m 'polars/private/generic/dtype)\n"
+                                              "(define s \"generic/dtype.rkt\")")])
+    (check-equal? (sort (layering-offenders root) string<?)
+                  '("local.rkt" "only.rkt" "plain.rkt" "relative.rkt" "submodule.rkt")))
+
   (define package-dir (simple-form-path polars-dir))
   (define (package-relative path)
     (path->string (find-relative-path package-dir (simple-form-path path))))
@@ -711,7 +763,6 @@
                #:when (memq name exports))
       name))
   (define generic-sources (polars-sources #:dirs '("private/generic")))
-  (define foreign-source (build-path polars-dir "private" "foreign.rkt"))
   (define low-level-sources
     (for/list ([file (in-list (polars-sources #:dirs '("private")))]
                #:unless (member file generic-sources))
@@ -724,8 +775,12 @@
                                   (define-syntax-parse-rule (define-group-by-agg agg:id)
                                     (define (name df) (call/polars-reason 'name df)))))
                 '(dataframe-group-by-median series-add-i32 dataframe-group-by-agg:id name))
-  (check-not-false (memq 'dataframe-group-by-sum (exported-reasoned-names foreign-source)))
-  (check-not-false (memq 'series-add-i32 (exported-reasoned-names foreign-source)))
+  (check-not-false (memq 'dataframe-group-by-sum
+                         (exported-reasoned-names
+                          (build-path polars-dir "private" "dataframe-ops.rkt"))))
+  (check-not-false (memq 'series-add-i32
+                         (exported-reasoned-names
+                          (build-path polars-dir "private" "series-ops.rkt"))))
   (check-equal? (reasoned-names '((define-reasoned (series-twiddle s) #:who-variant t/who)
                                   (call/polars-reason who (lambda () s))
                                   (f call/foreign-error 'series-not-a-call)))
