@@ -96,8 +96,8 @@
          #:when (memq '#:no-declare args)
          (values '() stack)]
         [(list (or 'defmodule 'declare-exporting) args ...)
-         (match (drop-options args)
-           [(list mod _ ...) (values '() (cons mod (cdr stack)))])]
+         (match-define (list mod _ ...) (drop-options args))
+         (values '() (cons mod (cdr stack)))]
         [(list 'include-section (? string? included))
          (define document-level (list-tail stack (- (length stack) base)))
          (values (include included document-level) document-level)]
