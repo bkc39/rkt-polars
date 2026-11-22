@@ -24,13 +24,14 @@
   (define value (wrap callout))
   (if (procedure? value) (procedure-rename value name) value))
 
-;; A binding passed GC memory (a byte string, an f64vector) is never #:blocking?:
-;; the collector may move it during the call.
 (define-syntax-parse-rule (define-compat name:id type:expr
-                            (~alt (~optional (~seq #:c-id c-id:id))
-                                  (~optional (~seq #:wrap wrap:expr)))
+                            (~alt (~optional (~seq #:c-id (~var c-id id #:role "the C symbol"))
+                                             #:name "the #:c-id option")
+                                  (~optional (~seq #:wrap wrap:expr)
+                                             #:name "the #:wrap option"
+                                             #:defaults ([wrap #'values])))
                             ...)
-  (define-compat/ffi name type (~? (~@ #:c-id c-id)) #:wrap (named-binding 'name (~? wrap values))))
+  (define-compat/ffi name type (~? (~@ #:c-id c-id)) #:wrap (named-binding 'name wrap)))
 
 (define-compat str-block-drop
   (_fun _pointer -> _void))

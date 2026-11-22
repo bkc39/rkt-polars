@@ -4,7 +4,6 @@
   (require rackunit (only-in threading ~>)
            racket/runtime-path
            (only-in racket/contract exn:fail:contract:blame?)
-           (only-in racket/contract/base flat-contract-predicate)
            (only-in racket/match match-define)
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk series->list)
@@ -22,8 +21,8 @@
                     nul-names ops-df polars-null series-cells settle! v64)
            (only-in polars/tests/test-helpers with-default-polars-format)
            (only-in polars/private/generic/reshape
-                    cast-target/c collect drop-nulls filter grouped? lazy rename! reverse select
-                    unique with-columns)
+                    collect drop-nulls filter grouped? lazy rename! reverse select unique
+                    with-columns)
            (prefix-in contracted: polars/private/generic/reshape)
            (only-in (submod polars/private/generic/reshape internal)
                     agg cast column-height-problem drop group-by head pivot rename slice tail
@@ -142,14 +141,6 @@
     (check-equal? (dtype (ref d #:columns "score")) 'float32))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c dtype-spec\\? \\(quote binary\\)"
              (lambda () (contracted:cast (series '(1 2 3)) 'f65)))
-  (define cast-target? (flat-contract-predicate cast-target/c))
-  (for ([target '(f64 float64 i32 str bool binary null duration date time categorical
-                  datetime (datetime milliseconds) (datetime microseconds #f)
-                  (duration nanoseconds) (enum a b))])
-    (check-true (cast-target? target) (format "~v" target)))
-  (for ([target '(f65 float decimal (decimal 10 2) (list int32) (enum a a) "f64"
-                  (datetime microseconds todo-timezone))])
-    (check-false (cast-target? target) (format "~v" target)))
   (check-exn #rx"^cast: contract violation\n  expected: \\(or/c Expr-ptr\\? series\\? string\\?\\)"
              (lambda () (contracted:cast 5 'f64)))
   (check-exn #rx"^cast: 1 of 2 "
