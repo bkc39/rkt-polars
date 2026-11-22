@@ -10,7 +10,7 @@
            (prefix-in contracted: polars/private/generic/cumulative)
            (only-in polars/private/generic/cumulative cum-count cum-max cum-min cum-prod cum-sum)
            (only-in (submod polars/private/generic/cumulative internal) diff shift)
-           (only-in polars/tests/generic/test-fixtures check-selected)
+           (only-in polars/tests/generic/test-fixtures check-selected check-selected-as-is)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df (dataframe (list (series '(1 2 3 4 5) #:name "x" #:dtype 'i64))))
   (define out
@@ -60,6 +60,6 @@
            (list "prod" (cum-prod "n") (list 1 2 none 8))
            (list "min" (cum-min "n") (list 1 1 none 1))
            (list "max" (cum-max "n") (list 1 2 none 4))
-           (list "count" (cum-count "n") '(1 2 2 3))
-           (list "sum-from-end" (cum-sum "n" #:reverse #t) (list 7 6 none 4))))
+           (list "count" (cum-count "n") '(1 2 2 3))))
+    (check-selected-as-is tally (list (list "n" (cum-sum "n" #:reverse #t) (list 7 6 none 4))))
     (check-exn #rx"^cum-sum: expected an Expr or column name, got 'n" (lambda () (cum-sum 'n)))))

@@ -19,7 +19,8 @@
            (only-in (submod polars/private/generic/nullable internal) backward-fill forward-fill)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/operators [= p=] p+)
-           (only-in polars/tests/generic/test-fixtures check-selected series-shape)
+           (only-in polars/tests/generic/test-fixtures
+                    check-selected check-selected-as-is series-shape)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df
     (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
@@ -131,6 +132,6 @@
            (list "infinite" (is-infinite "v") (list #f none #f #t))
            (list "fill-null" (fill-null "v" 0.0) '(1.0 0.0 +nan.0 +inf.0))
            (list "fill-nan" (fill-nan "v" 0.0) (list 1.0 none 0.0 +inf.0))))
-    (check-selected sensor (list (list "v" (drop-nans "v") (list 1.0 none +inf.0))))
+    (check-selected-as-is sensor (list (list "v" (drop-nans "v") (list 1.0 none +inf.0))))
     (check-exn #rx"^fill-null: expected an Expr or column name, got 5"
                (lambda () (fill-null 5 0)))))
