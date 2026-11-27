@@ -92,11 +92,20 @@
     [#f #t]
     [(cons x _) (refuse-element elements (contract-name range) x)]))
 
+(define string-element/c (or/c string? polars-null?))
+
+(define category-element/c (or/c string? symbol? polars-null?))
+
+(define (element-range dtype)
+  (match (if (symbol? dtype) (hash-ref dtype-aliases dtype #f) dtype)
+    ['string string-element/c]
+    [(or 'categorical (? enum-dtype?)) category-element/c]
+    [canonical (hash-ref integer-dtype-ranges canonical #f)]))
+
 (define (series-elements/c dtype)
   (cond
     [(or (unsupplied-arg? dtype) (not dtype)) (and/c elements/c inferred-integers/c)]
-    [(and (symbol? dtype)
-          (hash-ref integer-dtype-ranges (hash-ref dtype-aliases dtype #f) #f))
+    [(element-range dtype)
      => (lambda (range)
           (and/c elements/c
                  (flat-contract-with-explanation (ranged-explanation range)
