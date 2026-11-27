@@ -9,6 +9,10 @@ APIs are filled out, and the Expr / LazyFrame DSL has been built up
 through Phase A10 (see "Continuing in a new session" below for what's
 shipped vs. queued).
 
+The two lists below are the surface of the private modules
+(`polars/private/foreign.rkt` and its siblings), not `polars/ffi`'s,
+which exports the smaller set the reference documents.
+
 Series surface (Racket-side names):
 - Lifecycle: `series-empty`, `series-drop`
 - Metadata: `series-name`, `series-rename`, `series-len`, `series-null-count`, `series-dtype`
@@ -39,9 +43,12 @@ DataFrame surface (Racket-side names):
 - IO: `dataframe-write-csv`, `dataframe-read-csv`, `dataframe-write-parquet`, `dataframe-read-parquet`, `dataframe-write-json-lines`, `dataframe-read-json-lines`
 - Display: `dataframe->string`, `display-dataframe`
 
-The public low-level API is exported from `(require polars)`. The
+Since 0.4 the public low-level API is exported from `(require
+polars/ffi)`, the bindings the reference's Low-level API section
+documents; `(require polars)` exports the fluent API alone. The
 `polars/private/*` modules remain implementation modules; examples
-should require `polars` unless they are specifically testing internals.
+should require `polars` or `polars/ffi` unless they are specifically
+testing internals.
 That low-level API should stay stable, explicit, function-first, and
 frame-first: `DataFrame`, `LazyFrame`, or `Series` arguments remain the
 first argument so code works naturally with Racket threading macros.

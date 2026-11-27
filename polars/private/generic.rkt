@@ -13,8 +13,7 @@
 ;;
 ;; The operators that shadow racket/base (+ - * / and or not xor when) are
 ;; defined in polars/private/generic/operators under p* spellings and renamed
-;; here on the way out — `polars/main.rkt` re-imports them under private aliases
-;; (all-from-out drops rename-out names that collide with the module language).
+;; here on the way out.
 
 (require polars/private/generic/core
          polars/private/generic/convert

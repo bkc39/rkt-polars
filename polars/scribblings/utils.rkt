@@ -43,6 +43,7 @@
          (only-in polars/private/resource with-release))
 
 (require (for-label polars
+                    polars/ffi
                     ffi/vector
                     (only-in racket/contract/base
                              -> and/c any/c cons/c flat-contract? hash/c integer-in listof
@@ -54,7 +55,8 @@
 
 (provide (all-from-out scribble/manual)
          (all-from-out scribble/example)
-         (for-label (all-from-out polars ffi/vector racket/contract/base threading racket/base))
+         (for-label (all-from-out polars polars/ffi ffi/vector racket/contract/base threading
+                                  racket/base))
          make-polars-eval
          examples-in-temporary-directory
          see-reference

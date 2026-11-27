@@ -16,11 +16,13 @@
                   dataframe-column polars-null polars-null? series-cast series-new-i32
                   series-new-i64)
          (only-in polars/private/parquet dataframe-read-parquet)
-         (only-in polars/private/generic/reshape pivot)
+         (only-in polars/private/generic/reductions alias)
+         (only-in polars/private/generic/reshape pivot select)
          (only-in gregor date datetime)
          (only-in gregor/period microseconds)
          (only-in gregor/time time)
-         (only-in racket/match match))
+         (only-in racket/list filter-not)
+         (only-in racket/match match match-define))
 
 (provide (all-defined-out)
          (all-from-out polars/tests/test-helpers)
@@ -100,6 +102,46 @@
 (define (column d name)
   (series-cells (ref d #:columns name)))
 
+(define (cells-match? got expected tolerance)
+  (and (= (length got) (length expected))
+       (for/and ([g (in-list got)] [e (in-list expected)])
+         (match tolerance
+           ['() (equal? g e)]
+           [(list within) (or (equal? g e)
+                              (and (flonum? g) (flonum? e) (<= (abs (- g e)) within)))]))))
+
+(define (selected-row? row)
+  (match row
+    [(list (? string?) (? Expr-ptr?) (? list?)) #t]
+    [(list (? string?) (? Expr-ptr?) (? list?) (? real?)) #t]
+    [_ #f]))
+
+(define (check-selected-rows d rows aliased?)
+  (define malformed (filter-not selected-row? rows))
+  (unless (null? malformed)
+    (with-check-info (['malformed-rows malformed])
+      (fail-check)))
+  (define-values (names exprs)
+    (for/lists (names exprs) ([row (in-list rows)])
+      (match-define (list name expr _ _ ...) row)
+      (values name (if aliased? (alias expr name) expr))))
+  (define selected (apply select d exprs))
+  (unless (equal? (column-names selected) names)
+    (with-check-info (['actual-names (column-names selected)] ['expected-names names])
+      (fail-check)))
+  (for ([row (in-list rows)])
+    (match-define (list name _ expected tolerance ...) row)
+    (define got (column selected name))
+    (unless (cells-match? got expected tolerance)
+      (with-check-info (['column name] ['actual got] ['expected expected])
+        (fail-check)))))
+
+(define-check (check-selected d rows)
+  (check-selected-rows d rows #t))
+
+(define-check (check-selected-as-is d rows)
+  (check-selected-rows d rows #f))
+
 (define (frame=? a b)
   (and (equal? (column-names a) (column-names b))
        (for/and ([name (in-list (column-names a))])
@@ -136,8 +178,12 @@
            (only-in polars/private/io-contracts size-max))
 
   (provide call-each-in-child call-in-child check-nul-names-round-trip check-readers-agree
-           check-reads-like-every check-staged-write eager-and-scan eager-reader glob-reader
-           outcome-difference read-outcome scan-reader)
+           check-reads-like-every check-staged-write eager-and-scan eager-reader failure-infos
+           glob-reader outcome-difference read-outcome scan-reader)
+
+  (define (failure-infos thunk)
+    (parameterize ([current-check-around (lambda (check) (check))])
+      (with-handlers ([exn:test:check? exn:test:check-stack]) (thunk) '())))
 
   (define (read-outcome thunk)
     (with-handlers ([exn:fail? (lambda (e) (cause-of (exn-message e)))]) (thunk)))
@@ -327,4 +373,30 @@
     (check-exn (failure "it is a directory$") (lambda () (write! df sub)))
     (check-equal? (staging-files dir) '())
     (check-equal? (directory-list sub) '())
-    (delete-directory/files dir)))
+    (delete-directory/files dir))
+
+  (let ([frame (dataframe (list (series '(1.0 2.0) #:name "x")))])
+    (define (failed-on thunk)
+      (for/list ([info (in-list (failure-infos thunk))]
+                 #:when (memq (check-info-name info)
+                              '(column actual-names malformed-rows)))
+        (check-info-name info)))
+    (for ([passing (list (lambda () (check-selected frame (list (list "y" (col "x") '(1.0 2.0)))))
+                         (lambda () (check-selected frame (list (list "y" (col "x") '(1.0 2.05) 0.1))))
+                         (lambda ()
+                           (check-selected-as-is frame (list (list "x" (col "x") '(1.0 2.0))))))])
+      (check-equal? (failed-on passing) '()))
+    (for ([planted
+           (list (lambda () (check-selected frame (list (list "y" (col "x") '(1.0 3.0)))))
+                 (lambda () (check-selected frame (list (list "y" (col "x") '(1.0 2.5) 0.1))))
+                 (lambda () (check-selected frame (list (list "y" (col "x") '(1 2)))))
+                 (lambda () (check-selected frame (list (list "y" (col "x") '(1 2) 0.1))))
+                 (lambda () (check-selected frame (list (list "y" (col "x") '(1.0)))))
+                 (lambda () (check-selected-as-is frame (list (list "y" (col "x") '(1.0 2.0)))))
+                 (lambda () (check-selected frame (list (list "y" (col "x")))))
+                 (lambda () (check-selected frame (list (list 'y (col "x") '(1.0 2.0)))))
+                 (lambda ()
+                   (check-selected frame (list (list "y" (col "x") '(1.0 2.0) 0.1 0.2)))))]
+          [failure '(column column column column column actual-names
+                     malformed-rows malformed-rows malformed-rows)])
+      (check-equal? (failed-on planted) (list failure)))))
