@@ -33,12 +33,10 @@ A @deftech{dataframe} is a collection of equal-length, uniquely named series.
 @examples[#:eval ev #:label #f
 (define df
   (dataframe
-   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                 #:name "name")
-         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
-                 #:name "birthdate")
-         (series '(57.9 72.5 53.6 83.1) #:name "weight")
-         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
+   [name '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")]
+   [birthdate (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))]
+   [weight '(57.9 72.5 53.6 83.1)]
+   ["height" '(1.56 1.77 1.65 1.75)]))
 df
 ]
 
@@ -70,8 +68,8 @@ The @racket[#:dtype] of each series plays the role of @tt{schema} /
 
 @examples[#:eval ev #:label #f
 (dataframe
- (list (series '("Alice" "Ben" "Chloe" "Daniel") #:name "name")
-       (series '(27 39 41 43) #:name "age" #:dtype 'u8)))
+ [name '("Alice" "Ben" "Chloe" "Daniel")]
+ [age '(27 39 41 43) #:dtype 'u8])
 ]
 
 API gap: no schema accessor on a dataframe.
@@ -128,7 +126,7 @@ other operand's dtype.
 (list (dtype (series '())) (dtype (series (list polars-null))))
 (series '() #:name "empty" #:dtype 'f64)
 (series (list polars-null polars-null) #:name "n" #:dtype 'null)
-(~> (dataframe (list (series '(1 2 3) #:name "x")))
+(~> (dataframe [x '(1 2 3)])
     (select (alias (lit polars-null) "nothing") (+ (col "x") polars-null)))
 ]
 
@@ -226,8 +224,8 @@ column (@tt{pl.col(pl.Float64)}), and the outputs keep the matched names.
 (define expr (* (col 'float64) 1.1))
 (select df expr)
 (define df2
-  (dataframe (list (series '(1 2 3 4) #:name "ints")
-                   (series '("A" "B" "C" "D") #:name "letters"))))
+  (dataframe [ints '(1 2 3 4)]
+             [letters '("A" "B" "C" "D")]))
 (select df2 expr)
 ]
 

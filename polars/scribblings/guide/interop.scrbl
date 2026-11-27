@@ -31,8 +31,8 @@ beyond its result. A null comes out as @racket[polars-null], or as the
 
 @examples[#:eval ev #:label #f
 (define df
-  (dataframe (list (series '(1 2 3) #:name "foo")
-                   (series '("ham" "spam" "jam") #:name "bar"))))
+  (dataframe [foo '(1 2 3)]
+             [bar '("ham" "spam" "jam")]))
 (~> df (ref "foo") series->list)
 (~> df (ref "bar") series->vector)
 (define gappy (series (list 1 polars-null 3) #:name "value"))
@@ -46,11 +46,10 @@ strings, and gregor values for the temporal dtypes.
 @examples[#:eval ev #:label #f
 (define people
   (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown") #:name "name")
-             (series (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))
-                     #:name "birthdate")
-             (series '(57.9 72.5) #:name "weight")
-             (series '(#t #f) #:name "parent")))
+       [name '("Alice Archer" "Ben Brown")]
+       [birthdate (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))]
+       [weight '(57.9 72.5)]
+       [parent '(#t #f)])
       (with-columns (alias (cast "birthdate" 'date) "birthday")
                     (alias (cast "birthdate" 'time) "clock"))))
 (for/list ([name (column-names people)])
@@ -134,8 +133,8 @@ by default (@racket['fortran], numpy's @tt{order="F"}) and row-major with
 @racket['c].
 
 @examples[#:eval ev #:label #f
-(define xy (dataframe (list (series (list 1 2 polars-null) #:name "a")
-                            (series '(0.5 1.5 2.5) #:name "b"))))
+(define xy (dataframe [a (list 1 2 polars-null)]
+                      [b '(0.5 1.5 2.5)]))
 (define-values (m nrows ncols) (dataframe->f64vector xy))
 (list nrows ncols (f64vector->list m))
 (define-values (m/c rows/c cols/c) (dataframe->f64vector xy #:order 'c))

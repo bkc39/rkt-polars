@@ -18,14 +18,13 @@ upstream's.
 @examples[#:eval ev #:label #f
 (define df
   (dataframe
-   (list (series '("AAPL" "NVDA" "MSFT" "GOOG" "AMZN") #:name "ticker")
-         (series '("Apple" "NVIDIA" "Microsoft" "Alphabet (Google)" "Amazon")
-                 #:name "company_name")
-         (series '(229.9 138.93 420.56 166.41 188.4) #:name "price")
-         (series '(231.31 139.6 424.04 167.62 189.83) #:name "day_high")
-         (series '(228.6 136.3 417.52 164.78 188.44) #:name "day_low")
-         (series '(237.23 140.76 468.35 193.31 201.2) #:name "year_high")
-         (series '(164.08 39.23 324.39 121.46 118.35) #:name "year_low"))))
+   [ticker '("AAPL" "NVDA" "MSFT" "GOOG" "AMZN")]
+   [company_name '("Apple" "NVIDIA" "Microsoft" "Alphabet (Google)" "Amazon")]
+   [price '(229.9 138.93 420.56 166.41 188.4)]
+   [day_high '(231.31 139.6 424.04 167.62 189.83)]
+   [day_low '(228.6 136.3 417.52 164.78 188.44)]
+   [year_high '(237.23 140.76 468.35 193.31 201.2)]
+   [year_low '(164.08 39.23 324.39 121.46 118.35)]))
 df
 ]
 
@@ -200,11 +199,11 @@ as its plan, and selecting from the frame lists what a selector matches.
 
 @examples[#:eval ev #:label #f
 (define people
-  (dataframe (list (series '("Anna" "Bob") #:name "name")
-                   (series '(#t #f) #:name "has_partner")
-                   (series '(#f #f) #:name "has_kids")
-                   (series '(#t #f) #:name "has_tattoos")
-                   (series '(#t #t) #:name "is_alive"))))
+  (dataframe [name '("Anna" "Bob")]
+             [has_partner '(#t #f)]
+             [has_kids '(#f #f)]
+             [has_tattoos '(#t #f)]
+             [is_alive '(#t #t)]))
 (select people (not (col #rx"^has_")))
 (~> (col #rx"^has_") not multi-column-expr?)
 (not (col #rx"^has_"))
@@ -256,10 +255,9 @@ An Enum sorts and compares in the order of its categories.
 (define-enum log-levels debug info warning error)
 (define logs
   (dataframe
-   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
-         (series '("process id: 525" "Service started correctly"
-                   "startup time: 67ms" "Cannot connect to DB!")
-                 #:name "message"))))
+   [level '(debug info debug error) #:dtype log-levels]
+   [message '("process id: 525" "Service started correctly"
+              "startup time: 67ms" "Cannot connect to DB!")]))
 (define non-debug-logs (filter logs (> (col "level") 'debug)))
 non-debug-logs
 ]
@@ -297,10 +295,10 @@ global mapping.
 A categorical compares with strings by the strings, not by the codes:
 
 @examples[#:eval ev #:label #f
-(~> (dataframe (list (rename bears-cat "categorical")))
+(~> (dataframe (rename bears-cat "categorical"))
     (with-columns (alias (< (col "categorical") "Cat") "categorical < \"Cat\"")))
-(~> (dataframe (list (rename bears-cat "categorical")
-                     (series '("Panda" "Brown" "Brown" "Polar" "Polar") #:name "string")))
+(~> (dataframe (rename bears-cat "categorical")
+               ["string" '("Panda" "Brown" "Brown" "Polar" "Polar")])
     (with-columns (alias (= (col "categorical") (col "string")) "categorical == string")))
 ]
 
@@ -311,11 +309,11 @@ re-encoding:
 
 @examples[#:eval ev #:label #f
 (define male-bears
-  (dataframe (list (series '(Polar Brown Panda) #:name "species")
-                   (series '(450 500 110) #:name "weight"))))
+  (dataframe [species '(Polar Brown Panda)]
+             [weight '(450 500 110)]))
 (define female-bears
-  (dataframe (list (series '(Brown Polar Panda) #:name "species")
-                   (series '(340 200 90) #:name "weight"))))
+  (dataframe [species '(Brown Polar Panda)]
+             [weight '(340 200 90)]))
 (vstack male-bears female-bears)
 ]
 
@@ -342,7 +340,7 @@ restarts once the last categorical column is gone. API gap: no
 @examples[#:eval ev #:label #f
 (define cat-bears (series '(Polar Panda Brown Brown Polar) #:dtype 'categorical))
 (define cat2-series (series '(Panda Brown Brown Polar Polar) #:dtype 'categorical))
-(ref (vstack (dataframe (list cat-bears)) (dataframe (list cat2-series))) 0)
+(ref (vstack (dataframe cat-bears) (dataframe cat2-series)) 0)
 ]
 
 @section[#:tag "expressions-window"]{Window functions}
@@ -357,17 +355,14 @@ first rows of upstream's table.
   Flying Dragon Dark Ghost Poison Rock Ice Fairy)
 (define pokemon
   (dataframe
-   (list (series '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
-                   "Charizard" "Mega Charizard X" "Squirtle"
-                   "Wartortle" "Blastoise")
-                 #:name "Name")
-         (series '(Grass Grass Grass Fire Fire Fire Fire Water Water Water)
-                 #:name "Type 1" #:dtype types)
-         (series (list 'Poison 'Poison 'Poison polars-null polars-null
-                       'Flying 'Dragon polars-null polars-null polars-null)
-                 #:name "Type 2" #:dtype types)
-         (series '(49 62 82 52 64 84 130 48 63 83) #:name "Attack")
-         (series '(45 60 80 65 80 100 100 43 58 78) #:name "Speed"))))
+   [Name '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
+           "Charizard" "Mega Charizard X" "Squirtle"
+           "Wartortle" "Blastoise")]
+   ["Type 1" '(Grass Grass Grass Fire Fire Fire Fire Water Water Water) #:dtype types]
+   ["Type 2" (list 'Poison 'Poison 'Poison polars-null polars-null
+                   'Flying 'Dragon polars-null polars-null polars-null) #:dtype types]
+   [Attack '(49 62 82 52 64 84 130 48 63 83)]
+   [Speed '(45 60 80 65 80 100 100 43 58 78)]))
 pokemon
 ]
 
@@ -395,9 +390,9 @@ API gap: @racket[over] has no @tt{mapping_strategy}; it always maps as
 
 @examples[#:eval ev #:label #f
 (define athletes
-  (dataframe (list (series '("A" "B" "C" "D" "E" "F") #:name "athlete")
-                   (series '("PT" "NL" "NL" "PT" "PT" "NL") #:name "country")
-                   (series '(6 1 5 4 2 3) #:name "rank"))))
+  (dataframe [athlete '("A" "B" "C" "D" "E" "F")]
+             [country '("PT" "NL" "NL" "PT" "PT" "NL")]
+             ["rank" '(6 1 5 4 2 3)]))
 athletes
 ]
 

@@ -155,9 +155,9 @@ a column name, which the verb lifts with @racket[col].
 
   @examples[#:eval ev
 (define people
-  (dataframe (list (series '(1 2 3) #:name "id" #:dtype 'i32)
-                   (series '(57.9 72.5 53.6) #:name "weight")
-                   (series '(1.56 1.77 1.65) #:name "height"))))
+  (dataframe ["id" '(1 2 3) #:dtype 'i32]
+             [weight '(57.9 72.5 53.6)]
+             ["height" '(1.56 1.77 1.65)]))
 (select people (* (col 'float64) 1.1))
 (list (dtype-spec? 'f64) (dtype-spec? 'float))
 (select people (col "^.*ght$"))
@@ -174,7 +174,7 @@ a column name, which the verb lifts with @racket[col].
 (select people (filter (lambda (name) (regexp-match? #px"^(?!id)" name))
                        (column-names people)))
 (define counters
-  (dataframe (list (series (list (sub1 (expt 2 64)) 1) #:name "u" #:dtype 'u64))))
+  (dataframe [u (list (sub1 (expt 2 64)) 1) #:dtype 'u64]))
 (select counters (alias (lit (sub1 (expt 2 64))) "top")
         (= (col "u") (lit (sub1 (expt 2 64)))))
 (eval:error (lit (expt 2 64)))]}
@@ -247,7 +247,7 @@ a column name, which the verb lifts with @racket[col].
 (define threshold (> (col "v") 2))
 (expr-drop threshold)
 threshold
-(eval:error (filter (dataframe (list (series '(1 3) #:name "v"))) threshold))
+(eval:error (filter (dataframe [v '(1 3)]) threshold))
 (eval:error (expr-drop threshold))]}
 
 @deftogether[(@defproc[(meta-output-name [e col-expr/c]) string?]
@@ -350,7 +350,7 @@ total
   under its own name.
 
   @examples[#:eval ev
-(define climate (dataframe (list (series '(-5 12 31) #:name "c"))))
+(define climate (dataframe [c '(-5 12 31)]))
 (~> climate
     (with-columns (alias (~> (when (< (col "c") 0)) (then "freezing")
                              (else-when (> (col "c") 25)) (then "hot")
@@ -405,8 +405,8 @@ total
 (/ (series '(1 -1 2 -2 0)))
 (/ (series '(-7 7 1)) (series '(2 2 0)))
 (/ (series '(10 -7) #:name "v") (series '(3 2) #:dtype 'u64))
-(~> (dataframe (list (series '(10 -7) #:name "i")
-                    (series '(3 2) #:dtype 'u64 #:name "u")))
+(~> (dataframe [i '(10 -7)]
+              [u '(3 2) #:dtype 'u64])
     (select (/ (col "i") (col "u"))
             (alias (/ (col "i") (expt 2 63)) "big")))
 (/ (cast (series '(1 2 4)) 'f64))
@@ -414,12 +414,12 @@ total
 (+ (series '(1 2)) 2.5)
 (+ (series '(1 2)) "a")
 (eval:error (+ (series '(1 2)) (date 2024 1 1)))
-(~> (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")))
+(~> (dataframe [c1 '(1.0 2.0)] [c2 '(4.0 8.0)])
     (select (/ (col #rx"^c"))))
 (eval:error (- (series '(1 2) #:dtype 'u8)))
 (eval:error (/ (series '("a"))))
 (eval:error (mod (col "v")))
-(~> (dataframe (list (series '(10 25 7) #:name "v")))
+(~> (dataframe [v '(10 25 7)])
     (with-columns (/ (col "v"))))]}
 
 @defproc[(filter [d dataframe?] [predicate any/c]) dataframe?]{
@@ -479,8 +479,8 @@ total
 
   @examples[#:eval ev
 (define flights
-  (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
-                   (series (list 12 polars-null 340 -3 polars-null) #:name "delay"))))
+  (dataframe [carrier '("UA" "AA" "UA" "AA" "B6")]
+             ["delay" (list 12 polars-null 340 -3 polars-null)]))
 (sort flights "delay" #:descending #t)
 (~> flights (sort "delay" #:descending #t #:nulls-last #t) (head 2))
 (sort flights '("carrier" "delay")
@@ -513,8 +513,8 @@ total
 
   @examples[#:eval ev
 (define scores
-  (dataframe (list (series '("ann" "bob" "cy" "dee") #:name "name")
-                   (series (list 3 polars-null 1 3) #:name "score"))))
+  (dataframe [name '("ann" "bob" "cy" "dee")]
+             [score (list 3 polars-null 1 3)]))
 (select scores (sort-by "name" #:by "score" #:descending #t #:nulls-last #t
                         #:maintain-order #t))
 (select scores (sort-by "name" #:by '("score" "name") #:descending '(#t #f)))]}
@@ -532,10 +532,10 @@ total
   @tech{lazyframe} they extend the plan and return a lazyframe.
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "a")
-                     (series '(4 5 6) #:name "b")))
+(~> (dataframe [a '(1 2 3)]
+               [b '(4 5 6)])
     (select "a" (alias (+ (col "a") (col "b")) "sum")))
-(~> (dataframe (list (series '(1 2 3) #:name "a")))
+(~> (dataframe [a '(1 2 3)])
     (with-columns (alias (* (col "a") 2) "double")))]}
 
 @defproc[(cast [x (or/c Expr-ptr? series? string?)]
@@ -591,22 +591,22 @@ total
   @racket['string] raise it.
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(1 2 3) #:name "v")))
+(~> (dataframe [v '(1 2 3)])
     (with-columns (cast "v" 'float64)))
 (cast (series '("UA" "AA" "UA")) 'categorical)
 (cast (series '(1 2 3)) 'f64)
 (define-enum carriers UA AA)
 (eval:error (cast (series '("UA" "B6")) carriers))
-(eval:error (select (dataframe (list (series '("UA" "B6") #:name "c"))) (cast "c" carriers)))
+(eval:error (select (dataframe [c '("UA" "B6")]) (cast "c" carriers)))
 (define repeated (series (for/list ([i 5]) "B6") #:name "c"))
 (eval:error (cast repeated carriers))
-(eval:error (select (dataframe (list repeated)) (cast "c" carriers)))
+(eval:error (select (dataframe repeated) (cast "c" carriers)))
 (cast (series (list (datetime 2021 3 27 12))) '(datetime microseconds "Europe/Brussels"))
 (eval:error (cast (series (list (datetime 2021 3 27 12)))
                   '(datetime microseconds "Europe/Brusels")))
 (define far (cast (series '(2000000000) #:dtype 'i32 #:name "d") 'date))
 (ref far 0)
-(dataframe (list far))
+(dataframe far)
 (eval:error (cast far 'string))
 (define far-zoned (cast (series '(9000000000000000000) #:dtype 'i64 #:name "k")
                         '(datetime microseconds "Europe/Brussels")))
@@ -619,9 +619,9 @@ far-zoned
   otherwise it raises with Polars' reason.
 
   @examples[#:eval ev
-(define top (dataframe (list (series '(1 2) #:name "v"))))
-(vstack top (dataframe (list (series '(3) #:name "v"))))
-(eval:error (vstack top (dataframe (list (series '("3") #:name "v")))))]}
+(define top (dataframe [v '(1 2)]))
+(vstack top (dataframe [v '(3)]))
+(eval:error (vstack top (dataframe [v '("3")])))]}
 
 @defproc[(hstack [d dataframe?] [column series?] ...) dataframe?]{
   Appends each @racket[column] to @racket[d] (Polars' @tt{hstack}). A
@@ -658,7 +658,7 @@ far-zoned
   integers, as Polars takes them; a count past the end takes every row.
 
   @examples[#:eval ev
-(define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
+(define nums (dataframe [v '(1 2 3 4 5)]))
 (head nums 2)
 (tail nums 2)
 (slice nums -2 (expt 2 40))
@@ -677,8 +677,8 @@ far-zoned
 
   @examples[#:eval ev
 (define dups
-  (dataframe (list (series (list 1 1 2 polars-null) #:name "v")
-                   (series '("a" "a" "b" "c") #:name "w"))))
+  (dataframe [v (list 1 1 2 polars-null)]
+             [w '("a" "a" "b" "c")]))
 (sort (unique dups) "v")
 (series->list (drop-nulls (ref dups "v")))
 (drop-nulls dups)
@@ -691,7 +691,7 @@ far-zoned
 
   @examples[#:eval ev
 (reverse (series '(1 2 3) #:name "r"))
-(~> (dataframe (list (series '(-5 12 31) #:name "c"))) (select (reverse (col "c"))))
+(~> (dataframe [c '(-5 12 31)]) (select (reverse (col "c"))))
 (reverse '(1 2 3))
 (eval:error (reverse "c"))]}
 
@@ -701,7 +701,7 @@ far-zoned
   @racketmodname[racket/list]'s @racketid[drop].
 
   @examples[#:eval ev
-(define pair (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(define pair (dataframe [a '(1)] [b '(2)]))
 (drop pair "a")
 (eval:error (drop pair '("a" "nope")))
 (drop '(1 2 3) 1)]}
@@ -723,9 +723,9 @@ far-zoned
 
   @examples[#:eval ev
 (define sales
-  (dataframe (list (series '("a" "a" "b") #:name "store")
-                   (series '("q1" "q2" "q1") #:name "quarter")
-                   (series '(10 20 30) #:name "sales"))))
+  (dataframe [store '("a" "a" "b")]
+             [quarter '("q1" "q2" "q1")]
+             ["sales" '(10 20 30)]))
 (define by-quarter
   (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
         "store"))
@@ -763,14 +763,14 @@ by-quarter
   different lengths raise with Polars' reason.
 
   @examples[#:eval ev
-(define left (dataframe (list (series '("a" "b") #:name "k")
-                               (series '(1 2) #:name "v"))))
-(define right (dataframe (list (series '("a" "c") #:name "k")
-                                (series '(10 30) #:name "w"))))
+(define left (dataframe [k '("a" "b")]
+                         [v '(1 2)]))
+(define right (dataframe [k '("a" "c")]
+                          [w '(10 30)]))
 (~> (join left right #:on '("k") #:how 'left) (sort "k"))
 (join left right #:on '("k") #:how 'inner)
 (join left right #:on '(#"k") #:how 'inner)
-(eval:error (join left (dataframe (list (series '(1 2) #:name "k"))) #:on '("k")))
+(eval:error (join left (dataframe [k '(1 2)]) #:on '("k")))
 (eval:error (join left right))]}
 
 @defproc[(join-asof [left dataframe?]
@@ -795,10 +795,10 @@ by-quarter
   @racket[#:tolerance] away matches nothing.
 
   @examples[#:eval ev
-(define readings (dataframe (list (series '(1 3 5) #:name "t")
-                                  (series '(100 300 500) #:name "v"))))
-(define offsets (dataframe (list (series '(1 2 4) #:name "t")
-                                 (series '(10 20 40) #:name "o"))))
+(define readings (dataframe [t '(1 3 5)]
+                            [v '(100 300 500)]))
+(define offsets (dataframe [t '(1 2 4)]
+                           [o '(10 20 40)]))
 (join-asof readings offsets #:on "t")
 (join-asof readings offsets #:on "t" #:tolerance 0)
 (eval:error (join-asof readings offsets #:on "t" #:left-by '("v")))]}
@@ -926,7 +926,7 @@ by-quarter
 
   @examples[#:eval ev #:label #f
 (eval:error (read-csv "/no/such/file.csv"))
-(define small (dataframe (list (series '(1 2) #:name "v"))))
+(define small (dataframe [v '(1 2)]))
 (eval:error (write-parquet small "/no/such/dir/out.parquet"))]
 
   Here @racket[not-parquet] is a path in the temporary directory:
@@ -1322,8 +1322,8 @@ stations
 (define json-dir (make-temporary-directory "polars-doc-~a"))
 (define path (build-path json-dir "frame.json"))]
   @examples[#:eval ev
-(define df (dataframe (list (series '(1 2 3) #:name "foo")
-                            (series (list polars-null "bak" "baz") #:name "bar"))))
+(define df (dataframe [foo '(1 2 3)]
+                      [bar (list polars-null "bak" "baz")]))
 (write-json df path)
 (file->string path)
 (read-json path)
@@ -1404,7 +1404,7 @@ stations
   an uncompressed file. It replaces a file as @racket[write-csv] does.
 
   @examples-in-temporary-directory[#:eval ev
-(define small (dataframe (list (series '(1 2) #:name "a"))))
+(define small (dataframe [a '(1 2)]))
 (write-ndjson small "small.ndjson")
 (file->string "small.ndjson")
 (write-ndjson small "small.ndjson.gz" #:compression 'gzip)
@@ -1423,7 +1423,7 @@ stations
   @racket[collect] with Polars' reason.
 
   @examples[#:eval ev
-(define four (dataframe (list (series '(1 2 3 4) #:name "v"))))
+(define four (dataframe [v '(1 2 3 4)]))
 (~> four lazy (filter (> (col "v") 2)) collect)
 (eval:error (~> four lazy (filter (> (col "nope") 2)) collect))]}
 
@@ -1462,8 +1462,8 @@ stations
   not guaranteed.
 
   @examples[#:eval ev
-(~> (dataframe (list (series '("x" "y" "x") #:name "k")
-                     (series '(1 2 3) #:name "v")))
+(~> (dataframe [k '("x" "y" "x")]
+               [v '(1 2 3)])
     (group-by "k")
     (agg (alias (sum "v") "total")))]}
 
@@ -1479,13 +1479,13 @@ stations
   @tt{group_to_rows} mapping is exposed.
 
   @examples[#:eval ev
-(define kv (dataframe (list (series '("x" "y" "x") #:name "k")
-                            (series '(1 2 3) #:name "v"))))
+(define kv (dataframe [k '("x" "y" "x")]
+                      [v '(1 2 3)]))
 (~> kv (group-by "k") (agg (alias (sum "v") "total")))
 (~> kv (with-columns (~> (col "v") sum (over "k") (alias "total"))))
-(define khv (dataframe (list (series '("a" "a" "a" "b") #:name "k")
-                             (series '("x" "y" "x" "x") #:name "h")
-                             (series '(1 2 3 4) #:name "v"))))
+(define khv (dataframe [k '("a" "a" "a" "b")]
+                       [h '("x" "y" "x" "x")]
+                       [v '(1 2 3 4)]))
 (~> khv (with-columns (~> (col "v") sum (over "k" "h") (alias "total"))
                       (~> (col "v") mean (over (col "k")) (alias "mean"))
                       (~> (col "v") (rank #:descending #t) (over "k") (alias "rank"))
@@ -1511,8 +1511,8 @@ stations
   under @racket[over].
 
   @examples[#:eval ev
-(define scores (dataframe (list (series '("a" "b" "c" "d") #:name "name")
-                                (series '(30 10 30 20) #:name "score"))))
+(define scores (dataframe [name '("a" "b" "c" "d")]
+                          [score '(30 10 30 20)]))
 (~> scores
     (with-columns (~> (col "score") (rank #:method 'dense #:descending #t) (alias "dense"))
                   (~> (col "score") (rank #:method 'ordinal) (alias "ordinal"))))
@@ -1535,7 +1535,7 @@ stations
   @racket['drop] removes the leading nulls that leaves.
 
   @examples[#:eval ev
-(define steps (dataframe (list (series '(1 3 6 10) #:name "v"))))
+(define steps (dataframe [v '(1 3 6 10)]))
 (select steps
         (alias (shift "v") "down")
         (alias (shift "v" #:n -1 #:fill-value 0) "up")
@@ -1554,7 +1554,7 @@ stations
   the count so far.
 
   @examples[#:eval ev
-(define tally (dataframe (list (series (list 1 2 polars-null 4) #:name "n"))))
+(define tally (dataframe [n (list 1 2 polars-null 4)]))
 (select tally
         (alias (cum-sum "n") "sum") (alias (cum-prod "n") "prod")
         (alias (cum-min "n") "min") (alias (cum-max "n") "max")
@@ -1573,7 +1573,7 @@ stations
   a row one value fills.
 
   @examples[#:eval ev
-(define gaps (dataframe (list (series (list 1 polars-null polars-null 4) #:name "v"))))
+(define gaps (dataframe [v (list 1 polars-null polars-null 4)]))
 (select gaps
         (alias (forward-fill "v") "forward")
         (alias (forward-fill "v" #:limit 1) "forward_1")
@@ -1594,7 +1594,7 @@ stations
   @racket[fill-nan] keeps it and @racket[drop-nans] keeps its row.
 
   @examples[#:eval ev
-(define sensor (dataframe (list (series (list 1.0 polars-null +nan.0 +inf.0) #:name "v"))))
+(define sensor (dataframe [v (list 1.0 polars-null +nan.0 +inf.0)]))
 (select sensor
         (alias (is-null "v") "null") (alias (is-not-null "v") "present")
         (alias (is-nan "v") "nan") (alias (is-not-nan "v") "number")
@@ -1639,7 +1639,7 @@ stations
 (mean (series '("a" "b")))
 (mean (series (list (date 2020 1 2) (date 2020 1 1))))
 (eval:error (sum (series '("a" "b"))))
-(~> (dataframe (list nothing)) (select (sum "n")))]}
+(~> (dataframe nothing) (select (sum "n")))]}
 
 @deftogether[(@defproc[(count    [x any/c]) any/c]
               @defproc[(n-unique [x (or/c series? string? Expr-ptr?)]) any/c]
@@ -1667,8 +1667,8 @@ stations
 (list (std nothing) (var nothing) (n-unique nothing))
 (list (std (series '(5))) (std (series '(#t #f))) (n-unique (series (list 1 polars-null))))
 (eval:error (var (series '("a" "b"))))
-(~> (dataframe (list nothing)) (select (count "n")))
-(~> (dataframe (list (series '(1) #:name "a")))
+(~> (dataframe nothing) (select (count "n")))
+(~> (dataframe [a '(1)])
     (select (alias (col "a") "a\u0000b"))
     column-names)]}
 
@@ -1699,7 +1699,7 @@ stations
   @secref["fluent-shadowing"].
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(-2.5 -1.5 0.5 1.5 2.5) #:name "x")))
+(~> (dataframe [x '(-2.5 -1.5 0.5 1.5 2.5)])
     (select (round "x")))
 (round 2.5)
 (round 1234 #:decimals -2)
@@ -1711,7 +1711,7 @@ stations
   @racket[-1.0], @racket[0.0] and @racket[1.0].
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(-2 0 3) #:name "i") (series '(-2.5 0.0 3.5) #:name "f")))
+(~> (dataframe [i '(-2 0 3)] [f '(-2.5 0.0 3.5)])
     (select (sign "i") (sign "f")))]}
 
 @deftogether[(@defproc[(abs [x (or/c Expr-ptr? string? number?)]) any/c]
@@ -1735,7 +1735,7 @@ stations
   @racketmodname[racket/base]'s; see @secref["fluent-shadowing"].
 
   @examples[#:eval ev
-(define readings (dataframe (list (series '(-2.25 0.5 4.0) #:name "x"))))
+(define readings (dataframe [x '(-2.25 0.5 4.0)]))
 (select readings
         (alias (abs "x") "abs") (alias (sqrt (abs "x")) "sqrt")
         (alias (floor "x") "floor") (alias (ceil "x") "ceil"))
@@ -1771,7 +1771,7 @@ stations
   @racket[series] builds a column from the same list.
 
   @examples[#:eval ev
-(define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
+(define gappy (dataframe [x (list 1 polars-null 3)]))
 (~> gappy (select (is-in "x" (list 1 polars-null))))
 (~> gappy (select (is-in "x" (list polars-null))))
 (~> gappy (select (is-in "x" '())))
@@ -1789,7 +1789,7 @@ stations
   the last time.
 
   @examples[#:eval ev
-(define visits (dataframe (list (series '("a" "b" "a" "c") #:name "who"))))
+(define visits (dataframe [who '("a" "b" "a" "c")]))
 (select visits
         (alias (is-unique "who") "unique") (alias (is-duplicated "who") "duplicated")
         (alias (is-first-distinct "who") "first") (alias (is-last-distinct "who") "last"))
@@ -1820,8 +1820,7 @@ stations
 
   @examples[#:eval ev
 (define stamps
-  (dataframe (list (series (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))
-                           #:name "t"))))
+  (dataframe [t (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))]))
 (select stamps
         (alias (dt-year "t") "year") (alias (dt-month "t") "month") (alias (dt-day "t") "day")
         (alias (dt-hour "t") "hour") (alias (dt-minute "t") "minute")
@@ -1864,8 +1863,8 @@ stations
   expression) runs to the end.
 
   @examples[#:eval ev
-(define words (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
-                               (series (list 1 polars-null 2 0) #:name "n"))))
+(define words (dataframe ["s" (list "hello" "héllo" polars-null "ab")]
+                         [n (list 1 polars-null 2 0)]))
 (select words
         (alias (str-slice "s" 1 #f) "rest")
         (alias (str-slice "s" -2) "last2")
@@ -1883,7 +1882,7 @@ stations
 
   @examples[#:eval ev
 (define people
-  (dataframe (list (series (list "Ada Lovelace" "grace hopper" "Émilie" polars-null) #:name "who"))))
+  (dataframe [who (list "Ada Lovelace" "grace hopper" "Émilie" polars-null)]))
 (select people
         (alias (str-to-lowercase "who") "lower") (alias (str-to-uppercase "who") "upper")
         (alias (str-len-bytes "who") "bytes") (alias (str-len-chars "who") "chars"))
@@ -1934,7 +1933,7 @@ stations
   argument is lifted by @racket[lit].
 
   @examples[#:eval ev
-(define tags (dataframe (list (series (list "  ok  " "xxtagxx" "v1.2.0") #:name "s"))))
+(define tags (dataframe ["s" (list "  ok  " "xxtagxx" "v1.2.0")]))
 (select tags
         (alias (str-strip-chars "s") "strip") (alias (str-strip-chars "s" "x") "strip-x")
         (alias (str-strip-prefix "s" "v") "no-v") (alias (str-strip-suffix "s" ".0") "no-.0"))
@@ -1991,23 +1990,21 @@ stations
 
   @examples[#:eval ev
 (define stamps
-  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")
-                           #:name "at")
-                   (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock"))))
+  (dataframe [at '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")]
+             [clock '("2021-03-27 03:00" "2021-10-31 02:30")]))
 (select stamps (str->datetime "at" #:format "%Y-%m-%dT%H:%M:%S%z"))
 (select stamps
         (str->datetime "at" #:time-zone "Asia/Tokyo")
         (str->datetime "clock" #:time-zone "Europe/Brussels" #:ambiguous 'latest))
-(select (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock")))
+(select (dataframe [clock '("2021-03-28 01:30" "2021-03-28 02:30")])
         (~> (str->datetime "clock")
             (dt-replace-time-zone "Europe/Brussels" #:non-existent 'null)))
-(~> (dataframe (list (series (list (string-append "2020" "\u0000" "01" "\u0000" "02"))
-                             #:name "d")))
+(~> (dataframe [d (list (string-append "2020" "\u0000" "01" "\u0000" "02"))])
     (select (str->date "d" #:format "%Y\u0000%m\u0000%d")))
-(define stamped (dataframe (list (series '("29|10|2026") #:name "d") (series '("12h30") #:name "u"))))
+(define stamped (dataframe [d '("29|10|2026")] [u '("12h30")]))
 (select stamped (str->date "d" #:format #"%d|%m|%Y") (str->time "u" #:format "%Hh%M"))
 (eval:error (select stamped (str->time "u")))
-(eval:error (select (dataframe (list (series '("2021-03-27" "soon") #:name "d"))) (str->date "d")))
+(eval:error (select (dataframe [d '("2021-03-27" "soon")]) (str->date "d")))
 (eval:error (str->datetime "at" #:time-zone "Asia/Tokio"))]}
 
 @deftogether[(@defproc[(dt-convert-time-zone [x (or/c series? Expr-ptr? string?)]
@@ -2045,8 +2042,7 @@ stations
 
   @examples[#:eval ev
 (define clocks
-  (dataframe (list (series (list (datetime 2021 3 27 3) (datetime 2021 10 31 2 30))
-                           #:name "clock"))))
+  (dataframe [clock (list (datetime 2021 3 27 3) (datetime 2021 10 31 2 30))]))
 (select clocks
         (~> "clock" (dt-replace-time-zone "UTC") (alias "utc"))
         (~> "clock" (dt-replace-time-zone "UTC") (dt-convert-time-zone "Asia/Kathmandu")
@@ -2135,7 +2131,7 @@ an implementation detail and not part of the public series API.)
 
   @examples[#:eval ev
 (series '(1 2 3) #:name "ints")
-(column-names (dataframe (list (series '(1) #:name "a") (series '(2) #:name "a\u0000b"))))
+(column-names (dataframe [a '(1)] ["a\u0000b" '(2)]))
 (eval:error (series '(1) #:name 'ints))
 (series '())
 (series (list polars-null polars-null))
@@ -2207,7 +2203,7 @@ an implementation detail and not part of the public series API.)
 
   @examples[#:eval ev
 (series-name (rename (series '(1) #:name "a") "b"))
-(define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+(define named (dataframe [a '(1)] [b '(2)]))
 (rename named "a" "z")
 (eval:error (rename named "a" "b"))]}
 
@@ -2406,9 +2402,8 @@ Polars' may.
 (eval:error (series (list (date 2013 1 1) (datetime 2013 1 1 5)) #:dtype 'datetime))
 (series->list (cast (series '(1500 -1) #:dtype 'i64) '(datetime milliseconds)))
 (define calendar
-  (dataframe (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))
-                           #:name "d")
-                   (series '(1 2 3) #:name "v"))))
+  (dataframe [d (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))]
+             [v '(1 2 3)]))
 (filter calendar (> (col "d") (date 2013 6 1)))
 (filter calendar (is-between "d" (date 2013 5 31) (datetime 2013 6 1 12)))
 (filter calendar (is-in "d" (list (date 2013 5 31) (date 2013 6 2))))
@@ -2480,8 +2475,8 @@ come from Parquet; @racket[cast] reads them into other dtypes. API gap: no
 @examples[#:eval ev #:label #f
 (define logs
   (dataframe
-   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
-         (series '(api db api db) #:name "source"))))
+   [level '(debug info debug error) #:dtype log-levels]
+   [source '(api db api db)]))
 (for/list ([name (column-names logs)]) (dtype (ref logs name)))
 (filter logs (> (col "level") 'info))
 (sort logs "level")
@@ -2578,8 +2573,8 @@ where they still differ.
 (+ (series '("due " "paid ")) (series (list (date 2024 1 1) polars-null)))
 (+ (series '("at " "since ")) (moment 2024 1 1 #:tz "Europe/Paris"))
 (eval:error (+ "x" (series (list (date 2024 1 1)))))
-(eval:error (select (dataframe (list (series '("due ") #:name "s")
-                                     (series (list (date 2024 1 1)) #:name "d")))
+(eval:error (select (dataframe ["s" '("due ")]
+                               [d (list (date 2024 1 1))])
                     (+ (col "s") (col "d"))))
 (- (series (list (date 2024 1 1) (date 2024 1 2)) #:name "d")
    (series (list polars-null polars-null)))
@@ -2696,7 +2691,7 @@ renders it with no separate display call.
   in one pass where a @racket[ref] loop makes one foreign call per element.
 
   @examples[#:eval ev
-(define starred (dataframe (list (series '(1) #:name "*") (series '(2) #:name "b"))))
+(define starred (dataframe ["*" '(1)] [b '(2)]))
 (ref starred '("*"))
 (eval:error (ref starred '("b" 1)))]}
 
@@ -2727,9 +2722,9 @@ renders it with no separate display call.
   @examples[#:eval ev #:label #f
 (define flights
   (dataframe
-   (list (series (list "UA" "AA" "UA" polars-null) #:name "carrier")
-         (series (list 1400 733 polars-null 1089) #:name "distance")
-         (series (list #t #f #t #t) #:name "on_time"))))
+   [carrier (list "UA" "AA" "UA" polars-null)]
+   [distance (list 1400 733 polars-null 1089)]
+   [on_time (list #t #f #t #t)]))
 (describe flights)]
 
   Datetime, duration and date columns get a mean and quartiles; a date
@@ -2738,12 +2733,10 @@ renders it with no separate display call.
   @examples[#:eval ev #:label #f
 (define times
   (~> (dataframe
-       (list (series (list (datetime 2013 1 1 5) (datetime 2013 1 1 6)
-                           (datetime 2013 1 2 7) (datetime 2013 1 3 8))
-                     #:name "scheduled")
-             (series (list (datetime 2013 1 1 5 12) (datetime 2013 1 1 5 57)
-                           polars-null (datetime 2013 1 3 9 30))
-                     #:name "departed")))
+       [scheduled (list (datetime 2013 1 1 5) (datetime 2013 1 1 6)
+                        (datetime 2013 1 2 7) (datetime 2013 1 3 8))]
+       [departed (list (datetime 2013 1 1 5 12) (datetime 2013 1 1 5 57)
+                       polars-null (datetime 2013 1 3 9 30))])
       (with-columns (alias (- (col "departed") (col "scheduled")) "delay")
                     (alias (cast "scheduled" 'date) "day"))))
 (describe times)]
@@ -2783,8 +2776,8 @@ renders it with no separate display call.
   column.
 
   @examples[#:eval ev #:label #f
-(define kv (dataframe (list (series '("a" "b") #:name "k")
-                            (series (list 1 polars-null) #:name "v"))))
+(define kv (dataframe [k '("a" "b")]
+                      [v (list 1 polars-null)]))
 (dataframe->columns kv)
 (dataframe->columns kv #:columns '("v" "k") #:null 0)
 (eval:error (dataframe->columns kv #:columns '("k" "k")))
@@ -2851,12 +2844,12 @@ renders it with no separate display call.
 
   @examples[#:eval ev #:label #f
 (define trips
-  (dataframe (list (series '(UA AA UA) #:name "carrier")
-                   (series (list 2 polars-null -3) #:name "delay")
-                   (cast (series (list (datetime 2013 1 1) (datetime 2013 1 1)
-                                       (datetime 2013 1 2))
-                                 #:name "day")
-                         'date))))
+  (dataframe [carrier '(UA AA UA)]
+             ["delay" (list 2 polars-null -3)]
+             (cast (series (list (datetime 2013 1 1) (datetime 2013 1 1)
+                                 (datetime 2013 1 2))
+                           #:name "day")
+                   'date)))
 (for/list ([row (in-dataframe-rows trips)]) row)
 (for/list ([row (in-dataframe-rows trips #:columns '("delay" "carrier") #:named? #t)])
   row)
@@ -2902,8 +2895,8 @@ renders it with no separate display call.
   call that is not @racket[#:blocking?].
 
   @examples[#:eval ev #:label #f
-(define xy (dataframe (list (series (list 1 2 polars-null) #:name "a")
-                            (series '(0.5 1.5 2.5) #:name "b"))))
+(define xy (dataframe [a (list 1 2 polars-null)]
+                      [b '(0.5 1.5 2.5)]))
 (define-values (m nrows ncols) (dataframe->f64vector xy))
 (list nrows ncols)
 (f64vector->list m)
@@ -2916,7 +2909,7 @@ renders it with no separate display call.
 (define-values (z rows/z cols/z) (dataframe->f64vector xy #:null 0))
 (f64vector->list z)
 (eval:error (dataframe->f64vector xy #:null 'error))
-(eval:error (dataframe->f64vector (dataframe (list (series '("p") #:name "s")))))]}
+(eval:error (dataframe->f64vector (dataframe ["s" '("p")])))]}
 
 @section[#:tag "ref-lazy"]{Lazy frames}
 
@@ -2973,7 +2966,7 @@ columns with @racket[in-dataframe-columns], or convert them with
 (sequence? ages)
 (for/list ([age ages]) age)
 (for/sum ([age ages] #:unless (polars-null? age)) age)
-(sequence? (dataframe (list ages)))]
+(sequence? (dataframe ages))]
 
 @section[#:tag "ref-ffi"]{Low-level API}
 
@@ -2993,7 +2986,7 @@ series and returns a wrapper, so it is the way back. No binding wraps a raw
 their data.
 
 @examples[#:eval ev #:label #f
-(ref (dataframe (list (series-new-i32 "n" '(1 2)))) "n")
+(ref (dataframe (series-new-i32 "n" '(1 2))) "n")
 (eval:error (len (series-new-i32 "n" '(1 2))))
 (define raw-frame (dataframe-new (list (series-new-i32 "n" '(1 2)))))
 (dataframe (for/list ([name (in-list (dataframe-column-names raw-frame))])
@@ -3178,7 +3171,7 @@ temps
 (list (series-quantile ranks 0.3) (series-quantile ranks 0.3 #:interpolation 'linear))
 (eval:error (series-quantile ranks 0.3 #:interpolation 'cubic))
 (define nested
-  (~> (dataframe (list (series '(1 1 2) #:name "g") (series '(3.0 4.0 5.0) #:name "v")))
+  (~> (dataframe [g '(1 1 2)] [v '(3.0 4.0 5.0)])
       (group-by "g")
       (agg (col "v"))
       (ref "v")))
@@ -3250,13 +3243,13 @@ operations are the preferred surface.
   print the table, where the dataframe itself prints as a placeholder.
 
   @examples[#:eval ev
-(define scores (dataframe (list (series '(10 25 18) #:name "score" #:dtype 'i32))))
+(define scores (dataframe [score '(10 25 18) #:dtype 'i32]))
 (series-sum-i32 (dataframe-column scores "score"))
 (list (dataframe-column-name scores 0) (dataframe-column-name scores 1))
 (eval:error (dataframe-column scores "points"))
-(dataframe (list far-date))
-(eval:error (display-dataframe (dataframe (list far-date))))
-(eval:error (dataframe->string (dataframe (list far-date))))]}
+(dataframe far-date)
+(eval:error (display-dataframe (dataframe far-date)))
+(eval:error (dataframe->string (dataframe far-date)))]}
 
 @defproc[(DataFrame-ptr? [v any/c]) boolean?]{
   Recognises a foreign dataframe pointer. Both raw pointers returned by the
@@ -3273,7 +3266,7 @@ operations are the preferred surface.
   drop must not run while another thread uses the same frame.
 
   @examples[#:eval ev
-(define readings (dataframe (list (series '(3 1 2) #:name "v"))))
+(define readings (dataframe [v '(3 1 2)]))
 (dataframe-drop readings)
 readings
 (eval:error (height readings))
@@ -3383,7 +3376,7 @@ bindings and, like them, returns raw foreign pointers; the fluent
   drop must not run while another thread uses the same plan.
 
   @examples[#:eval ev
-(define query (lazy (dataframe (list (series '(3 1 2) #:name "v")))))
+(define query (lazy (dataframe [v '(3 1 2)])))
 (lazyframe-drop query)
 query
 (eval:error (collect query))
@@ -3527,7 +3520,7 @@ built.
   to it.
 
   @examples[#:eval ev #:label #f
-(~> (dataframe (list (series '(1 -2 3) #:name "x")))
+(~> (dataframe [x '(1 -2 3)])
     (select (expr-neg (col "x"))))]}
 
 @deftogether[(@defproc[(expr-gt [a any/c] [b any/c]) Expr-ptr?]
@@ -3573,7 +3566,7 @@ built.
   @racket[var] dispatch to these when given an expression or a column name.
 
   @examples[#:eval ev
-(~> (dataframe (list (series '(2.0 4.0 4.0 6.0) #:name "v")))
+(~> (dataframe [v '(2.0 4.0 4.0 6.0)])
     (select (expr-alias (expr-std (col "v") #:ddof 0) "s")))
 (eval:error (expr-std (col "v") #:ddof 256))]}
 
