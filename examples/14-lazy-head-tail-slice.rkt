@@ -9,7 +9,8 @@
 (require polars)
 
 (define df
-  (dataframe [name '("a" "b" "c" "d" "e" "f" "g")] [score '(42 91 17 73 60 88 24) #:dtype 'i32]))
+  (dataframe [name '("a" "b" "c" "d" "e" "f" "g")]
+             [score '(42 91 17 73 60 88 24) #:dtype 'i32]))
 
 (displayln "input:")
 (displayln df)

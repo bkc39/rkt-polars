@@ -45,7 +45,8 @@
 
 ;; The #:dtype of each series plays the role of schema / schema_overrides.
 (define df-u8
-  (dataframe [name '("Alice" "Ben" "Chloe" "Daniel")] [age '(27 39 41 43) #:dtype 'u8]))
+  (dataframe [name '("Alice" "Ben" "Chloe" "Daniel")]
+             [age '(27 39 41 43) #:dtype 'u8]))
 
 (displayln df-u8)
 

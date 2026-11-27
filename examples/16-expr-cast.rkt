@@ -10,7 +10,8 @@
 (require polars)
 
 (define df
-  (dataframe [x '(10 20 30 40) #:dtype 'i32] [y '(3 4 5 6) #:dtype 'i32]))
+  (dataframe [x '(10 20 30 40) #:dtype 'i32]
+             [y '(3 4 5 6) #:dtype 'i32]))
 
 (displayln "input (x and y are i32):")
 (displayln df)

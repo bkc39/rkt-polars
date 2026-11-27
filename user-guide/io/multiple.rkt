@@ -14,7 +14,8 @@
 
 ;; --- create ------------------------------------------------------------------
 (define df
-  (dataframe [foo '(1 2 3)] [bar (list polars-null "ham" "spam")]))
+  (dataframe [foo '(1 2 3)]
+             [bar (list polars-null "ham" "spam")]))
 (for ([i (in-range 5)])
   (write-csv df (build-path dir (format "my_many_files_~a.csv" i))))
 

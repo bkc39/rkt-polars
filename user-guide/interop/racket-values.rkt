@@ -14,7 +14,8 @@
          polars)
 
 (define df
-  (dataframe [foo '(1 2 3)] [bar '("ham" "spam" "jam")]))
+  (dataframe [foo '(1 2 3)]
+             [bar '("ham" "spam" "jam")]))
 
 ;; --- series to Racket values ---------------------------------------------
 (writeln (~> df (ref "foo") series->list))

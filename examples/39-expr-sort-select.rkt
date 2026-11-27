@@ -13,7 +13,8 @@
 (require polars)
 
 (define df
-  (dataframe [x '(30 10 50 20 40) #:dtype 'i64] [g '("b" "a" "b" "a" "b")]))
+  (dataframe [x '(30 10 50 20 40) #:dtype 'i64]
+             [g '("b" "a" "b" "a" "b")]))
 
 ;; length-preserving ops: rank, reverse
 (displayln

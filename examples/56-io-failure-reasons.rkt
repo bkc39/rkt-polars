@@ -21,7 +21,8 @@
             "no error")))
 
 (define df
-  (dataframe [k '("a" "b" "c")] [v '(1 2 3)]))
+  (dataframe [k '("a" "b" "c")]
+             [v '(1 2 3)]))
 
 (report "read-csv of a missing file"
         (read-csv "/no/such/file.csv"))

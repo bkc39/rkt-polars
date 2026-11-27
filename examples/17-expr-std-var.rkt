@@ -28,7 +28,8 @@
 
 ;; std/var inside a group-by/agg pipeline.
 (define df-grp
-  (dataframe [g '("a" "a" "a" "b" "b" "b")] [v '(1.0 2.0 3.0 10.0 20.0 30.0)]))
+  (dataframe [g '("a" "a" "a" "b" "b" "b")]
+             [v '(1.0 2.0 3.0 10.0 20.0 30.0)]))
 
 (displayln "group_by(g).agg(mean, sample std, pop var):")
 (displayln (~> df-grp

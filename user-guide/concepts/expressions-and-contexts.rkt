@@ -87,5 +87,6 @@
 (displayln (select df expr))
 
 (define df2
-  (dataframe [ints '(1 2 3 4)] [letters '("A" "B" "C" "D")]))
+  (dataframe [ints '(1 2 3 4)]
+             [letters '("A" "B" "C" "D")]))
 (displayln (select df2 expr))

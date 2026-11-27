@@ -41,7 +41,8 @@
 
 ;; Dedup
 (define dup-df
-  (dataframe [x '(1 2 1 3 2 1) #:dtype 'i32] [y '("a" "b" "a" "c" "b" "a")]))
+  (dataframe [x '(1 2 1 3 2 1) #:dtype 'i32]
+             [y '("a" "b" "a" "c" "b" "a")]))
 
 (displayln "duplicates:")
 (displayln dup-df)

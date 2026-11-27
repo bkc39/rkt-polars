@@ -27,8 +27,8 @@
 (define logs
   (dataframe
    [level '(debug info debug error) #:dtype log-levels]
-   [message
-    '("process id: 525" "Service started correctly" "startup time: 67ms" "Cannot connect to DB!")]))
+   [message '("process id: 525" "Service started correctly"
+              "startup time: 67ms" "Cannot connect to DB!")]))
 
 (define non-debug-logs (filter logs (> (col "level") 'debug)))
 (displayln non-debug-logs)
@@ -50,13 +50,11 @@
 
 ;; --- lexical comparison with strings -------------------------------------
 (displayln
- (~> (dataframe (rename bears-cat
-                        "categorical"))
+ (~> (dataframe (rename bears-cat "categorical"))
      (with-columns (alias (< (col "categorical") "Cat") "categorical < \"Cat\""))))
 
 (displayln
- (~> (dataframe (rename bears-cat
-                        "categorical")
+ (~> (dataframe (rename bears-cat "categorical")
                 ["string" '("Panda" "Brown" "Brown" "Polar" "Polar")])
      (with-columns (alias (= (col "categorical") (col "string")) "categorical == string"))))
 

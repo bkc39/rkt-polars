@@ -11,7 +11,8 @@
          polars)
 
 (define df
-  (dataframe [foo '(1 2 3)] [bar '("ham" "spam" "jam")]))
+  (dataframe [foo '(1 2 3)]
+             [bar '("ham" "spam" "jam")]))
 (define gappy (series (list 1 polars-null 3) #:name "value"))
 
 ;; --- a series as an f64vector (to_numpy) ---------------------------------
@@ -23,7 +24,8 @@
 
 ;; --- a dataframe as one buffer (DataFrame.to_numpy) ----------------------
 (define xy
-  (dataframe [a (list 1 2 polars-null)] ["b" '(0.5 1.5 2.5)]))
+  (dataframe [a (list 1 2 polars-null)]
+             ["b" '(0.5 1.5 2.5)]))
 
 (define-values (m nrows ncols) (dataframe->f64vector xy))
 (writeln (list nrows ncols (f64vector->list m)))

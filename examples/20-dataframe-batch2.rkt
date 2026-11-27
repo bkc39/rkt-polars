@@ -9,10 +9,12 @@
 (require polars)
 
 (define observations
-  (dataframe ["time" '(1 3 5) #:dtype 'i32] [reading '(100 300 500) #:dtype 'i32]))
+  (dataframe ["time" '(1 3 5) #:dtype 'i32]
+             [reading '(100 300 500) #:dtype 'i32]))
 
 (define calibrations
-  (dataframe ["time" '(1 2 4) #:dtype 'i32] [offset '(10 20 40) #:dtype 'i32]))
+  (dataframe ["time" '(1 2 4) #:dtype 'i32]
+             [offset '(10 20 40) #:dtype 'i32]))
 
 (displayln "asof join:")
 (displayln (~> observations (join-asof calibrations #:on "time" #:strategy 'backward)))

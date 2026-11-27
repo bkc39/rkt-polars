@@ -15,27 +15,13 @@
   Flying Dragon Dark Ghost Poison Rock Ice Fairy)
 (define pokemon
   (dataframe [Name
-              '("Bulbasaur" "Ivysaur"
-                            "Venusaur"
-                            "Charmander"
-                            "Charmeleon"
-                            "Charizard"
-                            "Mega Charizard X"
-                            "Squirtle"
-                            "Wartortle"
-                            "Blastoise")]
+              '("Bulbasaur" "Ivysaur" "Venusaur" "Charmander" "Charmeleon"
+                "Charizard" "Mega Charizard X" "Squirtle"
+                "Wartortle" "Blastoise")]
              ["Type 1" '(Grass Grass Grass Fire Fire Fire Fire Water Water Water) #:dtype types]
              ["Type 2"
-              (list 'Poison
-                    'Poison
-                    'Poison
-                    polars-null
-                    polars-null
-                    'Flying
-                    'Dragon
-                    polars-null
-                    polars-null
-                    polars-null)
+              (list 'Poison 'Poison 'Poison polars-null polars-null
+                    'Flying 'Dragon polars-null polars-null polars-null)
               #:dtype types]
              [Attack '(49 62 82 52 64 84 130 48 63 83)]
              [Speed '(45 60 80 65 80 100 100 43 58 78)]))
