@@ -2606,16 +2606,58 @@ renders it with no separate display call.
 @defproc[(dataframe? [v any/c]) boolean?]{
   Returns @racket[#t] if @racket[v] is a dataframe.}
 
-@defproc[(dataframe [columns (listof Series-ptr?)]) dataframe?]{
-  Builds a dataframe from a list of equal-length series, each a
-  @racket[series] wrapper or a raw series pointer from
-  @racketmodname[polars/ffi] (see @secref["ref-ffi"]); their names become the
-  column names, and must differ.
+@defform[(dataframe column ...)
+         #:grammar ([column [values-expr column-option ...]
+                            [name values-expr column-option ...]
+                            part-expr]
+                    [name id string]
+                    [column-option (code:line #:name name-expr)
+                                   (code:line #:dtype dtype-expr)])
+         #:contracts ([values-expr (or/c list? vector? Series-ptr? sequence?)]
+                      [name-expr (or/c symbol? utf-8-name/c)]
+                      [dtype-expr (or/c #f dtype-spec? 'binary 'duration)]
+                      [part-expr (or/c Series-ptr? (listof Series-ptr?))])]{
+  Builds a dataframe, one column per @racket[column], left to right. A clause of
+  the first form is a column named by its @racket[#:name], which it must have;
+  so @racket[(f #:name "a")] is a column, never a call. One of the second form
+  is named by @racket[name], a string or an identifier with no binding where the
+  clause is (@racket[x] names @racket["x"], @racket[|dep time|] names
+  @racket["dep time"]), and takes no @racket[#:name]. A @racket[values-expr]
+  that is a list, vector or other sequence of single values, but not a string,
+  byte string, hash or number, is built as @racket[series] builds it, with
+  @racket[#:dtype]; a series is renamed, and cast with @racket[#:dtype] as
+  @racket[cast] casts, without a copy through Racket. Any other
+  @racket[column] is an expression giving a series or a list of series, spliced
+  in. The columns need equal lengths and distinct names. As an expression,
+  @racket[dataframe] is the procedure over series and lists of series.
 
-  @examples[#:eval ev
-(dataframe (list (series '("a" "b") #:name "k")
-                 (series '(1 2) #:name "v")))
-(eval:error (dataframe (list (series '(1) #:name "k") (series '(2) #:name "k"))))]}
+  A bound identifier is never a @racket[name]: @racket[date] and @racket[time]
+  (@racketmodname[racket/base]), @racket[delay], @racket[range] and
+  @racket[first] (@racketmodname[racket]), polars' own names (@racket[count],
+  @racket[min], @racket[max], @racket[sum], @racket[sort], @racket[filter],
+  @racket[height], ...), gregor's and your own definitions head an expression.
+  Name such a column @racket[[vals #:name 'date]] or @racket[["date" vals]]. A
+  bracketed clause that is not a column is a syntax error; a parenthesized one
+  is an expression, so a misspelt @racket[(serie vals)] is a column named
+  @racket["serie"]. At the top level (the REPL, these examples), an identifier
+  with no binding when the form is expanded is looked up each time it runs: a
+  variable defined by then heads an expression.
+
+  @examples[#:eval ev #:label #f #:preserve-source-locations
+(dataframe [carrier '("UA" "AA" "UA")]
+           [dep (in-range 3) #:dtype 'i32])
+(dataframe [(list (date 2026 1 1) (date 2026 6 1)) #:name 'date]
+           ["height" '(1.56 1.77)]
+           [|dep time| (vector 5 7)])
+(define carriers (series '("UA" "AA") #:name "c"))
+(dataframe [carrier carriers #:dtype 'categorical] carriers)
+(dataframe (list carriers) (series '(1 2) #:name "n"))
+(apply dataframe
+       (for/list ([c (in-dataframe-columns (dataframe [a '(1 2)] [b '(3 4)]))]) c))
+(eval:error (dataframe [date (list (date 2026 1 1))]))
+(eval:error (dataframe [k '(1 2) #:name "n"]))
+(eval:error (dataframe [a '(1 2)] [b '(3)]))
+(eval:error (dataframe [a "abc"]))]}
 
 @deftogether[(@defproc[(shape [x has-shape?]) (listof exact-nonnegative-integer?)]
               @defproc[(shape/values [x has-shape?]) (values exact-nonnegative-integer? ...)]

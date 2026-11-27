@@ -17,8 +17,8 @@
                   polars-null polars-null? series-drop series-dtype series-null-count
                   zoned-datetime-dtype?)
          (only-in (submod polars/private/foreign internal) series-rename/who)
-         (only-in polars/private/generic/core
-                  dataframe dataframe? ref series series? wrap-dataframe)
+         (only-in polars/private/generic/core dataframe? ref series series? wrap-dataframe)
+         (only-in (submod polars/private/generic/core internal) columns->dataframe)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
          (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)
@@ -221,7 +221,7 @@
   (with-releases ([built ([name (in-list names)] [values (in-list columns)])
                          (series values #:name name)
                          series-drop])
-    (dataframe built)))
+    (columns->dataframe built)))
 
 (define (describe-series s)
   (define rows (dtype-statistics (series-dtype s)))
