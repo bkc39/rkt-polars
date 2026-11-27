@@ -2612,8 +2612,8 @@ renders it with no separate display call.
                       [name-expr (or/c symbol? utf-8-name/c)]
                       [dtype-expr (or/c #f dtype-spec? 'binary 'duration)]
                       [part-expr (or/c Series-ptr? (listof Series-ptr?))])]{
-  Builds a dataframe, one column per @racket[column], left to right. A clause of
-  the first form is a column named by its @racket[#:name], which it must have;
+  Builds a dataframe, one column per @racket[column], left to right, each
+  built before the next clause is evaluated. A clause of the first form is a column named by its @racket[#:name], which it must have;
   so @racket[(f #:name "a")] is a column, never a call. One of the second form
   is named by @racket[name], a string or an identifier with no binding where the
   clause is (@racket[x] names @racket["x"], @racket[|dep time|] names

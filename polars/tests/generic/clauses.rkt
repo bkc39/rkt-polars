@@ -236,7 +236,7 @@
     (set-box! evaluated (cons tag (unbox evaluated)))
     v)
 
-  (test-case "every clause is evaluated, in order, before any series is built"
+  (test-case "each clause is built, in order, before the next clause is evaluated"
     (set-box! evaluated '())
     (settle!)
     (define drops-before (series-drop-count))
@@ -246,8 +246,28 @@
                             [b (noted 2 '(2))]
                             [c (noted 3 "abc")]
                             [d (noted 4 '(4))])))
-    (check-equal? (series-drop-count) drops-before)
+    (check-equal? (- (series-drop-count) drops-before) 2)
     (check-equal? (reverse (unbox evaluated)) '(1 2 3))
+    (set-box! evaluated '())
+    (settle!)
+    (define part-drops-before (series-drop-count))
+    (check-exn exn:fail:contract:blame?
+               (lambda ()
+                 (dataframe [a (noted 1 '(1))]
+                            (noted 2 5)
+                            [c (noted 3 '(3))])))
+    (check-equal? (- (series-drop-count) part-drops-before) 1)
+    (check-equal? (reverse (unbox evaluated)) '(1 2))
+    (define expected (list '("a" "b") '(int64 int64) (list (vector 1 2))))
+    (check-equal? (let ([xs (vector 1)])
+                    (frame-datum (dataframe [a xs]
+                                            [b (begin (vector-set! xs 0 2) xs)])))
+                  expected)
+    (check-equal? (let ([xs (vector 1)])
+                    (frame-datum (series-frame (series xs #:name "a")
+                                               (series (begin (vector-set! xs 0 2) xs)
+                                                       #:name "b"))))
+                  expected)
     (set-box! evaluated '())
     (dataframe [(noted 'v1 '(1 2)) #:name (noted 'n1 "a") #:dtype (noted 'd1 'i64)]
                [b (noted 'v2 '(3 4)) #:dtype (noted 'd2 #f)]

@@ -99,15 +99,15 @@
     [dtype ((named who name) (own (series-cast-to who vals dtype)))]
     [else ((named who name) (own (series-slice/who who vals 0 (series-len vals))))]))
 
-(define (build-frame who parts)
+(define (part-columns who own part)
+  (match part
+    [(? column-request?) (list (request->series who own part))]
+    [(? list?) part]
+    [_ (list part)]))
+
+(define (build-frame who build-columns)
   (with-release-pool ([own series-drop])
-    (define columns
-      (append-map (lambda (part)
-                    (match part
-                      [(? column-request?) (list (request->series who own part))]
-                      [(? list?) part]
-                      [_ (list part)]))
-                  parts))
+    (define columns (build-columns (lambda (part) (part-columns who own part))))
     (wrap-dataframe
      (or (dataframe-new/raw columns)
          (raise-arguments-error who (or (frame-columns-problem columns)
@@ -116,7 +116,7 @@
 (define columns->dataframe
   (let ()
     (define (dataframe . parts)
-      (build-frame 'dataframe parts))
+      (build-frame 'dataframe (lambda (columns) (append-map columns parts))))
     dataframe))
 
 (define-module-boundary-contract dataframe/contracted columns->dataframe
@@ -299,7 +299,7 @@
    #:do [(define repeated
            (check-duplicates (filter values (attribute column.literal-name)) #:key name-string))]
    #:fail-when repeated (format "duplicate column name ~s" (name-string repeated))
-   #'(build-frame 'dataframe (list column.part ...))]
+   #'(build-frame 'dataframe (lambda (columns) (append (columns column.part) ...)))]
   [_:id #'dataframe/contracted])
 
 (module+ internal

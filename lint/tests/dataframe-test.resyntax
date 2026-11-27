@@ -21,6 +21,20 @@ test: "a list of named series becomes clauses"
 ------------------------------
 
 
+test: "a later argument mutating an earlier column's values is still rewritten"
+------------------------------
+(define xs (vector 1))
+(dataframe (list (series xs #:name "a") (series (begin (vector-set! xs 0 2) xs) #:name "b")))
+==============================
+(define xs (vector 1))
+(dataframe [a xs]
+           [b
+            (begin
+              (vector-set! xs 0 2)
+              xs)])
+------------------------------
+
+
 test: "a name that is bound, or not an identifier, stays a string"
 ------------------------------
 (dataframe (list (series '(1) #:name "count")
