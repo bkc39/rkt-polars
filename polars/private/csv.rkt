@@ -19,7 +19,7 @@
                   dataframe-drop dataframe-height dataframe-width glob-pattern?
                   path->complete-string polars-null? series-drop series-dtype
                   series-ref zoned-datetime-dtype?)
-         (only-in polars/private/generic/dtype dtype-spec? normalize-dtype)
+         (only-in polars/private/dtype-spelling dtype-spec? normalize-dtype)
          (only-in polars/private/io-contracts
                   column-name/c distinct-names? distinct? given positive-size/c row-index/c
                   size/c)

@@ -1,6 +1,6 @@
 #lang racket/base
 
-;; dtype aliases, inference, and the dtype -> series-constructor map shared by
+;; dtype inference and the dtype -> series-constructor map shared by
 ;; the `series` smart constructor (core) and `const-series` (operators).
 
 (require racket/match
@@ -13,6 +13,7 @@
          (only-in polars/private/c-integer
                   int16/c int32/c int64-min int64/c int8/c uint16/c uint32/c uint64-max uint64/c
                   uint8/c)
+         (only-in polars/private/dtype-spelling dtype-aliases)
          polars/private/foreign
          (only-in polars/private/resource with-release)
          polars/private/series
@@ -20,9 +21,9 @@
          syntax/parse/define
          (for-syntax racket/base syntax/parse))
 
-(provide normalize-dtype dtype->constructor infer-dtype coerce-elements
+(provide dtype->constructor infer-dtype coerce-elements
          numeric-dtypes numeric-dtype? temporal-dtype?
-         dtype-spec? define-enum series-elements/c)
+         define-enum series-elements/c)
 
 (begin-for-syntax
   (define-syntax-class enum-category
@@ -35,31 +36,6 @@
   #:fail-when (check-duplicate-identifier (syntax->list #'(category.symbol ...)))
               "duplicate enum category"
   (define name '(enum category.symbol ...)))
-
-;; Accept both the short constructor spellings (i32, f64, str, bool) and the
-;; canonical symbols returned by series-dtype (int32, float64, string,
-;; boolean).  Maps everything to a canonical symbol.
-(define dtype-aliases
-  (for/fold ([aliases dtype-short-names])
-            ([canonical (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64
-                                   float32 float64 boolean string
-                                   date time datetime categorical null))])
-    (hash-set aliases canonical canonical)))
-
-(define (dtype-spec? v)
-  (match v
-    [(? symbol?) (hash-has-key? dtype-aliases v)]
-    [(list* (or 'datetime 'duration)
-            (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
-            (or '() (list #f)))
-     #t]
-    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
-
-(define (normalize-dtype dt)
-  (cond
-    [(not (dtype-spec? dt)) (error 'series "unsupported dtype ~v" dt)]
-    [(symbol? dt) (hash-ref dtype-aliases dt)]
-    [else dt]))
 
 (define (infer-dtype elements)
   (define all (if (vector? elements) (vector->list elements) elements))
