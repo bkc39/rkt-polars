@@ -1,0 +1,125 @@
+#lang resyntax/test
+
+
+require: lint/dataframe dataframe-clause-migrations
+
+
+header:
+------------------------------
+#lang racket/base
+(require polars)
+(define s1 (series '(1 2) #:name "s1"))
+(define n "n")
+------------------------------
+
+
+test: "a list of named series becomes clauses"
+------------------------------
+(dataframe (list (series '(1 2) #:name "a") (series '("x" "y") #:name "b" #:dtype 'categorical)))
+==============================
+(dataframe [a '(1 2)] [b '("x" "y") #:dtype 'categorical])
+------------------------------
+
+
+test: "a name that is bound, or not an identifier, stays a string"
+------------------------------
+(dataframe (list (series '(1) #:name "count")
+                 (series '(2) #:name "dep time")
+                 (series '(3) #:name "1")))
+==============================
+(dataframe ["count" '(1)] ["dep time" '(2)] ["1" '(3)])
+------------------------------
+
+
+test: "a name holding a character that is not graphic stays a string"
+------------------------------
+(dataframe (list (series '(1) #:name "a\u0000b") (series '(2) #:name "tab\there")))
+==============================
+(dataframe ["a\u0000b" '(1)] ["tab\there" '(2)])
+------------------------------
+
+
+test: "a name that is not a literal is a #:name option"
+------------------------------
+(dataframe (list (series '(1 2) #:name n #:dtype 'f64)))
+==============================
+(dataframe ['(1 2) #:name n #:dtype 'f64])
+------------------------------
+
+
+test: "a list of series and other parts is spliced"
+------------------------------
+(dataframe (list s1 (series '(3 4) #:name "b")))
+==============================
+(dataframe s1 [b '(3 4)])
+------------------------------
+
+
+test: "an empty list is spliced away"
+------------------------------
+(dataframe (list))
+==============================
+(dataframe)
+------------------------------
+
+
+test: "a literal #:name before the values is kept in order"
+------------------------------
+(dataframe (list (series #:name "a" '(1))))
+==============================
+(dataframe [a '(1)])
+------------------------------
+
+
+no-change-test: "a variable of series is an expression clause"
+------------------------------
+(define cols (list s1))
+(dataframe cols)
+------------------------------
+
+
+no-change-test: "a local dataframe is not polars'"
+------------------------------
+(let ([dataframe list])
+  (dataframe (list (series '(1) #:name "a"))))
+------------------------------
+
+
+no-change-test: "a shadowed list is not racket/base's"
+------------------------------
+(let ([list vector])
+  (dataframe (list s1)))
+------------------------------
+
+
+no-change-test: "two series of one literal name stay a run-time error"
+------------------------------
+(dataframe (list (series '(1) #:name "a") (series '(2) #:name "a")))
+------------------------------
+
+
+no-change-test: "clauses are left as they are"
+------------------------------
+(dataframe [a '(1 2)] ["b" '(3 4)] s1)
+------------------------------
+
+
+test: "a name expression before the values keeps the series call"
+------------------------------
+(dataframe (list (series #:name n '(1))))
+==============================
+(dataframe (series #:name n '(1)))
+------------------------------
+
+
+no-change-test: "a list holding a clause-shaped call is not spliced"
+------------------------------
+(define (make-column #:name name) (series '(1) #:name name))
+(dataframe (list (make-column #:name "a")))
+------------------------------
+
+
+no-change-test: "a series named like an existing clause stays a run-time error"
+------------------------------
+(dataframe ["a" '(1)] (list (series '(2) #:name "a")))
+------------------------------
