@@ -34,6 +34,7 @@
 (define column-name/c (or/c symbol? utf-8-name/c))
 
 (define column-part/c (or/c Series-ptr? (listof Series-ptr?)))
+(define column-parts/c (listof column-part/c))
 
 (define values-expectation
   "a list, vector, series or sequence, not a string, byte string, hash or number")
@@ -119,7 +120,7 @@
     dataframe))
 
 (define-module-boundary-contract dataframe/contracted columns->dataframe
-  (->* () #:rest (listof column-part/c) dataframe?)
+  (->* () #:rest column-parts/c dataframe?)
   #:name-for-blame dataframe)
 
 (define (top-level-variable? variable-reference name)
