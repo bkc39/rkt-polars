@@ -939,26 +939,24 @@ it. Racket side: `define-compat` with `#:c-id`.
   names (a string cast to `'date` is `str->date`).
 - Error wording follows the crate version. A test matches our `who:` prefix
   and the name, pattern or path the error carries, not the crate's phrasing.
-- `dataframe` (#217) is a macro of column clauses, as Python's dict of
-  lists: `[name values option ...]`, the name an identifier with no binding
-  or a string; `[values #:name name option ...]`; and any other expression,
-  a series or a list of series, spliced in. The options are `#:name` and
-  `#:dtype`. A bracketed clause headed by a bound identifier is a syntax
-  error naming it (`[height ...]` is `["height" ...]`, since `height` is
-  a verb), and so is any other bracketed clause that is not a column; a
-  parenthesized one is an expression, unless its head is a string or an
-  identifier with no binding, so a misspelt `(serie vals)` is a column named
-  `"serie"`. Two clauses of one literal name are a syntax error, and names
-  that meet only at run time are polars' duplicate error. At the top level
-  (the REPL, the manual's examples) an identifier with no binding when the
-  form is expanded is looked up each time it runs: a variable defined by then
-  heads an expression, and a bound one in brackets raises the syntax error
-  at run time. Values are a list, vector, series or any sequence of single
-  values; a string, byte string, hash or number is refused. A series value
-  is renamed, and with `#:dtype` cast non-strictly, as `cast` is (an Enum
-  strictly). Contract errors name `dataframe` and blame the clause's
-  module and location. The bare identifier, as in `(apply dataframe
-  parts)`, is the procedure over series and lists of series.
+- `dataframe` (#217, `generic/clauses.rkt`) is a macro of column clauses,
+  whose grammar the reference gives. A clause's head names the column when
+  it is a string or an identifier with no binding where the clause is, so a
+  parenthesized `(serie vals)` with `serie` unbound is a column, and so is
+  `(vals #:name n)`; a `#:name` is a string, byte string, path or symbol. At
+  module level and in a body the form expands to `(#%expression (dataframe
+  ...))`, so its clauses are read once every later definition and `require`
+  is known. At the top level an identifier with no binding when the form is
+  expanded is looked up each time the clause runs: a variable defined by then
+  heads an expression, and in brackets raises the syntax error at run time.
+  Two clauses of one literal name are a syntax error in a module; at the top
+  level an identifier head is looked up at run time, so a duplicate is
+  polars' run-time error, as are names that meet only at run time. Contract
+  errors name `dataframe` and blame the caller's module and, for a clause,
+  its location. A number, string, byte string or hash as values is refused.
+  A series value is cloned natively, renamed, and with `#:dtype` cast
+  non-strictly, as `cast` is (an Enum strictly); the caller's series is
+  never renamed or dropped.
 - `filter` takes one predicate; combine with `and` (#62). `join #:on` takes a
   list, not a bare name (#62).
 - An empty list or vector is an empty series of `#:dtype`, or `'null` without

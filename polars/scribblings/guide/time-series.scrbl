@@ -66,8 +66,8 @@ change, parse to UTC. Pass @racket[str->datetime] a target zone with
 
 @examples[#:eval ev #:label #f
 (define mixed
-  (dataframe ["data" '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
-                       "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")]))
+  (dataframe [data '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
+                     "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")]))
 (define mixed-parsed
   (~> mixed
       (select (~> (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")
@@ -130,7 +130,7 @@ compares directly too:
 
 @examples[#:eval ev #:label #f
 (define negative-dates
-  (~> (dataframe ["ts" '("-1300-05-23" "-1400-03-02")]
+  (~> (dataframe [ts '("-1300-05-23" "-1400-03-02")]
                  ["values" '(3 4)])
       (with-columns (str->date "ts"))))
 (filter negative-dates (< (dt-year "ts") -1300))

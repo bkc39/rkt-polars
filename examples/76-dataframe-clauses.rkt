@@ -1,11 +1,6 @@
 #lang racket/base
 
-;; dataframe: a frame from column clauses, as Python's dict of lists.
-;;
-;; [name values option ...] names a column by an identifier with no binding or
-;; a string; [values #:name name option ...] by an expression. Any other
-;; argument is a series or a list of series, spliced in. #:dtype casts a series
-;; value, and the bare identifier is the procedure over series.
+;; dataframe from column clauses, as Python's dict of lists.
 ;;
 ;; Inside `nix develop`:
 ;;   racket examples/76-dataframe-clauses.rkt
@@ -31,5 +26,6 @@
 
 (displayln (apply dataframe (for/list ([c (in-dataframe-columns flights)]) c)))
 
-(printf "~a\n" (with-handlers ([exn:fail? exn-message])
-                 (dataframe [a '(1 2)] [b '(3)])))
+(printf "unequal heights: ~a\n"
+        (with-handlers ([exn:fail? exn-message])
+          (dataframe [a '(1 2)] [b '(3)])))

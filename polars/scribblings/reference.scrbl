@@ -155,7 +155,7 @@ a column name, which the verb lifts with @racket[col].
 
   @examples[#:eval ev
 (define people
-  (dataframe ["id" '(1 2 3) #:dtype 'i32]
+  (dataframe [id '(1 2 3) #:dtype 'i32]
              [weight '(57.9 72.5 53.6)]
              ["height" '(1.56 1.77 1.65)]))
 (select people (* (col 'float64) 1.1))
@@ -480,7 +480,7 @@ total
   @examples[#:eval ev
 (define flights
   (dataframe [carrier '("UA" "AA" "UA" "AA" "B6")]
-             ["delay" (list 12 polars-null 340 -3 polars-null)]))
+             [delay (list 12 polars-null 340 -3 polars-null)]))
 (sort flights "delay" #:descending #t)
 (~> flights (sort "delay" #:descending #t #:nulls-last #t) (head 2))
 (sort flights '("carrier" "delay")
@@ -725,7 +725,7 @@ far-zoned
 (define sales
   (dataframe [store '("a" "a" "b")]
              [quarter '("q1" "q2" "q1")]
-             ["sales" '(10 20 30)]))
+             [sales '(10 20 30)]))
 (define by-quarter
   (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
         "store"))
@@ -2626,12 +2626,8 @@ renders it with no separate display call.
   in. The columns need equal lengths and distinct names. As an expression,
   @racket[dataframe] is the procedure over series and lists of series.
 
-  A bound identifier is never a @racket[name]: @racket[date] and @racket[time]
-  (@racketmodname[racket/base]), @racket[delay], @racket[range] and
-  @racket[first] (@racketmodname[racket]), polars' own names (@racket[count],
-  @racket[min], @racket[max], @racket[sum], @racket[sort], @racket[filter],
-  @racket[height], ...), gregor's and your own definitions head an expression.
-  Name such a column @racket[[vals #:name 'date]] or @racket[["date" vals]]. A
+  A bound identifier, such as @racket[date] or @racket[count], is never a
+  @racket[name]; write @racket[[vals #:name 'date]] or @racket[["date" vals]]. A
   bracketed clause that is not a column is a syntax error; a parenthesized one
   is an expression, so a misspelt @racket[(serie vals)] is a column named
   @racket["serie"]. At the top level (the REPL, these examples), an identifier
@@ -2845,7 +2841,7 @@ renders it with no separate display call.
   @examples[#:eval ev #:label #f
 (define trips
   (dataframe [carrier '(UA AA UA)]
-             ["delay" (list 2 polars-null -3)]
+             [delay (list 2 polars-null -3)]
              (cast (series (list (datetime 2013 1 1) (datetime 2013 1 1)
                                  (datetime 2013 1 2))
                            #:name "day")
