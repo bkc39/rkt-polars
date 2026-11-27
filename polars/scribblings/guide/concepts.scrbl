@@ -29,6 +29,9 @@ dtype or takes @racket[#:dtype]; @racket[polars-null] marks missing entries.
 @subsection{Dataframe}
 
 A @deftech{dataframe} is a collection of equal-length, uniquely named series.
+@racket[dataframe] takes a clause per column, @racket[[name values option ...]],
+or a series; @racket[["height" ...]] is a string because @racket[height] is
+polars' verb.
 
 @examples[#:eval ev #:label #f
 (define df
@@ -63,8 +66,7 @@ API gaps: no @tt{glimpse}; no @tt{sample} / @tt{set_random_seed}.
   (printf "~a: ~a\n" name (dtype (ref df #:columns name))))
 ]
 
-The @racket[#:dtype] of each series plays the role of @tt{schema} /
-@tt{schema_overrides}:
+@racket[#:dtype] in a clause plays @tt{schema_overrides}:
 
 @examples[#:eval ev #:label #f
 (dataframe

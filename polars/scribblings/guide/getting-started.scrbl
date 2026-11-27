@@ -17,8 +17,10 @@
 
 @section[#:tag "gs-reading-writing"]{Reading & writing}
 
-A @tech{dataframe} is built from named @tech{series}. gregor dates become a
-date column, as Python's @tt{date}s do.
+A @tech{dataframe} is built from column clauses, @racket[[name values]], as
+Python's dict of lists is. gregor dates become a date column, as Python's
+@tt{date}s do. A clause headed by a bound identifier is an error, so the
+@racket["height"] column is named by a string: @racket[height] is polars' verb.
 
 @examples[#:eval ev #:label #f
 (define df
