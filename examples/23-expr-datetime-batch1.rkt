@@ -14,11 +14,8 @@
 
 (define df
   (dataframe
-   (list (series '("open" "lunch" "close") #:name "event")
-         (series (list (datetime 2024 1 2 8 30 5)
-                       (datetime 2024 1 2 12 15 0)
-                       (datetime 2024 1 2 17 45 30))
-                 #:name "ts"))))
+   [event '("open" "lunch" "close")]
+   [ts (list (datetime 2024 1 2 8 30 5) (datetime 2024 1 2 12 15 0) (datetime 2024 1 2 17 45 30))]))
 
 (define out
   (~> df

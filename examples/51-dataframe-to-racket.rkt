@@ -16,9 +16,7 @@
          polars)
 
 (define df
-  (dataframe (list (series '("x" "y" "z") #:name "id")
-                   (series (list 1 2 polars-null) #:name "a")
-                   (series '(0.5 1.5 2.5) #:name "b"))))
+  (dataframe [id '("x" "y" "z")] [a (list 1 2 polars-null)] ["b" '(0.5 1.5 2.5)]))
 
 ;; --- columns as a hash or an association list ----------------------------
 (writeln (dataframe->hash df))

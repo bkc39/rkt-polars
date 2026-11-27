@@ -29,4 +29,4 @@
   (series (list (datetime 2013 1 1 5 6 7 123456789)) #:name "dt" #:dtype '(datetime milliseconds)))
 (printf "as milliseconds: ~s ~s\n" (dtype coarse) (series->list coarse))
 
-(displayln (dataframe (list birthdays (series '(1 2 3) #:name "n"))))
+(displayln (dataframe birthdays [n '(1 2 3)]))

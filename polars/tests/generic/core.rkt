@@ -42,9 +42,7 @@
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
   (define frame
-    (dataframe (list (series '("alice" "bob" "carol") #:name "user")
-                     (series '(10 25 18) #:name "score" #:dtype 'i32)
-                     (series '(1.2 3.5 2.0) #:name "cost"))))
+    (dataframe [user '("alice" "bob" "carol")] [score '(10 25 18) #:dtype 'i32] [cost '(1.2 3.5 2.0)]))
 
   (check-equal? (format "~a" ints) (series->string ints))
   (define printed-binary
@@ -110,7 +108,7 @@
     (check-equal? (dtype levels) (list 'enum 'c held))
     (check-cells levels (list held 'c)))
   (define nul-codes
-    (dataframe (list (series (list "a" "a\u0000b" "c") #:name "c" #:dtype 'categorical))))
+    (dataframe [c (list "a" "a\u0000b" "c") #:dtype 'categorical]))
   (check-equal? (series-cells (ref (filter nul-codes (p= (col "c") held-nul)) "c")) (list held-nul))
   (check-equal? (series->list (p= (series (list 'a held-nul 'c) #:dtype (list 'enum 'a held-nul 'c))
                                   held-nul))
@@ -120,7 +118,7 @@
   ;; ref on series and dataframe; df ref returns a wrapped series
   (check-equal? (ref withnull 0) 10)
   (check-equal? (ref withnull 1) polars-null)
-  (define df (dataframe (list ints floats)))
+  (define df (dataframe ints floats))
   (check-pred series? (ref df "floats"))
   (check-pred series? (ref df 0))
   (check-equal? (series-name (ref df "floats")) "floats")
@@ -412,7 +410,7 @@
   (define (shown-unwrapped nul n)
     (with-environment-variable #"POLARS_TABLE_WIDTH" #"200"
       (list (format "~a" nul) (dataframe->string nul)
-            (format "~a" (dataframe (list (series (list n) #:name "v")))))))
+            (format "~a" (dataframe [v (list n)])))))
   (for ([n (in-list nul-names)])
     (define nul (nul-frame n))
     (check-equal? (column-names nul) (list "id" n))
@@ -435,10 +433,9 @@
     (check-equal? (sequence->list (in-dataframe-rows named)) '(#(1 3) #(2 4)))
     (check-equal? (column-names (select named (column-names named))) (list n "a"))
     (check-exn (regexp (regexp-quote n))
-               (lambda () (dataframe (list (series '(1) #:name n) (series '(2) #:name n))))))
+               (lambda () (dataframe ['(1) #:name n] ['(2) #:name n]))))
   (define collided
-    (pivot (dataframe (list (series '(0 0) #:name "id") (series '("a" "a\u0000b") #:name "k")
-                            (series '(1 2) #:name "v")))
+    (pivot (dataframe [id '(0 0)] [k '("a" "a\u0000b")] [v '(1 2)])
            #:on '("k") #:index '("id") #:values '("v")))
   (check-equal? (column-names collided) '("id" "a" "a\u0000b"))
   (check-equal? (series->list (ref collided 2)) '(2))
@@ -446,16 +443,14 @@
   (check-equal? (for/list ([c (in-dataframe-columns collided)]) (series->list c)) '((0) (1) (2)))
   (check-equal? (sequence->list (in-dataframe-rows collided)) '(#(0 1 2)))
   (check-equal? (column-names (select collided (column-names collided))) '("id" "a" "a\u0000b"))
-  (check-equal? (column-names (dataframe (list (series '(1) #:name "a")
-                                              (series '(2) #:name "a\u0000b"))))
+  (check-equal? (column-names (dataframe [a '(1)] ["a\u0000b" '(2)]))
                 '("a" "a\u0000b"))
-  (check-equal? (width (dataframe (list (series '(1) #:name "a\u0000x")
-                                        (series '(1) #:name "a\u0000y"))))
+  (check-equal? (width (dataframe ["a\u0000x" '(1)] ["a\u0000y" '(1)]))
                 2)
 
   (test-case "the reference's bridge from polars/ffi: dataframe takes raw series"
     (define raw (series-new-i32 "n" '(1 2)))
-    (check-equal? (series->list (ref (contracted:dataframe (list raw)) "n")) '(1 2))
+    (check-equal? (series->list (ref (contracted:dataframe raw) "n")) '(1 2))
     (check-exn #rx"^len: contract violation:\n  expected: sized[?]" (lambda () (len raw)))
     (check-exn #rx"^dataframe: contract violation\n  expected: \\(or/c Series-ptr\\? \\(listof Series-ptr\\?\\)\\)\n  given: 1\n"
                (lambda () (contracted:dataframe 1)))
@@ -739,8 +734,8 @@
     (check-equal? (column-names (top-run '(b2))) '("n"))
     (top-run (datum->syntax #f (list 'define '(b3) (frame-of (bracketed 'later2 ''(1))))))
     (top-run '(define later2 1))
-    (define (syntax-error? rx)
-      (lambda (e) (and (exn:fail:syntax? e) (regexp-match? rx (exn-message e)))))
+    (define ((syntax-error? rx) e)
+      (and (exn:fail:syntax? e) (regexp-match? rx (exn-message e))))
     (check-exn (syntax-error? #rx"^dataframe: later2 is bound here") (lambda () (top-run '(b3))))
     (check-exn (syntax-error? #rx"^dataframe: k2 has no binding here")
                (lambda () (top-run '(dataframe (k2 '(1) #:name "n")))))

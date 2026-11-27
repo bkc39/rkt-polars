@@ -11,12 +11,8 @@
 
 (define df
   (dataframe
-   (list (series (list (datetime 2024 1 2 3 4 5)
-                       (datetime 2025 12 31 23 59 58)
-                       (datetime 2026 5 9 12 30 45))
-                 #:name "ts")
-         (series '(1704164645123 1704164645999 1704164646000)
-                 #:name "t" #:dtype 'i64))))
+   [ts (list (datetime 2024 1 2 3 4 5) (datetime 2025 12 31 23 59 58) (datetime 2026 5 9 12 30 45))]
+   [t '(1704164645123 1704164645999 1704164646000) #:dtype 'i64]))
 
 (define with-ms
   (~> df (with-columns (alias (cast "t" '(datetime milliseconds)) "ts_ms"))))

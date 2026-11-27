@@ -25,7 +25,7 @@
                     str-strip-suffix str-tail str-to-lowercase str-to-uppercase)
            (only-in (submod polars/private/generic/strings internal)
                     str->datetime str-extract str-slice))
-  (define df (dataframe (list (series '("Ab" "cD" "ef") #:name "s"))))
+  (define df (dataframe [s '("Ab" "cD" "ef")]))
   (define out
     (~> df lazy
         (with-columns
@@ -48,8 +48,7 @@
                 "AB")
   ;; batch 2: strip / replace / extract
   (define t
-    (dataframe (list (series '("  alpha  " "--beta--" "id=123" "report.txt" "banana")
-                             #:name "text"))))
+    (dataframe [text '("  alpha  " "--beta--" "id=123" "report.txt" "banana")]))
   (define out2
     (~> t (with-columns
             (alias (str-strip-chars "text") "trimmed")
@@ -68,7 +67,7 @@
   (check-equal? (ref (ref out2 #:columns "digits") 2) "123")
   ;; batch 3: lengths / slice / head / tail / find / count
   (define u
-    (dataframe (list (series '("hello" "héllo" "banana" "abc123abc") #:name "text"))))
+    (dataframe [text '("hello" "héllo" "banana" "abc123abc")]))
   (define out3
     (~> u (with-columns
             (alias (str-len-bytes "text") "bytes")
@@ -88,8 +87,7 @@
   (check-equal? (ref (ref out3 #:columns "find_na") 2) 2)
   (check-equal? (ref (ref out3 #:columns "count_a") 2) 3)
   (define words
-    (dataframe (list (series (list "hello" "héllo" polars-null "ab") #:name "s")
-                     (series (list 1 polars-null 2 0) #:name "n"))))
+    (dataframe [s (list "hello" "héllo" polars-null "ab")] [n (list 1 polars-null 2 0)]))
   (define (sliced . exprs)
     (define d (apply select words exprs))
     (map (lambda (name) (series->list (ref d name))) (column-names d)))
@@ -109,9 +107,9 @@
                       (list "h" "héllo" polars-null "")))
   ;; string-to-temporal: parse Date/Datetime/Time; #:strict #f -> null on failure
   (define p
-    (dataframe (list (series '("2024-01-02" "not-a-date" "2024-05-09 extra") #:name "date_s")
-                     (series '("2024-01-02 03:04:05" "bad" "x") #:name "dt_s")
-                     (series '("03:04:05.123456789" "bad" "x") #:name "time_s"))))
+    (dataframe [date_s '("2024-01-02" "not-a-date" "2024-05-09 extra")]
+               [dt_s '("2024-01-02 03:04:05" "bad" "x")]
+               [time_s '("03:04:05.123456789" "bad" "x")]))
   (define out4
     (~> p (with-columns
             (alias (str->date "date_s" #:strict #f) "d_infer")
@@ -141,9 +139,8 @@
                                                           (contract-name int64/c)))))
              (lambda () (contracted:str-slice "s" #\a 2)))
   (define stamps
-    (dataframe (list (series '("2021-03-27 03:00" "2021-10-31 02:30") #:name "clock")
-                     (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")
-                             #:name "offset"))))
+    (dataframe [clock '("2021-03-27 03:00" "2021-10-31 02:30")]
+               [offset '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")]))
   (define (parsed . exprs)
     (define d (apply select stamps exprs))
     (for/list ([name (in-list (column-names d))])
@@ -194,7 +191,7 @@
                    (lambda () (contracted:str->datetime "clock" #:strict 1)))])
     (check-exn exn:fail:contract:blame? bad))
   (define (strings-through xs make)
-    (~> (dataframe (list (series xs #:name "s" #:dtype 'string)))
+    (~> (dataframe [s xs #:dtype 'string])
         (select (alias (make "s") "s"))
         (ref "s")
         series->list))
@@ -220,8 +217,8 @@
   (test-case "the reference's string examples"
     (define none polars-null)
     (define people
-      (dataframe (list (series (list "Ada Lovelace" "grace hopper" "Émilie" none) #:name "who"))))
-    (define tags (dataframe (list (series (list "  ok  " "xxtagxx" "v1.2.0") #:name "s"))))
+      (dataframe [who (list "Ada Lovelace" "grace hopper" "Émilie" none)]))
+    (define tags (dataframe [s (list "  ok  " "xxtagxx" "v1.2.0")]))
     (check-selected
      people
      (list (list "lower" (str-to-lowercase "who")

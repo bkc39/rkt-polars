@@ -10,12 +10,10 @@
 (require polars)
 
 (define users
-  (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
-                   (series '("alice" "bob" "carol" "dora") #:name "name"))))
+  (dataframe [uid '(1 2 3 4) #:dtype 'i32] [name '("alice" "bob" "carol" "dora")]))
 
 (define orders
-  (dataframe (list (series '(1 2 2 5) #:name "uid" #:dtype 'i32)
-                   (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
+  (dataframe [uid '(1 2 2 5) #:dtype 'i32] [amount '(10 20 30 40) #:dtype 'i32]))
 
 (displayln "users:")
 (displayln users)
@@ -44,8 +42,7 @@
 
 ;; vstack — append rows from another (compatible) dataframe
 (define more-users
-  (dataframe (list (series '(5 6) #:name "uid" #:dtype 'i32)
-                   (series '("eve" "frank") #:name "name"))))
+  (dataframe [uid '(5 6) #:dtype 'i32] [name '("eve" "frank")]))
 
 (displayln "vstack(users, more-users):")
 (displayln (~> users (vstack more-users)))

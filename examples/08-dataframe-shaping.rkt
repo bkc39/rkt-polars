@@ -12,13 +12,10 @@
 
 (define df
   (dataframe
-   (list (series '("Boston" "New York" "Chicago" "Houston"
-                   "Phoenix" "Philadelphia" "San Antonio" "San Diego")
-                 #:name "city")
-         (series '(0.65 8.8 2.7 2.3 1.6 1.6 1.5 1.4)
-                 #:name "population_millions")
-         (series '(1630 1624 1837 1837 1881 1682 1718 1769)
-                 #:name "founded" #:dtype 'i32))))
+   [city
+    '("Boston" "New York" "Chicago" "Houston" "Phoenix" "Philadelphia" "San Antonio" "San Diego")]
+   [population_millions '(0.65 8.8 2.7 2.3 1.6 1.6 1.5 1.4)]
+   [founded '(1630 1624 1837 1837 1881 1682 1718 1769) #:dtype 'i32]))
 
 (displayln "input:")
 (displayln df)
@@ -63,9 +60,7 @@
 ;; `select` is variadic and expression-aware: names, lists of names, and Exprs.
 
 (define sdf
-  (dataframe (list (series '(1 2 3)       #:name "foo" #:dtype 'i32)
-                   (series '(6 7 8)       #:name "bar" #:dtype 'i32)
-                   (series '("a" "b" "c") #:name "ham"))))
+  (dataframe [foo '(1 2 3) #:dtype 'i32] [bar '(6 7 8) #:dtype 'i32] [ham '("a" "b" "c")]))
 
 ;; 1. a single column by name           df.select("foo")
 (displayln "select \"foo\":")

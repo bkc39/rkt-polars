@@ -16,14 +16,16 @@
          polars)
 
 (define flights
-  (dataframe
-   (list (series '(UA AA UA DL B6) #:name "carrier")
-         (series '("EWR" "LGA" "EWR" "JFK" "JFK") #:name "origin")
-         (series (list 2 polars-null -3 15 0) #:name "dep_delay")
-         (cast (series (list (datetime 2013 1 1) (datetime 2013 1 1) (datetime 2013 1 2)
-                             (datetime 2013 1 2) (datetime 2013 1 3))
-                       #:name "day")
-               'date))))
+  (dataframe [carrier '(UA AA UA DL B6)]
+             [origin '("EWR" "LGA" "EWR" "JFK" "JFK")]
+             [dep_delay (list 2 polars-null -3 15 0)]
+             (cast (series (list (datetime 2013 1 1)
+                                 (datetime 2013 1 1)
+                                 (datetime 2013 1 2)
+                                 (datetime 2013 1 2)
+                                 (datetime 2013 1 3))
+                           #:name "day")
+                   'date)))
 
 ;; --- a vector per row ----------------------------------------------------
 (for ([row (in-dataframe-rows flights)])
@@ -47,8 +49,7 @@
 
 ;; an early exit over a million rows converts only the first buffer
 (define squares
-  (dataframe (list (series (build-list 1000000 values) #:name "n")
-                   (series (build-list 1000000 (lambda (n) (* n n))) #:name "square"))))
+  (dataframe [n (build-list 1000000 values)] [square (build-list 1000000 (lambda (n) (* n n)))]))
 (writeln (for/first ([row (in-dataframe-rows squares)]
                      #:when (> (vector-ref row 1) 1000))
            row))

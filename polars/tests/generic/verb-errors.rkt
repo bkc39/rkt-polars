@@ -96,7 +96,7 @@
                                                         "")))
      (syntax/loc this-syntax (list (cons 'who (lambda () call)) ...))])
 
-  (define frame (dataframe (list (series '(1 2 3) #:name "v") (series '("a" "b" "c") #:name "s"))))
+  (define frame (dataframe [v '(1 2 3)] [s '("a" "b" "c")]))
 
   (check-raises 'polars #rx"^filter: [^\n]*filter's length: 2 differs from that of the series: 3$"
                 (lambda () (filter frame (series '(#t #f)))))
@@ -151,7 +151,7 @@
   (check-false (has-contract? round))
   (check-equal? (list (round 1234 #:decimals -2) (round 2.5) (round 2.345 #:decimals 1))
                 (list 1200 2.0 2.3))
-  (check-equal? (series->list (ref (select (dataframe (list (series '(1.25 2.5) #:name "v")))
+  (check-equal? (series->list (ref (select (dataframe [v '(1.25 2.5)])
                                            (round "v" #:decimals 1))
                                    "v"))
                 '(1.2 2.5))
@@ -180,8 +180,7 @@
   (check-equal? (series->list (slice (series '(1 2 3)) -2 2)) '(2 3))
 
   (define grouped
-    (dataframe (list (series '(5 1 7 3 4 6 2) #:name "v")
-                     (series '("a" "b" "a" "a" "b" "a" "b") #:name "g"))))
+    (dataframe [v '(5 1 7 3 4 6 2)] [g '("a" "b" "a" "a" "b" "a" "b")]))
   (define group-values '(("a" 5 7 3 6) ("b" 1 4 2)))
   (define (slice-list xs offset n)
     (define l (length xs))
@@ -241,7 +240,7 @@
   (check-equal? (column-names (ref frame '("s" 0))) '("s" "v"))
   (check-equal? (shape (ref frame '())) '(3 0))
   (define patterned
-    (dataframe (list (series '(1) #:name "^a$") (series '(2) #:name "ab") (series '(3) #:name "*"))))
+    (dataframe [^a$ '(1)] [ab '(2)] ["*" '(3)]))
   (check-equal? (column-names (ref patterned '("^a$"))) '("^a$"))
   (check-equal? (column-names (ref patterned '("*" "ab"))) '("*" "ab"))
   (check-raises 'contract #rx"^ref: \"[\\^]a[.][*][$]\" not found$"
@@ -252,29 +251,27 @@
   (check-raises 'contract
                 (string-append "^dataframe: could not create a new DataFrame: height of column 'b' "
                                "[(]2[)] does not match height of column 'a' [(]3[)]$")
-                (lambda () (dataframe (list (series '(1 2 3) #:name "a") (series '(1 2) #:name "b")))))
+                (lambda () (dataframe [a '(1 2 3)] [b '(1 2)])))
   (check-raises 'contract
                 (string-append "^dataframe: could not create a new DataFrame: column with name 'a' "
                                "has more than one occurrence$")
                 (lambda () (dataframe (list (series '(1) #:name "a") (series '(2) #:name "a")))))
 
   (define (columns-of d) (for/list ([name (column-names d)]) (cons name (series->list (ref d name)))))
-  (define top (dataframe (list (series '(1 2) #:name "v"))))
+  (define top (dataframe [v '(1 2)]))
   (check-equal? (columns-of (with-column top (series '(10 20) #:name "w"))) '(("v" 1 2) ("w" 10 20)))
   (check-equal? (columns-of (with-column top (series '(0) #:name "v"))) '(("v" 0 0)))
   (check-raises 'contract
                 #rx"^with-column: unable to add a column of length 3 to a DataFrame of height 2$"
                 (lambda () (with-column top (series '(1 2 3) #:name "w"))))
-  (define nums (dataframe (list (series '(1 2 3 4 5) #:name "v"))))
+  (define nums (dataframe [v '(1 2 3 4 5)]))
   (check-equal? (columns-of (slice nums -2 (expt 2 40))) '(("v" 4 5)))
   (check-raises 'contract #rx"^head: contract violation\n" (lambda () (head nums -1)))
-  (define pair (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (define pair (dataframe [a '(1)] [b '(2)]))
   (check-equal? (column-names (drop pair "a")) '("b"))
   (check-raises 'contract #rx"^drop: \"nope\" not found$" (lambda () (drop pair '("a" "nope"))))
   (define sales
-    (dataframe (list (series '("a" "a" "b") #:name "store")
-                     (series '("q1" "q2" "q1") #:name "quarter")
-                     (series '(10 20 30) #:name "sales"))))
+    (dataframe [store '("a" "a" "b")] [quarter '("q1" "q2" "q1")] ["sales" '(10 20 30)]))
   (define by-quarter
     (sort (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)
           "store"))
@@ -301,7 +298,7 @@
     (check-equal? (columns-of (unpivot by-quarter #:on (list (name "q1") (name "q2"))
                                        #:index (list (name "store"))))
                   (columns-of (unpivot by-quarter #:on '("q1" "q2") #:index '("store")))))
-  (define named (dataframe (list (series '(1) #:name "a") (series '(2) #:name "b"))))
+  (define named (dataframe [a '(1)] [b '(2)]))
   (for ([name (list string->bytes/utf-8 string->path)])
     (check-equal? (series-name (rename (series '(1) #:name "a") (name "b"))) "b")
     (check-equal? (column-names (rename named (name "a") (name "z"))) '("z" "b"))
@@ -331,7 +328,7 @@
   (check-raises 'contract #rx"^rename: column 'b' is duplicate$" (lambda () (rename named "a" "b")))
   (check-raises 'contract #rx"^dataframe: [^\n]*column with name 'k' has more than one occurrence$"
                 (lambda () (dataframe (list (series '(1) #:name "k") (series '(2) #:name "k")))))
-  (define starred (dataframe (list (series '(1) #:name "*") (series '(2) #:name "b"))))
+  (define starred (dataframe ["*" '(1)] [b '(2)]))
   (check-equal? (column-names (ref starred '("*"))) '("*"))
   (check-raises 'contract #rx"^ref: \"b\" named more than once$" (lambda () (ref starred '("b" 1))))
 
@@ -469,7 +466,7 @@
           (cons 'select (lambda () (select table (over (cast "c" target) "g"))))))
   (define (groups n) (for/list ([i (in-range n)]) (modulo i 2)))
   (define (with-groups source)
-    (dataframe (list source (series (groups (len source)) #:name "g"))))
+    (dataframe source [g (groups (len source))]))
   (define (miss-rows elements target)
     (define categories (map symbol->string (cdr target)))
     (for/list ([v (in-list elements)]
@@ -550,7 +547,7 @@
             (check-true (window-message? message who target elements) context)
             (check-equal? message (polars-message who target elements) context))
         (message-after (format "~a: " who) message))))
-  (define planted-misses (dataframe (list (series '("UA" "B6" "XX" "ZZ" "QQ") #:name "c"))))
+  (define planted-misses (dataframe [c '("UA" "B6" "XX" "ZZ" "QQ")]))
   (define (planted-format)
     (list (raised-message 'polars (who-prefix 'select)
                           (lambda () (select planted-misses (cast "c" carrier-enum))))
@@ -570,13 +567,12 @@
                 "cast: 100 of 100 values are not in '(enum UA): XX")
   (check-equal? (with-default-polars-format
                   (raised-message 'polars (who-prefix 'select)
-                                  (lambda () (select (dataframe (list repeated-miss))
+                                  (lambda () (select (dataframe repeated-miss)
                                                      (cast "c" '(enum UA))))))
                 "select: 100 of 100 values are not in the enum: XX XX, and 98 more rows")
 
   (define carriers
-    (dataframe (list (series '("UA" "AA" "UA" "AA" "AA") #:name "c")
-                     (series '(0 1 1 0 1) #:name "g"))))
+    (dataframe [c '("UA" "AA" "UA" "AA" "AA")] [g '(0 1 1 0 1)]))
   (define over-carriers (ref (select carriers (over (cast "c" carrier-enum) "g")) "c"))
   (check-equal? (dtype over-carriers) carrier-enum)
   (check-equal? (series->list over-carriers)
@@ -624,7 +620,7 @@
     (match-define (list message run) row)
     (check-equal? (with-default-polars-format (raised-message 'polars #rx"" run)) message))
 
-  (define pushed (dataframe (list (series '("UA" "XX") #:name "c") (series '(2 0) #:name "v"))))
+  (define pushed (dataframe [c '("UA" "XX")] [v '(2 0)]))
   (define pushed-plan (with-columns (lazy pushed) (cast "c" ua-only)))
   (define pushed-past (collect (filter pushed-plan (> (col "v") 1))))
   (check-equal? (list (shape pushed-past) (dtype (ref pushed-past "c"))
@@ -638,14 +634,13 @@
   (check-equal? (list (shape filtered-first) (series->list (ref filtered-first "c")))
                 (list '(1 2) '("UA")))
   (define joined-first
-    (collect (filter (join (lazy pushed) (lazy (dataframe (list (series '(2) #:name "v"))))
+    (collect (filter (join (lazy pushed) (lazy (dataframe [v '(2)]))
                            #:on '("v"))
                      (p= (cast "c" ua-only) "UA"))))
   (check-equal? (list (shape joined-first) (series->list (ref joined-first "c")))
                 (list '(1 2) '("UA")))
   (define grouped-pushed
-    (dataframe (list (series '(1 1) #:name "g") (series '("UA" "XX") #:name "c")
-                     (series '(2 0) #:name "v"))))
+    (dataframe [g '(1 1)] [c '("UA" "XX")] [v '(2 0)]))
   (for ([narrowed (list (filter (col "c") (> (col "v") 1)) (head (col "c") 1) (slice (col "c") 0 1))]
         [i (in-naturals)])
     (define grouped (agg (group-by grouped-pushed "g")
@@ -672,7 +667,7 @@
   (for ([value (list "a\"b" "a\u0000b")])
     (check-raises 'polars (string-append "^" (regexp-quote (fallback-message value)))
                   (lambda ()
-                    (select (dataframe (list (series (list "UA" value) #:name "c")))
+                    (select (dataframe [c (list "UA" value)])
                             (cast "c" ua-only)))))
 
   (define forged-column
@@ -680,8 +675,7 @@
   (check-equal? (with-default-polars-format
                   (raised-message 'polars (who-prefix 'select)
                                   (lambda ()
-                                    (select (dataframe (list (series '("A" "B" "C" "D" "E")
-                                                                     #:name forged-column)))
+                                    (select (dataframe ['("A" "B" "C" "D" "E") #:name forged-column])
                                             (cast forged-column ua-only)))))
                 (string-append "select: conversion from `str` to `enum` failed in column '"
                                forged-column "' for 5 out of 5 values: [\"A\", \"B\", … \"E\"]"
@@ -784,7 +778,7 @@
   (check-true (string-contains? (expr->string ranked-sort) "sort"))
   (check-false (string-contains? (expr->string ranked-sort) "sort_by"))
   (define ranked
-    (dataframe (list (series '(1 1 1 2 2) #:name "g") (series '("a" "c" "b" "b" "a") #:name "o"))))
+    (dataframe [g '(1 1 1 2 2)] [o '("a" "c" "b" "b" "a")]))
   (define ranked-ends
     (sort (agg (group-by ranked "g")
                (alias (first (sort (cast "o" ranks))) "lo")
@@ -867,8 +861,8 @@
      "values: \\[\"" value "\"\\]\n\nYou might want to try:\n"
      "- passing #:strict #f to set values that cannot be converted to null\n"
      "- passing str->date or str->datetime a #:format string$"))
-  (define unparsed (dataframe (list (series '("2021-03-27" "nope") #:name "s"))))
-  (define ab-frame (dataframe (list (series '(1 2) #:name "a") (series '(3 4) #:name "b"))))
+  (define unparsed (dataframe [s '("2021-03-27" "nope")]))
+  (define ab-frame (dataframe [a '(1 2)] [b '(3 4)]))
   (define misses-tag "\u0001enum-misses\u0001")
   (define forged-misses
     (string-append misses-tag
@@ -883,7 +877,7 @@
           (cons (parse-failure "datetime[[]μs[]]" "s" "nope")
                 (lambda () (select unparsed (str->datetime "s" #:format "%Y-%m-%d"))))
           (cons (parse-failure "date" "d" "soon")
-                (lambda () (select (dataframe (list (series '("2021-03-27" "soon") #:name "d")))
+                (lambda () (select (dataframe [d '("2021-03-27" "soon")])
                                    (str->date "d"))))
           (cons "^with-columns: the name 'x' is duplicate\n"
                 (lambda () (with-columns frame (alias "v" "x") (alias "v" "x"))))
@@ -906,7 +900,7 @@
                                 message)
                  message))
 
-  (define stamped (dataframe (list (series '("29|10|2026") #:name "d") (series '("12h30") #:name "u"))))
+  (define stamped (dataframe [d '("29|10|2026")] [u '("12h30")]))
   (for ([row (in-list (list (list "d" str->date "%d|%m|%Y" (date 2026 10 29))
                             (list "u" str->time "%Hh%M" (time 12 30))
                             (list "d" str->datetime "%d|%m|%Y" (datetime 2026 10 29))))])
@@ -918,7 +912,7 @@
     (check-raises 'contract (string-append (who-prefix (object-name parse)) "contract violation\n")
                   (lambda () (parse name #:format #"\377"))))
 
-  (define select-unknown (select (lazy (dataframe (list (series '(1) #:name "o")))) "nope"))
+  (define select-unknown (select (lazy (dataframe [o '(1)])) "nope"))
   (for ([explained (list (lambda () (explain select-unknown))
                          (lambda () (explain select-unknown #:optimized #f))
                          (lambda () (explain select-unknown #:format 'tree)))])

@@ -30,8 +30,7 @@
            (only-in polars/tests/generic/test-fixtures
                     Expr-ptr? col column datetime nul-names ops-df polars-null polars-null?
                     series-cells series-shape v64))
-  (define df (dataframe (list (series '(30 10 50 20 40) #:name "x" #:dtype 'i64)
-                              (series '("b" "a" "b" "a" "b") #:name "g"))))
+  (define df (dataframe [x '(30 10 50 20 40) #:dtype 'i64] [g '("b" "a" "b" "a" "b")]))
   ;; rank is length-preserving -> with-columns
   (define ranked (~> df (with-columns (alias (rank "x" #:method 'dense) "r"))))
   ;; x = (30 10 50 20 40) -> dense ranks (3 1 5 2 4)
@@ -58,8 +57,7 @@
     (check-equal? (gathered (list 0 polars-null)) (list 'int64 (list 30 polars-null)))
     (check-equal? (gathered (list polars-null)) (list 'int64 (list polars-null)))
     (check-equal? (gathered '()) '(int64 ())))
-  (let ([scores (dataframe (list (series '("a" "b" "c" "d") #:name "name")
-                                 (series '(30 10 30 20) #:name "score")))])
+  (let ([scores (dataframe [name '("a" "b" "c" "d")] [score '(30 10 30 20)])])
     (check-equal? (~> scores (select (contracted:gather "name" '(3 0))) (column "name"))
                   '("d" "a"))
     (check-equal? (~> scores (select (contracted:gather "score" (list 0 polars-null)))
@@ -227,8 +225,8 @@
                       (for/list ([i (in-list order)]) (vector-ref (vector-ref rows i) j))
                       why))))
 
-  (define nl-df (dataframe (list (series (list 3 polars-null 1 polars-null 2) #:name "a")
-                                 (series (list "x" "y" polars-null "x" "y") #:name "b"))))
+  (define nl-df (dataframe [a (list 3 polars-null 1 polars-null 2)]
+                           [b (list "x" "y" polars-null "x" "y")]))
   (check-equal? (~> nl-df (sort "a") (column "a")) (list polars-null polars-null 1 2 3))
   (check-equal? (~> nl-df (sort "a" #:descending #t) (column "a"))
                 (list polars-null polars-null 3 2 1))
@@ -251,8 +249,7 @@
     (check-equal? (column-names d) '("a" "b" "s"))
     (check-equal? (column d "a") (column nl-df "a"))
     (check-equal? (column d "s") (list polars-null polars-null 1 2 3)))
-  (let* ([g (dataframe (list (series '("a" "a" "b" "b" "c") #:name "g")
-                             (series (list 1 polars-null 3 4 polars-null) #:name "v")))]
+  (let* ([g (dataframe [g '("a" "a" "b" "b" "c")] [v (list 1 polars-null 3 4 polars-null)])]
          [out (~> g (group-by "g")
                   (agg (alias (first (sort "v" #:descending #t #:nulls-last #t)) "top_nl")
                        (alias (first (sort "v" #:descending #t)) "top_nf")
@@ -263,9 +260,9 @@
                   (hash "a" (list 1 polars-null 1)
                         "b" (list 4 4 4)
                         "c" (list polars-null polars-null polars-null))))
-  (let* ([g (dataframe (list (series '("a" "a" "a" "b" "b" "b") #:name "g")
-                             (series (list 3 1 2 5 polars-null 4) #:name "v")
-                             (series (list #t polars-null #f polars-null #t #f) #:name "b")))]
+  (let* ([g (dataframe [g '("a" "a" "a" "b" "b" "b")]
+                       [v (list 3 1 2 5 polars-null 4)]
+                       [b (list #t polars-null #f polars-null #t #f)])]
          [out (~> g (group-by "g")
                   (agg (alias (~> "v" shift (sort #:nulls-last #t) first) "f")
                        (alias (~> "v" shift (sort #:nulls-last #t) last) "l")
@@ -290,9 +287,8 @@
                   (vector (vector 1 polars-null) (vector 5 polars-null)))
     (check-equal? (over-g shifted-by-itself)
                   (list 1 3 polars-null 5 polars-null polars-null)))
-  (let ([nulls (~> (dataframe (list (series (list polars-null polars-null polars-null)
-                                            #:name "n" #:dtype 'int64)
-                                    (series '(3 1 2) #:name "v")))
+  (let ([nulls (~> (dataframe [n (list polars-null polars-null polars-null) #:dtype 'int64]
+                              [v '(3 1 2)])
                    (with-columns (cast "n" 'null)))])
     (for* ([d '(#f #t)] [l '(#f #t)])
       (define (sorted x) (sort x "n" #:descending d #:nulls-last l #:maintain-order #t))
@@ -314,16 +310,16 @@
                                      (cons (p-round (mean "v")) "col(\"v\").mean().round()")))])
     (check-equal? (expr->string (sort e #:descending d #:nulls-last l))
                   (string-append printed (if d ".sort(desc)" ".sort(asc)"))))
-  (let ([flights (dataframe (list (series '("UA" "AA" "UA" "AA" "B6") #:name "carrier")
-                                  (series (list 12 polars-null 340 -3 polars-null) #:name "delay")))])
+  (let ([flights (dataframe [carrier '("UA" "AA" "UA" "AA" "B6")]
+                            (delay
+                              (list 12 polars-null 340 -3 polars-null)))])
     (check-equal? (~> flights
                       (group-by "carrier")
                       (agg (sort (p-round (mean "delay")) #:descending #t))
                       (sort "carrier")
                       frame-rows)
                   (vector (vector "AA" -3.0) (vector "B6" polars-null) (vector "UA" 176.0))))
-  (let ([g (dataframe (list (series '("a" "a" "b" "b" "c") #:name "g")
-                            (series (list 1 polars-null 3 4 polars-null) #:name "v")))])
+  (let ([g (dataframe [g '("a" "a" "b" "b" "c")] [v (list 1 polars-null 3 4 polars-null)])])
     (for* ([d '(#f #t)] [l '(#f #t)])
       (define total (sort (sum "v") #:descending d #:nulls-last l))
       (define why (format "~s" (list d l)))
@@ -331,11 +327,15 @@
       (check-equal? (dtype (ref out #:columns "s")) 'int64 why)
       (check-equal? (column out "s") '(1 7 0) why)
       (check-equal? (~> g (select (alias (over total "g") "s")) (column "s")) '(1 1 7 7 0) why)))
-  (let ([words (dataframe (list (series (for/list ([i (in-range 1000)]) (if (< i 2) "a" "b"))
-                                        #:name "g")
-                                (series (for/list ([i (in-range 1000)]) (format "w~a" i))
-                                        #:name "s")
-                                (series (for/list ([i (in-range 1000)]) (- i)) #:name "v")))])
+  (let ([words (dataframe [g
+                           (for/list ([i (in-range 1000)])
+                             (if (< i 2) "a" "b"))]
+                          [s
+                           (for/list ([i (in-range 1000)])
+                             (format "w~a" i))]
+                          [v
+                           (for/list ([i (in-range 1000)])
+                             (- i))])])
     (for* ([d '(#f #t)] [l '(#f #t)])
       (define (sorted e) (sort e #:descending d #:nulls-last l))
       (define why (format "~s" (list d l)))
@@ -359,7 +359,9 @@
                     why)))
   (let* ([delays (for/list ([i (in-range 300)])
                    (if (zero? (modulo i 7)) polars-null (- (modulo (* i 37) 211) 100)))]
-         [d (dataframe (list (series delays #:name "delay") (series (range 300) #:name "id")))]
+         [d (dataframe (delay
+                         delays)
+                       [id (range 300)])]
          [want (lambda (k) (~> (filter number? delays) (base:sort >) (take k)))])
     (for ([k '(1 5 60)])
       (check-equal? (~> d (sort "delay" #:descending #t #:nulls-last #t) (head k) (column "delay"))
@@ -475,6 +477,6 @@
     (sort-column-laws d ks)
     (sort-by-laws d k))
   (for ([n (in-list nul-names)])
-    (define keyed (dataframe (list (series '(3 4) #:name "a") (series '(2 1) #:name n))))
+    (define keyed (dataframe [a '(3 4)] ['(2 1) #:name n]))
     (check-equal? (~> keyed (sort n) (ref "a") series->list) '(4 3))
     (check-equal? (~> keyed lazy (sort n) collect (ref "a") series->list) '(4 3))))

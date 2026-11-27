@@ -20,10 +20,9 @@
 
 (define logs
   (dataframe
-   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
-         (series '("process id: 525" "Service started correctly"
-                   "startup time: 67ms" "Cannot connect to DB!")
-                 #:name "message"))))
+   [level '(debug info debug error) #:dtype log-levels]
+   [message
+    '("process id: 525" "Service started correctly" "startup time: 67ms" "Cannot connect to DB!")]))
 
 (printf "dtype: ~s\n" (dtype (ref logs "level")))
 (printf "levels: ~s\n" (series->list (ref logs "level")))

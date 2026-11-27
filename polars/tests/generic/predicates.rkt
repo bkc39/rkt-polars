@@ -12,7 +12,7 @@
                     is-duplicated is-first-distinct is-in is-last-distinct is-unique)
            (only-in (submod polars/private/generic/predicates internal) is-between)
            (only-in polars/tests/generic/test-fixtures check-selected))
-  (define df (dataframe (list (series '(1 2 2 3 5 5 8) #:name "x" #:dtype 'i64))))
+  (define df (dataframe [x '(1 2 2 3 5 5 8) #:dtype 'i64]))
   (define out
     (~> df (with-columns
              (alias (is-in "x" '(2 3 8)) "in")
@@ -37,13 +37,13 @@
   (check-equal? (c "last" 1) #f)
   (check-equal? (c "last" 2) #t)    ; last 2
 
-  (define carriers (dataframe (list (series '(UA AA UA B6) #:name "carrier"))))
+  (define carriers (dataframe [carrier '(UA AA UA B6)]))
   (check-equal? (for/list ([x (~> carriers
                                   (with-columns (alias (is-in "carrier" '(AA B6)) "in"))
                                   (ref "in"))])
                   x)
                 '(#f #t #f #t))
-  (define gappy (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
+  (define gappy (dataframe [x (list 1 polars-null 3)]))
   (define (membership rhs)
     (~> gappy (select (is-in "x" rhs)) (ref "x") series->list))
   (check-equal? (membership (list polars-null)) (list #f polars-null #f))
@@ -66,14 +66,14 @@
                (format "~a" rhs)))
   (check-equal? (membership (list 1.0 2.5)) (list #t polars-null #f))
   (check-equal? (membership (list 1.0 polars-null 3.0)) (list #t polars-null #t))
-  (check-equal? (~> (dataframe (list (series '(0.5 1.0) #:name "f")))
+  (check-equal? (~> (dataframe [f '(0.5 1.0)])
                     (select (is-in "f" (list 0.25 1/2)))
                     (ref "f")
                     series->list)
                 '(#t #f))
   (check-exn exn:fail:contract?
              (lambda ()
-               (~> (dataframe (list (series (list (add1 (expt 2 63))) #:name "u" #:dtype 'u64)))
+               (~> (dataframe [u (list (add1 (expt 2 63))) #:dtype 'u64])
                    (select (is-in "u" (list (expt 2 63) 2.5))))))
   (check-equal? (membership '()) (list #f polars-null #f))
   (check-equal? (membership (list (expt 2 63) 3)) (list #f polars-null #t))
@@ -85,7 +85,7 @@
                       (series (list polars-null polars-null) #:name "x"))]
         [expected (list (list #f polars-null) (list #f polars-null)
                         (list polars-null polars-null))])
-    (check-equal? (~> (dataframe (list column)) (select (is-in "x" '())) (ref "x") series->list)
+    (check-equal? (~> (dataframe column) (select (is-in "x" '())) (ref "x") series->list)
                   expected))
   (for ([lower (list polars-null 1 polars-null)]
         [upper (list 5 polars-null polars-null)])
@@ -97,8 +97,7 @@
                     series->list)
                 '(#t #f #t #f))
   (define wide
-    (dataframe (list (series (list (expt 2 63) 1 2) #:name "u" #:dtype 'u64)
-                     (series '(1 2 3) #:name "i"))))
+    (dataframe [u (list (expt 2 63) 1 2) #:dtype 'u64] [i '(1 2 3)]))
   (for ([row (list (list "u" (list (expt 2 63) 1) '(#t #t #f))
                    (list "u" (list (sub1 (expt 2 64)) polars-null 2) '(#f #f #t))
                    (list "i" (list (expt 2 63)) '(#f #f #f))
@@ -119,7 +118,7 @@
              (lambda () (is-between "t" past-local-range past-local-range)))
 
   (test-case "the reference's distinctness example"
-    (define visits (dataframe (list (series '("a" "b" "a" "c") #:name "who"))))
+    (define visits (dataframe [who '("a" "b" "a" "c")]))
     (check-selected
      visits
      (list (list "unique" (is-unique "who") '(#f #t #f #t))

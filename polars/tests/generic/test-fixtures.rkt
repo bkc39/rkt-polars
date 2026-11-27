@@ -32,12 +32,11 @@
   '("\u0000" "a\u0000b" "a\u0000" "\u0000a" "\u0000\u0000" "東京\u0000😀" "a\u0000\u0000b"))
 
 (define (nul-frame n)
-  (pivot (dataframe (list (series '(1 2) #:name "id") (series (list n n) #:name "k")
-                          (series '(3 4) #:name "v")))
+  (pivot (dataframe [id '(1 2)] [k (list n n)] [v '(3 4)])
          #:on '("k") #:index '("id") #:values '("v")))
 
 (define (named-frame n [keys '(1 2)] [other "a"] [others '(3 4)])
-  (dataframe (list (series keys #:name n) (series others #:name other))))
+  (dataframe [keys #:name n] [others #:name other]))
 
 (define ints   (series '(1 2 3 4) #:name "ints" #:dtype 'i32))
 (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
@@ -52,14 +51,12 @@
                             '(datetime microseconds "Europe/Brussels"))))
 
 (define frame
-  (dataframe (list (series '("alice" "bob" "carol") #:name "user")
-                   (series '(10 25 18) #:name "score" #:dtype 'i32)
-                   (series '(1.2 3.5 2.0) #:name "cost"))))
+  (dataframe [user '("alice" "bob" "carol")] [score '(10 25 18) #:dtype 'i32] [cost '(1.2 3.5 2.0)]))
 
 (define ops-df
-  (dataframe (list (series '("a" "a" "b" "b" "c") #:name "group")
-                   (series '(10 25 7 30 18) #:name "value" #:dtype 'i32)
-                   (series '(1.2 2.4 0.5 3.1 1.8) #:name "cost"))))
+  (dataframe [group '("a" "a" "b" "b" "c")]
+             [value '(10 25 7 30 18) #:dtype 'i32]
+             [cost '(1.2 2.4 0.5 3.1 1.8)]))
 
 (define v64 (series '(10 25 7 30 18) #:name "value"))   ; int64 (default)
 
@@ -375,7 +372,7 @@
     (check-equal? (directory-list sub) '())
     (delete-directory/files dir))
 
-  (let ([frame (dataframe (list (series '(1.0 2.0) #:name "x")))])
+  (let ([frame (dataframe [x '(1.0 2.0)])])
     (define (failed-on thunk)
       (for/list ([info (in-list (failure-infos thunk))]
                  #:when (memq (check-info-name info)

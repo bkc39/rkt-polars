@@ -33,7 +33,7 @@
 (writeln (for/first ([n (in-series big)] #:when (> (* n n) 1000)) n))
 
 ;; a dataframe is not a sequence: iterate over its columns, or one of them
-(define df (dataframe (list temps (series '("mon" "tue" "wed" "thu") #:name "day"))))
+(define df (dataframe temps [day '("mon" "tue" "wed" "thu")]))
 (for ([column (in-dataframe-columns df)])
   (printf "~a: ~a\n" (series-name column) (dtype column)))
 (for ([day (ref df "day")] [t (ref df "temp")])

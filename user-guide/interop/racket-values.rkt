@@ -14,8 +14,7 @@
          polars)
 
 (define df
-  (dataframe (list (series '(1 2 3) #:name "foo")
-                   (series '("ham" "spam" "jam") #:name "bar"))))
+  (dataframe [foo '(1 2 3)] [bar '("ham" "spam" "jam")]))
 
 ;; --- series to Racket values ---------------------------------------------
 (writeln (~> df (ref "foo") series->list))
@@ -27,12 +26,10 @@
 
 ;; every dtype family comes out as the value `ref` returns
 (define people
-  (~> (dataframe
-       (list (series '("Alice Archer" "Ben Brown") #:name "name")
-             (series (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))
-                     #:name "birthdate")
-             (series '(57.9 72.5) #:name "weight")
-             (series '(#t #f) #:name "parent")))
+  (~> (dataframe [name '("Alice Archer" "Ben Brown")]
+                 [birthdate (list (datetime 1997 1 10 8 30 0 250000000) (datetime 1985 2 15 17 0 0))]
+                 [weight '(57.9 72.5)]
+                 [parent '(#t #f)])
       (with-columns (alias (cast "birthdate" 'date) "birthday")
                     (alias (cast "birthdate" 'time) "clock"))))
 (for ([name (column-names people)])

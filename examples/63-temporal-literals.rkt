@@ -16,11 +16,9 @@
          polars)
 
 (define flights
-  (dataframe
-   (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2) (date 2013 6 3))
-                 #:name "day")
-         (series (list (time 5 40) (time 17 5) (time 23 59) (time 6 0)) #:name "departs")
-         (series (list (hours 2) (minutes 45) (hours 5) (minutes 90)) #:name "flight_time"))))
+  (dataframe [day (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2) (date 2013 6 3))]
+             [departs (list (time 5 40) (time 17 5) (time 23 59) (time 6 0))]
+             [flight_time (list (hours 2) (minutes 45) (hours 5) (minutes 90))]))
 
 (displayln (filter flights (> (col "day") (date 2013 6 1))))
 (displayln (filter flights (is-between "day" (date 2013 6 1) (datetime 2013 6 2 12))))

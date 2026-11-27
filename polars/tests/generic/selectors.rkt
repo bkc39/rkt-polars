@@ -17,21 +17,19 @@
 
   (define people
     (dataframe
-     (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                   #:name "name")
-           (series (list (datetime 1997 1 10) (datetime 1985 2 15)
-                         (datetime 1983 3 22) (datetime 1981 4 30))
-                   #:name "birthdate")
-           (series '(57.9 72.5 53.6 83.1) #:name "weight")
-           (series '(1.56 1.77 1.65 1.75) #:name "height"))))
+     [name '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")]
+     [birthdate
+      (list (datetime 1997 1 10) (datetime 1985 2 15) (datetime 1983 3 22) (datetime 1981 4 30))]
+     [weight '(57.9 72.5 53.6 83.1)]
+     [height '(1.56 1.77 1.65 1.75)]))
   (define people/date (with-columns people (cast "birthdate" 'date)))
   (define iris
-    (dataframe (list (series '(5.1 4.9) #:name "sepal_length")
-                     (series '(3.5 3.0) #:name "sepal_width")
-                     (series '(1.4 1.3) #:name "petal_length")
-                     (series '(0.2 0.2) #:name "petal_width")
-                     (series '("setosa" "setosa") #:name "species"))))
-  (define ints-only (dataframe (list (series '(1 2) #:name "a" #:dtype 'i32))))
+    (dataframe [sepal_length '(5.1 4.9)]
+               [sepal_width '(3.5 3.0)]
+               [petal_length '(1.4 1.3)]
+               [petal_width '(0.2 0.2)]
+               [species '("setosa" "setosa")]))
+  (define ints-only (dataframe [a '(1 2) #:dtype 'i32]))
 
   (check-equal? (column-names (select people (all))) (column-names people))
   (check-equal? (format "~a" (select people (all))) (format "~a" people))
@@ -67,8 +65,7 @@
   (check-equal? (column-names (select people (col 'datetime))) '("birthdate"))
   (check-equal? (column-names (select people (col '(datetime milliseconds)))) '())
   (check-equal? (shape (select ints-only (col 'float64))) '(0 0))
-  (check-equal? (~> (dataframe (list (series '(1) #:name "a")
-                                     (series (list polars-null) #:name "n" #:dtype 'null)))
+  (check-equal? (~> (dataframe [a '(1)] [n (list polars-null) #:dtype 'null])
                     (select (col 'null))
                     column-names)
                 '("n"))

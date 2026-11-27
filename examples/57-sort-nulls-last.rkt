@@ -14,11 +14,9 @@
 (require polars)
 
 (define flights
-  (dataframe
-   (list (series '("UA" "AA" "UA" "B6" "AA" "B6" "UA" "AA" "B6" "UA") #:name "carrier")
-         (series '("IAH" "MIA" "ORD" "BOS" "DFW" "FLL" "SFO" "ORD" "MCO" "DEN") #:name "dest")
-         (series (list 2 polars-null 1301 -5 137 polars-null 44 1014 polars-null 9)
-                 #:name "dep_delay"))))
+  (dataframe [carrier '("UA" "AA" "UA" "B6" "AA" "B6" "UA" "AA" "B6" "UA")]
+             [dest '("IAH" "MIA" "ORD" "BOS" "DFW" "FLL" "SFO" "ORD" "MCO" "DEN")]
+             [dep_delay (list 2 polars-null 1301 -5 137 polars-null 44 1014 polars-null 9)]))
 
 ;; Descending puts the nulls first, as in Python: the top rows are cancellations.
 (displayln (~> flights (sort "dep_delay" #:descending #t) (head 5)))

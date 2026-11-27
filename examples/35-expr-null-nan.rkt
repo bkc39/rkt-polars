@@ -9,9 +9,8 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x" #:dtype 'f64)
-         (series (list 1.0 +nan.0 3.0 +inf.0 -1.0)          #:name "y" #:dtype 'f64))))
+  (dataframe [x (list 1.0 polars-null 3.0 polars-null 5.0) #:dtype 'f64]
+             [y (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:dtype 'f64]))
 
 (define out
   (~> df

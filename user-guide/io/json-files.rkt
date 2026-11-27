@@ -24,8 +24,7 @@
 (define path (build-path dir "path.json"))
 (define nd-path (build-path dir "path.ndjson"))
 (define df
-  (dataframe (list (series '(1 2 3) #:name "foo")
-                   (series (list polars-null "bak" "baz") #:name "bar"))))
+  (dataframe [foo '(1 2 3)] [bar (list polars-null "bak" "baz")]))
 (write-json df path)
 (displayln (file->string path))
 (displayln (read-json path))

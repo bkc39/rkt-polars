@@ -15,10 +15,9 @@
 (require polars)
 
 (define sales
-  (dataframe
-   (list (series '("north" "north" "north" "south" "south" "south") #:name "region")
-         (series '("a" "b" "a" "a" "b" "b")                         #:name "product")
-         (series '(10 25 7 30 18 4)                                #:name "units"))))
+  (dataframe [region '("north" "north" "north" "south" "south" "south")]
+             [product '("a" "b" "a" "a" "b" "b")]
+             [units '(10 25 7 30 18 4)]))
 
 (displayln "input:")
 (displayln sales)

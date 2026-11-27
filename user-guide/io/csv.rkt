@@ -17,8 +17,7 @@
 ;; --- read & write ----------------------------------------------------------
 (define path (build-path (find-system-path 'temp-dir) "polars-guide-path.csv"))
 (define df
-  (dataframe (list (series '(1 2 3) #:name "foo")
-                   (series (list polars-null "bak" "baz") #:name "bar"))))
+  (dataframe [foo '(1 2 3)] [bar (list polars-null "bak" "baz")]))
 (write-csv df path)
 (displayln (read-csv path))
 

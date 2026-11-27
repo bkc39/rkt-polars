@@ -10,15 +10,13 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series '("AAPL" "NVDA" "MSFT" "GOOG" "AMZN") #:name "ticker")
-         (series '("Apple" "NVIDIA" "Microsoft" "Alphabet (Google)" "Amazon")
-                 #:name "company_name")
-         (series '(229.9 138.93 420.56 166.41 188.4) #:name "price")
-         (series '(231.31 139.6 424.04 167.62 189.83) #:name "day_high")
-         (series '(228.6 136.3 417.52 164.78 188.44) #:name "day_low")
-         (series '(237.23 140.76 468.35 193.31 201.2) #:name "year_high")
-         (series '(164.08 39.23 324.39 121.46 118.35) #:name "year_low"))))
+  (dataframe [ticker '("AAPL" "NVDA" "MSFT" "GOOG" "AMZN")]
+             [company_name '("Apple" "NVIDIA" "Microsoft" "Alphabet (Google)" "Amazon")]
+             [price '(229.9 138.93 420.56 166.41 188.4)]
+             [day_high '(231.31 139.6 424.04 167.62 189.83)]
+             [day_low '(228.6 136.3 417.52 164.78 188.44)]
+             [year_high '(237.23 140.76 468.35 193.31 201.2)]
+             [year_low '(164.08 39.23 324.39 121.46 118.35)]))
 
 (displayln df)
 
@@ -113,11 +111,11 @@
                     (column-names df))))
 
 (define people
-  (dataframe (list (series '("Anna" "Bob") #:name "name")
-                   (series '(#t #f) #:name "has_partner")
-                   (series '(#f #f) #:name "has_kids")
-                   (series '(#t #f) #:name "has_tattoos")
-                   (series '(#t #t) #:name "is_alive"))))
+  (dataframe [name '("Anna" "Bob")]
+             [has_partner '(#t #f)]
+             [has_kids '(#f #f)]
+             [has_tattoos '(#t #f)]
+             [is_alive '(#t #t)]))
 
 ;; API gap: no name.prefix, so the negated columns keep their names.
 (displayln (select people (not (col #rx"^has_"))))

@@ -9,7 +9,7 @@
 (require polars)
 
 (define df
-  (dataframe (list (series '(-2.5 -1.0 0.0 1.5 4.0) #:name "x" #:dtype 'f64))))
+  (dataframe [x '(-2.5 -1.0 0.0 1.5 4.0) #:dtype 'f64]))
 
 (define out
   (~> df

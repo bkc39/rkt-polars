@@ -10,8 +10,7 @@
 (require polars)
 
 (define df
-  (dataframe (list (series '(10 20 30 40) #:name "x" #:dtype 'i32)
-                   (series '(3 4 5 6)      #:name "y" #:dtype 'i32))))
+  (dataframe [x '(10 20 30 40) #:dtype 'i32] [y '(3 4 5 6) #:dtype 'i32]))
 
 (displayln "input (x and y are i32):")
 (displayln df)
@@ -31,7 +30,7 @@
 
 ;; Datetime cast: interpret an i64 column as microsecond-resolution timestamps.
 (define df-ts
-  (dataframe (list (series '(0 1000000 2000000 3000000) #:name "t" #:dtype 'i64))))
+  (dataframe [t '(0 1000000 2000000 3000000) #:dtype 'i64]))
 
 (displayln "cast i64 -> datetime (defaults to microseconds):")
 (displayln (~> df-ts (with-columns (~> (col "t") (cast 'datetime) (alias "ts")))))

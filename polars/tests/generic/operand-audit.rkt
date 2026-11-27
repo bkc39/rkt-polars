@@ -54,7 +54,7 @@
     (wrap-series (series-cast (series (list polars-null polars-null) #:name "n") 'null)))
 
   (define (selected e [s nulls])
-    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe (list s))
+    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe s)
                                                            (list (expr-alias e "n")))
                                    "n")))
 

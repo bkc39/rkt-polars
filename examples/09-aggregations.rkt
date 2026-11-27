@@ -11,10 +11,9 @@
          polars)
 
 (define df
-  (dataframe
-   (list (series '("a" "a" "b" "b" "c") #:name "group")
-         (series '(10 25 7 30 18)        #:name "value" #:dtype 'i32)
-         (series '(1.2 2.4 0.5 3.1 1.8)  #:name "cost"))))
+  (dataframe [group '("a" "a" "b" "b" "c")]
+             [value '(10 25 7 30 18) #:dtype 'i32]
+             [cost '(1.2 2.4 0.5 3.1 1.8)]))
 
 (displayln "input:")
 (displayln df)
@@ -42,9 +41,7 @@
 
 ;; Dedup
 (define dup-df
-  (dataframe
-   (list (series '(1 2 1 3 2 1)            #:name "x" #:dtype 'i32)
-         (series '("a" "b" "a" "c" "b" "a") #:name "y"))))
+  (dataframe [x '(1 2 1 3 2 1) #:dtype 'i32] [y '("a" "b" "a" "c" "b" "a")]))
 
 (displayln "duplicates:")
 (displayln dup-df)

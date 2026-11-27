@@ -24,9 +24,7 @@
                 (for/list ([g (column df "group")]) (hash-ref totals g)))
   (check-equal? (column (select ops-df (alias (over "value" "group") "w")) "w")
                 (column ops-df "value"))
-  (define gh (dataframe (list (series '("a" "a" "a" "b") #:name "g")
-                              (series '("x" "y" "x" "x") #:name "h")
-                              (series '(1 2 3 4) #:name "v" #:dtype 'i32))))
+  (define gh (dataframe [g '("a" "a" "a" "b")] [h '("x" "y" "x" "x")] [v '(1 2 3 4) #:dtype 'i32]))
   (check-equal? (column (with-columns gh (~> (col "v") sum (over "g" "h") (alias "t"))) "t")
                 '(4 2 4 4))
   (check-equal? (column (with-columns ops-df
