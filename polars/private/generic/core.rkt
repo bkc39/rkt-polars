@@ -34,8 +34,9 @@
 (provide (except-out (all-defined-out)
                      (struct-out column-clause)
                      build-frame clause->series column-clause-at column-clause/c column-name/c
-                     column-part-at column-part/c column-values/c columns->dataframe core-party
-                     dataframe-procedure dataframe/contracted make-column-clause series series-of
+                     column-part-at column-part/c column-parts/c column-values/c columns->dataframe
+                     core-party dataframe-procedure dataframe/contracted make-column-clause series
+                     series-of
                      sequence-elements top-level-variable? values-expectation)
          (contract-out
           [series (->i ([elements (dtype) (series-elements/c dtype)])
@@ -223,6 +224,7 @@
 (define column-name/c (or/c symbol? utf-8-name/c))
 
 (define column-part/c (or/c Series-ptr? (listof Series-ptr?)))
+(define column-parts/c (listof column-part/c))
 
 (define values-expectation
   "a list, vector, series or sequence, not a string, byte string, hash or number")
@@ -293,7 +295,7 @@
 (define dataframe-procedure (procedure-rename columns->dataframe 'dataframe))
 
 (define-module-boundary-contract dataframe/contracted dataframe-procedure
-  (->* () #:rest (listof column-part/c) dataframe?)
+  (->* () #:rest column-parts/c dataframe?)
   #:name-for-blame dataframe)
 
 (define (top-level-variable? variable-reference name)
