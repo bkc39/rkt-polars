@@ -425,6 +425,43 @@
     (check-equal? (column-names (top-run "(forward)")) '("l"))
     (check-equal? (column-names (top-run "named")) '("zz")))
 
+  (define phase-one-require
+    '(require (for-syntax (only-in racket/base #%app #%datum #%top datum->syntax define list quote)
+                          polars)))
+
+  (test-case "a clause's head is read at the phase the form is expanded in"
+    (define module-namespace (fresh-namespace))
+    (run `(module phase-one racket/base
+            ,phase-one-require
+            (provide names)
+            (define (mk-0 xs) xs)
+            (begin-for-syntax
+              (define (mk xs) (series xs #:name "actual"))
+              (define (frame-names)
+                (list (column-names (dataframe (mk '(1))))
+                      (column-names (dataframe [mk-0 '(1)]))
+                      (column-names (dataframe (later '(1))))))
+              (define (later xs) (series xs #:name "later")))
+            (define-syntax (phase-one-names stx)
+              (datum->syntax stx (list 'quote (frame-names))))
+            (define names (phase-one-names)))
+         module-namespace)
+    (check-equal? (run '(dynamic-require ''phase-one 'names) module-namespace)
+                  '(("actual") ("mk-0") ("later")))
+    (check-syntax-error (format "(module phase-one-later racket/base ~s ~a)"
+                                phase-one-require
+                                "(begin-for-syntax (dataframe [zz '(1)]) (define zz 5))")
+                        (bound-here 'zz) 'zz module-namespace)
+    (define top (fresh-namespace))
+    (run phase-one-require top)
+    (run '(begin-for-syntax (define (mk xs) (series xs #:name "actual"))) top)
+    (run '(define zz 5) top)
+    (run '(define-syntax (top-names stx)
+            (datum->syntax stx (list 'quote (list (column-names (dataframe (mk '(1))))
+                                                  (column-names (dataframe [zz '(1)]))))))
+         top)
+    (check-equal? (run '(top-names) top) '(("actual") ("zz"))))
+
   (define (drops thunk)
     (settle!)
     (define before (series-drop-count))

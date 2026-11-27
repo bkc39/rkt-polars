@@ -131,7 +131,7 @@
 
 (begin-for-syntax
   (define (head-binding id)
-    (cond [(identifier-binding id 0 #t) 'bound]
+    (cond [(identifier-binding id (syntax-local-phase-level) #t) 'bound]
           [(syntax-transforming-module-expression?) 'unbound]
           [else 'deferred]))
 
