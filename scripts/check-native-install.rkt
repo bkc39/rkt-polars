@@ -32,8 +32,8 @@
     (fail "polars loads ~a, which is not in the package ~a at ~a" file package root))
   (unless (null? staged-libraries)
     (fail "the polars install staged ~a in ~a" staged-libraries staged))
-  (define kept
-    (pl:filter (pl:dataframe (list (pl:series '(1 2 3) #:name "v"))) (pl:> (pl:col "v") 1)))
+  (define columns (list (pl:series '(1 2 3) #:name "v")))
+  (define kept (pl:filter (pl:dataframe columns) (pl:> (pl:col "v") 1)))
   (unless (equal? (pl:series->list (pl:ref kept "v")) '(2 3))
     (fail "a filter of v > 1 over 1, 2, 3 kept ~a" kept))
   (printf "polars loads ~a from the package ~a\n" file package))
