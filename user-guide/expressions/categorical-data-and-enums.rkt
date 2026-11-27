@@ -60,9 +60,11 @@
 
 ;; --- combining categorical columns ---------------------------------------
 (define male-bears
-  (dataframe [species '(Polar Brown Panda)] [weight '(450 500 110)]))
+  (dataframe [species '(Polar Brown Panda)]
+             [weight '(450 500 110)]))
 (define female-bears
-  (dataframe [species '(Brown Polar Panda)] [weight '(340 200 90)]))
+  (dataframe [species '(Brown Polar Panda)]
+             [weight '(340 200 90)]))
 (displayln (vstack male-bears female-bears))
 
 ;; --- categorical encodings -----------------------------------------------

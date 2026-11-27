@@ -38,7 +38,8 @@
 (newline)
 
 (define parquet-source
-  (dataframe [x '(1 2 3 4) #:dtype 'i32] [y '(0.5 1.5 2.5 3.5) #:dtype 'f64]))
+  (dataframe [x '(1 2 3 4) #:dtype 'i32]
+             [y '(0.5 1.5 2.5 3.5) #:dtype 'f64]))
 
 (define parquet-path (make-temporary-file "rkt-polars-lazy-scan-options-~a.parquet"))
 

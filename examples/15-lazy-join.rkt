@@ -13,10 +13,12 @@
 (require polars)
 
 (define users
-  (dataframe [uid '(1 2 3 4) #:dtype 'i32] [name '("alice" "bob" "carol" "dan")]))
+  (dataframe [uid '(1 2 3 4) #:dtype 'i32]
+             [name '("alice" "bob" "carol" "dan")]))
 
 (define orders
-  (dataframe [uid '(1 1 2 2 2 3) #:dtype 'i32] [amount '(10 25 30 7 18 4) #:dtype 'i32]))
+  (dataframe [uid '(1 1 2 2 2 3) #:dtype 'i32]
+             [amount '(10 25 30 7 18 4) #:dtype 'i32]))
 
 (displayln "users:")
 (displayln users)
@@ -44,7 +46,8 @@
 
 ;; #:left-on / #:right-on for differently named keys.
 (define orders-r
-  (dataframe [buyer '(1 2 3) #:dtype 'i32] [amount '(100 200 300) #:dtype 'i32]))
+  (dataframe [buyer '(1 2 3) #:dtype 'i32]
+             [amount '(100 200 300) #:dtype 'i32]))
 
 (displayln "join with #:left-on=uid #:right-on=buyer:")
 (displayln (~> users lazy (join (lazy orders-r) #:left-on '("uid") #:right-on '("buyer") #:how 'inner) collect))

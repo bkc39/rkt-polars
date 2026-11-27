@@ -60,7 +60,9 @@
 ;; `select` is variadic and expression-aware: names, lists of names, and Exprs.
 
 (define sdf
-  (dataframe [foo '(1 2 3) #:dtype 'i32] [bar '(6 7 8) #:dtype 'i32] [ham '("a" "b" "c")]))
+  (dataframe [foo '(1 2 3) #:dtype 'i32]
+             [bar '(6 7 8) #:dtype 'i32]
+             [ham '("a" "b" "c")]))
 
 ;; 1. a single column by name           df.select("foo")
 (displayln "select \"foo\":")

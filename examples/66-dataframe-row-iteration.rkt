@@ -49,7 +49,8 @@
 
 ;; an early exit over a million rows converts only the first buffer
 (define squares
-  (dataframe [n (build-list 1000000 values)] [square (build-list 1000000 (lambda (n) (* n n)))]))
+  (dataframe [n (build-list 1000000 values)]
+             [square (build-list 1000000 (lambda (n) (* n n)))]))
 (writeln (for/first ([row (in-dataframe-rows squares)]
                      #:when (> (vector-ref row 1) 1000))
            row))

@@ -22,7 +22,8 @@
 
 (define-enum grade-levels low mid high)
 (define grades
-  (dataframe [item '(apple fig apple)] [grade '(low high mid) #:dtype grade-levels]))
+  (dataframe [item '(apple fig apple)]
+             [grade '(low high mid) #:dtype grade-levels]))
 (define path (make-temporary-file "rkt-polars-grades-~a.parquet"))
 (write-parquet grades path)
 (define back (read-parquet path))
