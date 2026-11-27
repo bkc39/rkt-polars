@@ -7,24 +7,13 @@
   [dataframe-clause-migrations refactoring-suite?]))
 
 (require (for-label (only-in polars dataframe series))
-         (only-in racket/list append-map check-duplicates)
+         (only-in racket/list append-map check-duplicates filter-not)
          racket/match
          resyntax/base
          syntax/parse)
 
 (define (bound-to? id label)
   (and (identifier? id) (free-identifier=? id label 0 #f)))
-
-(define (list-call? stx)
-  (syntax-parse stx
-    [(head:id _ ...) (free-identifier=? #'head #'list 0 0)]
-    [_ #f]))
-
-(define (literal? stx)
-  (syntax-parse stx
-    #:literals (quote)
-    [(~or* _:str _:number _:boolean _:char (quote _)) #t]
-    [_ #f]))
 
 (define (bracketed? stx)
   (eqv? (syntax-property stx 'paren-shape) #\[))
@@ -35,21 +24,32 @@
     [_ #f]))
 
 (define (keyword-named? pairs name)
-  (and pairs (memq name (map (lambda (pair) (syntax-e (car pair))) pairs)) #t))
+  (and pairs (for/or ([pair (in-list pairs)]) (eq? (syntax-e (car pair)) name))))
 
-(define (clause-shaped? stx)
-  (syntax-parse stx
-    [_ #:when (bracketed? stx) #t]
-    [(_:str . _) #t]
-    [(_:expr . options) (keyword-named? (keyword-pairs #'options) '#:name)]
-    [_ #f]))
+(define-syntax-class literal
+  #:literals (quote)
+  (pattern (~or* _:str _:number _:boolean _:char (quote _))))
+
+(define-syntax-class list-call
+  #:attributes ([element 1])
+  (pattern (head:id element ...)
+    #:when (free-identifier=? #'head #'list 0 0)))
+
+(define-syntax-class clause-shaped
+  (pattern part
+    #:when (bracketed? #'part))
+  (pattern (_:str . _))
+  (pattern (_:expr . options)
+    #:when (keyword-named? (keyword-pairs #'options) '#:name)))
 
 (struct convertible (values name pairs))
 
 (define (series-arguments args)
   (let loop ([args args] [before '()] [vals #f] [pairs '()])
     (match args
-      ['() (and vals (convertible vals (cdr (assq '#:name pairs)) (reverse pairs)))]
+      ['() (and vals
+                (assq '#:name pairs)
+                (convertible vals (cdr (assq '#:name pairs)) (reverse pairs)))]
       [(list* kw e rest)
        #:when (keyword? (syntax-e kw))
        (define key (syntax-e kw))
@@ -58,7 +58,9 @@
             (loop rest (if vals before (cons e before)) vals (cons (cons key e) pairs)))]
       [(cons v rest)
        (and (not vals)
-            (andmap literal? before)
+            (syntax-parse #`(#,@before)
+              [(_:literal ...) #t]
+              [_ #f])
             (loop rest before v pairs))])))
 
 (define (series-call stx)
@@ -67,11 +69,10 @@
      #:when (bound-to? #'head #'series)
      (define found (series-arguments (attribute arg)))
      (and found
-          (not (syntax-parse (convertible-name found)
-                 #:literals (quote)
-                 [(quote _) #t]
-                 [_ #f]))
-          found)]
+          (syntax-parse (convertible-name found)
+            #:literals (quote)
+            [(quote _) #f]
+            [_ found]))]
     [_ #f]))
 
 (define (name-identifier name context)
@@ -87,7 +88,7 @@
   (match-define (convertible vals name pairs) found)
   (define (spelled pairs)
     (append-map (lambda (pair) (list (datum->syntax #f (car pair)) (cdr pair))) pairs))
-  (define options (spelled (filter (lambda (pair) (not (eq? (car pair) '#:name))) pairs)))
+  (define options (spelled (filter-not (lambda (pair) (eq? (car pair) '#:name)) pairs)))
   (define elements
     (cond
       [(name-identifier name context) => (lambda (id) (list* id vals options))]
@@ -96,24 +97,29 @@
   (syntax-property (datum->syntax #f elements) 'paren-shape #\[))
 
 (define (literal-name found)
-  (match (syntax-e (convertible-name found))
-    [(? string? text) text]
-    [_ #f]))
+  (define text (syntax-e (convertible-name found)))
+  (and (string? text) text))
+
+(define-syntax-class spliceable-list
+  #:attributes ([element 1])
+  (pattern (~and :list-call (_ (~not :clause-shaped) ...))))
 
 (define (spliceable? part)
-  (and (list-call? part)
-       (syntax-parse part
-         [(_ element ...) (not (ormap clause-shaped? (attribute element)))])))
+  (syntax-parse part
+    [:spliceable-list #t]
+    [_ #f]))
 
 (define (spliced parts)
   (append-map (lambda (part)
-                (if (spliceable? part) (cdr (syntax->list part)) (list part)))
+                (syntax-parse part
+                  [:spliceable-list (attribute element)]
+                  [_ (list part)]))
               parts))
 
 (define (existing-name part context)
   (syntax-parse part
     #:literals (quote)
-    [_ #:when (not (clause-shaped? part)) #f]
+    [(~not :clause-shaped) #f]
     [(text:str . _) (syntax-e #'text)]
     [(head:id _ . _)
      #:when (not (identifier-binding (datum->syntax context (syntax-e #'head)) 0))

@@ -71,6 +71,48 @@ test: "a literal #:name before the values is kept in order"
 ------------------------------
 
 
+test: "a name expression before the values keeps the series call"
+------------------------------
+(dataframe (list (series #:name n '(1))))
+==============================
+(dataframe (series #:name n '(1)))
+------------------------------
+
+
+test: "a series with no #:name is kept, and its list spliced"
+------------------------------
+(dataframe (list s1 (series '(1 2))))
+==============================
+(dataframe s1 (series '(1 2)))
+------------------------------
+
+
+test: "a series with a #:dtype but no #:name is kept"
+------------------------------
+(dataframe (list (series '(1) #:dtype 'i32)))
+==============================
+(dataframe (series '(1) #:dtype 'i32))
+------------------------------
+
+
+test: "a #:dtype that is not quoted is kept as written"
+------------------------------
+(define dt 'f64)
+(dataframe (list (series '(1 2) #:name "a" #:dtype dt)))
+==============================
+(define dt 'f64)
+(dataframe [a '(1 2) #:dtype dt])
+------------------------------
+
+
+test: "a clause already in brackets keeps them"
+------------------------------
+(dataframe [a '(1)] (list (series '(2) #:name "b")))
+==============================
+(dataframe [a '(1)] [b '(2)])
+------------------------------
+
+
 no-change-test: "a variable of series is an expression clause"
 ------------------------------
 (define cols (list s1))
@@ -101,14 +143,6 @@ no-change-test: "two series of one literal name stay a run-time error"
 no-change-test: "clauses are left as they are"
 ------------------------------
 (dataframe [a '(1 2)] ["b" '(3 4)] s1)
-------------------------------
-
-
-test: "a name expression before the values keeps the series call"
-------------------------------
-(dataframe (list (series #:name n '(1))))
-==============================
-(dataframe (series #:name n '(1)))
 ------------------------------
 
 
