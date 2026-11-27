@@ -41,8 +41,9 @@
                     expr-dt-convert-time-zone/raw expr-dt-replace-time-zone/raw)
            (only-in (submod polars/private/expr-str internal) expr-str->datetime-tz/raw)
            (only-in polars/private/generic/combine join vstack)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dataframe? dtype height lazyframe? len ref series series?
+                    column-names dataframe? dtype height lazyframe? len ref series series?
                     shape)
            (only-in polars/private/generic/cumulative diff shift)
            (only-in polars/private/generic/datetime

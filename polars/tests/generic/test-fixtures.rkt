@@ -4,8 +4,9 @@
          (only-in rackunit define-check fail-check with-check-info)
          (only-in racket/file file->value)
          (only-in polars/private/bulk series->list)
+         (only-in polars/private/generic/clauses dataframe)
          (only-in polars/private/generic/core
-                  column-names dataframe dtype len ref series wrap-series)
+                  column-names dtype len ref series wrap-series)
          (only-in polars/tests/test-helpers
                   apply-keywords contains-all? contract-violation-of drops-during drops-once
                   explain-failure gzip-file keyword-rejected? message-of not-utf-8-expected

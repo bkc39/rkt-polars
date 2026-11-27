@@ -13,8 +13,9 @@
                     read-parquet scan-parquet write-parquet)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr-core col)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? null-count ref series shape)
+                    column-names dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/datetime dt-convert-time-zone dt-replace-time-zone)
            (only-in polars/private/generic/nullable is-not-null)
            (only-in polars/private/generic/operators [= p=] [> p>])

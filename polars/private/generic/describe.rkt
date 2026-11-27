@@ -18,7 +18,7 @@
                   zoned-datetime-dtype?)
          (only-in (submod polars/private/foreign internal) series-rename/who)
          (only-in polars/private/generic/core dataframe? ref series series? wrap-dataframe)
-         (only-in (submod polars/private/generic/core internal) columns->dataframe)
+         (only-in (submod polars/private/generic/clauses internal) columns->dataframe)
          (only-in polars/private/generic/dtype numeric-dtype? temporal-dtype?)
          (only-in polars/private/temporal offset-unit per-second utc-offset)
          (only-in polars/private/generic/ordering gather)

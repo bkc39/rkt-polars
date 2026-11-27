@@ -6,7 +6,8 @@
            (only-in threading ~>)
            (only-in polars/private/foreign polars-null)
            (only-in polars/private/bulk series->list)
-           (only-in polars/private/generic/core column-names dataframe height ref series shape)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core column-names height ref series shape)
            (only-in polars/private/generic/ordering sort)
            (only-in polars/private/generic/reshape collect head lazy)
            (only-in polars/tests/generic/test-fixtures

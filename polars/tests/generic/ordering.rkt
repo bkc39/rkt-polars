@@ -15,8 +15,9 @@
            (only-in polars/private/bulk series->list)
            (only-in polars/private/c-integer uint64/c)
            (only-in polars/private/expr-core expr->string lit)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? ref series)
+                    column-names dtype height lazyframe? ref series)
            (only-in polars/private/generic/cumulative diff shift)
            (only-in polars/private/generic/math p-abs [round p-round])
            (only-in polars/private/generic/operators p+)

@@ -14,8 +14,9 @@
                     dataframe-drop-count series-drop-count series-head series-min-f64
                     series-n-unique series-quantile series-slice series-std series-sum-f64
                     series-sum-i32 series-var)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype ref series wrap-series)
+                    column-names dtype ref series wrap-series)
            (only-in polars/private/generic/reshape agg group-by select)
            (only-in threading ~>)
            (only-in polars/private/generic/reductions alias first last max mean min sum)

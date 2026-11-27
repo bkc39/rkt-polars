@@ -11,8 +11,9 @@
            (only-in polars/private/foreign
                     dataframe-drop dataframe-drop-count series-drop series-drop-count
                     series-quantile)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dataframe? height len null-count ref series)
+                    column-names dataframe? height len null-count ref series)
            (prefix-in contracted: polars/private/generic/describe)
            (only-in (submod polars/private/generic/describe internal)
                     call-with-column-plans column-plan-series describe offset->string)

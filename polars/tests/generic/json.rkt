@@ -10,8 +10,9 @@
            (only-in (submod polars/private/generic/json internal)
                     read-json read-ndjson scan-ndjson write-json write-ndjson)
            (only-in threading ~>)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? ref series shape)
+                    column-names dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
            (only-in polars/private/generic/csv read-csv)
            (only-in polars/private/generic/reshape cast collect filter select)

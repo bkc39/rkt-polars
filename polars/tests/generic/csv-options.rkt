@@ -11,8 +11,9 @@
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height ref series shape)
+                    column-names dtype height ref series shape)
            (only-in polars/private/generic/csv read-csv scan-csv write-csv)
            (only-in polars/private/generic/reshape collect rename select [filter frame-filter])
            (only-in polars/private/generic/operators [> gt])

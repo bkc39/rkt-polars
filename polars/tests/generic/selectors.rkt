@@ -6,8 +6,9 @@
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/selectors)
            (only-in (submod polars/private/generic/selectors internal) all exclude)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype lazyframe? ref series shape)
+                    column-names dtype lazyframe? ref series shape)
            (only-in polars/private/generic/operators p*)
            (only-in polars/private/generic/reductions alias sum)
            (only-in polars/private/generic/reshape

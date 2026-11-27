@@ -6,8 +6,9 @@
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign polars-null series-dtype series-len)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe height len null-count ref series)
+                    column-names height len null-count ref series)
            (only-in polars/private/generic/reductions
                     alias count first last max mean median min n-unique std sum var)
            (only-in polars/private/generic/reshape

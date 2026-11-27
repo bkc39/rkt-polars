@@ -8,8 +8,9 @@
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/csv lazyframe-scan-csv)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dataframe? dtype height lazyframe? len ref series
+                    column-names dataframe? dtype height lazyframe? len ref series
                     series? wrap-dataframe wrap-lazyframe)
            (only-in polars/private/generic/operators
                     < <= = > >= else-when otherwise p+ p-and p-not p-or p-when p/ then)

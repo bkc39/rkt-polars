@@ -14,8 +14,9 @@
            (only-in polars/private/bulk
                     dataframe->columns dataframe->f64vector dataframe->hash dataframe->rows
                     in-dataframe-rows in-series series->f64vector series->list series->vector)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height len ref series series? width)
+                    column-names dtype height len ref series series? width)
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/combine vstack)

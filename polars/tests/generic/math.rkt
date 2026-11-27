@@ -2,7 +2,8 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
-           (only-in polars/private/generic/core dataframe ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape select with-columns)
            (only-in polars/tests/generic/test-fixtures check-selected column)

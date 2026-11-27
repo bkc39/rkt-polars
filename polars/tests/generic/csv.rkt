@@ -16,8 +16,9 @@
            (prefix-in contracted: polars/private/generic/csv)
            (only-in (submod polars/private/generic/csv internal) read-csv scan-csv write-csv)
            (prefix-in raw: polars/private/csv)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? null-count ref series shape)
+                    column-names dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
            (only-in polars/private/generic/reshape collect head select slice tail)
            (only-in polars/tests/generic/test-fixtures

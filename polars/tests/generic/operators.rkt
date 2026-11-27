@@ -19,7 +19,8 @@
                     dataframe-column dataframe-column-names dataframe-drop-count series-cast
                     series-drop series-drop-count series-name)
            (only-in polars/private/resource with-release)
-           (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
            (only-in polars/private/generic/math p-abs pow)
            (only-in polars/private/generic/reductions alias)

@@ -14,7 +14,8 @@
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign
                     polars-null polars-null? series-drop series-drop-count series-name)
-           (only-in polars/private/generic/core column-names dataframe dtype height len ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core column-names dtype height len ref series)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operands const-series)
            (prefix-in p: polars/private/generic/operators)

@@ -14,7 +14,8 @@
            (only-in polars/tests/generic/test-fixtures
                     check-selected check-selected-as-is nul-expected)
            (only-in polars/private/foreign polars-null)
-           (only-in polars/private/generic/core column-names dataframe dtype ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core column-names dtype ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape collect lazy select with-columns)
            (prefix-in contracted: polars/private/generic/strings)
