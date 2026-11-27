@@ -5,8 +5,9 @@
          (only-in racket/contract/base [-> ->/c] any/c contract-out)
          racket/match
          (only-in polars/private/compat-dtype ->compat-dtype _CompatDType compat-dtype->datum
-                  datetime-zone/c enum-dtype? time-unit-symbol->code zoned-datetime-dtype?)
+                  enum-dtype? time-unit-symbol->code zoned-datetime-dtype?)
          (only-in polars/private/compat-ffi _c-string _c-string/null _rsstr define-compat)
+         (only-in polars/private/dtype-spelling cast-target/c)
          (only-in polars/private/owned Series-ptr? _Series-ptr _Series-ptr/null)
          (only-in polars/private/reason call/foreign-error call/polars-reason)
          (only-in (submod polars/private/owned internal) series-drop)
@@ -14,7 +15,7 @@
 
 (provide (except-out (all-defined-out) named series-cast series-rename/who series-strings)
          (contract-out
-          [series-cast (->/c any/c datetime-zone/c Series-ptr?)]))
+          [series-cast (->/c any/c cast-target/c Series-ptr?)]))
 
 (define-compat series-empty
   (_fun -> _Series-ptr)

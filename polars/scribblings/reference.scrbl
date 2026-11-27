@@ -2940,7 +2940,8 @@ columns with @racket[in-dataframe-columns], or convert them with
 The monomorphic layer the fluent operations are built on: one binding per
 operation and dtype, taking a wrapper wherever it takes a pointer and
 returning the raw foreign pointer. Before 0.4 @racket[(require polars)]
-exported these bindings too.
+exported these bindings too, and @racket[polars:+], @racket[polars:abs] and
+the other aliases of the operators that shadow @racketmodname[racket/base].
 
 @examples[#:eval ev #:hidden (require polars/ffi)]
 
@@ -3156,9 +3157,16 @@ temps
   the unit is one of @racket['nanoseconds], @racket['microseconds] or
   @racket['milliseconds]. Bare @racket['datetime] and @racket['duration]
   default to microseconds. A zoned datetime is
-  @racket['(datetime unit "Zone/Name")], with an explicit unit. Raises an
-  error when Polars cannot perform the cast. The fluent @racket[cast] wraps
-  this for the generic layer.}
+  @racket['(datetime unit "Zone/Name")], with an explicit unit, whose zone
+  is a @racket[time-zone-name/c]. Any other @racket[dtype] is a contract
+  violation. Raises an error when Polars cannot perform the cast, as for a
+  zone it does not know. The fluent @racket[cast] wraps this for the
+  generic layer.
+
+  @examples[#:eval ev #:label #f
+(define readings (series '(1.5 1.7 2.2)))
+(series-n-unique (series-cast readings 'i64))
+(eval:error (series-cast readings '(duration milliseconds "UTC")))]}
 
 @defproc[(series-sort [s Series-ptr?]
                       [#:descending descending boolean? #f]

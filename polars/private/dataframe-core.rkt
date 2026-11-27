@@ -2,9 +2,10 @@
 
 (require ffi/unsafe
          ffi/unsafe/alloc
-         (only-in racket/contract/base [-> ->/c] contract-out listof)
+         (only-in racket/contract/base [-> ->/c] contract-out listof or/c)
          (only-in racket/provide matching-identifiers-out)
          syntax/parse/define
+         (only-in polars/private/c-integer size/c)
          (only-in polars/private/compat-ffi _rsstr _rsstr-list define-compat)
          (only-in polars/private/owned DataFrame-ptr? Series-ptr? _DataFrame-ptr
                   _DataFrame-ptr/null _Series-ptr _Series-ptr/null provide-row-windows)
@@ -15,10 +16,11 @@
          (for-syntax racket/base racket/syntax syntax/parse))
 
 (provide (except-out (all-defined-out)
-                     dataframe-head dataframe-hstack dataframe-slice dataframe-tail
-                     dataframe-vstack define-frame-op/reason print-dataframe
+                     dataframe-column-name dataframe-head dataframe-hstack dataframe-slice
+                     dataframe-tail dataframe-vstack define-frame-op/reason print-dataframe
                      (matching-identifiers-out #rx"^dataframe-.*/who$" (all-defined-out)))
          (contract-out
+          [dataframe-column-name (->/c DataFrame-ptr? size/c (or/c string? #f))]
           [dataframe-hstack (->/c DataFrame-ptr? (listof Series-ptr?) DataFrame-ptr?)]
           [dataframe-vstack (->/c DataFrame-ptr? DataFrame-ptr? DataFrame-ptr?)]))
 
@@ -103,9 +105,12 @@
 (define (dataframe-new series-list)
   (or (dataframe-new/raw series-list) (error 'dataframe-new "operation failed")))
 
-(define-compat dataframe-column-name
+(define-compat dataframe-column-name/raw
   (_fun _DataFrame-ptr _size -> _rsstr)
   #:c-id dataframe_column_name_v2)
+
+(define (dataframe-column-name df i)
+  (dataframe-column-name/raw df i))
 
 (define-reasoned (dataframe-column df name) #:who-variant dataframe-column/who
   #:c-id dataframe_column_v2

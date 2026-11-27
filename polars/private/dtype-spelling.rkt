@@ -1,10 +1,12 @@
 #lang racket/base
 
-(require racket/match
+(require (only-in racket/contract/base and/c flat-contract-predicate or/c)
+         racket/match
          (only-in polars/private/compat-dtype
-                  dtype-short-names enum-dtype? zoned-datetime-dtype?))
+                  datetime-zone/c dtype-short-names enum-dtype? time-zone-name/c
+                  zoned-datetime-dtype?))
 
-(provide dtype-aliases dtype-spec? normalize-dtype)
+(provide cast-target/c dtype-aliases dtype-spec? normalize-dtype)
 
 (define dtype-aliases
   (for/fold ([aliases dtype-short-names])
@@ -20,7 +22,12 @@
             (or #f 'none 'nanoseconds 'microseconds 'milliseconds)
             (or '() (list #f)))
      #t]
-    [_ (or (enum-dtype? v) (zoned-datetime-dtype? v))]))
+    [(and (? zoned-datetime-dtype?) (list _ _ zone)) (time-zone-name? zone)]
+    [_ (enum-dtype? v)]))
+
+(define time-zone-name? (flat-contract-predicate time-zone-name/c))
+
+(define cast-target/c (and/c datetime-zone/c (or/c dtype-spec? 'binary 'duration)))
 
 (define (normalize-dtype dt [who 'normalize-dtype])
   (cond

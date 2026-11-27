@@ -3,7 +3,7 @@
 (require racket/match
          syntax/parse/define
          (only-in racket/contract/base
-                  -> ->* ->i and/c any/c contract-out flat-contract-predicate listof or/c
+                  -> ->* ->i any/c contract-out flat-contract-predicate listof or/c
                   unsupplied-arg?)
          (prefix-in base: racket/base)
          (except-in racket/list drop)
@@ -23,7 +23,7 @@
          (only-in polars/private/expr-core explain/c lazyframe-explain/who)
          polars/private/generic/core
          (only-in polars/private/c-integer int64/c size/c)
-         (only-in polars/private/dtype-spelling dtype-spec?)
+         (only-in polars/private/dtype-spelling cast-target/c)
          (only-in polars/private/generic/expr-util col-expr/c))
 
 (provide (except-out (all-defined-out) cast clone-series define-frame-verb explain head tail slice
@@ -52,8 +52,6 @@
                                          "renaming a dataframe column needs old and new names")
                                      [result (or/c series? dataframe?)]))
           [explain (explain/c lazyframe?)]))
-
-(define cast-target/c (and/c datetime-zone/c (or/c dtype-spec? 'binary 'duration)))
 
 (define rows-source/c (or/c series? dataframe? lazyframe? Expr-ptr?))
 

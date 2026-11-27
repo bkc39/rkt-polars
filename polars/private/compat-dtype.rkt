@@ -178,6 +178,6 @@
         (make-CompatDType tag compat-time-unit/none 0 0)])]
     [(list* 'datetime unit (or '() (list #f)))
      (make-CompatDType compat-dtype-tag/datetime (time-unit-symbol->code unit) 0 0)]
-    [(cons 'duration (cons unit _))
+    [(list* 'duration unit (or '() (list #f)))
      (make-CompatDType compat-dtype-tag/duration (time-unit-symbol->code unit) 0 0)]
     [_ (error '->compat-dtype "unsupported cast target ~v" dtype)]))

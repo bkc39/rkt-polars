@@ -2,6 +2,7 @@
 
 (module+ test
   (require rackunit
+           (only-in racket/contract exn:fail:contract:blame?)
            (only-in racket/list append-map check-duplicates remove-duplicates)
            racket/match
            racket/runtime-path
@@ -28,14 +29,21 @@
       (namespace-require 'polars)
       (current-namespace)))
 
-  (define (phase-0-exports mod)
+  (define (phase-0-names phases)
+    (for*/list ([phase+names (in-list phases)]
+                #:when (eqv? (car phase+names) 0)
+                [name (in-list (cdr phase+names))])
+      (car name)))
+
+  (define (phase-0-exports-by-kind mod)
     (parameterize ([current-namespace polars-namespace])
       (dynamic-require mod (void))
       (define-values (variables syntaxes) (module->exports mod))
-      (for*/list ([phase+names (in-list (append variables syntaxes))]
-                  #:when (eqv? (car phase+names) 0)
-                  [name (in-list (cdr phase+names))])
-        (car name))))
+      (values (phase-0-names variables) (phase-0-names syntaxes))))
+
+  (define (phase-0-exports mod)
+    (define-values (variables syntaxes) (phase-0-exports-by-kind mod))
+    (append variables syntaxes))
 
   (define (binding-source name)
     (parameterize ([current-namespace polars-namespace])
@@ -204,6 +212,49 @@
   (test-case "every export of polars/ffi has its entry and every entry its export"
     (check-same-names 'polars/ffi (names-of entries 'polars/ffi) ffi-exports))
 
+  (test-case "neither module exports a polars: alias of a shadowing operator"
+    (check-equal? (filter (lambda (name) (string-prefix? (symbol->string name) "polars:"))
+                          (append polars-exports ffi-exports))
+                  '()))
+
+  (define macro-exports
+    '(and define-enum gen:has-dtype gen:has-null-count gen:has-ref gen:has-shape gen:sized
+      lambda~> lambda~>> or when ~> ~>>))
+
+  (define (export-value mod name)
+    (parameterize ([current-namespace polars-namespace])
+      (dynamic-require mod name)))
+
+  (define-values (polars-variables polars-syntaxes) (phase-0-exports-by-kind 'polars))
+  (define-values (ffi-variables ffi-syntaxes) (phase-0-exports-by-kind 'polars/ffi))
+
+  (test-case "polars' macros are syntax exports and no expression"
+    (check-equal? (sorted-difference macro-exports polars-syntaxes) '() "not a syntax export")
+    (for ([name (in-list macro-exports)])
+      (check-exn exn:fail:syntax? (lambda () (export-value 'polars name)) (symbol->string name))))
+
+  (define (export-values mod names)
+    (for/list ([name (in-list names)])
+      (cons name (export-value mod name))))
+
+  (define (non-macro-exports)
+    (append (export-values 'polars
+                           (remove* macro-exports (append polars-variables polars-syntaxes)))
+            (export-values 'polars/ffi (append ffi-variables ffi-syntaxes))))
+
+  (test-case "every other export, contracted or not, is a procedure, polars-null aside"
+    (check-equal? (map car (filter (lambda (export) (not (procedure? (cdr export))))
+                                   (non-macro-exports)))
+                  '(polars-null)))
+
+  (test-case "every exported procedure's object-name is its exported name"
+    (check-equal? (for/list ([export (in-list (non-macro-exports))]
+                             #:when (procedure? (cdr export))
+                             #:unless (eq? (object-name (cdr export)) (car export)))
+                    (list (car export) (object-name (cdr export))))
+                  '())
+    (check-equal? (object-name (export-value 'polars 'log)) 'log))
+
   (define (documented-contract forms name arg)
     (let find ([form forms])
       (match form
@@ -217,25 +268,45 @@
 
   (define cast-namespace
     (parameterize ([current-namespace (make-base-empty-namespace)])
+      (namespace-attach-module (variable-reference->empty-namespace (#%variable-reference))
+                               'racket/contract)
       (namespace-require '(only racket/base #%app #%datum quote))
       (namespace-require 'racket/contract/base)
       (namespace-require 'polars)
       (namespace-require '(only polars/ffi series-cast series-new-null))
       (current-namespace)))
 
-  (test-case "series-cast's and cast's entries take the dtypes series-cast takes"
-    (define reference (read-manual reference-path))
-    (define (series-cast-takes? dtype)
-      (parameterize ([current-namespace cast-namespace])
-        (with-handlers ([exn:fail? (lambda (_) #f)])
-          (eval `(series-cast (series-new-null "s" 1) ',dtype))
-          #t)))
-    (for* ([verb (in-list '(series-cast cast))]
-           [dtype (in-list '(binary duration datetime f64 float64 categorical null
-                             (datetime milliseconds) (duration nanoseconds)
-                             (datetime microseconds "UTC") (enum a b) nope
-                             (datetime seconds)))])
+  (define (series-cast-failure? e)
+    (and (exn:fail? e) (regexp-match? #rx"^series-cast: " (exn-message e))))
+
+  (define (series-cast-refusal? e)
+    (and (exn:fail:contract:blame? e) (series-cast-failure? e)))
+
+  (define (series-cast-takes? dtype)
+    (parameterize ([current-namespace cast-namespace])
+      (with-handlers ([series-cast-refusal? (lambda (_) #f)]
+                      [series-cast-failure? (lambda (_) #t)])
+        (eval `(series-cast (series-new-null "s" 1) ',dtype))
+        #t)))
+
+  (define cast-probes
+    '(binary duration datetime f64 float64 categorical null nope
+      (datetime milliseconds) (duration nanoseconds) (datetime microseconds "UTC") (enum a b)
+      (datetime seconds) (duration milliseconds "UTC") (datetime microseconds "Nope/Zone")
+      (datetime microseconds "a\u0000b")))
+
+  (test-case "a refused dtype is series-cast's contract violation, a polars failure is not"
+    (check-false (series-cast-takes? 'nope))
+    (check-true (series-cast-takes? '(datetime microseconds "Nope/Zone"))))
+
+  (define reference (read-manual reference-path))
+
+  (for ([verb (in-list '(series-cast cast))])
+    (test-case (format "~a's entry takes the dtypes series-cast takes" verb)
+      (define contract (documented-contract reference verb 'dtype))
+      (check-not-false contract (format "no ~a entry with a dtype formal" verb))
       (define documented
         (parameterize ([current-namespace cast-namespace])
-          (eval `(flat-contract-predicate ,(documented-contract reference verb 'dtype)))))
-      (check-equal? (documented dtype) (series-cast-takes? dtype) (format "~a ~s" verb dtype)))))
+          (eval `(flat-contract-predicate ,contract))))
+      (for ([dtype (in-list cast-probes)])
+        (check-equal? (documented dtype) (series-cast-takes? dtype) (format "~a ~s" verb dtype))))))

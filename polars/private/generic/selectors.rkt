@@ -9,7 +9,7 @@
           [all (-> Expr-ptr?)]
           [exclude (-> multi-column-expr? column-pattern/c column-pattern/c ... Expr-ptr?)]))
 
-(define all expr-all)
+(define (all) (expr-all))
 
 (define (exclude e name . names)
   (expr-exclude/who 'exclude e (cons name names)))

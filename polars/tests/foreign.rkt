@@ -580,8 +580,10 @@
     (define casted (series-cast (series-new-i32 "small" '(1 2 3)) dtype))
     (check-equal? (series-dtype casted) dtype)
     (check-equal? (series-ref casted 1) (if (eq? dtype 'float32) 2.0 2)))
-  (check-exn #rx"unsupported cast target"
-             (lambda () (series-cast batch2-x '(list int32))))
+  (for ([dtype (in-list '((list int32) nope (duration milliseconds "UTC") (duration ms x y z)
+                          (datetime microseconds "a\u0000b")))])
+    (check-exn #rx"^series-cast: contract violation" (lambda () (series-cast batch2-x dtype))))
+  (check-equal? (series-n-unique (series-cast (series-new-f64 "r" '(1.5 1.7 2.2)) 'i64)) 2)
   (for ([(short canonical) (in-hash dtype-short-names)])
     (check-equal? (series-dtype (series-cast batch2-y short)) canonical))
 
@@ -596,9 +598,9 @@
   (check-equal? (series-ref (series-cast bears/enum 'string) 0) "Polar")
   (check-exn #rx"^series-cast: 1 of 3 values is not in '\\(enum Polar Panda\\): Brown$"
              (lambda () (series-cast bears '(enum Polar Panda))))
-  (check-exn #rx"unsupported cast target '\\(enum Polar Polar\\)"
+  (check-exn #rx"^series-cast: contract violation.*given: '\\(enum Polar Polar\\)"
              (lambda () (series-cast bears '(enum Polar Polar))))
-  (check-exn #rx"unsupported cast target '\\(enum \"Polar\"\\)"
+  (check-exn #rx"^series-cast: contract violation.*given: '\\(enum \"Polar\"\\)"
              (lambda () (series-cast bears '(enum "Polar"))))
   (check-exn #rx"^series-enum-categories: invalid series dtype: expected `Enum`, got `str` for `bears`$"
              (lambda () (series-enum-categories bears)))
@@ -856,6 +858,9 @@
   (check-equal? (dataframe-column-name example-df 1) "score")
   (check-equal? (dataframe-column-name example-df 2) "cost")
   (check-false (dataframe-column-name example-df 3))
+  (for ([bad (in-list (list -1 1.5 "x"))])
+    (check-exn #rx"^dataframe-column-name: contract violation"
+               (lambda () (dataframe-column-name example-df bad))))
   (check-equal? (series-name (dataframe-column example-df #"score")) "score")
 
   (define score-col (dataframe-column example-df "score"))
