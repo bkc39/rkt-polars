@@ -9,13 +9,13 @@
                   -> ->* ->i any contract contract-out define-module-boundary-contract
                   get/build-late-neg-projection listof or/c)
          (only-in racket/contract/combinator make-contract raise-blame-error)
-         (only-in racket/list check-duplicates)
+         (only-in racket/list append-map check-duplicates)
          (only-in racket/match match match* match-define)
          syntax/location
          syntax/parse/define
          (for-syntax racket/base
                      (only-in racket/list check-duplicates)
-                     (only-in racket/match match)
+                     (only-in racket/match match match-define)
                      (only-in racket/string string-join)
                      syntax/parse
                      (submod "." column-options))
@@ -24,8 +24,8 @@
          (only-in polars/private/expr-core lazyframe-dropped)
          polars/private/foreign
          (only-in (submod polars/private/foreign internal)
-                  dataframe-column/who dataframe-select/who)
-         (only-in polars/private/resource utf-8-name/c)
+                  dataframe-column/who dataframe-select/who named series-cast-to series-slice/who)
+         (only-in polars/private/resource utf-8-name/c with-release-pool)
          polars/private/generic/dtype
          (only-in polars/private/dtype-spelling cast-target/c normalize-dtype)
          polars/private/generic/printing
@@ -33,9 +33,9 @@
 
 (provide (except-out (all-defined-out)
                      (struct-out column-clause)
-                     build-frame column-clause-at column-clause/c column-name/c
+                     build-frame clause->series column-clause-at column-clause/c column-name/c
                      column-part-at column-part/c column-values/c columns->dataframe core-party
-                     dataframe-procedure dataframe/contracted make-column-clause series
+                     dataframe-procedure dataframe/contracted make-column-clause series series-of
                      sequence-elements top-level-variable? values-expectation)
          (contract-out
           [series (->i ([elements (dtype) (series-elements/c dtype)])
@@ -166,10 +166,13 @@
 ;; ---------------------------------------------------------------------------
 ;; series: keyword constructor with dtype inference (see dtype.rkt)
 
-(define (series elements #:name [name ""] #:dtype [dtype #f])
-  (define canonical (if dtype (normalize-dtype dtype 'series) (infer-dtype elements)))
-  (define ctor (dtype->constructor canonical (vector? elements)))
+(define (series-of who elements name dtype)
+  (define canonical (if dtype (normalize-dtype dtype who) (infer-dtype who elements)))
+  (define ctor (dtype->constructor who canonical (vector? elements)))
   (wrap-series (ctor name (coerce-elements canonical elements))))
+
+(define (series elements #:name [name ""] #:dtype [dtype #f])
+  (series-of 'series elements name dtype))
 
 ;; ---------------------------------------------------------------------------
 ;; ref dispatch helpers (referenced by the struct methods above)
@@ -263,8 +266,26 @@
 (define (column-part-at srcloc party)
   (contract (-> column-part/c any) values core-party party 'dataframe srcloc))
 
+(define (clause->series who own clause)
+  (match-define (column-clause name vals dtype) clause)
+  (cond
+    [(not (Series-ptr? vals)) (own (series-of who vals name dtype))]
+    [dtype ((named who name) (own (series-cast-to who vals dtype)))]
+    [else ((named who name) (own (series-slice/who who vals 0 (series-len vals))))]))
+
 (define (build-frame who parts)
-  (error who "not implemented"))
+  (with-release-pool ([own series-drop])
+    (define columns
+      (append-map (lambda (part)
+                    (match part
+                      [(? column-clause?) (list (clause->series who own part))]
+                      [(? list?) part]
+                      [_ (list part)]))
+                  parts))
+    (wrap-dataframe
+     (or (dataframe-new/raw columns)
+         (raise-arguments-error who (or (frame-columns-problem columns)
+                                        "could not create a new DataFrame"))))))
 
 (define (columns->dataframe . parts)
   (build-frame 'dataframe parts))
@@ -346,10 +367,13 @@
       [_ (list bracketed-message clause)]))
 
   (define (raise-problem clause problem)
-    (void))
+    (match problem
+      [#f (void)]
+      [(list message at) (raise-syntax-error 'dataframe message clause at)]))
 
   (define (raise-problem-later clause problem)
-    #'(void))
+    (match-define (list message at) problem)
+    #`(raise-syntax-error 'dataframe #,message (quote-syntax #,clause) (quote-syntax #,at)))
 
   (define (literal-name kws es)
     (for/first ([kw (in-list kws)] [e (in-list es)]
