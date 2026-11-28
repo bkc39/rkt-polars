@@ -13,11 +13,11 @@
 ;; --- converting and replacing time zones ---------------------------------
 (define ts '("2021-03-27 03:00" "2021-03-28 03:00"))
 (define tz-naive
-  (~> (dataframe (list (series ts #:name "tz_naive")))
+  (~> (dataframe [tz_naive ts])
       (select (str->datetime "tz_naive"))
       (ref "tz_naive")))
 (define tz-aware (~> tz-naive (dt-replace-time-zone "UTC") (rename "tz_aware")))
-(define time-zones-df (dataframe (list tz-naive tz-aware)))
+(define time-zones-df (dataframe tz-naive tz-aware))
 (displayln time-zones-df)
 
 (displayln

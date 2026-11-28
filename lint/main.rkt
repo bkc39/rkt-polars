@@ -3,11 +3,12 @@
 (require racket/contract/base)
 
 (provide
- (all-from-out lint/macros)
+ (all-from-out lint/dataframe lint/macros)
  (contract-out
   [polars-style refactoring-suite?]))
 
 (require racket/list
+         lint/dataframe
          lint/macros
          resyntax/base
          resyntax/default-recommendations)
@@ -23,5 +24,6 @@
   (refactoring-suite
    #:name 'polars-style
    #:rules (append (refactoring-suite-rules syntax-parse-migrations)
+                   (refactoring-suite-rules dataframe-clause-migrations)
                    (filter-not (λ (rule) (memq (object-name rule) disabled-default-rules))
                                (refactoring-suite-rules default-recommendations)))))

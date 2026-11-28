@@ -14,10 +14,9 @@
          polars)
 
 (define original
-  (dataframe
-   (list (series '("Boston" "New York" "Chicago") #:name "city")
-         (series '(0.65 8.8 2.7)                  #:name "population_millions")
-         (series '(1630 1624 1837)                #:name "founded" #:dtype 'i32))))
+  (dataframe [city '("Boston" "New York" "Chicago")]
+             [population_millions '(0.65 8.8 2.7)]
+             [founded '(1630 1624 1837) #:dtype 'i32]))
 
 (define csv-path (make-temporary-file "rkt-polars-example-~a.csv"))
 

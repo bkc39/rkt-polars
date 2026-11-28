@@ -11,10 +11,9 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series '("2024-01-02" "not-a-date" "2024-05-09 extra") #:name "date_s")
-         (series '("2024-01-02 03:04:05" "bad" "2024-05-09 12:30:45") #:name "dt_s")
-         (series '("03:04:05.123456789" "bad" "12:30:45") #:name "time_s"))))
+  (dataframe [date_s '("2024-01-02" "not-a-date" "2024-05-09 extra")]
+             [dt_s '("2024-01-02 03:04:05" "bad" "2024-05-09 12:30:45")]
+             [time_s '("03:04:05.123456789" "bad" "12:30:45")]))
 
 (define out
   (~> df

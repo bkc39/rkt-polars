@@ -11,13 +11,7 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series '("  alpha  "
-                   "--beta--"
-                   "id=123"
-                   "report.txt"
-                   "banana")
-                 #:name "text"))))
+  (dataframe [text '("  alpha  " "--beta--" "id=123" "report.txt" "banana")]))
 
 (define out
   (~> df

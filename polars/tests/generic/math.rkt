@@ -2,7 +2,8 @@
 
 (module+ test
   (require rackunit (only-in threading ~>)
-           (only-in polars/private/generic/core dataframe ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape select with-columns)
            (only-in polars/tests/generic/test-fixtures check-selected column)
@@ -15,7 +16,7 @@
   (check-= (p-sqrt 9) 3.0 1e-9)
   (check-= (p-log 8 #:base 2) 3.0 1e-9)
   ;; Expr math through with-columns -> evaluated values
-  (define df (dataframe (list (series '(-2.5 -1.0 0.0 1.5 4.0) #:name "x" #:dtype 'f64))))
+  (define df (dataframe [x '(-2.5 -1.0 0.0 1.5 4.0) #:dtype 'f64]))
   (define out
     (~> df (with-columns
              (alias (p-abs "x") "abs")
@@ -38,7 +39,7 @@
   (check-= (c "l2" 4) 2.0 1e-9)
   (check-= (c "p2" 0) 6.25 1e-9)
 
-  (define ties (dataframe (list (series '(-2.5 -1.5 -0.5 0.5 1.5 2.5 0.125 2.345) #:name "x"))))
+  (define ties (dataframe [x '(-2.5 -1.5 -0.5 0.5 1.5 2.5 0.125 2.345)]))
   (check-equal? (column (select ties (round "x")) "x")
                 '(-2.0 -2.0 -0.0 0.0 2.0 2.0 0.0 2.0))
   (for ([decimals (in-list '(1 2))])
@@ -47,7 +48,7 @@
 
   (test-case "the reference's abs, sqrt, exp, floor, log, ceil, log1p and clip example"
     (define xs '(-2.25 0.5 4.0))
-    (define readings (dataframe (list (series xs #:name "x"))))
+    (define readings (dataframe [x xs]))
     (check-selected
      readings
      (list (list "abs" (p-abs "x") '(2.25 0.5 4.0))

@@ -33,3 +33,13 @@ no-change-test: "the suite never recommends define-syntax-rule"
   (syntax-rules ()
     [(_ c body ...) (if c (void) (begin body ...))]))
 ------------------------------
+
+
+test: "the suite carries the dataframe clause migration"
+------------------------------
+(require polars)
+(dataframe (list (series '(1 2) #:name "a")))
+==============================
+(require polars)
+(dataframe [a '(1 2)])
+------------------------------

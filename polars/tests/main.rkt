@@ -233,6 +233,23 @@
     (for ([name (in-list macro-exports)])
       (check-exn exn:fail:syntax? (lambda () (export-value 'polars name)) (symbol->string name))))
 
+  (define expression-macro-exports '(dataframe))
+
+  (define-namespace-anchor anchor)
+
+  (test-case "a macro whose bare identifier is its procedure carries its exported name"
+    (check-equal? (sorted-difference expression-macro-exports polars-syntaxes) '())
+    (check-equal? (sorted-difference expression-macro-exports macro-exports)
+                  expression-macro-exports)
+    (define ns
+      (parameterize ([current-namespace (namespace-anchor->empty-namespace anchor)])
+        (namespace-require 'racket/base)
+        (namespace-require 'polars)
+        (current-namespace)))
+    (for ([name (in-list expression-macro-exports)])
+      (check-equal? (object-name (export-value 'polars name)) name))
+    (check-true (eval '(dataframe? (dataframe ["a" '(1)])) ns)))
+
   (define (export-values mod names)
     (for/list ([name (in-list names)])
       (cons name (export-value mod name))))

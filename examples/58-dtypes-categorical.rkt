@@ -13,9 +13,9 @@
 (require polars)
 
 (define flights
-  (dataframe (list (series '("UA" "AA" "UA" "B6" "AA") #:name "carrier")
-                   (series '("IAH" "MIA" "IAH" "JFK" "MIA") #:name "dest")
-                   (series '(2 -4 11 0 7) #:name "dep_delay"))))
+  (dataframe [carrier '("UA" "AA" "UA" "B6" "AA")]
+             [dest '("IAH" "MIA" "IAH" "JFK" "MIA")]
+             [dep_delay '(2 -4 11 0 7)]))
 
 (define coded (with-columns flights (cast "carrier" 'categorical) (cast "dest" 'categorical)))
 

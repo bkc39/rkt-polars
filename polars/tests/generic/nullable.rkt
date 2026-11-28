@@ -6,8 +6,9 @@
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign polars-null series-dtype series-len)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe height len null-count ref series)
+                    column-names height len null-count ref series)
            (only-in polars/private/generic/reductions
                     alias count first last max mean median min n-unique std sum var)
            (only-in polars/private/generic/reshape
@@ -23,8 +24,7 @@
                     check-selected check-selected-as-is series-shape)
            (only-in polars/tests/test-helpers contract-violation-of))
   (define df
-    (dataframe (list (series (list 1.0 polars-null 3.0 polars-null 5.0) #:name "x")
-                     (series (list 1.0 +nan.0 3.0 +inf.0 -1.0) #:name "y"))))
+    (dataframe [x (list 1.0 polars-null 3.0 polars-null 5.0)] [y (list 1.0 +nan.0 3.0 +inf.0 -1.0)]))
   (define out
     (~> df (with-columns
              (alias (fill-null "x" 0.0) "x_filled")
@@ -42,8 +42,7 @@
   (check-equal? (series-shape broadcast)
                 (list 'null (make-list 5 polars-null)))
   (define people
-    (dataframe (list (series '(1 2 3) #:name "id" #:dtype 'i32)
-                     (series '(57.9 72.5 53.6) #:name "weight"))))
+    (dataframe [id '(1 2 3) #:dtype 'i32] [weight '(57.9 72.5 53.6)]))
   (define null-literals
     (select people (alias (lit polars-null) "nothing") (p= (col "id") polars-null)
             (p+ (col "weight") polars-null)))
@@ -73,9 +72,7 @@
   (check-equal? (map (lambda (reduce) (reduce (series '("b" "a") #:name "^x$"))) (list min max))
                 '("a" "b"))
   (check-equal? (mean (series '(#t #f #t #t) #:name "^x$")) 0.75)
-  (define null-frame (dataframe (list (series '(a b a) #:name "g")
-                                      (series (list polars-null polars-null polars-null)
-                                              #:name "n"))))
+  (define null-frame (dataframe [g '(a b a)] [n (list polars-null polars-null polars-null)]))
   (define (column-of d name) (series-shape (ref d name)))
   (for ([reduce (list sum mean min max median first last std var)])
     (check-equal? (column-of (select null-frame (reduce "n")) "n")
@@ -99,13 +96,13 @@
   (check-equal? (series-shape (series (list polars-null polars-null) #:name "n" #:dtype 'null))
                 (list 'null (list polars-null polars-null)))
   (define null-literal
-    (~> (dataframe (list (series '(1 2 3) #:name "x")))
+    (~> (dataframe [x '(1 2 3)])
         (select (alias (lit polars-null) "nothing") (p+ (col "x") polars-null))))
   (check-equal? (list (column-names null-literal) (column-of null-literal "nothing")
                       (column-of null-literal "x"))
                 (list '("nothing" "x") (list 'null (make-list 3 polars-null))
                       (list 'int64 (make-list 3 polars-null))))
-  (define gaps (dataframe (list (series (list 1 polars-null polars-null 4) #:name "v"))))
+  (define gaps (dataframe [v (list 1 polars-null polars-null 4)]))
   (define filled
     (select gaps
             (alias (forward-fill "v") "forward")
@@ -121,7 +118,7 @@
 
   (test-case "the reference's null and NaN example"
     (define none polars-null)
-    (define sensor (dataframe (list (series (list 1.0 none +nan.0 +inf.0) #:name "v"))))
+    (define sensor (dataframe [v (list 1.0 none +nan.0 +inf.0)]))
     (check-selected
      sensor
      (list (list "null" (is-null "v") '(#f #t #f #f))

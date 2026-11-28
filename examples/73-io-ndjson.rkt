@@ -19,9 +19,8 @@
 (define (part i) (build-path dir (format "part-~a.ndjson" i)))
 
 (for ([i '(1 2 3)] [readings '((3.5 2.25) (4.0) (1.75 5.0))])
-  (write-ndjson (dataframe (list (series (make-list (length readings) (format "s~a" i))
-                                         #:name "station")
-                                 (series readings #:name "reading")))
+  (write-ndjson (dataframe [station (make-list (length readings) (format "s~a" i))]
+                           [reading readings])
                 (part i)))
 (printf "part-1.ndjson:\n~a" (file->string (part 1)))
 

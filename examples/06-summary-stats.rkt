@@ -10,10 +10,9 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series '("Boston" "New York" "Chicago" "Houston") #:name "city")
-         (series '(0.65 8.8 2.7 2.3)                         #:name "population_millions")
-         (series '(1630 1624 1837 1837)                      #:name "founded" #:dtype 'i32))))
+  (dataframe [city '("Boston" "New York" "Chicago" "Houston")]
+             [population_millions '(0.65 8.8 2.7 2.3)]
+             [founded '(1630 1624 1837 1837) #:dtype 'i32]))
 
 (displayln "input:")
 (displayln df)

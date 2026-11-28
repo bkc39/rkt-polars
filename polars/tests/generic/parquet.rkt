@@ -13,8 +13,9 @@
                     read-parquet scan-parquet write-parquet)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/expr-core col)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? null-count ref series shape)
+                    column-names dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/datetime dt-convert-time-zone dt-replace-time-zone)
            (only-in polars/private/generic/nullable is-not-null)
            (only-in polars/private/generic/operators [= p=] [> p>])
@@ -32,7 +33,7 @@
   (define-runtime-path data-dir "../../scribblings/data")
   (define scratch (make-temporary-directory "rkt-polars-parquet-~a"))
   (define (one-column value)
-    (dataframe (list (series (list value) #:name "x"))))
+    (dataframe [x (list value)]))
 
   (for ([name '("b" "c" "a")] [value '(2 3 1)])
     (write-parquet (one-column value) (build-path scratch (format "~a.parquet" name))))
@@ -42,7 +43,7 @@
   (define widened (build-path scratch "widened"))
   (make-directory widened)
   (for ([name '("a" "b")] [integer '(i32 i64)])
-    (write-parquet (dataframe (list (series '(1) #:name "a" #:dtype integer)))
+    (write-parquet (dataframe [a '(1) #:dtype integer])
                    (build-path widened (format "~a.parquet" name))))
   (define widened-message (message-of (lambda () (read-parquet (build-path widened "*.parquet")))))
   (check-regexp-match
@@ -174,7 +175,7 @@
   (make-directory small-then-large)
   (for ([file '("f0" "f1" "f2" "f3")]
         [rows (list (range 0 10) (range 10 20) (range 20 30) (range 30 1030))])
-    (write-parquet (dataframe (list (series rows #:name "a")))
+    (write-parquet (dataframe [a rows])
                    (build-path small-then-large (format "~a.parquet" file))))
   (check-equal? (~> (build-path small-then-large "f*.parquet")
                     scan-parquet
@@ -218,16 +219,21 @@
    #rx"^write-parquet: contract violation\n  expected: parquet-statistics/c\n  given: '[(]min median[)]"
    (message-of (lambda () (contracted:write-parquet produce out #:statistics '(min median)))))
   (check-true (frame=? (read-parquet out) produce))
-  (let ([spotty (dataframe
-                 (list (series (for/list ([i (in-range 1000)])
-                                 (if (zero? (modulo i 10)) polars-null (exact->inexact i)))
-                               #:name "f")
-                       (series (for/list ([i (in-range 1000)])
-                                 (if (zero? (modulo i 7)) polars-null (add1 (modulo i 3))))
-                               #:name "n")
-                       (series (for/list ([i (in-range 1000)])
-                                 (if (zero? (modulo i 9)) polars-null (vector-ref #(x y z) (modulo i 3))))
-                               #:name "c")))]
+  (let ([spotty (dataframe [f
+                            (for/list ([i (in-range 1000)])
+                              (if (zero? (modulo i 10))
+                                  polars-null
+                                  (exact->inexact i)))]
+                           [n
+                            (for/list ([i (in-range 1000)])
+                              (if (zero? (modulo i 7))
+                                  polars-null
+                                  (add1 (modulo i 3))))]
+                           [c
+                            (for/list ([i (in-range 1000)])
+                              (if (zero? (modulo i 9))
+                                  polars-null
+                                  (vector-ref #(x y z) (modulo i 3))))])]
         [path (build-path scratch "spotty.parquet")]
         [keeps (list (p> (col "f") 500.0) (is-not-null (col "n")) (p= (col "n") 2)
                      (is-not-null (col "c")))])
@@ -240,9 +246,11 @@
                                      (frame-filter spotty keep))))
                     '(#t #t #t #t #t)
                     (format "~s" statistics))))
-  (let ([halves (dataframe (list (series (for/list ([i (in-range 262144)])
-                                           (if (even? i) polars-null (add1 (modulo i 3))))
-                                         #:name "x")))]
+  (let ([halves (dataframe [x
+                            (for/list ([i (in-range 262144)])
+                              (if (even? i)
+                                  polars-null
+                                  (add1 (modulo i 3))))])]
         [path (build-path scratch "halves.parquet")])
     (write-parquet halves path)
     (check-equal? (for/list ([keep (list (is-not-null (col "x")) (p= (col "x") 2))])
@@ -259,8 +267,7 @@
                       (message-of (lambda () (explain late #:format 'dot))))
 
   (define foo-bar
-    (dataframe (list (series '(1 2 3) #:name "foo")
-                     (series (list polars-null "bak" "baz") #:name "bar"))))
+    (dataframe [foo '(1 2 3)] [bar (list polars-null "bak" "baz")]))
   (write-parquet foo-bar (pq-file "path.parquet"))
   (check-true (frame=? (read-parquet (pq-file "path.parquet")) foo-bar))
   (check-true (frame=? (collect (scan-parquet (pq-file "path.parquet"))) foo-bar))
@@ -309,9 +316,12 @@
 
 
   (define compressible
-    (dataframe (list (series (for/list ([i (in-range 20000)]) (modulo i 7)) #:name "n")
-                     (series (for/list ([i (in-range 20000)]) (if (even? i) "even" "odd"))
-                             #:name "s"))))
+    (dataframe [n
+                (for/list ([i (in-range 20000)])
+                  (modulo i 7))]
+               [s
+                (for/list ([i (in-range 20000)])
+                  (if (even? i) "even" "odd"))]))
   (define (written-size . kvs)
     (define path (pq-file "sized.parquet"))
     (apply-keywords write-parquet kvs compressible path)
@@ -347,9 +357,10 @@
   (delete-directory/files pq-dir)
 
   (define brussels
-    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
-                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
-                             #:name "t"))))
+    (dataframe [t
+                (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                      polars-null
+                      (moment 2021 7 1 #:tz "Europe/Brussels"))]))
   (define brussels-parquet (build-path scratch "brussels.parquet"))
   (write-parquet brussels brussels-parquet)
   (check-true (frame=? (read-parquet brussels-parquet) brussels))
@@ -358,7 +369,7 @@
 
   (define nul-parquet (build-path scratch "nul.parquet"))
   (define nul-plain (build-path scratch "nul-plain.parquet"))
-  (write-parquet (dataframe (list (series '("x" "y") #:name "s"))) nul-plain)
+  (write-parquet (dataframe [s '("x" "y")]) nul-plain)
   (check-nul-names-round-trip
    write-parquet nul-parquet (list (cons 'eager (eager-reader read-parquet)))
    (lambda (n read-with label)

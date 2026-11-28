@@ -11,12 +11,12 @@
 (require polars)
 
 (define observations
-  (dataframe (list (series '(1 3 5)       #:name "time"    #:dtype 'i32)
-                   (series '(100 300 500) #:name "reading" #:dtype 'i32))))
+  (dataframe ["time" '(1 3 5) #:dtype 'i32]
+             [reading '(100 300 500) #:dtype 'i32]))
 
 (define calibrations
-  (dataframe (list (series '(1 2 4)    #:name "time"   #:dtype 'i32)
-                   (series '(10 20 40) #:name "offset" #:dtype 'i32))))
+  (dataframe ["time" '(1 2 4) #:dtype 'i32]
+             [offset '(10 20 40) #:dtype 'i32]))
 
 (displayln "asof with exact-match tolerance:")
 (displayln (~> observations
@@ -24,14 +24,14 @@
 (newline)
 
 (define grouped-observations
-  (dataframe (list (series '("a" "a" "b" "b") #:name "sensor")
-                   (series '(3 5 3 5)         #:name "time"    #:dtype 'i32)
-                   (series '(300 500 30 50)   #:name "reading" #:dtype 'i32))))
+  (dataframe [sensor '("a" "a" "b" "b")]
+             ["time" '(3 5 3 5) #:dtype 'i32]
+             [reading '(300 500 30 50) #:dtype 'i32]))
 
 (define grouped-calibrations
-  (dataframe (list (series '("a" "a" "b" "b") #:name "sensor")
-                   (series '(1 4 1 4)         #:name "time"   #:dtype 'i32)
-                   (series '(10 40 100 400)   #:name "offset" #:dtype 'i32))))
+  (dataframe [sensor '("a" "a" "b" "b")]
+             ["time" '(1 4 1 4) #:dtype 'i32]
+             [offset '(10 40 100 400) #:dtype 'i32]))
 
 (displayln "asof by sensor:")
 (displayln (~> grouped-observations

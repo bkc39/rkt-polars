@@ -11,8 +11,9 @@
            (only-in threading ~>)
            (prefix-in contracted: polars/private/generic/csv)
            (only-in polars/private/csv float-precision-max)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height ref series shape)
+                    column-names dtype height ref series shape)
            (only-in polars/private/generic/csv read-csv scan-csv write-csv)
            (only-in polars/private/generic/reshape collect rename select [filter frame-filter])
            (only-in polars/private/generic/operators [> gt])
@@ -471,9 +472,9 @@
   (for ([row (in-list (nul-expected 'io-writes))])
     (match-define (list name xs arg expected) row)
     (apply-keywords write-csv (list (cons (keyword-of name) arg))
-                    (dataframe (list (series xs #:name "s"))) nul-written)
+                    (dataframe [s xs]) nul-written)
     (check-equal? (file->string nul-written) expected (format "~s" row)))
-  (write-csv (dataframe (list (series (list "x" polars-null) #:name "s"))) nul-written
+  (write-csv (dataframe [s (list "x" polars-null)]) nul-written
              #:null-value "N\u0000A")
   (check-equal? (column (read-csv nul-written #:null-values "N\u0000A") "s") (list "x" polars-null))
 

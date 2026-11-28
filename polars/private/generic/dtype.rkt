@@ -37,7 +37,7 @@
               "duplicate enum category"
   (define name '(enum category.symbol ...)))
 
-(define (infer-dtype elements)
+(define (infer-dtype who elements)
   (define all (if (vector? elements) (vector->list elements) elements))
   (define vals
     (for/list ([x (in-list all)]
@@ -53,8 +53,7 @@
     [(andmap string? vals) 'string]
     [(andmap symbol? vals) 'categorical]
     [(temporal-values-dtype vals)]
-    [else (error 'series
-                 "cannot infer a dtype from elements; pass #:dtype explicitly")]))
+    [else (error who "cannot infer a dtype from elements; pass #:dtype explicitly")]))
 
 (define integer-dtype-ranges
   (for/hash ([dtype (in-list '(int8 int16 int32 int64 uint8 uint16 uint32 uint64))]
@@ -93,18 +92,27 @@
     [#f #t]
     [(cons x _) (refuse-element elements (contract-name range) x)]))
 
+(define string-element/c (or/c string? polars-null?))
+
+(define category-element/c (or/c string? symbol? polars-null?))
+
+(define (element-range dtype)
+  (match (if (symbol? dtype) (hash-ref dtype-aliases dtype #f) dtype)
+    ['string string-element/c]
+    [(or 'categorical (? enum-dtype?)) category-element/c]
+    [canonical (hash-ref integer-dtype-ranges canonical #f)]))
+
 (define (series-elements/c dtype)
   (cond
     [(or (unsupplied-arg? dtype) (not dtype)) (and/c elements/c inferred-integers/c)]
-    [(and (symbol? dtype)
-          (hash-ref integer-dtype-ranges (hash-ref dtype-aliases dtype #f) #f))
+    [(element-range dtype)
      => (lambda (range)
           (and/c elements/c
                  (flat-contract-with-explanation (ranged-explanation range)
                                                  #:name 'series-elements/c)))]
     [else elements/c]))
 
-(define (dtype->constructor canonical vec?)
+(define (dtype->constructor who canonical vec?)
   (case canonical
     [(int8)    (if vec? series-new-i8/vec  series-new-i8)]
     [(int16)   (if vec? series-new-i16/vec series-new-i16)]
@@ -121,21 +129,21 @@
     [(null)
      (lambda (name elements)
        (unless (for/and ([x elements]) (polars-null? x))
-         (raise-arguments-error 'series "a 'null series holds only polars-null"
+         (raise-arguments-error who "a 'null series holds only polars-null"
                                 "elements" elements))
        (series-new-null name (sequence-length elements)))]
     [else
      (match canonical
        [(or 'date 'time 'datetime `(datetime . ,_) `(duration . ,_))
-        (lambda (name elements) (series-new-temporal 'series name elements canonical))]
+        (lambda (name elements) (series-new-temporal who name elements canonical))]
        [(or 'categorical (? enum-dtype?))
         (define strings (if vec? series-new-str/vec series-new-str))
         (lambda (name elements)
           (with-release ([s (strings name elements) series-drop])
             (if (eq? canonical 'categorical)
                 (series-cast s 'categorical)
-                (series-cast-enum 'series s canonical))))]
-       [_ (error 'series "no constructor for dtype ~v" canonical)])]))
+                (series-cast-enum who s canonical))))]
+       [_ (error who "no constructor for dtype ~v" canonical)])]))
 
 ;; The float constructors want flonums; accept exact reals too by coercing,
 ;; so (series '(1 2 3) #:dtype 'f64) does what the user means.

@@ -10,12 +10,12 @@
          polars)
 
 (define users
-  (dataframe (list (series '(1 2 3 4) #:name "uid" #:dtype 'i32)
-                   (series '("alice" "bob" "carol" "dora") #:name "name"))))
+  (dataframe [uid '(1 2 3 4) #:dtype 'i32]
+             [name '("alice" "bob" "carol" "dora")]))
 
 (define orders
-  (dataframe (list (series '(1 2 2 5)   #:name "uid" #:dtype 'i32)
-                   (series '(10 20 30 40) #:name "amount" #:dtype 'i32))))
+  (dataframe [uid '(1 2 2 5) #:dtype 'i32]
+             [amount '(10 20 30 40) #:dtype 'i32]))
 
 (define with-region
   (~> users (hstack (series '("east" "west" "west" "east") #:name "region"))))

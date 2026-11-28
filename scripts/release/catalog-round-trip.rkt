@@ -6,7 +6,8 @@
 (provide filter-round-trip)
 
 (define (filter-round-trip)
-  (~> (pl:dataframe (list (pl:series '(1 2 3) #:name "v")))
+  (define columns (list (pl:series '(1 2 3) #:name "v")))
+  (~> (pl:dataframe columns)
       (pl:filter (pl:> (pl:col "v") 1))
       (pl:ref "v")
       pl:series->list))

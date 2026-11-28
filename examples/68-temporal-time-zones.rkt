@@ -37,8 +37,7 @@
                  (dt-replace-time-zone clocks "Europe/Brussels")))
 
 (define stamps
-  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")
-                           #:name "at"))))
+  (dataframe [at '("2021-03-27T00:00:00+0100" "2021-03-29T00:00:00+0200")]))
 (displayln (select stamps
                    (~> (str->datetime "at" #:format "%Y-%m-%dT%H:%M:%S%z") (alias "utc"))
                    (~> (str->datetime "at" #:format "%Y-%m-%dT%H:%M:%S%z")
@@ -46,7 +45,7 @@
                        (alias "brussels"))
                    (~> (str->datetime "at" #:time-zone "Asia/Tokyo") (alias "tokyo"))))
 
-(define flights (dataframe (list landed (series '(1 2 3) #:name "n"))))
+(define flights (dataframe landed [n '(1 2 3)]))
 (displayln (filter flights (> (col "landed") (moment 2021 3 27 12 #:tz "Europe/Brussels"))))
 (displayln (select flights (col '(datetime microseconds "Europe/Brussels"))))
 (displayln (describe landed))

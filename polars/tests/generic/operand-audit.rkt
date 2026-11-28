@@ -13,7 +13,8 @@
            (only-in polars/private/foreign
                     dataframe-column series-add series-add/who series-cast series-name
                     series-not series-rename series-slice)
-           (only-in polars/private/generic/core dataframe dtype series series? wrap-series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core dtype series series? wrap-series)
            (only-in polars/private/generic/operators
                     != < <= = > >= mod otherwise p* p+ p- p-and p-not p-or p-when p-xor p/ then)
            (only-in polars/tests/generic/operand-audit-classes
@@ -54,7 +55,7 @@
     (wrap-series (series-cast (series (list polars-null polars-null) #:name "n") 'null)))
 
   (define (selected e [s nulls])
-    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe (list s))
+    (wrap-series (dataframe-column (dataframe-select-exprs (dataframe s)
                                                            (list (expr-alias e "n")))
                                    "n")))
 

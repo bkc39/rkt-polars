@@ -20,8 +20,8 @@
   (map (lambda (name) (dtype (ref df name))) (column-names df)))
 
 (define readings
-  (dataframe (list (series '("north" "south" "north") #:name "station")
-                   (series (list 3.5 polars-null 2.25) #:name "reading"))))
+  (dataframe [station '("north" "south" "north")]
+             [reading (list 3.5 polars-null 2.25)]))
 (define path (make-temporary-file "rkt-polars-readings-~a.json"))
 (write-json readings path)
 (printf "written: ~a\n" (file->string path))

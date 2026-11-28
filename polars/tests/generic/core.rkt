@@ -5,20 +5,20 @@
            (only-in gregor ->datetime/local ->posix date datetime moment now)
            (only-in gregor/period days hours microseconds milliseconds months nanoseconds weeks)
            (only-in gregor/time time)
+           (only-in racket/contract blame-positive exn:fail:contract:blame-object)
            (only-in racket/match match match-define)
            (only-in racket/sequence sequence->list)
            (only-in racket/string string-contains?)
+           (only-in syntax/location quote-module-name)
            (only-in threading ~>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign
-                    dataframe->string dataframe-column dataframe-column-names dataframe-new
-                    polars-null series-cast series-drop-count series-dtype series-len series-name
-                    series-new-i32 series-new-i64 series-new-str)
-           (prefix-in contracted: polars/private/generic/core)
+                    dataframe->string polars-null series-cast series-drop-count series-dtype
+                    series-len series-name series-new-i64 series-new-str)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
                     column-name column-names dataframe? dtype height len null-count ref series
                     series? shape shape/values width wrap-series)
-           (only-in (submod polars/private/generic/core internal) dataframe)
            (only-in polars/private/generic/convert in-dataframe-columns in-dataframe-rows)
            (only-in polars/private/generic/operators [= p=])
            (only-in polars/private/generic/reshape filter pivot select)
@@ -31,9 +31,9 @@
   (define floats (series '(1.5 2.0 4.25 8.0) #:name "floats"))
   (define withnull (series (list 10 polars-null 30) #:dtype 'i32))
   (define frame
-    (dataframe (list (series '("alice" "bob" "carol") #:name "user")
-                     (series '(10 25 18) #:name "score" #:dtype 'i32)
-                     (series '(1.2 3.5 2.0) #:name "cost"))))
+    (dataframe [user '("alice" "bob" "carol")]
+               [score '(10 25 18) #:dtype 'i32]
+               [cost '(1.2 3.5 2.0)]))
 
   (check-equal? (format "~a" ints) (series->string ints))
   (define printed-binary
@@ -78,6 +78,15 @@
   (check-equal? (for/list ([x dests]) x) (list 'IAH polars-null 'ATL 'IAH))
   (check-equal? (series-dtype (series (vector "a" 'b) #:dtype 'categorical)) 'categorical)
   (check-exn #rx"cannot infer a dtype" (lambda () (series (list 'a "b"))))
+  (for ([row (in-list (list (list 'string "(or/c string? polars-null?)")
+                            (list 'categorical "(or/c string? symbol? polars-null?)")
+                            (list '(enum a) "(or/c string? symbol? polars-null?)")))])
+    (match-define (list spec expected) row)
+    (define e (with-handlers ([exn:fail:contract? values]) (series '(1) #:name "x" #:dtype spec)))
+    (check-regexp-match (regexp (string-append "^series: contract violation\n  expected: "
+                                               (regexp-quote expected) "\n  given: 1\n"))
+                        (exn-message e))
+    (check-equal? (blame-positive (exn:fail:contract:blame-object e)) (quote-module-name)))
   (define levels (series '("info" debug) #:dtype '(enum debug info)))
   (check-equal? (dtype levels) '(enum debug info))
   (check-equal? (ref levels 0) 'info)
@@ -99,7 +108,7 @@
     (check-equal? (dtype levels) (list 'enum 'c held))
     (check-cells levels (list held 'c)))
   (define nul-codes
-    (dataframe (list (series (list "a" "a\u0000b" "c") #:name "c" #:dtype 'categorical))))
+    (dataframe [c (list "a" "a\u0000b" "c") #:dtype 'categorical]))
   (check-equal? (series-cells (ref (filter nul-codes (p= (col "c") held-nul)) "c")) (list held-nul))
   (check-equal? (series->list (p= (series (list 'a held-nul 'c) #:dtype (list 'enum 'a held-nul 'c))
                                   held-nul))
@@ -109,7 +118,7 @@
   ;; ref on series and dataframe; df ref returns a wrapped series
   (check-equal? (ref withnull 0) 10)
   (check-equal? (ref withnull 1) polars-null)
-  (define df (dataframe (list ints floats)))
+  (define df (dataframe ints floats))
   (check-pred series? (ref df "floats"))
   (check-pred series? (ref df 0))
   (check-equal? (series-name (ref df "floats")) "floats")
@@ -401,7 +410,7 @@
   (define (shown-unwrapped nul n)
     (with-environment-variable #"POLARS_TABLE_WIDTH" #"200"
       (list (format "~a" nul) (dataframe->string nul)
-            (format "~a" (dataframe (list (series (list n) #:name "v")))))))
+            (format "~a" (dataframe [v (list n)])))))
   (for ([n (in-list nul-names)])
     (define nul (nul-frame n))
     (check-equal? (column-names nul) (list "id" n))
@@ -424,10 +433,9 @@
     (check-equal? (sequence->list (in-dataframe-rows named)) '(#(1 3) #(2 4)))
     (check-equal? (column-names (select named (column-names named))) (list n "a"))
     (check-exn (regexp (regexp-quote n))
-               (lambda () (dataframe (list (series '(1) #:name n) (series '(2) #:name n))))))
+               (lambda () (dataframe ['(1) #:name n] ['(2) #:name n]))))
   (define collided
-    (pivot (dataframe (list (series '(0 0) #:name "id") (series '("a" "a\u0000b") #:name "k")
-                            (series '(1 2) #:name "v")))
+    (pivot (dataframe [id '(0 0)] [k '("a" "a\u0000b")] [v '(1 2)])
            #:on '("k") #:index '("id") #:values '("v")))
   (check-equal? (column-names collided) '("id" "a" "a\u0000b"))
   (check-equal? (series->list (ref collided 2)) '(2))
@@ -435,23 +443,7 @@
   (check-equal? (for/list ([c (in-dataframe-columns collided)]) (series->list c)) '((0) (1) (2)))
   (check-equal? (sequence->list (in-dataframe-rows collided)) '(#(0 1 2)))
   (check-equal? (column-names (select collided (column-names collided))) '("id" "a" "a\u0000b"))
-  (check-equal? (column-names (dataframe (list (series '(1) #:name "a")
-                                              (series '(2) #:name "a\u0000b"))))
+  (check-equal? (column-names (dataframe [a '(1)] ["a\u0000b" '(2)]))
                 '("a" "a\u0000b"))
-  (check-equal? (width (dataframe (list (series '(1) #:name "a\u0000x")
-                                        (series '(1) #:name "a\u0000y"))))
-                2)
-
-  (test-case "the reference's bridge from polars/ffi: dataframe takes raw series"
-    (define raw (series-new-i32 "n" '(1 2)))
-    (check-equal? (series->list (ref (contracted:dataframe (list raw)) "n")) '(1 2))
-    (check-exn #rx"^len: contract violation:\n  expected: sized[?]" (lambda () (len raw)))
-    (check-exn #rx"^dataframe: contract violation\n  expected: Series-ptr[?]"
-               (lambda () (contracted:dataframe (list 1))))
-    (define raw-frame (dataframe-new (list raw (series-new-str "s" '("a" "b")))))
-    (define rebuilt
-      (contracted:dataframe (for/list ([name (in-list (dataframe-column-names raw-frame))])
-                              (dataframe-column raw-frame name))))
-    (check-pred dataframe? rebuilt)
-    (check-equal? (shape rebuilt) '(2 2))
-    (check-equal? (series->list (ref rebuilt "s")) '("a" "b"))))
+  (check-equal? (width (dataframe ["a\u0000x" '(1)] ["a\u0000y" '(1)]))
+                2))

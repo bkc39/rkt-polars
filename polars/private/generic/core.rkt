@@ -1,9 +1,8 @@
 #lang racket/base
 
 (require racket/generic
-         (only-in racket/contract/base -> ->i contract-out listof)
+         (only-in racket/contract/base ->i contract-out)
          (only-in racket/list check-duplicates)
-         (only-in racket/match match*)
          syntax/parse/define
          (for-syntax racket/base)
          (only-in ffi/unsafe prop:cpointer)
@@ -16,9 +15,8 @@
          (only-in polars/private/dtype-spelling normalize-dtype)
          polars/private/generic/printing)
 
-(provide (except-out (all-defined-out) dataframe series)
+(provide (except-out (all-defined-out) series series-of)
          (contract-out
-          [dataframe (-> (listof Series-ptr?) dataframe?)]
           [series (->i ([elements (dtype) (series-elements/c dtype)])
                        (#:name [name utf-8-name/c] #:dtype [dtype datetime-zone/c])
                        [result series?])]))
@@ -88,32 +86,12 @@
 (define (dataframe? v) (dataframe-rec? v))
 (define (wrap-dataframe ptr) (dataframe-rec ptr))
 
-(define (frame-columns-problem columns)
-  (define heights (map series-len columns))
-  (define names (map series-name columns))
-  (match* ((for/first ([h (in-list heights)] [n (in-list names)] #:unless (= h (car heights)))
-             (list n h))
-           (check-duplicates names))
-    [((list name height) _)
-     (format "could not create a new DataFrame: height of column '~a' (~a) does not match ~a"
-             name height (format "height of column '~a' (~a)" (car names) (car heights)))]
-    [(#f (? string? name))
-     (format "could not create a new DataFrame: column with name '~a' has more than one occurrence"
-             name)]
-    [(#f #f) #f]))
-
 (define (column-problem present names)
   (cond
     [(for/first ([name (in-list names)] #:unless (member name present)) name)
      => (lambda (name) (format "~s not found" name))]
     [(check-duplicates names) => (lambda (name) (format "~s named more than once" name))]
     [else #f]))
-
-(define (dataframe series-list)
-  (wrap-dataframe
-   (or (dataframe-new/raw series-list)
-       (raise-arguments-error 'dataframe (or (frame-columns-problem series-list)
-                                             "could not create a new DataFrame")))))
 
 ;; ---------------------------------------------------------------------------
 ;; the lazyframe wrapper
@@ -152,10 +130,13 @@
 ;; ---------------------------------------------------------------------------
 ;; series: keyword constructor with dtype inference (see dtype.rkt)
 
-(define (series elements #:name [name ""] #:dtype [dtype #f])
-  (define canonical (if dtype (normalize-dtype dtype 'series) (infer-dtype elements)))
-  (define ctor (dtype->constructor canonical (vector? elements)))
+(define (series-of who elements name dtype)
+  (define canonical (if dtype (normalize-dtype dtype who) (infer-dtype who elements)))
+  (define ctor (dtype->constructor who canonical (vector? elements)))
   (wrap-series (ctor name (coerce-elements canonical elements))))
+
+(define (series elements #:name [name ""] #:dtype [dtype #f])
+  (series-of 'series elements name dtype))
 
 ;; ---------------------------------------------------------------------------
 ;; ref dispatch helpers (referenced by the struct methods above)
@@ -199,4 +180,4 @@
                                         (column-problem (dataframe-column-names d) (list name)))))]))
 
 (module+ internal
-  (provide dataframe))
+  (provide series-of))

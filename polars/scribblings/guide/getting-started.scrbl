@@ -17,18 +17,18 @@
 
 @section[#:tag "gs-reading-writing"]{Reading & writing}
 
-A @tech{dataframe} is built from named @tech{series}. gregor dates become a
-date column, as Python's @tt{date}s do.
+A @tech{dataframe} is built from column clauses, @racket[[name values]], as
+Python's dict of lists is. gregor dates become a date column, as Python's
+@tt{date}s do. A clause headed by a bound identifier is an error, so the
+@racket["height"] column is named by a string: @racket[height] is polars' verb.
 
 @examples[#:eval ev #:label #f
 (define df
   (dataframe
-   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                 #:name "name")
-         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
-                 #:name "birthdate")
-         (series '(57.9 72.5 53.6 83.1) #:name "weight")
-         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
+   [name '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")]
+   [birthdate (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))]
+   [weight '(57.9 72.5 53.6 83.1)]
+   ["height" '(1.56 1.77 1.65 1.75)]))
 df
 ]
 
@@ -131,10 +131,9 @@ instead); no @tt{name.prefix}.
 @examples[#:eval ev #:label #f
 (define df2
   (dataframe
-   (list (series '("Ben Brown" "Daniel Donovan" "Alice Archer" "Chloe Cooper")
-                 #:name "name")
-         (series '(#t #f #f #f) #:name "parent")
-         (series '(1 2 3 4) #:name "siblings"))))
+   [name '("Ben Brown" "Daniel Donovan" "Alice Archer" "Chloe Cooper")]
+   [parent '(#t #f #f #f)]
+   [siblings '(1 2 3 4)]))
 (join df df2 #:on '("name") #:how 'left)
 ]
 
@@ -145,12 +144,10 @@ API gap: @racket[#:on] takes a list of names, not a bare name.
 @examples[#:eval ev #:label #f
 (define df3
   (dataframe
-   (list (series '("Ethan Edwards" "Fiona Foster" "Grace Gibson" "Henry Harris")
-                 #:name "name")
-         (series (list (date 1977 5 10) (date 1975 6 23) (date 1973 7 22) (date 1971 8 3))
-                 #:name "birthdate")
-         (series '(67.9 72.5 57.6 93.1) #:name "weight")
-         (series '(1.76 1.6 1.66 1.8) #:name "height"))))
+   [name '("Ethan Edwards" "Fiona Foster" "Grace Gibson" "Henry Harris")]
+   [birthdate (list (date 1977 5 10) (date 1975 6 23) (date 1973 7 22) (date 1971 8 3))]
+   [weight '(67.9 72.5 57.6 93.1)]
+   ["height" '(1.76 1.6 1.66 1.8)]))
 (vstack df df3)
 ]
 

@@ -33,7 +33,7 @@
   (wrap-series
    (if (temporal-dtype? dt)
        (series-repeat-temporal who name value n dt)
-       ((dtype->constructor dt #f) name (coerce-elements dt (make-list n value))))))
+       ((dtype->constructor who dt #f) name (coerce-elements dt (make-list n value))))))
 
 (define integer-ranges
   (for*/hasheq ([bits (in-list '(8 16 32 64))]

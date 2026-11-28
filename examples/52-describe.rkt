@@ -15,18 +15,21 @@
          polars)
 
 (define flights
-  (~> (dataframe
-       (list (series (list "UA" "AA" "UA" polars-null "DL") #:name "carrier")
-             (series (list 1400 733 polars-null 1089 762) #:name "distance")
-             (series (list #t #f #t #t polars-null) #:name "on_time")
-             (series (list (datetime 2013 1 1 5) (datetime 2013 1 1 6)
-                           (datetime 2013 1 2 7) (datetime 2013 1 3 8)
-                           (datetime 2013 1 3 9))
-                     #:name "scheduled")
-             (series (list (datetime 2013 1 1 5 12) (datetime 2013 1 1 5 57)
-                           polars-null (datetime 2013 1 3 9 30)
-                           (datetime 2013 1 3 9 4))
-                     #:name "departed")))
+  (~> (dataframe [carrier (list "UA" "AA" "UA" polars-null "DL")]
+                 [distance (list 1400 733 polars-null 1089 762)]
+                 [on_time (list #t #f #t #t polars-null)]
+                 [scheduled
+                  (list (datetime 2013 1 1 5)
+                        (datetime 2013 1 1 6)
+                        (datetime 2013 1 2 7)
+                        (datetime 2013 1 3 8)
+                        (datetime 2013 1 3 9))]
+                 [departed
+                  (list (datetime 2013 1 1 5 12)
+                        (datetime 2013 1 1 5 57)
+                        polars-null
+                        (datetime 2013 1 3 9 30)
+                        (datetime 2013 1 3 9 4))])
       (with-columns (alias (- (col "departed") (col "scheduled")) "delay")
                     (alias (cast "scheduled" 'date) "day"))))
 

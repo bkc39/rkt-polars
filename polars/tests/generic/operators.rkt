@@ -19,7 +19,8 @@
                     dataframe-column dataframe-column-names dataframe-drop-count series-cast
                     series-drop series-drop-count series-name)
            (only-in polars/private/resource with-release)
-           (only-in polars/private/generic/core dataframe dtype len ref series series? wrap-series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core dtype len ref series series? wrap-series)
            (only-in polars/private/generic/logical p-and p-not p-or p-xor)
            (only-in polars/private/generic/math p-abs pow)
            (only-in polars/private/generic/reductions alias)
@@ -195,8 +196,7 @@
   (check-equal? (dataframe-column-names (dataframe-with-columns ops-df (list (p/ (col "cost")))))
                 '("group" "value" "cost"))
   (check-equal? (expr-meta-output-name (p/ (expr-alias (col "cost") "c"))) "c")
-  (define c-frame (dataframe (list (series '(1.0 2.0) #:name "c1") (series '(4.0 8.0) #:name "c2")
-                                   (series '(1 2) #:name "n"))))
+  (define c-frame (dataframe [c1 '(1.0 2.0)] [c2 '(4.0 8.0)] [n '(1 2)]))
   (define (reciprocal-names . exprs)
     (dataframe-column-names (dataframe-select-exprs c-frame exprs)))
   (check-equal? (reciprocal-names (p/ (col #rx"^c"))) '("c1" "c2"))
@@ -232,12 +232,12 @@
   (check-equal? (series->list (p- (series '(1 -2 3)))) '(-1 2 -3))
   (check-equal? (series-name (p- (series '(1 -2 3) #:name "v"))) "v")
   (define replaced
-    (dataframe-with-columns (dataframe (list (series '(10 25 7) #:name "v")))
+    (dataframe-with-columns (dataframe [v '(10 25 7)])
                             (list (p/ (col "v")))))
   (check-equal? (dataframe-column-names replaced) '("v"))
   (check-equal? (series->list (dataframe-column replaced "v")) '(0 0 0))
   (check-exn #rx"^mod: arity mismatch" (lambda () (mod (col "v"))))
-  (check-equal? (~> (dataframe (list (series '(10 25 7) #:name "v")))
+  (check-equal? (~> (dataframe [v '(10 25 7)])
                     (dataframe-select-exprs (list (expr-alias (p- (col "v")) "neg")))
                     (dataframe-column "neg")
                     series->list)
@@ -339,7 +339,7 @@
       (match-define (list op exact) (hash-ref operator-procedures name))
       (define s (series cells #:dtype dt #:name "n"))
       (define result-dtype
-        (~> (dataframe (list s)) (select (expr-alias (on-side side op (col "n") v) "n")) (ref "n")
+        (~> (dataframe s) (select (expr-alias (on-side side op (col "n") v) "n")) (ref "n")
             dtype))
       (define exact-values
         (for/list ([x cells]) (if (polars-null? x) x (on-side side exact x v))))
@@ -452,7 +452,7 @@
     (define i64-divisor (series '(3 2)))
     (check-equal? (division-drops u64-divisor) (add1 (division-drops i64-divisor)))
     (define signed-unsigned
-      (dataframe (list (series '(10 -7) #:name "i") (series '(3 2) #:dtype 'u64 #:name "u"))))
+      (dataframe [i '(10 -7)] [u '(3 2) #:dtype 'u64]))
     (define floored
       (select signed-unsigned (p/ (col "i") (col "u")) (expr-alias (p/ (col "i") (expt 2 63)) "big")))
     (define (dtypes-and-values df names)
@@ -470,11 +470,11 @@
     (define deep (select signed-unsigned (nested 16 values) (expr-alias (nested 16 p-abs) "abs")))
     (check-equal? (dtypes-and-values deep '("i" "abs")) '((int64 (10 -7)) (int64 (10 7))))
     (define dynamic-typing
-      (dataframe (list (series '(3 200 7) #:dtype 'u8 #:name "b")
-                       (series '(3 2 2) #:dtype 'u64 #:name "u")
-                       (series '(10.0 -7.0 9.0) #:dtype 'f32 #:name "f")
-                       (series (list polars-null polars-null polars-null) #:name "n")
-                       (series '("10" "-7" "9") #:name "s"))))
+      (dataframe [b '(3 200 7) #:dtype 'u8]
+                 [u '(3 2 2) #:dtype 'u64]
+                 [f '(10.0 -7.0 9.0) #:dtype 'f32]
+                 [n (list polars-null polars-null polars-null)]
+                 [s '("10" "-7" "9")]))
     (define (typed e)
       (car (dtypes-and-values (select dynamic-typing (expr-alias e "q")) '("q"))))
     (define nulls (list polars-null polars-null polars-null))
@@ -496,7 +496,7 @@
       (match-define (list e expected) row)
       (check-equal? (typed e) expected (format "~a" e)))
     (define grouped-null-quotient
-      (~> (dataframe (list (series '("x" "x" "y") #:name "g")))
+      (~> (dataframe [g '("x" "x" "y")])
           (group-by "g")
           (agg (expr-alias (p/ (lit polars-null) (lit 2)) "q"))))
     (check-equal? (dtypes-and-values grouped-null-quotient '("q"))
@@ -563,8 +563,7 @@
                       (list (lambda () (p+ "x" (series (list (date 2024 1 1)))))
                             #rx"^[+]: [+] not allowed on str and date")
                       (list (lambda ()
-                              (select (dataframe (list (series '("due ") #:name "s")
-                                                       (series (list (date 2024 1 1)) #:name "d")))
+                              (select (dataframe [s '("due ")] [d (list (date 2024 1 1))])
                                       (p+ (col "s") (col "d"))))
                             #rx"^select: [+] not allowed on str and date")))])
       (match-define (list thunk message) row)
@@ -579,7 +578,7 @@
                (lambda () (< (col "t") past-local-range))))
 
   (test-case "the reference's when / then / otherwise example"
-    (define climate (dataframe (list (series '(-5 12 31) #:name "c"))))
+    (define climate (dataframe [c '(-5 12 31)]))
     (define felt
       (~> climate
           (with-columns (alias (~> (p-when (< (col "c") 0)) (then "freezing")

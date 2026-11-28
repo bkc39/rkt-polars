@@ -11,12 +11,11 @@
 (require polars)
 
 (define df
-  (dataframe
-   (list (series (list -8 polars-null 12)     #:name "i8s"  #:dtype 'i8)
-         (series (list -300 polars-null 1200) #:name "i16s" #:dtype 'i16)
-         (series (list 0 polars-null 255)     #:name "u8s"  #:dtype 'u8)
-         (series (list 0 polars-null 65535)   #:name "u16s" #:dtype 'u16)
-         (series (list 1.5 polars-null 2.25)  #:name "f32s" #:dtype 'f32))))
+  (dataframe [i8s (list -8 polars-null 12) #:dtype 'i8]
+             [i16s (list -300 polars-null 1200) #:dtype 'i16]
+             [u8s (list 0 polars-null 255) #:dtype 'u8]
+             [u16s (list 0 polars-null 65535) #:dtype 'u16]
+             [f32s (list 1.5 polars-null 2.25) #:dtype 'f32]))
 
 (displayln df)
 

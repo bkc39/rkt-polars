@@ -9,7 +9,7 @@
 (require polars (only-in racket/match match-define))
 
 (define df
-  (dataframe (list (series (list 1 polars-null 3) #:name "x"))))
+  (dataframe [x (list 1 polars-null 3)]))
 
 (displayln
  (~> df

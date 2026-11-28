@@ -4,7 +4,8 @@
   (require rackunit (only-in threading ~>)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/foreign polars-null)
-           (only-in polars/private/generic/core column-names dataframe ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core column-names ref series)
            (only-in polars/private/generic/reductions alias)
            (only-in polars/private/generic/reshape select with-columns)
            (prefix-in contracted: polars/private/generic/cumulative)
@@ -12,7 +13,7 @@
            (only-in (submod polars/private/generic/cumulative internal) diff shift)
            (only-in polars/tests/generic/test-fixtures check-selected check-selected-as-is)
            (only-in polars/tests/test-helpers contract-violation-of))
-  (define df (dataframe (list (series '(1 2 3 4 5) #:name "x" #:dtype 'i64))))
+  (define df (dataframe [x '(1 2 3 4 5) #:dtype 'i64]))
   (define out
     (~> df (with-columns
              (alias (cum-sum "x") "cs")
@@ -41,7 +42,7 @@
   (check-equal? (c "d1" 1) 1)             ; 2-1
   (define (columns d)
     (map (lambda (name) (series->list (ref d name))) (column-names d)))
-  (define steps (dataframe (list (series '(1 3 6 10) #:name "v"))))
+  (define steps (dataframe [v '(1 3 6 10)]))
   (check-equal? (columns (select steps
                                  (alias (shift "v") "down")
                                  (alias (shift "v" #:n -1 #:fill-value 0) "up")
@@ -53,7 +54,7 @@
 
   (test-case "the reference's running-aggregate example"
     (define none polars-null)
-    (define tally (dataframe (list (series (list 1 2 none 4) #:name "n"))))
+    (define tally (dataframe [n (list 1 2 none 4)]))
     (check-selected
      tally
      (list (list "sum" (cum-sum "n") (list 1 3 none 7))

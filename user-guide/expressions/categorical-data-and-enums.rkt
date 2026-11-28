@@ -26,10 +26,9 @@
 
 (define logs
   (dataframe
-   (list (series '(debug info debug error) #:name "level" #:dtype log-levels)
-         (series '("process id: 525" "Service started correctly"
-                   "startup time: 67ms" "Cannot connect to DB!")
-                 #:name "message"))))
+   [level '(debug info debug error) #:dtype log-levels]
+   [message '("process id: 525" "Service started correctly"
+              "startup time: 67ms" "Cannot connect to DB!")]))
 
 (define non-debug-logs (filter logs (> (col "level") 'debug)))
 (displayln non-debug-logs)
@@ -47,29 +46,29 @@
 ;; API gap: no pl.Categories; every categorical shares Polars' one global
 ;; mapping, so the species are a plain categorical.
 (displayln
- (dataframe (list (series '(Polar Brown Panda Brown Polar) #:name "species"))))
+ (dataframe [species '(Polar Brown Panda Brown Polar)]))
 
 ;; --- lexical comparison with strings -------------------------------------
 (displayln
- (~> (dataframe (list (rename bears-cat "categorical")))
+ (~> (dataframe (rename bears-cat "categorical"))
      (with-columns (alias (< (col "categorical") "Cat") "categorical < \"Cat\""))))
 
 (displayln
- (~> (dataframe (list (rename bears-cat "categorical")
-                      (series '("Panda" "Brown" "Brown" "Polar" "Polar") #:name "string")))
+ (~> (dataframe (rename bears-cat "categorical")
+                ["string" '("Panda" "Brown" "Brown" "Polar" "Polar")])
      (with-columns (alias (= (col "categorical") (col "string")) "categorical == string"))))
 
 ;; --- combining categorical columns ---------------------------------------
 (define male-bears
-  (dataframe (list (series '(Polar Brown Panda) #:name "species")
-                   (series '(450 500 110) #:name "weight"))))
+  (dataframe [species '(Polar Brown Panda)]
+             [weight '(450 500 110)]))
 (define female-bears
-  (dataframe (list (series '(Brown Polar Panda) #:name "species")
-                   (series '(340 200 90) #:name "weight"))))
+  (dataframe [species '(Brown Polar Panda)]
+             [weight '(340 200 90)]))
 (displayln (vstack male-bears female-bears))
 
 ;; --- categorical encodings -----------------------------------------------
 ;; API gap: no Series.extend; stack one-column frames instead.
 (define cat-bears (series '(Polar Panda Brown Brown Polar) #:dtype 'categorical))
 (define cat2-series (series '(Panda Brown Brown Polar Polar) #:dtype 'categorical))
-(displayln (ref (vstack (dataframe (list cat-bears)) (dataframe (list cat2-series))) 0))
+(displayln (ref (vstack (dataframe cat-bears) (dataframe cat2-series)) 0))

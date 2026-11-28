@@ -14,7 +14,8 @@
            (only-in polars/private/expr col lit)
            (only-in polars/private/foreign
                     polars-null polars-null? series-drop series-drop-count series-name)
-           (only-in polars/private/generic/core column-names dataframe dtype height len ref series)
+           (only-in polars/private/generic/clauses dataframe)
+           (only-in polars/private/generic/core column-names dtype height len ref series)
            (only-in polars/private/generic/nullable fill-null)
            (only-in polars/private/generic/operands const-series)
            (prefix-in p: polars/private/generic/operators)
@@ -34,7 +35,7 @@
            (only-in polars/tests/generic/test-fixtures check-selected nul-expected)
            (only-in polars/tests/test-helpers drops-during make-moment with-environment-variable))
   (define df
-    (dataframe (list (series (list (datetime 2024 1 2 8 30 5)) #:name "ts"))))
+    (dataframe [ts (list (datetime 2024 1 2 8 30 5))]))
   (define out
     (~> df
         (with-columns
@@ -57,8 +58,7 @@
                 2024)
   ;; batch 2: ISO/calendar fields, date/time, subsecond, timestamp, truncate
   (define dt2
-    (dataframe (list (series (list (datetime 2024 1 2 3 4 5)) #:name "ts")
-                     (series '(1704164645123) #:name "t" #:dtype 'i64))))
+    (dataframe [ts (list (datetime 2024 1 2 3 4 5))] [t '(1704164645123) #:dtype 'i64]))
   (define m (~> dt2 (with-columns (alias (cast "t" '(datetime milliseconds)) "ts_ms"))))
   (define o2
     (~> m (with-columns
@@ -95,12 +95,10 @@
   (check-not-eq? (c0 "bucket") polars-null)   ; truncated datetime[ms]
 
   (define calendar
-    (dataframe
-     (list (series (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2)) #:name "d")
-           (series (list (datetime 2013 5 31 5) (datetime 2013 6 1) (datetime 2013 6 2 1 2 3 500))
-                   #:name "dt")
-           (series (list (time 1) (time 5 6 7 123456000) (time 23)) #:name "t")
-           (series (list (hours 1) (hours 2) (nanoseconds 1)) #:name "dur"))))
+    (dataframe [d (list (date 2013 5 31) (date 2013 6 1) (date 2013 6 2))]
+               [dt (list (datetime 2013 5 31 5) (datetime 2013 6 1) (datetime 2013 6 2 1 2 3 500))]
+               [t (list (time 1) (time 5 6 7 123456000) (time 23))]
+               [dur (list (hours 1) (hours 2) (nanoseconds 1))]))
   (check-equal? (c0 "time") (time 3 4 5))
   (check-equal? (c0 "bucket") (datetime 2024 1 2 3))
   (check-equal? (ref (ref m "ts_ms") 0) (datetime 2024 1 2 3 4 5 123000000))
@@ -141,7 +139,7 @@
   (check-exn #rx"^is-in: the values have no common dtype: their time zones differ\n"
              (lambda () (is-in "d" (list (datetime 2013 5 31) (moment 2013 6 2 #:tz "UTC")))))
   (define instants
-    (dataframe (list (series (list (datetime 2013 6 1) (datetime 2013 6 2 1 2 3)) #:name "dt"))))
+    (dataframe [dt (list (datetime 2013 6 1) (datetime 2013 6 2 1 2 3))]))
   (for ([vals (list (list (moment 2013 6 1 2 #:tz "Europe/Brussels")
                           (moment 2013 6 2 3 2 3 #:tz "Europe/Brussels"))
                     (list (moment 2013 6 1 1 #:tz 3600) (moment 2013 6 2 1 2 3 #:tz "UTC")))])
@@ -171,8 +169,7 @@
   (check-equal? (literal (time 5 6 7 123456789)) (list 'time (time 5 6 7 123456789)))
   (check-equal? (literal (hours 1)) (list '(duration microseconds) (microseconds 3600000000)))
   (check-equal? (literal (nanoseconds -1)) (list '(duration nanoseconds) (nanoseconds -1)))
-  (check-equal? (for/list ([x (~> (dataframe (list (series (list (date 2013 1 1) polars-null)
-                                                           #:name "d")))
+  (check-equal? (for/list ([x (~> (dataframe [d (list (date 2013 1 1) polars-null)])
                                  (select (fill-null (col "d") (date 2000 1 1)))
                                  (ref "d"))])
                   x)
@@ -203,11 +200,11 @@
 
   ;; the guide's Time zones section, upstream's example
   (define tz-naive
-    (~> (dataframe (list (series '("2021-03-27 03:00" "2021-03-28 03:00") #:name "tz_naive")))
+    (~> (dataframe [tz_naive '("2021-03-27 03:00" "2021-03-28 03:00")])
         (select (str->datetime "tz_naive"))
         (ref "tz_naive")))
   (define tz-aware (~> tz-naive (dt-replace-time-zone "UTC") (rename "tz_aware")))
-  (define tz-df (dataframe (list tz-naive tz-aware)))
+  (define tz-df (dataframe tz-naive tz-aware))
   (check-equal? (column-names tz-df) '("tz_naive" "tz_aware"))
   (check-equal? (dtype (ref tz-df "tz_naive")) '(datetime microseconds #f))
   (check-equal? (dtype (ref tz-df "tz_aware")) '(datetime microseconds "UTC"))
@@ -233,9 +230,10 @@
 
   ;; the guide's Mixed offsets section, upstream's example
   (define offsets
-    (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
-                               "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")
-                             #:name "data"))))
+    (dataframe [data
+                '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
+                                             "2021-03-29T00:00:00+0200"
+                                             "2021-03-30T00:00:00+0200")]))
   (define parsed (select offsets (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")))
   (check-equal? (dtype (ref parsed "data")) '(datetime microseconds "UTC"))
   (check-equal? (one (ref parsed "data")) (moment 2021 3 26 23 #:tz "UTC"))
@@ -277,7 +275,7 @@
   (check-equal? (cells (series (list (datetime 2021 3 27 12))
                                #:dtype '(datetime milliseconds "Europe/Brussels")))
                 (list (moment 2021 3 27 13 #:tz "Europe/Brussels")))
-  (check-equal? (ref (ref (select (dataframe (list (series '(1) #:name "id")))
+  (check-equal? (ref (ref (select (dataframe [id '(1)])
                                   (alias (lit (moment 2013 6 1 12 30 #:tz "Europe/Paris")) "noon"))
                           "noon")
                      0)
@@ -298,8 +296,7 @@
 
   ;; the reference's dt-convert-time-zone / dt-replace-time-zone and cast examples
   (define clocks
-    (dataframe (list (series (list (datetime 2021 3 27 3) (datetime 2021 10 31 2 30))
-                             #:name "clock"))))
+    (dataframe [clock (list (datetime 2021 3 27 3) (datetime 2021 10 31 2 30))]))
   (define moved
     (select clocks
             (~> "clock" (dt-replace-time-zone "UTC") (alias "utc"))
@@ -334,7 +331,7 @@
   (check-equal? (ref tokyo-edge 0) (moment 2262 4 12 8 0 0 1 #:tz "Asia/Tokyo"))
   (check-equal? (ref (dt-replace-time-zone tokyo-edge #f) 0) (datetime 1677 9 21 8 25 26 290448385))
   (define skipped-text
-    (dataframe (list (series '("2021-03-28 01:30" "2021-03-28 02:30") #:name "clock"))))
+    (dataframe [clock '("2021-03-28 01:30" "2021-03-28 02:30")]))
   (check-exn (regexp (string-append "^select: .*'2021-03-28 02:30:00' is non-existent"
                                     " in time zone 'Europe/Brussels'\\. You may be able to use"
                                     " dt-replace-time-zone's #:non-existent 'null to return"))
@@ -419,8 +416,7 @@
 
   ;; literals and comparisons
   (define zoned-frame
-    (dataframe (list (series (list brussels (moment 2021 7 1 #:tz "Europe/Brussels"))
-                             #:name "t"))))
+    (dataframe [t (list brussels (moment 2021 7 1 #:tz "Europe/Brussels"))]))
   (define may-day (moment 2021 5 1 #:tz "Europe/Brussels"))
   (check-equal? (height (filter zoned-frame (p:> (col "t") may-day))) 1)
   (check-equal? (height (filter zoned-frame (is-between "t" brussels
@@ -475,7 +471,7 @@
   (check-equal? (literal (moment 2021 3 27 0 0 0 1 #:tz "Europe/Brussels"))
                 (list '(datetime nanoseconds "Europe/Brussels")
                       (moment 2021 3 27 0 0 0 1 #:tz "Europe/Brussels")))
-  (check-equal? (cells (ref (select (dataframe (list (series (list polars-null brussels) #:name "t")))
+  (check-equal? (cells (ref (select (dataframe [t (list polars-null brussels)])
                                     (fill-null (col "t") (moment 2000 #:tz "Europe/Brussels")))
                             "t"))
                 (list (moment 2000 #:tz "Europe/Brussels") brussels))
@@ -541,8 +537,8 @@
                 (cells wall))
   (check-exn #rx"^select: .*is ambiguous in time zone 'Europe/Brussels'\\. Please use #:amb"
              (lambda ()
-               (select (dataframe (list wall)) (dt-replace-time-zone "wall" "Europe/Brussels"))))
-  (check-equal? (column (select (dataframe (list wall))
+               (select (dataframe wall) (dt-replace-time-zone "wall" "Europe/Brussels"))))
+  (check-equal? (column (select (dataframe wall)
                                 (dt-replace-time-zone "wall" "Europe/Brussels"
                                                       #:ambiguous 'null #:non-existent 'null))
                         "wall")
@@ -560,7 +556,7 @@
   (with-environment-variable
    #"POLARS_IGNORE_TIMEZONE_PARSE_ERROR" #"1"
    (define mars '(datetime microseconds "Mars/Base"))
-   (define frame (dataframe (list (series '("2021-03-27 03:00") #:name "s"))))
+   (define frame (dataframe [s '("2021-03-27 03:00")]))
    (for ([attempt (list (lambda () (cast wall mars))
                         (lambda () (cast "t" mars))
                         (lambda () (col mars))
@@ -593,21 +589,19 @@
                                "\t2021-03-27 08:45:00 +0545\n\t2021-03-28 08:45:00 +0545\n]"))
 
   (define nul "\u0000")
-  (check-equal? (~> (dataframe (list (series (list (string-append "2020" nul "01" nul "02"))
-                                             #:name "d")))
+  (check-equal? (~> (dataframe [d (list (string-append "2020" nul "01" nul "02"))])
                     (select (str->date "d" #:format "%Y\u0000%m\u0000%d" #:strict #t))
                     (ref "d")
                     series->list)
                 (list (date 2020 1 2)))
-  (check-equal? (~> (dataframe (list (series (list (string-append "2020" nul "01" nul "02 03:04"))
-                                             #:name "s")))
+  (check-equal? (~> (dataframe [s (list (string-append "2020" nul "01" nul "02 03:04"))])
                     (select (str->datetime "s" #:format "%Y\u0000%m\u0000%d %H:%M"
                                            #:time-zone "UTC"))
                     (ref "s")
                     series->list)
                 (list (moment 2020 1 2 3 4 #:tz "UTC")))
   (define (formatted xs make)
-    (~> (dataframe (list (series xs #:name "s")))
+    (~> (dataframe [s xs])
         (select (alias (make "s") "s"))
         (ref "s")
         series->list))
@@ -623,8 +617,7 @@
 
   (test-case "the reference's component and formatting examples"
     (define stamps
-      (dataframe (list (series (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))
-                               #:name "t"))))
+      (dataframe [t (list (datetime 2024 2 29 13 45 30 123456789) (datetime 2025 1 1))]))
     (check-selected
      stamps
      (list (list "year" (dt-year "t") '(2024 2025))

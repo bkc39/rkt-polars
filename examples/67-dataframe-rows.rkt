@@ -12,9 +12,9 @@
 (require polars)
 
 (define flights
-  (dataframe (list (series '(UA AA UA DL AA) #:name "carrier")
-                   (series (list 2 polars-null -3 15 7) #:name "dep_delay")
-                   (series '(1400 1089 1400 762 1089) #:name "distance"))))
+  (dataframe [carrier '(UA AA UA DL AA)]
+             [dep_delay (list 2 polars-null -3 15 7)]
+             [distance '(1400 1089 1400 762 1089)]))
 
 ;; --- rows() and to_dicts() -----------------------------------------------
 (writeln (dataframe->rows flights))

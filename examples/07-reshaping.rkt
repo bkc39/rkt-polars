@@ -12,11 +12,9 @@
 
 (define df
   (dataframe
-   (list (series '("Boston" "New York" "Chicago" "Houston"
-                   "Phoenix" "Philadelphia" "San Antonio" "San Diego")
-                 #:name "city")
-         (series '(1630 1624 1837 1837 1881 1682 1718 1769)
-                 #:name "founded" #:dtype 'i32))))
+   [city
+    '("Boston" "New York" "Chicago" "Houston" "Phoenix" "Philadelphia" "San Antonio" "San Diego")]
+   ["founded" '(1630 1624 1837 1837 1881 1682 1718 1769) #:dtype 'i32]))
 
 (displayln "input:")
 (displayln df)

@@ -8,8 +8,9 @@
            (only-in racket/string string-contains?)
            (only-in polars/private/bulk series->list)
            (only-in polars/private/csv lazyframe-scan-csv)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dataframe? dtype height lazyframe? len ref series
+                    column-names dataframe? dtype height lazyframe? len ref series
                     series? wrap-dataframe wrap-lazyframe)
            (only-in polars/private/generic/operators
                     < <= = > >= else-when otherwise p+ p-and p-not p-or p-when p/ then)
@@ -91,8 +92,7 @@
 
   ;; the unique / drop-nulls reference entry
   (define ref-dups
-    (dataframe (list (series (list 1 1 2 polars-null) #:name "v")
-                     (series '("a" "a" "b" "c") #:name "w"))))
+    (dataframe [v (list 1 1 2 polars-null)] [w '("a" "a" "b" "c")]))
   (define ref-unique (sorted-by (unique ref-dups) "v"))
   (check-equal? (column ref-unique "v") (list polars-null 1 2))
   (check-equal? (column ref-unique "w") '("c" "a" "b"))
@@ -122,7 +122,7 @@
     (check-equal? (ref (ref d #:columns "score1") 0) 11))
   ;; chained when / then / else-when / otherwise -> bucketed values
   (let ([d (with-columns
-            (dataframe (list (series '(-3 0 4 12 7) #:name "x" #:dtype 'i32)))
+            (dataframe [x '(-3 0 4 12 7) #:dtype 'i32])
             (alias (~> (p-when (< (col "x") 0)) (then 0)
                        (else-when (= (col "x") 0)) (then 1)
                        (else-when (< (col "x") 10)) (then 2)
@@ -147,14 +147,14 @@
              (lambda () (contracted:cast (series '("UA" "B6")) '(enum UA AA))))
   (check-exn #rx"^select: 1 of 2 values is not in the enum: B6$"
              (lambda () (with-default-polars-format
-                          (select (dataframe (list (series '("UA" "B6") #:name "c")))
+                          (select (dataframe [c '("UA" "B6")])
                                   (contracted:cast "c" '(enum UA AA))))))
   (define repeated (series (for/list ([i 5]) "B6") #:name "c"))
   (check-exn #rx"^cast: 5 of 5 values are not in '\\(enum UA AA\\): B6$"
              (lambda () (cast repeated '(enum UA AA))))
   (check-exn #rx"^select: 5 of 5 values are not in the enum: B6 B6, and 3 more rows$"
              (lambda () (with-default-polars-format
-                          (select (dataframe (list repeated)) (contracted:cast "c" '(enum UA AA))))))
+                          (select (dataframe repeated) (contracted:cast "c" '(enum UA AA))))))
   (check-exn #rx"^cast: 3 of 4 "
              (lambda () (cast (series (list 'TEB polars-null 'XYZ 'TEB 'EWR)) '(enum EWR JFK LGA))))
   (check-equal? (series-cells (cast (series (list 'EWR polars-null 'LGA)) '(enum EWR JFK LGA)))
@@ -164,9 +164,7 @@
 
   ;; categorical / enum casts: symbols out, lexical vs declared order, strict enum
   (define flights
-    (dataframe (list (series '("UA" "AA" "UA" "B6") #:name "carrier")
-                     (series '("IAH" "MIA" "IAH" "JFK") #:name "dest")
-                     (series '(10 20 30 40) #:name "n"))))
+    (dataframe [carrier '("UA" "AA" "UA" "B6")] [dest '("IAH" "MIA" "IAH" "JFK")] [n '(10 20 30 40)]))
   (define coded (with-columns flights (cast "carrier" 'categorical)
                   (cast "dest" '(enum JFK MIA IAH))))
   (check-equal? (dtype (ref coded "carrier")) 'categorical)
@@ -191,7 +189,7 @@
                           (with-columns flights (cast "dest" '(enum JFK MIA))))))
   (define nul-mia (string->symbol "MI\u0000A"))
   (define nul-dests (list 'enum 'JFK nul-mia 'IAH))
-  (define nul-flights (dataframe (list (series (list "IAH" "MI\u0000A" "JFK") #:name "dest"))))
+  (define nul-flights (dataframe [dest (list "IAH" "MI\u0000A" "JFK")]))
   (define nul-cast (cast (ref nul-flights "dest") nul-dests))
   (check-equal? (dtype nul-cast) nul-dests)
   (check-cells nul-cast (list 'IAH nul-mia 'JFK))
@@ -215,25 +213,21 @@
     (check-equal? (column-names d) '("user" "th"))
     (check-equal? (for/list ([i (in-range 3)]) (ref (ref d #:columns "th") i)) '(0 10 10)))
 
-  (let* ([sales (dataframe (list (series '("a" "a" "b" "b")     #:name "store")
-                                 (series '("q1" "q2" "q1" "q2") #:name "quarter")
-                                 (series '(10 20 30 40)         #:name "sales" #:dtype 'i32)))]
+  (let* ([sales (dataframe [store '("a" "a" "b" "b")]
+                           [quarter '("q1" "q2" "q1" "q2")]
+                           [sales '(10 20 30 40) #:dtype 'i32])]
          [pv (pivot sales #:on '("quarter") #:index '("store") #:values '("sales") #:agg 'sum)])
     (check-equal? (sort (column-names pv) string<?) '("q1" "q2" "store"))
     (check-equal? (height pv) 2)
     (check-equal? (height (unpivot pv #:on '("q1" "q2") #:index '("store"))) 4))
-  (let* ([cells (dataframe (list (series '(1 1 2 2 2) #:name "id")
-                                 (series '("x" "y" "x" "y" "y") #:name "k")
-                                 (series '(10 11 20 21 22) #:name "v")))]
+  (let* ([cells (dataframe [id '(1 1 2 2 2)] [k '("x" "y" "x" "y" "y")] [v '(10 11 20 21 22)])]
          [pv (sorted-by (pivot cells #:on '("k") #:index '("id") #:values '("v")) "id")])
     (check-equal? (column-names pv) '("id" "x" "y"))
     (check-equal? (dtype (ref pv "y")) 'int64)
     (check-equal? (column pv "y") '(11 21))
     (check-exn #rx"^pivot: cannot pivot the dataframe: "
                (lambda () (pivot cells #:on '("k") #:index '("id") #:values '("v") #:agg #f))))
-  (let* ([gaps (dataframe (list (series '(1 2 2) #:name "id")
-                                (series '("y" "x" "y") #:name "k")
-                                (series (list 10 polars-null 21) #:name "v")))]
+  (let* ([gaps (dataframe [id '(1 2 2)] [k '("y" "x" "y")] [v (list 10 polars-null 21)])]
          [sums (sorted-by (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'sum) "id")]
          [counts (sorted-by (pivot gaps #:on '("k") #:index '("id") #:values '("v") #:agg 'count) "id")]
          [inferred (sorted-by (pivot gaps #:on '("k") #:index '() #:values '("v") #:agg 'sum) "id")])
@@ -242,14 +236,10 @@
     (check-equal? (column counts "x") '(0 1))
     (check-equal? (dtype (ref counts "x")) 'uint32)
     (check-equal? (column-names inferred) '("id" "x" "y")))
-  (let ([numeric (dataframe (list (series '(1 1) #:name "id")
-                                  (series '(10 2) #:name "k")
-                                  (series '(5 6) #:name "v")))])
+  (let ([numeric (dataframe [id '(1 1)] [k '(10 2)] [v '(5 6)])])
     (check-equal? (column-names (pivot numeric #:on '("k") #:index '("id") #:values '("v")))
                   '("id" "2" "10")))
-  (let* ([wide (dataframe (list (series '(1 2) #:name "id")
-                                (series '(10 20) #:name "a")
-                                (series '(30 40) #:name "b")))]
+  (let* ([wide (dataframe [id '(1 2)] [a '(10 20)] [b '(30 40)])]
          [long (unpivot wide #:on '() #:index '("id"))])
     (check-equal? (column-names long) '("id" "variable" "value"))
     (check-equal? (column long "variable") '("a" "a" "b" "b")))
@@ -284,7 +274,7 @@
       (match-define (list label sliced) via)
       (check-equal? (series->list (ref (sliced) "value")) expected
                     (format "~a ~a ~a" label offset length))))
-  (let ([nums (dataframe (list (series '(1 2 3 4 5) #:name "v")))])
+  (let ([nums (dataframe [v '(1 2 3 4 5)])])
     (check-equal? (~> nums
                       (select (slice (col "v") (- (expt 2 63)) (sub1 (expt 2 64))))
                       (ref "v")
@@ -313,8 +303,7 @@
      (contracted:explain (select (lazy ops-df) "nope"))))
 
   (for ([n (in-list nul-names)])
-    (define long (dataframe (list (series '(0 0) #:name "id") (series (list n "x") #:name "k")
-                                  (series '(1 2) #:name "v"))))
+    (define long (dataframe [id '(0 0)] [k (list n "x")] [v '(1 2)]))
     (check-equal? (sort (column-names (pivot long #:on '("k") #:index '("id") #:values '("v")))
                         string<?)
                   (sort (list "id" n "x") string<?))
@@ -328,7 +317,7 @@
     (check-equal? (series-name renamed!) n)
     (for ([m (in-list nul-names)] #:unless (equal? m n))
       (check-equal? (column-names (rename named "a" m)) (list n m)))
-    (check-equal? (column-names (rename (dataframe (list (series '(1) #:name "a"))) "a" n))
+    (check-equal? (column-names (rename (dataframe [a '(1)]) "a" n))
                   (list n))
     (check-equal? (column-names (rename named n "z")) '("z" "a"))
     (check-equal? (column-names (select named (col n))) (list n))
@@ -340,8 +329,7 @@
     (define selected (~> named (dataframe-select (list n)) wrap-dataframe))
     (check-equal? (column-names selected) (list n))
     (check-equal? (~> selected (ref 0) series->list) '(1 2))
-    (define on-n (dataframe (list (series '(0 0) #:name "id") (series '("x" "y") #:name n)
-                                  (series '(1 2) #:name "v"))))
+    (define on-n (dataframe [id '(0 0)] ['("x" "y") #:name n] [v '(1 2)]))
     (check-equal? (column-names (pivot on-n #:on (list n) #:index '("id") #:values '("v")))
                   '("id" "x" "y"))
     (check-equal? (column-names (pivot on-n #:on '("id") #:index (list n) #:values '("v")))
@@ -350,7 +338,7 @@
     (check-equal? (column-names melted) (list n "variable" "value"))
     (check-equal? (~> melted (ref 0) series->list) '(1 2)))
 
-  (define three-rows (dataframe (list (series '(1 2 3) #:name "v"))))
+  (define three-rows (dataframe [v '(1 2 3)]))
   (for ([row (in-list `((,three-rows (0) #f)
                         (,three-rows (1 2 3) #f)
                         (,(dataframe '()) (1 2) #f)
@@ -367,7 +355,7 @@
     (define reversed (reverse (series '(1 2 3) #:name "r")))
     (check-equal? (series->list reversed) '(3 2 1))
     (check-equal? (series-name reversed) "r")
-    (check-equal? (column (select (dataframe (list (series '(-5 12 31) #:name "c")))
+    (check-equal? (column (select (dataframe [c '(-5 12 31)])
                                   (reverse (col "c")))
                           "c")
                   '(31 12 -5))

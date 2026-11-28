@@ -26,7 +26,6 @@
 
 ;; a column of a dataframe converts the same way
 (define df
-  (dataframe (list (series '("a" "b" "c") #:name "key")
-                   (series '(1.5 2.5 3.5) #:name "value"))))
+  (dataframe [key '("a" "b" "c")] [value '(1.5 2.5 3.5)]))
 (writeln (~> df (ref "value") series->list))
 (writeln (~> df (ref "key") series->vector))

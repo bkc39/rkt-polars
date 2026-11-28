@@ -51,8 +51,8 @@ Polars can read an NDJSON file into a @tech{dataframe} using
 
 @examples[#:eval ev #:label #f
 (define df
-  (dataframe (list (series '(1 2 3) #:name "foo")
-                   (series (list polars-null "bak" "baz") #:name "bar"))))
+  (dataframe [foo '(1 2 3)]
+             [bar (list polars-null "bak" "baz")]))
 (write-json df path)
 (file->string path)
 (read-json path)

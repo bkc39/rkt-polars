@@ -29,7 +29,7 @@
 ;; `dataframe` is the smart constructor: it wraps the columns in a dataframe
 ;; value (`dataframe?`) that prints like Polars, mirroring the series wrapper.
 (define df
-  (dataframe (list users scores costs created-at)))
+  (dataframe users scores costs created-at))
 
 ;; shape / height / width are generic accessors (no dataframe- prefix needed).
 ;; shape returns the dimensions as a list; shape/values is the values variant.

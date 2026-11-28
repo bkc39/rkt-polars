@@ -14,8 +14,9 @@
            (only-in polars/private/bulk
                     dataframe->columns dataframe->f64vector dataframe->hash dataframe->rows
                     in-dataframe-rows in-series series->f64vector series->list series->vector)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height len ref series series? width)
+                    column-names dtype height len ref series series? width)
            (only-in polars/private/foreign polars-null polars-null? series-drop-count series-name)
            (only-in polars/private/generic/parquet read-parquet)
            (only-in polars/private/generic/combine vstack)
@@ -72,10 +73,12 @@
   (define base-series (append int-series float-series temporal-series other-series))
 
   (define (two-chunks s)
-    (define f (dataframe (list (rename s "c"))))
+    (define f (dataframe (rename s
+                                 "c")))
     (ref (vstack f f) "c"))
   (define (with-null-chunk s)
-    (define (framed part) (dataframe (list (rename part "c"))))
+    (define (framed part) (dataframe (rename part
+                                             "c")))
     (define half (quotient (len s) 2))
     (~> (framed (head s half))
         (vstack (framed (all-null (dtype s))))
@@ -145,16 +148,15 @@
     (check-exn (null-error "series->f64vector" "series" "x" row)
                (lambda () (series->f64vector (series xs #:name "x") #:null 'error))))
   (define second-chunk-null
-    (~> (dataframe (list (series '(1 2 3) #:name "x")))
-        (vstack (dataframe (list (series (list 4 polars-null 6) #:name "x"))))
+    (~> (dataframe [x '(1 2 3)])
+        (vstack (dataframe [x (list 4 polars-null 6)]))
         (ref "x")))
   (check-exn (null-error "series->f64vector" "series" "x" 4)
              (lambda () (series->f64vector second-chunk-null #:null 'error)))
   (define null-only-chunk
-    (~> (dataframe (list (series '(1 2 3) #:name "x")))
-        (vstack (dataframe (list (series (list polars-null polars-null)
-                                         #:dtype 'int64 #:name "x"))))
-        (vstack (dataframe (list (series '(6) #:name "x"))))
+    (~> (dataframe [x '(1 2 3)])
+        (vstack (dataframe [x (list polars-null polars-null) #:dtype 'int64]))
+        (vstack (dataframe [x '(6)]))
         (ref "x")))
   (check-exn (null-error "series->f64vector" "series" "x" 3)
              (lambda () (series->f64vector null-only-chunk #:null 'error)))
@@ -219,12 +221,11 @@
              (lambda () (contracted:dataframe->f64vector frame #:order 'row)))
 
   (define mixed
-    (dataframe
-     (list (series (list 1 -2 polars-null 127) #:dtype 'int8 #:name "i8")
-           (series (list (add1 (expt 2 53)) polars-null 3 -4) #:name "i64")
-           (series (list (sub1 (expt 2 64)) 0 polars-null 7) #:dtype 'uint64 #:name "u64")
-           (series (list 0.1 polars-null 2.5 -1.0) #:dtype 'float32 #:name "f32")
-           (series (list -0.0 +nan.0 polars-null 4.5) #:name "f64"))))
+    (dataframe [i8 (list 1 -2 polars-null 127) #:dtype 'int8]
+               [i64 (list (add1 (expt 2 53)) polars-null 3 -4)]
+               [u64 (list (sub1 (expt 2 64)) 0 polars-null 7) #:dtype 'uint64]
+               [f32 (list 0.1 polars-null 2.5 -1.0) #:dtype 'float32]
+               [f64 (list -0.0 +nan.0 polars-null 4.5)]))
   (define (matrix-matches? d cols order v)
     (define-values (m nrows ncols)
       (dataframe->f64vector d #:columns cols #:order order #:null v))
@@ -252,9 +253,7 @@
     (check-equal? (list (f64vector-length m) nrows ncols) '(0 4 0)))
 
   (define bad
-    (dataframe (list (series (list 1 polars-null) #:name "a")
-                     (series '("x" "y") #:name "s")
-                     (series (list 0.5 polars-null) #:name "b"))))
+    (dataframe [a (list 1 polars-null)] [s '("x" "y")] [b (list 0.5 polars-null)]))
   (define (frame-error who what name)
     (regexp (format "^~a: ~a\n  column: \"~a\"" who what name)))
   (for ([thunk (list (lambda () (dataframe->f64vector bad))
@@ -278,7 +277,7 @@
     (check-exn not-blame? (go '("a" "a"))))
 
   (define binary-frame
-    (dataframe (list (series '(1 2) #:name "a") (cast (series '("p" "q") #:name "b") 'binary))))
+    (dataframe [a '(1 2)] (cast (series '("p" "q") #:name "b") 'binary)))
   (check-exn (frame-error "dataframe->columns" "unsupported dtype" "b")
              (lambda () (dataframe->columns binary-frame)))
   (check-exn (frame-error "dataframe->hash" "unsupported dtype" "b")
@@ -346,22 +345,19 @@
 
   (check-equal? (~> (list 3 polars-null 1) (series #:name "x") series->list)
                 (list 3 polars-null 1))
-  (define to-dict (dataframe (list (series '("a" "b") #:name "k")
-                                   (series (list 1 polars-null) #:name "v"))))
+  (define to-dict (dataframe [k '("a" "b")] [v (list 1 polars-null)]))
   (check-equal? (dataframe->columns to-dict)
                 (list (cons "k" (vector "a" "b")) (cons "v" (vector 1 polars-null))))
   (check-equal? (dataframe->hash to-dict)
                 (hash "k" (vector "a" "b") "v" (vector 1 polars-null)))
-  (define to-numpy (dataframe (list (series (list 1 2 polars-null) #:name "a")
-                                    (series '(0.5 1.5 2.5) #:name "b"))))
+  (define to-numpy (dataframe [a (list 1 2 polars-null)] [b '(0.5 1.5 2.5)]))
   (let-values ([(m nrows ncols) (dataframe->f64vector to-numpy)])
     (check-equal? (list (f64vector->list m) nrows ncols) '((1.0 2.0 +nan.0 0.5 1.5 2.5) 3 2)))
   (let-values ([(m _nrows _ncols) (dataframe->f64vector to-numpy #:order 'c)])
     (check-equal? (f64vector->list m) '(1.0 0.5 2.0 1.5 +nan.0 2.5)))
   (check-equal? (~> (list 1 polars-null 3) series f64s) '(1.0 +nan.0 3.0))
   (let-values ([(m _nrows _ncols)
-                (dataframe->f64vector (dataframe (list (series '(#t #f) #:name "a")
-                                                       (series '(0.5 1.5) #:name "b"))))])
+                (dataframe->f64vector (dataframe [a '(#t #f)] [b '(0.5 1.5)]))])
     (check-equal? (f64vector->list m) '(1.0 0.0 0.5 1.5)))
 
   (define row-length
@@ -428,9 +424,9 @@
     (check-equal? (sequence->list rows) (sequence->list rows)))
 
   (define carriers
-    (dataframe (list (~> '("UA" "AA" "UA" "DL" "B6" "UA" "AA" "DL" "UA" "B6")
-                         (series #:name "carrier")
-                         (cast 'categorical)))))
+    (dataframe (~> '("UA" "AA" "UA" "DL" "B6" "UA" "AA" "DL" "UA" "B6")
+                   (series #:name "carrier")
+                   (cast 'categorical))))
   (define ((take-through k))
     (for/first ([row (in-dataframe-rows carriers #:buffer-size 3)]
                 [i (in-naturals)]

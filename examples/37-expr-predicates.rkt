@@ -10,7 +10,7 @@
 (require polars)
 
 (define df
-  (dataframe (list (series '(1 2 2 3 5 5 8) #:name "x" #:dtype 'i64))))
+  (dataframe [x '(1 2 2 3 5 5 8) #:dtype 'i64]))
 
 (define out
   (~> df

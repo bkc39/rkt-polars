@@ -16,8 +16,9 @@
            (prefix-in contracted: polars/private/generic/csv)
            (only-in (submod polars/private/generic/csv internal) read-csv scan-csv write-csv)
            (prefix-in raw: polars/private/csv)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? null-count ref series shape)
+                    column-names dtype height lazyframe? null-count ref series shape)
            (only-in polars/private/generic/printing series->string)
            (only-in polars/private/generic/reshape collect head select slice tail)
            (only-in polars/tests/generic/test-fixtures
@@ -684,11 +685,11 @@
   (check-regexp-match #rx"^shape [(]2 2[)]" (info-text disagreeing 'nulled))
   (check-equal? (cadr (info-text disagreeing 'location)) call-line)
   (check-equal? (failure-infos (lambda () (check-readers-agree every-reader small '()))) '())
-  (define one-column (dataframe (list (series '(1 2) #:name "a"))))
+  (define one-column (dataframe [a '(1 2)]))
   (for ([a (list "x" "x" one-column one-column one-column one-column one-column)]
-        [b (list "x" "y" one-column "x" (dataframe (list (series '(1 2) #:name "z")))
-                 (dataframe (list (series '(1 2) #:name "a" #:dtype 'i32)))
-                 (dataframe (list (series '(1) #:name "a"))))]
+        [b (list "x" "y" one-column "x" (dataframe [z '(1 2)])
+                 (dataframe ["a" '(1 2) #:dtype 'i32])
+                 (dataframe ["a" '(1)]))]
         [expected (list #f "the errors differ" #f "only the second raised"
                         "columns (\"a\") against (\"z\")" "column \"a\": dtype int64 against int32"
                         "shape (2 1) against (1 1)")])
@@ -726,9 +727,9 @@
   (define frame-csv (build-path scratch "frame.csv"))
   (write-csv frame frame-csv)
   (check-true (frame=? (read-csv frame-csv)
-                       (dataframe (list (series '("alice" "bob" "carol") #:name "user")
-                                        (series '(10 25 18) #:name "score")
-                                        (series '(1.2 3.5 2.0) #:name "cost")))))
+                       (dataframe [user '("alice" "bob" "carol")]
+                                  [score '(10 25 18)]
+                                  [cost '(1.2 3.5 2.0)])))
   (define levels (scratch-file scratch "levels.csv" "level,n\ninfo,1\ndebug,2\ninfo,3\n"))
   (define as-categorical (read-csv levels #:schema-overrides '(("level" . categorical))))
   (check-equal? (dtype (ref as-categorical "level")) 'categorical)
@@ -746,9 +747,10 @@
   (check-equal? (ref (ref from-gz-csv "s") (sub1 many)) (format "row-~a" (modulo (sub1 many) 977)))
 
   (define brussels
-    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
-                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
-                             #:name "t"))))
+    (dataframe [t
+                (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                      polars-null
+                      (moment 2021 7 1 #:tz "Europe/Brussels"))]))
   (define brussels-csv (build-path scratch "brussels.csv"))
   (write-csv brussels brussels-csv)
   (check-equal? (file->string brussels-csv)

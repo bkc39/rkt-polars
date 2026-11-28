@@ -66,9 +66,8 @@ change, parse to UTC. Pass @racket[str->datetime] a target zone with
 
 @examples[#:eval ev #:label #f
 (define mixed
-  (dataframe (list (series '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
-                             "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")
-                           #:name "data"))))
+  (dataframe [data '("2021-03-27T00:00:00+0100" "2021-03-28T00:00:00+0100"
+                     "2021-03-29T00:00:00+0200" "2021-03-30T00:00:00+0200")]))
 (define mixed-parsed
   (~> mixed
       (select (~> (str->datetime "data" #:format "%Y-%m-%dT%H:%M:%S%z")
@@ -131,8 +130,8 @@ compares directly too:
 
 @examples[#:eval ev #:label #f
 (define negative-dates
-  (~> (dataframe (list (series '("-1300-05-23" "-1400-03-02") #:name "ts")
-                       (series '(3 4) #:name "values")))
+  (~> (dataframe [ts '("-1300-05-23" "-1400-03-02")]
+                 ["values" '(3 4)])
       (with-columns (str->date "ts"))))
 (filter negative-dates (< (dt-year "ts") -1300))
 (filter negative-dates (= (col "ts") (date -1300 5 23)))
@@ -154,11 +153,11 @@ each instant; @racket[dt-replace-time-zone] sets, changes or, given
 @examples[#:eval ev #:label #f
 (define ts '("2021-03-27 03:00" "2021-03-28 03:00"))
 (define tz-naive
-  (~> (dataframe (list (series ts #:name "tz_naive")))
+  (~> (dataframe [tz_naive ts])
       (select (str->datetime "tz_naive"))
       (ref "tz_naive")))
 (define tz-aware (~> tz-naive (dt-replace-time-zone "UTC") (rename "tz_aware")))
-(define time-zones-df (dataframe (list tz-naive tz-aware)))
+(define time-zones-df (dataframe tz-naive tz-aware))
 time-zones-df
 (select time-zones-df
         (~> (col "tz_aware") (dt-replace-time-zone "Europe/Brussels")

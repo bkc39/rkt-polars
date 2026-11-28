@@ -28,7 +28,7 @@
 (define in-ms (series (list (seconds 90)) #:name "wait" #:dtype '(duration milliseconds)))
 (printf "~s ~s\n" (dtype in-ms) (series->list in-ms))
 
-(displayln (filter (dataframe (list waits)) (> (col "wait") (minutes 60))))
+(displayln (filter (dataframe waits) (> (col "wait") (minutes 60))))
 
 (printf "a month: ~a\n"
         (with-handlers ([exn:fail? exn-message])

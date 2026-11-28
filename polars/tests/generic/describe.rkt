@@ -11,8 +11,9 @@
            (only-in polars/private/foreign
                     dataframe-drop dataframe-drop-count series-drop series-drop-count
                     series-quantile)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dataframe? height len null-count ref series)
+                    column-names dataframe? height len null-count ref series)
            (prefix-in contracted: polars/private/generic/describe)
            (only-in (submod polars/private/generic/describe internal)
                     call-with-column-plans column-plan-series describe offset->string)
@@ -55,9 +56,9 @@
   (define (nulls n) (make-list n polars-null))
 
   (define nums
-    (dataframe (list (series (list 5 polars-null 3 9 1 2 polars-null 8) #:name "i")
-                     (series (list 1.5 2.25 polars-null -3.0 0.5 7.75 4.0 polars-null) #:name "f")
-                     (series '(7 8 9 10 11 12 13 14) #:name "u" #:dtype 'u8))))
+    (dataframe [i (list 5 polars-null 3 9 1 2 polars-null 8)]
+               [f (list 1.5 2.25 polars-null -3.0 0.5 7.75 4.0 polars-null)]
+               [u '(7 8 9 10 11 12 13 14) #:dtype 'u8]))
   (for ([name (in-list '("i" "f" "u"))])
     (define s (ref nums name))
     (check-column (describe nums) name
@@ -70,13 +71,12 @@
   (check-column (describe (series '(1 2))) "value" '(2.0 0.0 1.5 0.7071067811865476 1.0 1.0 2.0 2.0 2.0))
 
   (define mixed
-    (dataframe
-     (list (series (list 1.5 2.5 +nan.0 polars-null -3.25 0.0) #:name "f")
-           (series (list #t #f polars-null #t #t #f) #:name "b")
-           (series (list "pear" polars-null "apple" "fig" "" "Zed") #:name "s")
-           (series (nulls 6) #:name "none" #:dtype 'f64)
-           (series '("a" "b" "c" "d" "e" "f") #:name "*")
-           (series '(1 2 3 4 5 6) #:name "^i$"))))
+    (dataframe [f (list 1.5 2.5 +nan.0 polars-null -3.25 0.0)]
+               [b (list #t #f polars-null #t #t #f)]
+               [s (list "pear" polars-null "apple" "fig" "" "Zed")]
+               [none (nulls 6) #:dtype 'f64]
+               ["*" '("a" "b" "c" "d" "e" "f")]
+               [^i$ '(1 2 3 4 5 6)]))
   (define mixed-desc (describe mixed))
   (check-equal? (column-names mixed-desc) '("statistic" "f" "b" "s" "none" "*" "^i$"))
   (check-column mixed-desc "f" '(5.0 1.0 +nan.0 +nan.0 -3.25 0.0 1.5 2.5 2.5))
@@ -92,7 +92,7 @@
   (define ms (series (list 1500 -250 86400001 polars-null -172800000 7) #:name "ms"))
   (define ns (series (list 3723000000001 -1 999 polars-null 86399999999999 5) #:name "ns"))
   (define temporal
-    (select (dataframe (list ms ns))
+    (select (dataframe ms ns)
             (~> "ms" (cast '(datetime milliseconds)) (alias "dtm"))
             (~> "ms" (cast '(duration milliseconds)) (alias "durm"))
             (~> "ns" (cast '(datetime nanoseconds)) (alias "dtn"))
@@ -121,7 +121,7 @@
   (check-column temporal-desc "d"
                 (list "5" "1" "1969-12-31 14:24:00" polars-null "1969-12-30" "1969-12-31"
                       "1970-01-01" "1970-01-01" "1970-01-02"))
-  (define days (select (dataframe (list (series '(0 1 2 3 4 5 7) #:name "d" #:dtype 'i32)))
+  (define days (select (dataframe [d '(0 1 2 3 4 5 7) #:dtype 'i32])
                        (cast "d" 'date)))
   (check-column (describe days) "d"
                 (list "7" "0" "1970-01-04 03:25:42.857142" polars-null "1970-01-01" "1970-01-03"
@@ -129,15 +129,14 @@
 
   (define zoned
     (dataframe
-     (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels") polars-null
-                         (moment 2021 7 1 #:tz "Europe/Brussels"))
-                   #:name "t")
-           (cast (series (list (* 1616825700 1000000) (* (- -2208988800 20476) 1000000)
-                               polars-null)
-                         #:name "k")
-                 '(datetime microseconds "Asia/Kathmandu"))
-           (series (list (moment 2020 1 1 12 #:tz "America/New_York") polars-null polars-null)
-                   #:name "ny"))))
+     [t
+      (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+            polars-null
+            (moment 2021 7 1 #:tz "Europe/Brussels"))]
+     (cast (series (list (* 1616825700 1000000) (* (- -2208988800 20476) 1000000) polars-null)
+                   #:name "k")
+           '(datetime microseconds "Asia/Kathmandu"))
+     [ny (list (moment 2020 1 1 12 #:tz "America/New_York") polars-null polars-null)]))
   (define zoned-desc (describe zoned))
   (check-column zoned-desc "t"
                 (list "2" "1" "2021-05-14 06:30:00.250000+02:00" polars-null
@@ -157,7 +156,7 @@
                       "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"
                       "2021-07-01 00:00:00+02:00"))
   (define zoned-temporal
-    (select (dataframe (list ms ns))
+    (select (dataframe ms ns)
             (~> "ms" (cast '(datetime milliseconds "Asia/Kathmandu")) (alias "ms"))
             (~> "ns" (cast '(datetime nanoseconds "America/New_York")) (alias "ns"))))
   (check-column (describe zoned-temporal) "ms"
@@ -178,11 +177,11 @@
                       "2021-03-27 12:00:00+01:00" "2021-07-01 00:00:00+02:00"
                       "2021-07-01 00:00:00+02:00" "2021-07-01 00:00:00+02:00"))
   (define ns-edges
-    (dataframe
-     (list (cast (series (list 9223369200000000001 polars-null) #:name "east")
-                 '(datetime nanoseconds "Asia/Tokyo"))
-           (cast (series (list (+ (- (sub1 (expt 2 63))) 3600000000000) polars-null) #:name "west")
-                 '(datetime nanoseconds "America/New_York")))))
+    (dataframe (cast (series (list 9223369200000000001 polars-null) #:name "east")
+                     '(datetime nanoseconds "Asia/Tokyo"))
+               (cast (series (list (+ (- (sub1 (expt 2 63))) 3600000000000) polars-null)
+                             #:name "west")
+                     '(datetime nanoseconds "America/New_York"))))
   (for ([name '("east" "west")]
         [shown '("2262-04-12 08:00:00+09:00" "1677-09-20 20:16:41.145224-04:56:02")])
     (check-column (describe ns-edges) name (list* "1" "1" shown polars-null (make-list 5 shown))))
@@ -190,7 +189,7 @@
                 '("+00:00" "+01:00" "-05:00" "+05:45" "+00:17:30" "-00:17:30"))
 
   (define grouped
-    (~> (dataframe (list (series '("x" "y" "x") #:name "k") (series '(1 2 3) #:name "v")))
+    (~> (dataframe [k '("x" "y" "x")] [v '(1 2 3)])
         (group-by "k")
         (agg (col "v"))))
   (check-column (describe grouped) "v" (list* 2.0 0.0 (nulls 7)))
@@ -238,13 +237,13 @@
                 (length (column-names nums)))
 
   (define numeric
-    (dataframe (list (series '(5 3 9 1) #:name "i") (series '(1.5 -3.0 0.5 7.75) #:name "f"))))
+    (dataframe [i '(5 3 9 1)] [f '(1.5 -3.0 0.5 7.75)]))
   (define all-null
     (dataframe (for/list ([i (in-range 4)])
                  (series (nulls 3) #:name (format "n~a" i) #:dtype 'i64))))
   (define zoned-column
-    (dataframe (list (cast (series (list 1 2 polars-null) #:name "k")
-                           '(datetime microseconds "Asia/Kathmandu")))))
+    (dataframe (cast (series (list 1 2 polars-null) #:name "k")
+                     '(datetime microseconds "Asia/Kathmandu"))))
   (define counters
     (list (cons 'series series-drop-count)
           (cons 'dataframe dataframe-drop-count)

@@ -24,8 +24,8 @@
 
 ;; --- filtering with negative dates ---------------------------------------
 (define negative-dates
-  (~> (dataframe (list (series '("-1300-05-23" "-1400-03-02") #:name "ts")
-                       (series '(3 4) #:name "values")))
+  (~> (dataframe [ts '("-1300-05-23" "-1400-03-02")]
+                 ["values" '(3 4)])
       (with-columns (str->date "ts"))))
 (displayln (filter negative-dates (< (dt-year "ts") -1300)))
 ;; gregor holds years before 1, where Python's datetime cannot.

@@ -17,13 +17,10 @@
 
 ;; --- contexts ------------------------------------------------------------
 (define df
-  (dataframe
-   (list (series '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")
-                 #:name "name")
-         (series (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))
-                 #:name "birthdate")
-         (series '(57.9 72.5 53.6 83.1) #:name "weight")
-         (series '(1.56 1.77 1.65 1.75) #:name "height"))))
+  (dataframe [name '("Alice Archer" "Ben Brown" "Chloe Cooper" "Daniel Donovan")]
+             [birthdate (list (date 1997 1 10) (date 1985 2 15) (date 1983 3 22) (date 1981 4 30))]
+             [weight '(57.9 72.5 53.6 83.1)]
+             ["height" '(1.56 1.77 1.65 1.75)]))
 
 (displayln df)
 
@@ -90,6 +87,6 @@
 (displayln (select df expr))
 
 (define df2
-  (dataframe (list (series '(1 2 3 4) #:name "ints")
-                   (series '("A" "B" "C" "D") #:name "letters"))))
+  (dataframe [ints '(1 2 3 4)]
+             [letters '("A" "B" "C" "D")]))
 (displayln (select df2 expr))

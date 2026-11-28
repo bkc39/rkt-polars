@@ -11,7 +11,7 @@
 (require polars)
 
 (define df
-  (dataframe (list (series '(2.0 4.0 4.0 6.0) #:name "v"))))
+  (dataframe [v '(2.0 4.0 4.0 6.0)]))
 
 (displayln "input:")
 (displayln df)
@@ -28,8 +28,8 @@
 
 ;; std/var inside a group-by/agg pipeline.
 (define df-grp
-  (dataframe (list (series '("a" "a" "a" "b" "b" "b")   #:name "g")
-                   (series '(1.0 2.0 3.0 10.0 20.0 30.0) #:name "v"))))
+  (dataframe [g '("a" "a" "a" "b" "b" "b")]
+             [v '(1.0 2.0 3.0 10.0 20.0 30.0)]))
 
 (displayln "group_by(g).agg(mean, sample std, pop var):")
 (displayln (~> df-grp

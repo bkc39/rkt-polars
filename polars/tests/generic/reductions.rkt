@@ -14,8 +14,9 @@
                     dataframe-drop-count series-drop-count series-head series-min-f64
                     series-n-unique series-quantile series-slice series-std series-sum-f64
                     series-sum-i32 series-var)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype ref series wrap-series)
+                    column-names dtype ref series wrap-series)
            (only-in polars/private/generic/reshape agg group-by select)
            (only-in threading ~>)
            (only-in polars/private/generic/reductions alias first last max mean min sum)
@@ -106,7 +107,7 @@
   (check-exn #rx"^series-quantile: contract violation\n  expected: \\(or/c \\(quote nearest\\)"
              (lambda () (series-quantile ranks 0.3 #:interpolation 'cubic)))
   (define nested
-    (~> (dataframe (list (series '(1 1 2) #:name "g") (series '(3.0 4.0 5.0) #:name "v")))
+    (~> (dataframe [g '(1 1 2)] [v '(3.0 4.0 5.0)])
         (group-by "g")
         (agg (col "v"))
         (ref "v")))
@@ -164,7 +165,7 @@
   (for ([single (in-list singles)])
     (match-define (list op dt rows ddof expected) single)
     (check-reduction op (series (map rktd-value rows) #:dtype dt) expected #:ddof ddof))
-  (define named (dataframe (list (series '(1 2) #:name "a"))))
+  (define named (dataframe [a '(1 2)]))
   (for ([n (in-list nul-names)])
     (check-equal? (column-names (select named (alias (col "a") n))) (list n))
     (check-equal? (column-names (select named (alias (sum "a") n))) (list n))))

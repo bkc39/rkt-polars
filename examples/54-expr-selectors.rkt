@@ -19,14 +19,13 @@
 (require polars)
 
 (define stocks
-  (dataframe
-   (list (series '("AAPL" "NVDA" "MSFT") #:name "ticker")
-         (series '(229.9 138.93 420.56)  #:name "price")
-         (series '(231.31 139.6 424.04)  #:name "day_high")
-         (series '(228.6 136.3 417.52)   #:name "day_low")
-         (series '(237.23 140.76 468.35) #:name "year_high")
-         (series '(164.08 39.23 324.39)  #:name "year_low")
-         (series '(51 48 22)             #:name "volume_m" #:dtype 'i32))))
+  (dataframe [ticker '("AAPL" "NVDA" "MSFT")]
+             [price '(229.9 138.93 420.56)]
+             [day_high '(231.31 139.6 424.04)]
+             [day_low '(228.6 136.3 417.52)]
+             [year_high '(237.23 140.76 468.35)]
+             [year_low '(164.08 39.23 324.39)]
+             [volume_m '(51 48 22) #:dtype 'i32]))
 
 (displayln "input:")
 (displayln stocks)

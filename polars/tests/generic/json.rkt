@@ -10,8 +10,9 @@
            (only-in (submod polars/private/generic/json internal)
                     read-json read-ndjson scan-ndjson write-json write-ndjson)
            (only-in threading ~>)
+           (only-in polars/private/generic/clauses dataframe)
            (only-in polars/private/generic/core
-                    column-names dataframe dtype height lazyframe? ref series shape)
+                    column-names dtype height lazyframe? ref series shape)
            (only-in polars/private/generic/operators >)
            (only-in polars/private/generic/csv read-csv)
            (only-in polars/private/generic/reshape cast collect filter select)
@@ -34,16 +35,14 @@
 
   (define guide-path (build-path scratch "path.json"))
   (define guide-df
-    (dataframe (list (series '(1 2 3) #:name "foo")
-                     (series (list polars-null "bak" "baz") #:name "bar"))))
+    (dataframe [foo '(1 2 3)] [bar (list polars-null "bak" "baz")]))
   (write-json guide-df guide-path)
   (check-equal? (file->string guide-path)
                 "[{\"foo\":1,\"bar\":null},{\"foo\":2,\"bar\":\"bak\"},{\"foo\":3,\"bar\":\"baz\"}]")
   (check-true (frame=? (read-json guide-path) guide-df))
 
   (define example-frame
-    (dataframe (list (series '("north" "south" "north") #:name "station")
-                     (series (list 3.5 polars-null 2.25) #:name "reading"))))
+    (dataframe [station '("north" "south" "north")] [reading (list 3.5 polars-null 2.25)]))
   (define example-json (build-path scratch "readings.json"))
   (write-json example-frame example-json)
   (check-equal?
@@ -54,9 +53,9 @@
   (define frame-json (build-path scratch "frame.json"))
   (write-json frame frame-json)
   (check-true (frame=? (read-json frame-json)
-                       (dataframe (list (series '("alice" "bob" "carol") #:name "user")
-                                        (series '(10 25 18) #:name "score")
-                                        (series '(1.2 3.5 2.0) #:name "cost")))))
+                       (dataframe [user '("alice" "bob" "carol")]
+                                  [score '(10 25 18)]
+                                  [cost '(1.2 3.5 2.0)])))
 
   (define readings (read-json stations))
   (check-equal? (shape readings) '(4 5))
@@ -129,7 +128,7 @@
 
   (define keep (scratch-file scratch "keep.json" "PRECIOUS"))
   (define binary-frame
-    (dataframe (list (series '(1 2) #:name "a") (cast (series '("p" "q") #:name "b") 'binary))))
+    (dataframe [a '(1 2)] (cast (series '("p" "q") #:name "b") 'binary)))
   (check-exn #rx"^write-json: failed to write json to [^:]*keep.json: cannot write the binary column \"b\" as JSON$"
              (lambda () (write-json binary-frame keep)))
   (check-equal? (file->string keep) "PRECIOUS")
@@ -290,7 +289,7 @@
   (define parts (build-path scratch "parts"))
   (make-directory parts)
   (for ([name '("p2" "p1" "p3")] [x '(20 10 30)])
-    (write-ndjson (dataframe (list (series (list x) #:name "x")))
+    (write-ndjson (dataframe ["x" (list x)])
                   (build-path parts (format "~a.ndjson" name))))
   (define pattern (build-path parts "p*.ndjson"))
   (check-equal? (column (read-ndjson pattern) "x") '(10 20 30))
@@ -317,7 +316,7 @@
   (define relative-writes (build-path scratch "relative-writes"))
   (make-directory relative-writes)
   (parameterize ([current-directory relative-writes])
-    (define small (dataframe (list (series '(1 2) #:name "a"))))
+    (define small (dataframe [a '(1 2)]))
     (write-ndjson small "small.ndjson")
     (check-equal? (file->string "small.ndjson") "{\"a\":1}\n{\"a\":2}\n")
     (write-ndjson small "small.ndjson.gz" #:compression 'gzip)
@@ -380,7 +379,9 @@
                       (message-of (lambda () (read-ndjson (scratch-file scratch "late.ndjson"
                                                                         "{\"a\":1}\nx^junk\n")))))
   (define long-nd (build-path scratch "long.ndjson"))
-  (write-ndjson (dataframe (list (series (for/list ([i 5000]) i) #:name "n"))) long-nd)
+  (write-ndjson (dataframe [n
+                            (for/list ([i 5000])
+                              i)]) long-nd)
   (define long-gz (build-path scratch "long.ndjson.gz"))
   (gzip-file long-nd long-gz)
   (check-equal? (height (read-ndjson long-gz)) 5000)
@@ -462,9 +463,10 @@
   (check-exn (contract-violation-of 'read-ndjson) (lambda () (contracted:read-ndjson 'sym)))
 
   (define brussels
-    (dataframe (list (series (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
-                                   polars-null (moment 2021 7 1 #:tz "Europe/Brussels"))
-                             #:name "t"))))
+    (dataframe [t
+                (list (moment 2021 3 27 12 0 0 500000000 #:tz "Europe/Brussels")
+                      polars-null
+                      (moment 2021 7 1 #:tz "Europe/Brussels"))]))
   (define brussels-ndjson (build-path scratch "brussels.ndjson"))
   (write-ndjson brussels brussels-ndjson)
   (check-equal? (file->string brussels-ndjson)
@@ -474,7 +476,7 @@
   (define nul-json (build-path scratch "nul.json"))
   (define nul-ndjson (build-path scratch "nul.ndjson"))
   (define nul-plain (build-path scratch "nul-plain.ndjson"))
-  (write-ndjson (dataframe (list (series '("x" "y") #:name "s"))) nul-plain)
+  (write-ndjson (dataframe [s '("x" "y")]) nul-plain)
   (check-nul-names-round-trip
    write-json nul-json (list (cons 'eager (eager-reader read-json)))
    (lambda (n read-with label)

@@ -16,6 +16,7 @@
 ;; here on the way out.
 
 (require polars/private/generic/core
+         (only-in polars/private/generic/clauses dataframe)
          polars/private/generic/convert
          polars/private/generic/csv
          polars/private/generic/json
